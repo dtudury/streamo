@@ -1,6 +1,6 @@
 {
   "name": "streamo",
-  "version": "0.5.10",
+  "version": "0.1.0",
   "description": "content-addressed p2p sync",
   "repository": "git@github.com:dtudury/streamo.git",
   "author": "David Tudury <david.tudury@gmail.com>",

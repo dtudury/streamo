@@ -1,7 +1,9 @@
-import { globalTestRunner, urlToName } from '../lib/utils/TestRunner.js'
+import { describe } from '../public/streamo/utils/testing.js'
 import { h } from './h.js'
 
-globalTestRunner.describe(urlToName(import.meta.url), suite => {
-  const asdf = h`<div>asdf</div>`
-  console.log(asdf)
+describe(import.meta.url, ({ test }) => {
+  test('parses a simple element', () => {
+    const nodes = h`<div>asdf</div>`
+    console.log(nodes)
+  })
 })

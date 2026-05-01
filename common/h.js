@@ -209,7 +209,5 @@ export function h (strings, ...values) {
   }
   const arr = [].concat.apply([], ss)
   arr.i = 0
-  const input = new HInput(strings, values)
-  console.log(input.decodeElements())
   return _decodeElements(arr, null)
 }

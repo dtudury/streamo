@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamo</title>
+  <link rel="stylesheet" href="/apps/styles/proto.css">
+  <style>
+    body { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem; }
+
+    .wordmark { font-size: 2.4rem; letter-spacing: -0.02em; margin-bottom: 0.15rem; }
+    .tagline  { color: var(--ink-dim); font-size: 0.95rem; margin-bottom: 2rem; }
+
+    .ideas {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+      margin-bottom: 2.5rem;
+    }
+    .idea {
+      display: flex;
+      gap: 0.75rem;
+      align-items: baseline;
+      font-size: 0.9rem;
+    }
+    .idea-glyph { font-size: 1rem; flex-shrink: 0; width: 1.4rem; text-align: center; }
+    .idea-text  { color: var(--ink-dim); }
+    .idea-text strong { color: var(--ink); }
+
+    hr { margin: 2rem 0; }
+
+    .apps-heading {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--ink-dim);
+      margin-bottom: 1rem;
+    }
+
+    .app-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+      gap: 0.75rem;
+    }
+
+    .app-card {
+      display: block;
+      text-decoration: none;
+      color: var(--ink);
+      border: 1.5px solid var(--ink);
+      border-radius: var(--radius);
+      box-shadow: 2px 3px 0 var(--ink);
+      padding: 0.9rem 1rem;
+      transition: transform 0.08s, box-shadow 0.08s;
+    }
+    .app-card:hover  { transform: translate(-1px, -1px); box-shadow: 3px 4px 0 var(--ink); }
+    .app-card:active { transform: translate(1px, 2px); box-shadow: none; }
+
+    .app-name { font-size: 1rem; margin-bottom: 0.2rem; }
+    .app-desc { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.4; }
+
+    .footer {
+      margin-top: 3rem;
+      font-size: 0.75rem;
+      color: var(--ink-dim);
+    }
+    .footer a { color: var(--ink-dim); }
+  </style>
+</head>
+<body>
+
+  <div class="wordmark">streamo</div>
+  <p class="tagline">every device is an equal author</p>
+
+  <div class="ideas">
+    <div class="idea">
+      <span class="idea-glyph">⬡</span>
+      <span class="idea-text"><strong>content-addressed</strong> — data is identified by what it is, not where it lives</span>
+    </div>
+    <div class="idea">
+      <span class="idea-glyph">✍</span>
+      <span class="idea-text"><strong>signed</strong> — every write is authenticated with a secp256k1 keypair derived from your identity</span>
+    </div>
+    <div class="idea">
+      <span class="idea-glyph">↔</span>
+      <span class="idea-text"><strong>p2p sync</strong> — repos replicate over WebSocket without a central authority; the server is just another peer</span>
+    </div>
+    <div class="idea">
+      <span class="idea-glyph">∞</span>
+      <span class="idea-text"><strong>append-only</strong> — history is never rewritten; every commit is permanent and verifiable</span>
+    </div>
+  </div>
+
+  <hr>
+
+  <p class="apps-heading">apps</p>
+  <div class="app-grid">
+    <a class="app-card" href="/apps/chat/">
+      <div class="app-name">chat</div>
+      <div class="app-desc">p2p messaging — each participant owns their message stream</div>
+    </a>
+  </div>
+
+  <p class="footer">
+    <a href="https://github.com/dtudury/streamo">github</a>
+  </p>
+
+</body>
+</html>

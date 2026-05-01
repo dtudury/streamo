@@ -1,0 +1,26 @@
+{
+  "name": "streamo",
+  "version": "0.5.10",
+  "description": "content-addressed p2p sync",
+  "repository": "git@github.com:dtudury/streamo.git",
+  "author": "David Tudury <david.tudury@gmail.com>",
+  "license": "AGPL-3.0-only",
+  "bin": {
+    "streamo": "./bin/streamo.js"
+  },
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.958.0",
+    "@gerhobbelt/gitignore-parser": "^0.2.0-9",
+    "@parcel/watcher": "^2.5.1",
+    "commander": "^14.0.2",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "mkcert": "^3.2.0",
+    "readline-sync": "^1.4.10",
+    "ws": "^8.18.3"
+  },
+  "scripts": {
+    "serve": "node scripts/serve.js"
+  }
+}

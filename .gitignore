@@ -1,0 +1,20 @@
+# Dependency directories
+node_modules/
+
+# turtleDB uses this file and should ignore git stuff
+.git/
+
+# git uses this file and should ignore turtleDB stuff
+.turtleDB/
+
+# stream archive data (also excluded from fileSync via buildFilter)
+.stream/
+
+# Optional REPL history
+.node_repl_history
+
+# dotenv environment variable files
+.env
+
+# the true price of a pretty laptop
+**/.DS_Store

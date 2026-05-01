@@ -1,0 +1,71 @@
+/*
+ * proto.css — shared prototype stylesheet
+ *
+ * Deliberately rough. Use this so design bikeshedding doesn't happen.
+ * Replace per-app when the app is ready to grow up.
+ */
+
+:root {
+  --ink:      #1c1917;
+  --ink-dim:  #78716c;
+  --paper:    #fefdf8;
+  --rule:     #e7e5e0;
+  --accent:   #2563eb;
+  --warn:     #ca8a04;
+  --flash:    #fef08a;
+  --radius:   2px 8px 3px 7px / 7px 3px 8px 2px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: cursive;
+  background: var(--paper);
+  color: var(--ink);
+  padding: 1.25rem;
+  line-height: 1.5;
+}
+
+/* data / code always monospace */
+code, pre, .mono { font-family: monospace; }
+
+/* hand-drawn border feel */
+.box {
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: 2px 3px 0 var(--ink);
+  padding: 0.75rem 1rem;
+}
+
+/* status pill */
+.pill {
+  font-family: cursive;
+  font-size: 0.75rem;
+  padding: 0.15rem 0.6rem;
+  border: 1.5px solid currentColor;
+  border-radius: 999px;
+}
+.pill.ok  { color: #16a34a; }
+.pill.err { color: #dc2626; }
+
+/* flash animation — add .flash class, it auto-expires */
+@keyframes proto-flash {
+  0%   { background-color: var(--flash); }
+  100% { background-color: transparent; }
+}
+.flash { animation: proto-flash 0.7s ease-out; }
+
+/* divider */
+hr { border: none; border-top: 1.5px dashed var(--rule); margin: 0.75rem 0; }
+
+/* muted / helper text */
+.dim { color: var(--ink-dim); font-size: 0.8rem; }
+
+/* inline code snippet */
+.snippet {
+  font-family: monospace;
+  font-size: 0.85rem;
+  background: var(--rule);
+  border-radius: 3px;
+  padding: 0.1em 0.35em;
+}

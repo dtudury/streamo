@@ -1,5 +1,5 @@
 {
-  "name": "streamo",
+  "name": "@dtudury/streamo",
   "version": "0.1.0",
   "description": "content-addressed p2p sync",
   "repository": "git@github.com:dtudury/streamo.git",

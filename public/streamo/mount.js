@@ -21,6 +21,29 @@
 
 import { HElement, HText } from './h.js'
 
+// ── Watcher cleanup registry ──────────────────────────────────────────────
+//
+// Each node tracks the watcher functions registered against it.
+// cleanupNode() walks the subtree unwatching all of them, so removed
+// nodes never accumulate stale watchers.
+
+const nodeCleanups = new WeakMap() // Node → Set<Function>
+
+function addCleanup (node, f) {
+  let set = nodeCleanups.get(node)
+  if (!set) { set = new Set(); nodeCleanups.set(node, set) }
+  set.add(f)
+}
+
+function cleanupNode (node, recaller) {
+  const fns = nodeCleanups.get(node)
+  if (fns) {
+    for (const f of fns) recaller.unwatch(f)
+    nodeCleanups.delete(node)
+  }
+  for (const child of [...node.childNodes]) cleanupNode(child, recaller)
+}
+
 /**
  * Mount an array of virtual nodes (result of h``) into `container`.
  * @param {Array} nodes
@@ -71,8 +94,9 @@ function mountNode (node, container, recaller) {
 // ── Child slot ────────────────────────────────────────────────────────────
 //
 // ${cell} in content position.
-// Two comment nodes act as stable anchors so the rendered output can be
-// replaced in-place when the watcher fires.
+// Comment anchors delimit the slot's DOM range. On re-render, existing
+// elements are matched by data-key (exact) or tag (positional fallback)
+// and recycled in place. Unmatched nodes are cleaned up before removal.
 
 function mountSlot (cell, container, recaller) {
   const start = document.createComment('')
@@ -80,12 +104,101 @@ function mountSlot (cell, container, recaller) {
   container.appendChild(start)
   container.appendChild(end)
 
-  recaller.watch(cell.name || '(h cell)', () => {
-    while (start.nextSibling !== end) start.nextSibling.remove()
-    const frag = document.createDocumentFragment()
-    mountNode(cell(container), frag, recaller)
-    end.before(frag)
-  })
+  const watcher = () => {
+    const newVNodes = [cell(container)].flat(Infinity).filter(n => n != null)
+    reconcileSlot(start, end, newVNodes, recaller)
+  }
+  addCleanup(start, watcher)
+  recaller.watch(cell.name || '(h cell)', watcher)
+}
+
+function reconcileSlot (start, end, newVNodes, recaller) {
+  // Collect existing Element nodes between the anchors — only elements can be recycled
+  const existingEls = []
+  let node = start.nextSibling
+  while (node !== end) {
+    if (node.nodeType === Node.ELEMENT_NODE) existingEls.push(node)
+    node = node.nextSibling
+  }
+
+  // Build lookup: keyed elements by data-key, unkeyed elements pooled by tag.
+  // Keyed and unkeyed pools are kept separate so a keyed vnode never steals
+  // an unkeyed element and vice versa.
+  const keyedMap = new Map()
+  const tagPool = new Map()
+  for (const el of existingEls) {
+    const key = el.getAttribute('data-key')
+    if (key != null) {
+      keyedMap.set(key, el)
+    } else {
+      const tag = el.tagName.toLowerCase()
+      if (!tagPool.has(tag)) tagPool.set(tag, [])
+      tagPool.get(tag).push(el)
+    }
+  }
+
+  // Match each new HElement vnode to an existing element
+  const recycledEls = new Set()
+  const vnodeToEl = new Map()
+  for (const vnode of newVNodes) {
+    if (!(vnode instanceof HElement)) continue
+    const keyAttr = vnode.attrs.find(a => a?.name === 'data-key')
+    const keyVal = keyAttr?.value
+    // Only use static (non-reactive) key values for matching
+    const key = (keyVal != null && typeof keyVal !== 'function' && !Array.isArray(keyVal))
+      ? String(keyVal) : null
+
+    let el = null
+    if (key != null) {
+      // Keyed: only match an existing element with the same data-key
+      const candidate = keyedMap.get(key)
+      if (candidate && !recycledEls.has(candidate)) el = candidate
+    } else {
+      // Unkeyed: take the first unused same-tag element from the pool
+      const pool = tagPool.get(vnode.tag)
+      if (pool) el = pool.find(e => !recycledEls.has(e)) ?? null
+    }
+
+    if (el) {
+      recycledEls.add(el)
+      vnodeToEl.set(vnode, el)
+    }
+  }
+
+  // Detach recycled elements before wiping so they survive the cleanup pass
+  for (const el of recycledEls) el.remove()
+
+  // Clean up and remove all remaining old content
+  while (start.nextSibling !== end) {
+    const old = start.nextSibling
+    cleanupNode(old, recaller)
+    old.remove()
+  }
+
+  // Reinsert recycled elements (static attrs patched) and mount fresh ones, in order
+  for (const vnode of newVNodes) {
+    const recycled = vnodeToEl.get(vnode)
+    if (recycled) {
+      patchElement(recycled, vnode)
+      end.before(recycled)
+    } else {
+      const frag = document.createDocumentFragment()
+      mountNode(vnode, frag, recaller)
+      end.before(frag)
+    }
+  }
+}
+
+// Update static attributes on a recycled element.
+// Reactive (function/array) attrs are already self-updating via their existing watchers.
+function patchElement (el, vnode) {
+  for (const attr of vnode.attrs) {
+    if (attr == null) continue
+    if (typeof attr === 'object' && !attr.name) continue // spread — skip
+    if (typeof attr.value === 'function' || Array.isArray(attr.value)) continue // reactive — skip
+    if (attr.value !== undefined) setAttr(el, attr.name, attr.value)
+    else el.toggleAttribute(attr.name, true)
+  }
 }
 
 // ── Attribute cells ───────────────────────────────────────────────────────
@@ -102,14 +215,18 @@ function applyAttr (el, attr, recaller) {
   }
   const { name, value } = attr
   if (typeof value === 'function') {
-    recaller.watch(`attr:${name}`, () => setAttr(el, name, value(el)))
+    const watcher = () => setAttr(el, name, value(el))
+    addCleanup(el, watcher)
+    recaller.watch(`attr:${name}`, watcher)
     return
   }
   if (Array.isArray(value)) {
     // mixed static/dynamic: each function part is a cell called with el
-    recaller.watch(`attr:${name}`, () => {
+    const watcher = () => {
       setAttr(el, name, value.map(p => typeof p === 'function' ? p(el) : String(p ?? '')).join(''))
-    })
+    }
+    addCleanup(el, watcher)
+    recaller.watch(`attr:${name}`, watcher)
     return
   }
   if (value !== undefined) setAttr(el, name, value)

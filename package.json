@@ -1,7 +1,8 @@
 {
   "name": "@dtudury/streamo",
   "version": "0.1.2",
-  "description": "content-addressed p2p sync",
+  "description": "peer-to-peer sync where your data and identity belong to you, not the server",
+  "keywords": ["p2p", "peer-to-peer", "sync", "reactive", "content-addressed", "websocket", "signed", "append-only", "offline-first", "cryptographic", "identity"],
   "repository": "git@github.com:dtudury/streamo.git",
   "author": "David Tudury <david.tudury@gmail.com>",
   "license": "AGPL-3.0-only",

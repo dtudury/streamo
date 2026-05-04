@@ -9,15 +9,17 @@ append-only, and the server is a relay — not a gatekeeper.
 
 ## the face of the project
 
-These three files are how people discover and understand streamo. Keep them in sync
+These files are how people discover and understand streamo. Keep them in sync
 after any meaningful change — not as an afterthought, but as part of the work:
 
 - **`README.md`** — npm/GitHub landing page; imports, framing, and examples must reflect
   the current package name (`@dtudury/streamo`) and current capabilities
 - **`public/index.html`** — browser homepage; feature list and app cards should match
   the README's framing
-- **`package.json`** — version and name (`@dtudury/streamo`); version bumps immediately
-  after the user says they've published
+- **`package.json`** — version, name (`@dtudury/streamo`), description, and keywords;
+  version bumps immediately after the user says they've published
+- **`ROADMAP.md`** — public on GitHub; mark items done when they ship, update "start
+  here" to the next priority, keep the "toward 1.0" list current
 
 Stale public-facing docs erode trust faster than bugs do.
 

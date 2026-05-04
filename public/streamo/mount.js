@@ -21,6 +21,9 @@
 
 import { HElement, HText } from './h.js'
 
+const HTML_NS = 'http://www.w3.org/1999/xhtml'
+const SVG_NS  = 'http://www.w3.org/2000/svg'
+
 // ── Watcher cleanup registry ──────────────────────────────────────────────
 //
 // Each node tracks the watcher functions registered against it.
@@ -51,36 +54,41 @@ export function dismount (root, recaller) {
 
 /**
  * Mount an array of virtual nodes (result of h``) into `container`.
- * @param {Array} nodes
+ * @param {Array}  nodes
  * @param {Element} container
  * @param {import('./utils/Recaller.js').Recaller} recaller
+ * @param {string} [ns]  XML namespace inherited from parent (defaults to XHTML)
  */
-export function mount (nodes, container, recaller) {
+export function mount (nodes, container, recaller, ns = HTML_NS) {
   for (const node of [nodes].flat()) {
-    mountNode(node, container, recaller)
+    mountNode(node, container, recaller, ns)
   }
 }
 
-function mountNode (node, container, recaller) {
+function mountNode (node, container, recaller, ns = HTML_NS) {
   if (node == null) return
   if (Array.isArray(node)) {
-    node.forEach(n => mountNode(n, container, recaller))
+    node.forEach(n => mountNode(n, container, recaller, ns))
     return
   }
   if (node instanceof HElement) {
     if (typeof node.tag === 'function') {
-      mountNode(node.tag(buildProps(node)), container, recaller)
+      mountNode(node.tag(buildProps(node)), container, recaller, ns)
       return
     }
-    const el = document.createElementNS(
-      node.attrs.find(a => a?.name === 'xmlns')?.value ?? 'http://www.w3.org/1999/xhtml',
-      node.tag
-    )
+    // Determine this element's namespace:
+    //   xmlns attr > svg tag > foreignObject resets to HTML > inherit from parent
+    const nsAttr = node.attrs.find(a => a?.name === 'xmlns')?.value
+    const elemNs = nsAttr
+      ?? (node.tag === 'svg' ? SVG_NS
+        : node.tag === 'foreignObject' ? HTML_NS
+        : ns)
+    const el = document.createElementNS(elemNs, node.tag)
     for (const attr of node.attrs) {
       if (attr == null) continue
       applyAttr(el, attr, recaller)
     }
-    mount(node.children, el, recaller)
+    mount(node.children, el, recaller, elemNs)
     container.appendChild(el)
     return
   }
@@ -93,7 +101,7 @@ function mountNode (node, container, recaller) {
     return
   }
   if (typeof node === 'function') {
-    mountSlot(node, container, recaller)
+    mountSlot(node, container, recaller, ns)
     return
   }
   // primitive — string, number, etc.
@@ -107,7 +115,7 @@ function mountNode (node, container, recaller) {
 // elements are matched by data-key (exact) or tag (positional fallback)
 // and recycled in place. Unmatched nodes are cleaned up before removal.
 
-function mountSlot (cell, container, recaller) {
+function mountSlot (cell, container, recaller, ns = HTML_NS) {
   const start = document.createComment('')
   const end = document.createComment('')
   container.appendChild(start)
@@ -115,13 +123,13 @@ function mountSlot (cell, container, recaller) {
 
   const watcher = () => {
     const newVNodes = [cell(container)].flat(Infinity).filter(n => n != null)
-    reconcileSlot(start, end, newVNodes, recaller)
+    reconcileSlot(start, end, newVNodes, recaller, ns)
   }
   addCleanup(start, watcher)
   recaller.watch(cell.name || '(h cell)', watcher)
 }
 
-function reconcileSlot (start, end, newVNodes, recaller) {
+function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
   // Collect existing Element nodes between the anchors — only elements can be recycled
   const existingEls = []
   let node = start.nextSibling
@@ -192,7 +200,7 @@ function reconcileSlot (start, end, newVNodes, recaller) {
       end.before(recycled)
     } else {
       const frag = document.createDocumentFragment()
-      mountNode(vnode, frag, recaller)
+      mountNode(vnode, frag, recaller, ns)
       end.before(frag)
     }
   }
@@ -232,6 +240,8 @@ function buildProps (node) {
 // attr=${cell}          → cell(el), return value applied via setAttr
 // onclick=${cell}       → cell(el), return value assigned to el.onclick
 // attr="prefix-${cell}" → each fn part called with el, results joined as string
+// class=${[...]}        → falsy items filtered, truthy items joined with space
+// class=${{k:bool}}     → keys with truthy values joined with space
 
 function applyAttr (el, attr, recaller) {
   if (typeof attr === 'object' && !attr.name) {
@@ -247,12 +257,17 @@ function applyAttr (el, attr, recaller) {
     return
   }
   if (Array.isArray(value)) {
-    // mixed static/dynamic: each function part is a cell called with el
-    const watcher = () => {
-      setAttr(el, name, value.map(p => typeof p === 'function' ? p(el) : String(p ?? '')).join(''))
+    if (value.some(p => typeof p === 'function')) {
+      // Mixed static/dynamic attr from template interpolation — evaluate and concatenate
+      const watcher = () => {
+        setAttr(el, name, value.map(p => typeof p === 'function' ? p(el) : String(p ?? '')).join(''))
+      }
+      addCleanup(el, watcher)
+      recaller.watch(`attr:${name}`, watcher)
+    } else {
+      // Static array value (e.g. class list) — delegate to setAttr for normalization
+      setAttr(el, name, value)
     }
-    addCleanup(el, watcher)
-    recaller.watch(`attr:${name}`, watcher)
     return
   }
   if (value !== undefined) setAttr(el, name, value)
@@ -260,6 +275,14 @@ function applyAttr (el, attr, recaller) {
 }
 
 function setAttr (el, name, value) {
+  // Normalize class arrays and objects into a space-separated string
+  if (name === 'class') {
+    if (Array.isArray(value)) {
+      value = value.filter(Boolean).join(' ')
+    } else if (value !== null && value !== undefined && typeof value === 'object') {
+      value = Object.entries(value).filter(([, v]) => v).map(([k]) => k).join(' ')
+    }
+  }
   if (name.startsWith('on')) {
     el[name] = typeof value === 'function' ? value : null
   } else if (name === 'value' && 'value' in el) {

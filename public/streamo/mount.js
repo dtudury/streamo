@@ -44,6 +44,11 @@ function cleanupNode (node, recaller) {
   for (const child of [...node.childNodes]) cleanupNode(child, recaller)
 }
 
+// Call when removing a mounted root (e.g. in disconnectedCallback of a custom element).
+export function dismount (root, recaller) {
+  cleanupNode(root, recaller)
+}
+
 /**
  * Mount an array of virtual nodes (result of h``) into `container`.
  * @param {Array} nodes
@@ -63,6 +68,10 @@ function mountNode (node, container, recaller) {
     return
   }
   if (node instanceof HElement) {
+    if (typeof node.tag === 'function') {
+      mountNode(node.tag(buildProps(node)), container, recaller)
+      return
+    }
     const el = document.createElementNS(
       node.attrs.find(a => a?.name === 'xmlns')?.value ?? 'http://www.w3.org/1999/xhtml',
       node.tag
@@ -199,6 +208,23 @@ function patchElement (el, vnode) {
     if (attr.value !== undefined) setAttr(el, attr.name, attr.value)
     else el.toggleAttribute(attr.name, true)
   }
+}
+
+// ── Function components ───────────────────────────────────────────────────
+//
+// When an HElement's tag is a function, call it with a props object instead
+// of creating a DOM element. Attr values are passed as-is — reactive function
+// attrs stay as functions so the component can forward them into its own slots.
+
+function buildProps (node) {
+  const props = {}
+  for (const attr of node.attrs) {
+    if (attr == null) continue
+    if (typeof attr === 'object' && attr.name) props[attr.name] = attr.value
+    else if (typeof attr === 'object') Object.assign(props, attr) // spread
+  }
+  props.children = node.children
+  return props
 }
 
 // ── Attribute cells ───────────────────────────────────────────────────────

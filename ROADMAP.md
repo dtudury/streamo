@@ -40,6 +40,11 @@ The foundation is solid and working. Here's what's in:
   unwatched before removal so watchers never accumulate. Elements are recycled
   across re-renders by `data-key` (exact) then tag (positional fallback), so user
   input and focus survive list reorders.
+- `StreamoComponent` — base class for hot-reloadable custom element components.
+  Function components (`(props) => nodes`) work directly as tags in `h`. For
+  hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn)`
+  pair a content address to a unique custom element name — a new file version gets
+  a new name, stale elements are naturally orphaned and cleaned up.
 
 **Apps**
 - Chat — full p2p messaging app. Each participant owns their own message stream;
@@ -52,13 +57,7 @@ The foundation is solid and working. Here's what's in:
 
 ## what's next
 
-### component support in `h` ← start here
-Functions as tags: `` h`<${Card} title="hi"/>` ``. This is the difference between
-a templating tool and a UI framework. Watcher cleanup is already correct, so
-components are now straightforward — a component is just a function that returns
-nodes and cleans up after itself when removed.
-
-### chat signing
+### chat signing ← start here
 Messages aren't cryptographically verified yet. Anyone who knows a participant's
 public key hex could theoretically spoof them. Wiring `repo.sign()` after each
 `set()` closes this.
@@ -94,12 +93,11 @@ Either rebuild them or remove the links.
 
 ## toward 1.0
 
-The three things blocking a stable `1.0` claim:
+The two things blocking a stable `1.0` claim:
 
-1. **Components** — without them, `h` / `mount` is too limited for real apps
-2. **Chat signing** — the whole point of the project is cryptographic authorship;
+1. **Chat signing** — the whole point of the project is cryptographic authorship;
    the flagship app should demonstrate it
-3. **Chat persistence** — a chat app that loses history on restart isn't production-ready
+2. **Chat persistence** — a chat app that loses history on restart isn't production-ready
 
-Keyed list reconciliation is done. SVG namespace, `class` arrays, and refs are
-quality-of-life improvements that can come after 1.0.
+Components and keyed list reconciliation are done. SVG namespace, `class` arrays,
+and refs are quality-of-life improvements that can come after 1.0.

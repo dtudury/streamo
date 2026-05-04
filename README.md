@@ -150,6 +150,20 @@ mount(h`
 
 Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update. Elements are recycled across re-renders by `data-key` (or tag as a fallback), so user input and focus survive list reorders.
 
+Any function can be used directly as a tag — it receives `{ ...attrs, children }` and returns virtual nodes:
+
+```js
+import { StreamoComponent, componentKey, defineComponent } from '@dtudury/streamo/public/streamo/StreamoComponent.js'
+
+function Card ({ title, children }) {
+  return h`<div class="card"><h2>${title}</h2>${children}</div>`
+}
+
+mount(h`<${Card} title="Hello"><p>hi</p></${Card}>`, document.body, recaller)
+```
+
+For hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn)` pair a content address to a unique custom element name. A new file version gets a new name; stale elements are naturally orphaned and cleaned up without any explicit bookkeeping.
+
 ## sync backends
 
 | module | what it does |

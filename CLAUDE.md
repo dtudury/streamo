@@ -49,14 +49,17 @@ Use this framing consistently across all public-facing text:
 - `Recaller` — fine-grained reactive dependency tracker; `watch(name, f)` / `unwatch(f)`
 - `h` — tagged template literal HTML parser → HElement / HText virtual tree
 - `mount` — reactive DOM renderer; slots are reactive cells; elements recycled by
-  `data-key` then tag on re-render; removed nodes cleaned up via `recaller.unwatch()`
+  `data-key` then tag on re-render; removed nodes cleaned up via `recaller.unwatch()`;
+  exports `dismount(root, recaller)` for custom element cleanup
+- `StreamoComponent` — base class for hot-reloadable custom elements; `componentKey`
+  generates address-based names; `defineComponent` registers render functions; function
+  components `(props) => nodes` work directly as tags in `h` with no class needed
 - `registrySync` — bidirectional multi-repo sync over a single WebSocket; works in Node
   and browser; content-driven discovery via `follow`
 
 ## what's next (toward 1.0)
 
-1. Component support in `h` — functions as tags: `` h`<${Card} title="hi"/>` ``
-2. Chat signing — wire `repo.sign()` so messages are cryptographically verified
+1. Chat signing — wire `repo.sign()` so messages are cryptographically verified
 3. SVG namespace — auto-detect SVG elements in `mount`
 4. `class` as array or object — common pattern, currently unsupported
 5. Chat persistence — wire `archiveSync` into `chat-server.js`

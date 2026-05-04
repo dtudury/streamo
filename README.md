@@ -189,6 +189,10 @@ node --test public/streamo/Repo.test.js  # single file
 See [ROADMAP.md](./ROADMAP.md) for what's been built, what's next, and what we're
 aiming at for 1.0.
 
+## collaboration
+
+Built with significant AI collaboration via [Claude Code](https://claude.ai/code). Human-directed; Claude is a co-author and contributor, not an autonomous builder.
+
 ## license
 
 AGPL-3.0-only

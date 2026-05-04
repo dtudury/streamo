@@ -148,7 +148,7 @@ mount(h`
 `, document.body, recaller)
 ```
 
-Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update. Elements are recycled across re-renders by `data-key` (or tag as a fallback), so user input and focus survive list reorders.
+Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update. Elements are recycled across re-renders by `data-key` (or tag as a fallback), so user input and focus survive list reorders. SVG namespaces propagate automatically — `` h`<svg><path d="..."/></svg>` `` works without any extra wiring. `class` accepts an array (`['btn', isActive && 'active']`) or an object (`{btn: true, active: false}`); falsy entries are filtered out.
 
 Any function can be used directly as a tag — it receives `{ ...attrs, children }` and returns virtual nodes:
 

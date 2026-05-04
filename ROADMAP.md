@@ -39,7 +39,9 @@ The foundation is solid and working. Here's what's in:
   bound to mutated paths update. Watcher cleanup is precise: removed nodes are
   unwatched before removal so watchers never accumulate. Elements are recycled
   across re-renders by `data-key` (exact) then tag (positional fallback), so user
-  input and focus survive list reorders.
+  input and focus survive list reorders. SVG namespaces propagate automatically —
+  `` h`<svg><path/></svg>` `` just works. `class` accepts an array
+  (`['btn', isActive && 'active']`) or an object (`{btn: true, active: false}`).
 - `StreamoComponent` — base class for hot-reloadable custom element components.
   Function components (`(props) => nodes`) work directly as tags in `h`. For
   hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn)`
@@ -62,14 +64,6 @@ Messages aren't cryptographically verified yet. Anyone who knows a participant's
 public key hex could theoretically spoof them. Wiring `repo.sign()` after each
 `set()` closes this.
 
-### SVG namespace
-`mount` hardcodes the XHTML namespace. `` h`<svg><path/></svg>` `` won't render
-correctly until `mount` auto-detects SVG elements and switches namespaces.
-
-### `class` as array or object
-`class=${['btn', isActive && 'active']}` is such a common pattern that not
-supporting it is a daily papercut. Easy win.
-
 ### chat persistence
 Right now the chat server is in-memory — restart it and history is gone. Wiring
 `archiveSync` into `chat-server.js` is a small change with a big quality-of-life
@@ -85,10 +79,6 @@ The old repository-browser app was left behind during the migration because its
 imports broke. Rebuilding it with `h` / `mount` would be the first substantial
 real-world test of the UI layer.
 
-### fix dead links on the homepage
-`public/index.html` links to the browser and components apps that no longer exist.
-Either rebuild them or remove the links.
-
 ---
 
 ## toward 1.0
@@ -99,5 +89,5 @@ The two things blocking a stable `1.0` claim:
    the flagship app should demonstrate it
 2. **Chat persistence** — a chat app that loses history on restart isn't production-ready
 
-Components and keyed list reconciliation are done. SVG namespace, `class` arrays,
-and refs are quality-of-life improvements that can come after 1.0.
+Components, keyed list reconciliation, SVG namespaces, and `class` arrays/objects
+are all done. Chat signing and persistence are the last mile.

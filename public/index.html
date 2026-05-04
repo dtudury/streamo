@@ -74,20 +74,20 @@
 
   <div class="ideas">
     <div class="idea">
-      <span class="idea-glyph">⬡</span>
-      <span class="idea-text"><strong>content-addressed</strong> — data is identified by what it is, not where it lives</span>
+      <span class="idea-glyph">↔</span>
+      <span class="idea-text"><strong>no server holds authority</strong> — the server is a relay, not a gatekeeper; your data lives on your devices and can't be seized or censored</span>
+    </div>
+    <div class="idea">
+      <span class="idea-glyph">≡</span>
+      <span class="idea-text"><strong>your identity travels with you</strong> — same credentials produce the same keypair everywhere — no key files, no seed phrases, no backup ritual</span>
     </div>
     <div class="idea">
       <span class="idea-glyph">✍</span>
-      <span class="idea-text"><strong>signed</strong> — every write is authenticated with a secp256k1 keypair derived from your identity</span>
+      <span class="idea-text"><strong>every write is provably yours</strong> — commits are signed with your keypair and append-only; history is permanent and can't be forged</span>
     </div>
     <div class="idea">
-      <span class="idea-glyph">↔</span>
-      <span class="idea-text"><strong>p2p sync</strong> — repos replicate over WebSocket without a central authority; the server is just another peer</span>
-    </div>
-    <div class="idea">
-      <span class="idea-glyph">∞</span>
-      <span class="idea-text"><strong>append-only</strong> — history is never rewritten; every commit is permanent and verifiable</span>
+      <span class="idea-glyph">⬡</span>
+      <span class="idea-text"><strong>content-addressed</strong> — data is identified by what it is, not where it lives; dedup and diffing are structural</span>
     </div>
   </div>
 
@@ -97,7 +97,7 @@
   <div class="app-grid">
     <a class="app-card" href="/apps/chat/">
       <div class="app-name">chat</div>
-      <div class="app-desc">p2p messaging — each participant owns their message stream</div>
+      <div class="app-desc">p2p messaging — the server is a relay, not a gatekeeper</div>
     </a>
   </div>
 

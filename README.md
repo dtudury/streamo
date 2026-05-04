@@ -2,25 +2,25 @@
 
 > every device is an equal author
 
-Streamo is a content-addressed, cryptographically signed, peer-to-peer sync library. There is no central server — your keypair is your identity, your commit log is the source of truth, and every connected peer sees the same history.
+Streamo is a peer-to-peer sync library built around a simple promise: **no server holds authority over your data or your identity.** The server is a relay, not a gatekeeper. Your keypair is your identity — derived from your credentials, not stored in a file. Your commit log is the source of truth, and every connected peer sees the same history.
 
 ## core ideas
 
-- **Content-addressed** — data is identified by what it is, not where it lives. The same value always lands at the same address; deduplication and diffing are free.
-- **Signed** — every write is authenticated with a secp256k1 keypair derived from your username and password. Peers reject unsigned or mis-signed data.
-- **Append-only** — history is never rewritten. Every commit is permanent and verifiable.
-- **P2P sync** — repos replicate over WebSocket. The server is just another peer; disconnect it and the data is still yours.
+- **No server holds authority** — the server is a relay; your data lives on your devices and can't be seized or censored. Disconnect the server and everything is still yours.
+- **Your identity travels with you** — keys are derived with PBKDF2 from your username and password. Same credentials, same keypair, everywhere — no key files, no seed phrases, no backup ritual.
+- **Every write is provably yours** — commits are signed with your keypair and append-only. History is permanent and can't be forged; peers reject unsigned or mis-signed data.
+- **Content-addressed** — data is identified by what it is, not where it lives. The same value always lands at the same address; deduplication and diffing are structural.
 
 ## install
 
 ```bash
-npm install streamo
+npm install @dtudury/streamo
 ```
 
 Or run the CLI directly:
 
 ```bash
-npx streamo --help
+npx @dtudury/streamo --help
 ```
 
 ## cli
@@ -56,8 +56,8 @@ streamo --env-file .env
 ### Streamo — reactive append-only store
 
 ```js
-import { Streamo } from 'streamo/public/streamo/Streamo.js'
-import { Recaller } from 'streamo/public/streamo/utils/Recaller.js'
+import { Streamo } from '@dtudury/streamo/public/streamo/Streamo.js'
+import { Recaller } from '@dtudury/streamo/public/streamo/utils/Recaller.js'
 
 const store = new Streamo()
 store.set({ name: 'alice', score: 42 })
@@ -72,7 +72,7 @@ Values are encoded with a self-describing codec (strings, numbers, dates, boolea
 `Repo` wraps a `Streamo` so every `set()` becomes a commit — message, date, data address, and parent pointer. The raw commit log is what syncs over the wire.
 
 ```js
-import { Repo } from 'streamo/public/streamo/Repo.js'
+import { Repo } from '@dtudury/streamo/public/streamo/Repo.js'
 
 const repo = new Repo()
 repo.set({ name: 'alice', messages: [] })
@@ -84,8 +84,8 @@ repo.lastCommit       // { message: '', date: Date, dataAddress: n, parent: n|un
 ### Signer — deterministic identity
 
 ```js
-import { Signer } from 'streamo/public/streamo/Signer.js'
-import { bytesToHex } from 'streamo/public/streamo/utils.js'
+import { Signer } from '@dtudury/streamo/public/streamo/Signer.js'
+import { bytesToHex } from '@dtudury/streamo/public/streamo/utils.js'
 
 const signer = new Signer('alice', 'my-password')
 const { publicKey } = await signer.keysFor('my-dataset')
@@ -97,8 +97,8 @@ Keys are derived with PBKDF2 so the same username + password always produces the
 ### RepoRegistry — multi-repo store
 
 ```js
-import { RepoRegistry } from 'streamo/public/streamo/RepoRegistry.js'
-import { archiveSync } from 'streamo/public/streamo/archiveSync.js'
+import { RepoRegistry } from '@dtudury/streamo/public/streamo/RepoRegistry.js'
+import { archiveSync } from '@dtudury/streamo/public/streamo/archiveSync.js'
 
 const registry = new RepoRegistry(async key => {
   const repo = new Repo()
@@ -112,7 +112,7 @@ const repo = await registry.open(publicKeyHex)
 ### registrySync — peer sync over WebSocket
 
 ```js
-import { registrySync } from 'streamo/public/streamo/registrySync.js'
+import { registrySync } from '@dtudury/streamo/public/streamo/registrySync.js'
 
 const session = await registrySync(registry, 'localhost', 8080, {
   // only sync repos you care about
@@ -134,9 +134,9 @@ session.announce(myKey, rootKey) // tell interested peers about your repo
 ### h + mount — reactive UI
 
 ```js
-import { h } from 'streamo/public/streamo/h.js'
-import { mount } from 'streamo/public/streamo/mount.js'
-import { Recaller } from 'streamo/public/streamo/utils/Recaller.js'
+import { h } from '@dtudury/streamo/public/streamo/h.js'
+import { mount } from '@dtudury/streamo/public/streamo/mount.js'
+import { Recaller } from '@dtudury/streamo/public/streamo/utils/Recaller.js'
 
 const recaller = new Recaller('app')
 
@@ -148,7 +148,7 @@ mount(h`
 `, document.body, recaller)
 ```
 
-Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update.
+Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update. Elements are recycled across re-renders by `data-key` (or tag as a fallback), so user input and focus survive list reorders.
 
 ## sync backends
 

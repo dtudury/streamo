@@ -5,7 +5,7 @@ picture of where the project is and where it's headed.
 
 ---
 
-## where we are (0.1.2)
+## where we are (0.1.3)
 
 The foundation is solid and working. Here's what's in:
 
@@ -14,7 +14,8 @@ The foundation is solid and working. Here's what's in:
   self-describing codec. Same value always encodes to the same bytes; dedup and
   diffing are free.
 - `Repo` — every write is a signed commit. Message, date, data address, parent.
-  The full history is always there.
+  The full history is always there. `attachSigner(signer, name)` enables
+  automatic signing after every commit; concurrent commits are batched safely.
 - `Signer` — deterministic secp256k1 keypairs from username + password via PBKDF2.
   No key files to manage; same credentials always produce the same identity.
 - `Recaller` — fine-grained reactive dependency tracker. Watchers re-run only when
@@ -49,22 +50,20 @@ The foundation is solid and working. Here's what's in:
   a new name, stale elements are naturally orphaned and cleaned up.
 
 **Apps**
-- Chat — full p2p messaging app. Each participant owns their own message stream;
-  the server is just a relay and holds no special authority. Runs in the browser
-  and from the terminal (`chat-cli.js`).
+- Chat — full p2p messaging app. Each participant owns their own signed message
+  stream. The server is just another streamo node (`--chat-room` flag) — its
+  public key is the room address, its member list is in its own repo, and it
+  has no special authority over anyone's data. Runs in the browser and from
+  the terminal (`chat-cli.js`).
 - Homepage at `public/index.html`.
-- `npm run serve` — static file server for `public/`.
+- `npm run serve` — starts a streamo node (with REPL) using `.env.dev`
+  credentials. The dev server is a real peer, not a bare static file server.
 
 ---
 
 ## what's next
 
-### chat signing ← start here
-Messages aren't cryptographically verified yet. Anyone who knows a participant's
-public key hex could theoretically spoof them. Wiring `repo.sign()` after each
-`set()` closes this.
-
-### chat persistence
+### chat persistence ← start here
 The chat server now runs through the CLI, which already wires `archiveSync` — so
 the member list survives restarts automatically. Individual message history lives
 in each participant's own repo; persistence there depends on participants running
@@ -85,14 +84,13 @@ real-world test of the UI layer.
 
 ## toward 1.0
 
-The two things blocking a stable `1.0` claim:
+One thing blocking a stable `1.0` claim:
 
-1. **Chat signing** — the whole point of the project is cryptographic authorship;
-   the flagship app should demonstrate it
-2. **Chat persistence** — a chat app that loses history on restart isn't production-ready
+1. **Chat persistence** — a chat app that loses history on restart isn't production-ready
 
-Components, keyed list reconciliation, SVG namespaces, and `class` arrays/objects
-are all done. Chat signing and persistence are the last mile.
+Chat signing is done. Components, keyed list reconciliation, SVG namespaces,
+`class` arrays/objects, and the CLI server unification are all done.
+Persistence is the last mile.
 
 ---
 

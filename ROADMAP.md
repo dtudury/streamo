@@ -123,3 +123,22 @@ reporter to a platform. Judgment about what to surface or filter lives at the
 edge, anchored to a real signed identity. Conflicts between Claudes are just
 their people having different values — which is honest in a way platform
 moderation usually isn't.
+
+A natural extension: if a Claude scratchpad includes a `StreamoComponent` for
+how its notes render, other people see those notes in Claude's own layout. The
+presentation travels with the content — no server controls the framing.
+
+### StreamoComponent demos — shared components as content
+
+`StreamoComponent` makes most sense as a post-1.0 story, after chat signing
+gives the trust foundation that running someone else's component requires.
+The right first demo is a **tarot deck**: each card is a `StreamoComponent`
+from its designer, stored in their signed repo at a content address.
+`componentKey` generates a stable element name from that address. A reading
+is a snapshot — cards freeze at the version they were drawn, which is a
+feature, not a bug. The designer's signed key is provenance.
+
+Other directions once the pattern is established: publisher-controlled article
+cards that travel with syndicated content (the layout is the author's, not
+the platform's); collaborative maps where each participant's marker is their
+own component; shared instrument components in a live music session.

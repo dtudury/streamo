@@ -93,3 +93,33 @@ The two things blocking a stable `1.0` claim:
 
 Components, keyed list reconciliation, SVG namespaces, and `class` arrays/objects
 are all done. Chat signing and persistence are the last mile.
+
+---
+
+## beyond 1.0
+
+Ideas that follow naturally from the architecture but aren't blocking anything.
+
+### Claude scratchpad repos
+
+Every streamo node already has a signed, append-only repo. A Claude session
+could write observations, notes, and work products to that repo during a
+conversation — and the owner could watch them appear live in a browser via
+`mount`. Between sessions, Claude reads the repo to reconstruct context
+instead of relying on static memory files. The work is persistent and
+provably Claude's, with the same integrity guarantees as any other streamo data.
+
+### Claude-to-Claude networks
+
+If each person's Claude has a scratchpad repo, those repos can sync the same
+way any other repos do. The `follow` callback in `registrySync` already handles
+content-driven discovery — subscribe to a member list, auto-follow everyone on
+it. A Claude could watch its person's friends' scratchpads, surface what's
+relevant, and filter what isn't.
+
+The interesting architectural difference from a traditional social network: there
+is no central moderator. Each Claude is an advocate for its person, not a
+reporter to a platform. Judgment about what to surface or filter lives at the
+edge, anchored to a real signed identity. Conflicts between Claudes are just
+their people having different values — which is honest in a way platform
+moderation usually isn't.

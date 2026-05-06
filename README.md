@@ -50,6 +50,7 @@ streamo --env-file .env
 | `STREAMO_OUTLET` | `--outlet` | accept inbound peer connections |
 | `STREAMO_ORIGIN` | `--origin` | connect to a remote outlet |
 | `STREAMO_S3_BUCKET` | `--s3-bucket` | S3 bucket for replication |
+| `STREAMO_CHAT_ROOM` | `--chat-room` | auto-accept member announcements; this node's key becomes the room address |
 
 ## javascript api
 
@@ -75,11 +76,14 @@ Values are encoded with a self-describing codec (strings, numbers, dates, boolea
 import { Repo } from '@dtudury/streamo/public/streamo/Repo.js'
 
 const repo = new Repo()
+repo.attachSigner(signer, 'my-dataset')  // auto-sign every commit
 repo.set({ name: 'alice', messages: [] })
 repo.get('name')      // 'alice'
 repo.lastCommit       // { message: '', date: Date, dataAddress: n, parent: n|undefined }
 [...repo.history()]   // newest-first iterator over commits
 ```
+
+Signature chunks travel in the byte stream automatically — peers running `registrySync` or `originSync` verify every signature on receipt and reject data that doesn't match the repo's public key.
 
 ### Signer — deterministic identity
 

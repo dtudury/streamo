@@ -92,6 +92,10 @@ program
       .env('STREAMO_INTERACTIVE')
   )
   .addOption(
+    new Option('--chat-room', 'auto-accept member announcements — this node\'s key becomes the room key (requires --web)')
+      .env('STREAMO_CHAT_ROOM')
+  )
+  .addOption(
     new Option('--key-iterations <number>', 'PBKDF2 iterations for key derivation (lower = faster startup, less secure)')
       .env('STREAMO_KEY_ITERATIONS')
       .default(100000)
@@ -175,8 +179,24 @@ if (options.s3Bucket) {
   console.log(`\x1b[32ms3: syncing to bucket ${options.s3Bucket}\x1b[0m`)
 }
 
+const peerOptions = {}
+if (options.chatRoom) {
+  if (!streamo.get('members')) {
+    streamo.set({ ...(streamo.get() ?? {}), members: [] })
+    console.log('\x1b[32m[chat] initialized chat room\x1b[0m')
+  }
+  peerOptions.onAnnounce = (key, topic) => {
+    if (topic !== publicKeyHex) return
+    const members = streamo.get('members') ?? []
+    if (!members.includes(key)) {
+      streamo.set({ ...(streamo.get() ?? {}), members: [...members, key] })
+      console.log(`\x1b[32m[chat] new member: ${key.slice(0, 12)}…\x1b[0m`)
+    }
+  }
+}
+
 if (options.web) {
-  await webSync(registry, publicKeyHex, +options.web, name, options.keyIterations)
+  await webSync(registry, publicKeyHex, +options.web, name, options.keyIterations, peerOptions)
 }
 
 if (options.outlet) {

@@ -25,11 +25,12 @@ const signer = new Signer(username, password, 1)
 const { publicKey } = await signer.keysFor('chat')
 const myKey = bytesToHex(publicKey)
 
-// Fetch root key from server
+// Fetch root key from server (/api/info is the canonical endpoint)
 let rootKey
 try {
-  const res = await fetch(`http://${host}:${port}/api/chat-info`)
-  ;({ rootKey } = await res.json())
+  const res = await fetch(`http://${host}:${port}/api/info`)
+  const info = await res.json()
+  rootKey = info.primaryKeyHex ?? info.rootKey
 } catch (e) {
   console.error(`could not reach server at http://${host}:${port}: ${e.message}`)
   process.exit(1)

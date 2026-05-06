@@ -65,9 +65,11 @@ public key hex could theoretically spoof them. Wiring `repo.sign()` after each
 `set()` closes this.
 
 ### chat persistence
-Right now the chat server is in-memory — restart it and history is gone. Wiring
-`archiveSync` into `chat-server.js` is a small change with a big quality-of-life
-improvement.
+The chat server now runs through the CLI, which already wires `archiveSync` — so
+the member list survives restarts automatically. Individual message history lives
+in each participant's own repo; persistence there depends on participants running
+with `--data-dir` set (the CLI default). The remaining work is ensuring the browser
+chat client also persists across page reloads.
 
 ### presence indicators
 Who's currently online? The `interest` / `announce` layer is ephemeral by design,

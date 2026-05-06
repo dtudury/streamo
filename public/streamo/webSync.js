@@ -25,7 +25,7 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
  * @param {number} port
  * @returns {Promise<import('http').Server>}
  */
-export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000) {
+export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000, peerOptions = {}) {
   const app = express()
 
   app.use(express.static(publicDir))
@@ -108,7 +108,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
 
   const server = createServer(app)
 
-  attachStreamSync(new WebSocketServer({ server }), registry, 'web')
+  attachStreamSync(new WebSocketServer({ server }), registry, 'web', peerOptions)
 
   await new Promise((resolve, reject) => {
     server.listen(port, err => err ? reject(err) : resolve())

@@ -56,15 +56,14 @@ Use this framing consistently across all public-facing text:
   components `(props) => nodes` work directly as tags in `h` with no class needed
 - `registrySync` — bidirectional multi-repo sync over a single WebSocket; works in Node
   and browser; content-driven discovery via `follow`
+- CLI `--chat-room` flag — when combined with `--web`, auto-accepts member announcements
+  and stores the member list in the server's own repo (backed by `archiveSync`);
+  the server's public key is the room key; `chat-server.js` is retired
 
 ## what's next (toward 1.0)
 
 1. Chat signing — wire `repo.sign()` so messages are cryptographically verified
-3. SVG namespace — auto-detect SVG elements in `mount`
-4. `class` as array or object — common pattern, currently unsupported
-5. Chat persistence — wire `archiveSync` into `chat-server.js`
-6. Rebuild the browser app with `h` / `mount`
-7. Fix dead links on homepage (browser and components apps no longer exist)
+2. Rebuild the browser app with `h` / `mount`
 
 ## commit style
 

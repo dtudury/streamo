@@ -179,8 +179,8 @@ For hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn
 ## chat example
 
 ```bash
-# start the server
-node public/streamo/chat-server.js 8080
+# start the server — its public key becomes the room key
+streamo --name my-chat --username relay --web 8080 --chat-room
 
 # join from the browser
 open http://localhost:8080
@@ -189,7 +189,7 @@ open http://localhost:8080
 node public/streamo/chat-cli.js alice secret localhost 8080
 ```
 
-Each participant owns their own message stream. The server holds only a root repo listing members; it has no special authority over anyone's data.
+Each participant owns their own message stream. The server is just another streamo node — it holds the member list in its own repo and auto-accepts anyone who announces to it. Its public key is the room address. No special authority, no hidden state.
 
 ## tests
 

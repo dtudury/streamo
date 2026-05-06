@@ -1,3 +1,4 @@
+/// <reference lib="dom" />
 import { Signer } from '/streamo/Signer.js'
 import { RepoRegistry } from '/streamo/RepoRegistry.js'
 import { registrySync } from '/streamo/registrySync.js'
@@ -12,7 +13,7 @@ const inputEl  = document.getElementById('msg-input')
 const sendBtn  = document.getElementById('send-btn')
 const joinBtn  = document.getElementById('join-btn')
 
-const { rootKey } = await fetch('/api/chat-info').then(r => r.json())
+const { primaryKeyHex: rootKey } = await fetch('/api/info').then(r => r.json())
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 

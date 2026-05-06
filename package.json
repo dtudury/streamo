@@ -22,6 +22,6 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "serve": "node bin/streamo.js --env-file .env.dev --web 3000"
+    "serve": "node bin/streamo.js --env-file .env.dev --web 3000 --interactive"
   }
 }

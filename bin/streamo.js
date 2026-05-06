@@ -126,9 +126,8 @@ const publicKeyHex = Array.from(publicKey).map(b => b.toString(16).padStart(2, '
 
 const name = options.name
 const username = options.username
-const appPath = options.envFile
-  ? '/' + dirname(options.envFile).replace(/^public\//, '') + '/'
-  : '/'
+const envDir   = options.envFile ? dirname(options.envFile).replace(/^public\//, '') : null
+const appPath  = (envDir && envDir !== '.') ? `/${envDir}/` : '/'
 const webUrl = options.web ? `http://localhost:${+options.web}${appPath}` : null
 const rows = [
   ['NAME', name],

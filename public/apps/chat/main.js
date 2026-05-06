@@ -1,8 +1,7 @@
-/// <reference lib="dom" />
-import { Signer } from '/streamo/Signer.js'
-import { RepoRegistry } from '/streamo/RepoRegistry.js'
-import { registrySync } from '/streamo/registrySync.js'
-import { bytesToHex } from '/streamo/utils.js'
+import { Signer } from '../../streamo/Signer.js'
+import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { registrySync } from '../../streamo/registrySync.js'
+import { bytesToHex } from '../../streamo/utils.js'
 
 const loginEl  = document.getElementById('login')
 const chatEl   = document.getElementById('chat')

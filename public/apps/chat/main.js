@@ -1,74 +1,33 @@
+import { h } from '../../streamo/h.js'
+import { mount } from '../../streamo/mount.js'
+import { Recaller } from '../../streamo/utils/Recaller.js'
 import { Signer } from '../../streamo/Signer.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex } from '../../streamo/utils.js'
 
-const loginEl  = document.getElementById('login')
-const chatEl   = document.getElementById('chat')
-const statusEl = document.getElementById('status')
-const myNameEl = document.getElementById('my-name')
-const msgsEl   = document.getElementById('messages')
-const inputEl  = document.getElementById('msg-input')
-const sendBtn  = document.getElementById('send-btn')
-const joinBtn  = document.getElementById('join-btn')
-
 const { primaryKeyHex: rootKey } = await fetch('/api/info').then(r => r.json())
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 function fmt (ts) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-// ── Rendering ──────────────────────────────────────────────────────────────
-
-let myKey = null
-
-/** Flat list of { name, text, at, mine } sorted by `at` */
-function collectMessages (registry) {
-  const all = []
-  for (const [keyHex, repo] of registry) {
-    const name = repo.get('name')
-    const messages = repo.get('messages') ?? []
-    for (const msg of messages) {
-      const text = typeof msg === 'string' ? msg : msg?.text ?? String(msg)
-      const at   = msg?.at ?? 0
-      all.push({ name, text, at, mine: keyHex === myKey })
-    }
-  }
-  all.sort((a, b) => a.at - b.at)
-  return all
-}
-
-let rendered = 0
-
-function renderMessages (registry) {
-  const all = collectMessages(registry)
-  // Only append new messages (simple: clear + rebuild if out of order, else append)
-  if (all.length < rendered) {
-    msgsEl.innerHTML = ''
-    rendered = 0
-  }
-  for (let i = rendered; i < all.length; i++) {
-    const { name, text, at, mine } = all[i]
-    const div = document.createElement('div')
-    div.className = `msg ${mine ? 'mine' : 'theirs'}`
-    div.innerHTML = `
-      ${!mine ? `<div class="sender">${escHtml(name)}</div>` : ''}
-      <div class="text">${escHtml(text)}</div>
+function Msg ({ name, text, at, mine }) {
+  return h`
+    <div class=${['msg', mine ? 'mine' : 'theirs']} data-key=${at}>
+      ${!mine ? h`<div class="sender">${name}</div>` : null}
+      <div class="text">${text}</div>
       <div class="time">${fmt(at)}</div>
-    `
-    msgsEl.appendChild(div)
-  }
-  rendered = all.length
-  if (all.length > rendered - 1) msgsEl.scrollTop = msgsEl.scrollHeight
+    </div>
+  `
 }
 
-function escHtml (s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-}
-
-// ── Join ───────────────────────────────────────────────────────────────────
+const loginEl  = document.getElementById('login')
+const chatEl   = document.getElementById('chat')
+const msgsEl   = document.getElementById('messages')
+const inputEl  = document.getElementById('msg-input')
+const statusEl = document.getElementById('status')
+const joinBtn  = document.getElementById('join-btn')
 
 joinBtn.onclick = async () => {
   const username = document.getElementById('username').value.trim()
@@ -79,50 +38,73 @@ joinBtn.onclick = async () => {
   statusEl.textContent = 'connecting…'
 
   try {
-    const signer = new Signer(username, password, 1)
+    const signer  = new Signer(username, password, 1)
     const { publicKey } = await signer.keysFor('chat')
-    myKey = bytesToHex(publicKey)
-
+    const myKey   = bytesToHex(publicKey)
     const registry = new RepoRegistry()
 
     const session = await registrySync(registry, location.hostname, Number(location.port) || 80, {
-      filter: k => k === rootKey,
-      follow: (keyHex, repo, subscribe) => {
-        for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
-      },
-      onAnnounce: (key) => {
-        session.subscribe(key)
-      }
+      filter:     k => k === rootKey,
+      follow:     (keyHex, repo, subscribe) => {
+                    for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
+                  },
+      onAnnounce: key => session.subscribe(key)
     })
 
-    // Open own repo
     const myRepo = await registry.open(myKey)
-    if (!myRepo.get('name')) {
-      myRepo.set({ name: username, messages: [] })
-    }
+    if (!myRepo.get('name')) myRepo.set({ name: username, messages: [] })
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)
 
-    // Switch to chat view
     loginEl.style.display = 'none'
-    chatEl.style.display = 'flex'
-    myNameEl.textContent = `(${username})`
+    chatEl.style.display  = 'flex'
+    document.getElementById('my-name').textContent = `(${username})`
 
-    // Reactive rendering: re-render on any repo change
-    function watchRepo (keyHex, repo) {
-      repo.watch(`chat-render:${keyHex}`, () => renderMessages(registry))
+    // ── Reactive message list ──────────────────────────────────────────────
+    //
+    // Each repo has its own internal Recaller, so repo.get() inside a mount
+    // slot won't automatically re-trigger mount's recaller. Bridge via
+    // reportKey*: repo.watch() calls reportKeyMutation when data changes;
+    // the slot calls reportKeyAccess to register the dependency.
+
+    const recaller = new Recaller('chat')
+    const signal   = {}
+
+    function triggerRender () {
+      recaller.reportKeyMutation(signal, 'data')
+      requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight })
     }
+
+    function watchRepo (keyHex, repo) {
+      repo.watch(`chat:${keyHex}`, triggerRender)
+    }
+
     for (const [k, r] of registry) watchRepo(k, r)
-    registry.onOpen((keyHex, repo) => {
-      watchRepo(keyHex, repo)
-      renderMessages(registry)
-    })
-    renderMessages(registry)
+    registry.onOpen((keyHex, repo) => { watchRepo(keyHex, repo); triggerRender() })
+
+    mount(h`${function messages () {
+      recaller.reportKeyAccess(signal, 'data')
+      const all = []
+      for (const [keyHex, repo] of registry) {
+        if (keyHex === rootKey) continue
+        const name = repo.get('name')
+        for (const msg of repo.get('messages') ?? []) {
+          const text = typeof msg === 'string' ? msg : msg?.text ?? String(msg)
+          const at   = msg?.at ?? 0
+          all.push({ name, text, at, mine: keyHex === myKey })
+        }
+      }
+      all.sort((a, b) => a.at - b.at)
+      return all.map(({ name, text, at, mine }) =>
+        h`<${Msg} name=${name} text=${text} at=${at} mine=${mine}/>`)
+    }}`, msgsEl, recaller)
 
     // ── Send ────────────────────────────────────────────────────────────────
 
-    async function sendMessage () {
+    const sendBtn = document.getElementById('send-btn')
+
+    function sendMessage () {
       const text = inputEl.value.trim()
       if (!text) return
       inputEl.value = ''

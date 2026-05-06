@@ -52,6 +52,7 @@ joinBtn.onclick = async () => {
     })
 
     const myRepo = await registry.open(myKey)
+    myRepo.attachSigner(signer, 'chat')
     if (!myRepo.get('name')) myRepo.set({ name: username, messages: [] })
 
     session.interest(rootKey)

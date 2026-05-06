@@ -18,6 +18,39 @@ import { Streamo, changedPaths } from './Streamo.js'
  * for read-only inspection or direct use with the explicit commit() API.
  */
 export class Repo extends Streamo {
+  #signer      = null
+  #signerName  = null
+  #signing     = false
+  #signPending = false
+
+  /**
+   * Attach a signer so every commit is automatically signed.
+   * Concurrent commits are batched: if a sign is in flight when another
+   * commit lands, one more sign runs after the current one finishes,
+   * covering all accumulated commits in a single signature.
+   *
+   * @param {import('./Signer.js').Signer} signer
+   * @param {string} name  stream name passed to signer.keysFor()
+   */
+  attachSigner (signer, name) {
+    this.#signer     = signer
+    this.#signerName = name
+  }
+
+  #scheduleSign () {
+    if (!this.#signer) return
+    if (this.#signing) { this.#signPending = true; return }
+    this.#signing = true
+    this.sign(this.#signer, this.#signerName)
+      .then(() => {
+        this.#signing = false
+        if (this.#signPending) {
+          this.#signPending = false
+          this.#scheduleSign()
+        }
+      })
+      .catch(console.error)
+  }
   /**
    * The latest commit record, or null if nothing has been committed yet.
    * Registers a reactive dependency on the commit log length.
@@ -171,6 +204,8 @@ export class Repo extends Streamo {
     const parent = parentAddr >= 0 ? parentAddr : undefined
     const dataAddress = this.copyFrom(workingStreamo, workingStreamo.byteLength - 1)
     const code = this.encode({ message, date: new Date(), dataAddress, parent })
-    return this.append(code)
+    const result = this.append(code)
+    this.#scheduleSign()
+    return result
   }
 }

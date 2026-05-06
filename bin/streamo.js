@@ -155,6 +155,7 @@ const registry = new RepoRegistry(async key => {
   return repo
 })
 const streamo = await registry.open(publicKeyHex)
+streamo.attachSigner(signer, name)
 
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'

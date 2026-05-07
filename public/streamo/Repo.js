@@ -49,7 +49,10 @@ export class Repo extends Streamo {
           this.#scheduleSign()
         }
       })
-      .catch(console.error)
+      .catch(() => {
+        this.#signing = false
+        if (this.byteLength > this.signedLength) this.#scheduleSign()
+      })
   }
   /**
    * The latest commit record, or null if nothing has been committed yet.

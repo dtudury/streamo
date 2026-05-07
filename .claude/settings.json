@@ -1,6 +1,19 @@
 {
   "model": "claude-opus-4-7",
   "alwaysThinkingEnabled": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/session-start.sh",
+            "statusMessage": "loading streamo context"
+          }
+        ]
+      }
+    ]
+  },
   "spinnerTipsEnabled": true,
   "spinnerVerbs": {
     "mode": "replace",

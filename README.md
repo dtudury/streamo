@@ -204,8 +204,7 @@ node --test public/streamo/Repo.test.js  # single file
 
 ## roadmap
 
-See [ROADMAP.md](./ROADMAP.md) for what's been built, what's next, and what we're
-aiming at for 1.0.
+See [ROADMAP.md](./ROADMAP.md) for what's been built and what's next.
 
 ## collaboration
 

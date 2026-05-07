@@ -5,9 +5,9 @@ picture of where the project is and where it's headed.
 
 ---
 
-## where we are (0.2.0)
+## where we are (1.0.0)
 
-The foundation is solid and working. Here's what's in:
+The foundation is solid, tested, and shipped. Here's what's in:
 
 **Core data layer**
 - `Streamo` — reactive, content-addressed, append-only byte store with a
@@ -54,7 +54,8 @@ The foundation is solid and working. Here's what's in:
   stream. `public/apps/chat/server.js` is the standalone server — its public key
   is the room address, its member list is in its own repo, and it has no special
   authority over anyone's data. Runs in the browser and from the terminal
-  (`chat-cli.js`).
+  (`chat-cli.js`). Message history persists across page reloads via server-side
+  archiving — rejoin with the same credentials and your history comes back.
 - Homepage at `public/index.html`.
 - `StreamoServer` — reusable class that wraps signer, registry, and all sync
   methods behind a clean API. `bin/streamo.js` is now a thin CLI parser on top
@@ -67,13 +68,6 @@ The foundation is solid and working. Here's what's in:
 
 ## what's next
 
-### chat persistence ← start here
-The chat server (`public/apps/chat/server.js`) uses `StreamoServer` and wires
-`archiveSync` — so the member list survives restarts automatically. Individual
-message history lives in each participant's own repo; persistence there depends
-on participants running with `--data-dir` set. The remaining work is ensuring the
-browser chat client also persists across page reloads.
-
 ### presence indicators
 Who's currently online? The `interest` / `announce` layer is ephemeral by design,
 so presence is a heartbeat + timeout — announce yourself periodically, time out
@@ -85,16 +79,6 @@ imports broke. Rebuilding it with `h` / `mount` would be the first substantial
 real-world test of the UI layer.
 
 ---
-
-## toward 1.0
-
-One thing blocking a stable `1.0` claim:
-
-1. **Chat persistence** — a chat app that loses history on restart isn't production-ready
-
-Chat signing is done. Components, keyed list reconciliation, SVG namespaces,
-`class` arrays/objects, and the CLI server unification are all done.
-Persistence is the last mile.
 
 ---
 

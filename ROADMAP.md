@@ -5,7 +5,7 @@ picture of where the project is and where it's headed.
 
 ---
 
-## where we are (0.1.3)
+## where we are (0.2.0)
 
 The foundation is solid and working. Here's what's in:
 

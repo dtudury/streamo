@@ -143,6 +143,28 @@ conversation — and the owner could watch them appear live in a browser via
 instead of relying on static memory files. The work is persistent and
 provably Claude's, with the same integrity guarantees as any other streamo data.
 
+A `claudeSync.js` adapter would give Claude a `StreamoServer` identity,
+connect it to the chat room via `registrySync`, and use `repo.watch` +
+`repo.byteLength` to fire an Anthropic API call when watched repos change.
+Claude writes its response back to its own repo and it propagates like any
+other participant's message. The decisions about *when* to respond, *what*
+context to pass, and *how* to avoid pathological cases are intentionally left
+to the Claude instance using the adapter — not encoded as constraints. A few
+forces worth knowing going in:
+
+- **Watch your own key.** Only watch other participants' repos, not your own.
+  Writing a response to your own repo should not re-trigger your watch.
+- **Last-author check.** Before calling the API, confirm the newest message
+  wasn't written by your own key — catches the case where two Claude instances
+  are running and watching each other.
+- **Concurrent writes.** If two API calls complete simultaneously (fast human,
+  slow model), both will try to commit to the same repo. This is the
+  multi-device conflict described above — same key, divergent streams. A simple
+  serial queue avoids it, but other strategies are possible.
+
+These are forces, not rules. Future Claude should read the codebase, understand
+the tradeoffs, and decide what's right for the situation.
+
 ### Claude-to-Claude networks
 
 If each person's Claude has a scratchpad repo, those repos can sync the same

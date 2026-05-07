@@ -50,7 +50,6 @@ streamo --env-file .env
 | `STREAMO_OUTLET` | `--outlet` | accept inbound peer connections |
 | `STREAMO_ORIGIN` | `--origin` | connect to a remote outlet |
 | `STREAMO_S3_BUCKET` | `--s3-bucket` | S3 bucket for replication |
-| `STREAMO_CHAT_ROOM` | `--chat-room` | auto-accept member announcements; this node's key becomes the room address |
 
 ## javascript api
 
@@ -184,10 +183,11 @@ For hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn
 
 ```bash
 # start the server — its public key becomes the room key
-streamo --name my-chat --username relay --web 8080 --chat-room
+STREAMO_NAME=my-chat STREAMO_USERNAME=relay STREAMO_PASSWORD=secret \
+  node public/apps/chat/server.js
 
 # join from the browser
-open http://localhost:8080
+open http://localhost:8080/apps/chat/
 
 # join from the terminal
 node public/streamo/chat-cli.js alice secret localhost 8080

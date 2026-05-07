@@ -51,11 +51,15 @@ The foundation is solid and working. Here's what's in:
 
 **Apps**
 - Chat — full p2p messaging app. Each participant owns their own signed message
-  stream. The server is just another streamo node (`--chat-room` flag) — its
-  public key is the room address, its member list is in its own repo, and it
-  has no special authority over anyone's data. Runs in the browser and from
-  the terminal (`chat-cli.js`).
+  stream. `public/apps/chat/server.js` is the standalone server — its public key
+  is the room address, its member list is in its own repo, and it has no special
+  authority over anyone's data. Runs in the browser and from the terminal
+  (`chat-cli.js`).
 - Homepage at `public/index.html`.
+- `StreamoServer` — reusable class that wraps signer, registry, and all sync
+  methods behind a clean API. `bin/streamo.js` is now a thin CLI parser on top
+  of it; `public/apps/chat/server.js` is a standalone chat server using the
+  same class.
 - `npm run serve` — starts a streamo node (with REPL) using `.env.dev`
   credentials. The dev server is a real peer, not a bare static file server.
 
@@ -64,11 +68,11 @@ The foundation is solid and working. Here's what's in:
 ## what's next
 
 ### chat persistence ← start here
-The chat server now runs through the CLI, which already wires `archiveSync` — so
-the member list survives restarts automatically. Individual message history lives
-in each participant's own repo; persistence there depends on participants running
-with `--data-dir` set (the CLI default). The remaining work is ensuring the browser
-chat client also persists across page reloads.
+The chat server (`public/apps/chat/server.js`) uses `StreamoServer` and wires
+`archiveSync` — so the member list survives restarts automatically. Individual
+message history lives in each participant's own repo; persistence there depends
+on participants running with `--data-dir` set. The remaining work is ensuring the
+browser chat client also persists across page reloads.
 
 ### presence indicators
 Who's currently online? The `interest` / `announce` layer is ephemeral by design,

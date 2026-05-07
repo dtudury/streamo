@@ -6,16 +6,14 @@ import { Option, program } from 'commander'
 import { config } from 'dotenv'
 import { question, questionNewPassword } from 'readline-sync'
 import { start as startRepl } from 'repl'
-import { Signer } from '../public/streamo/Signer.js'
+import { StreamoServer } from '../public/streamo/StreamoServer.js'
 import { Repo } from '../public/streamo/Repo.js'
 import { RepoRegistry } from '../public/streamo/RepoRegistry.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
-import { webSync } from '../public/streamo/webSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
-import { stateFileSync } from '../public/streamo/stateFileSync.js'
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)))
 
@@ -92,10 +90,6 @@ program
       .env('STREAMO_INTERACTIVE')
   )
   .addOption(
-    new Option('--chat-room', 'auto-accept member announcements — this node\'s key becomes the room key (requires --web)')
-      .env('STREAMO_CHAT_ROOM')
-  )
-  .addOption(
     new Option('--key-iterations <number>', 'PBKDF2 iterations for key derivation (lower = faster startup, less secure)')
       .env('STREAMO_KEY_ITERATIONS')
       .default(100000)
@@ -116,28 +110,32 @@ if (options.envFile) {
   Object.assign(options, program.opts())
 }
 
-options.name ||= question('Name: ')
+options.name     ||= question('Name: ')
 options.username ||= question('Username: ')
 const password = options.password || questionNewPassword('Password [ATTENTION!: Backspace won\'t work here]: ', { min: 4, max: 999 })
 
-const signer = new Signer(options.username, password, options.keyIterations)
-const { publicKey } = await signer.keysFor(options.name)
-const publicKeyHex = Array.from(publicKey).map(b => b.toString(16).padStart(2, '0')).join('')
+const server = await StreamoServer.create({
+  name:          options.name,
+  username:      options.username,
+  password,
+  dataDir:       options.dataDir,
+  keyIterations: options.keyIterations,
+})
 
-const name = options.name
-const username = options.username
-const envDir   = options.envFile ? dirname(options.envFile).replace(/^public\//, '') : null
-const appPath  = (envDir && envDir !== '.') ? `/${envDir}/` : '/'
-const webUrl = options.web ? `http://localhost:${+options.web}${appPath}` : null
+const { name, username, publicKeyHex, signer, streamo, registry } = server
+
+const envDir  = options.envFile ? dirname(options.envFile).replace(/^public\//, '') : null
+const appPath = (envDir && envDir !== '.') ? `/${envDir}/` : '/'
+const webUrl  = options.web ? `http://localhost:${+options.web}${appPath}` : null
 const rows = [
-  ['NAME', name],
-  ['USERNAME', username],
+  ['NAME',       name],
+  ['USERNAME',   username],
   ['PUBLIC KEY', publicKeyHex],
   ...(webUrl ? [['URL', webUrl]] : []),
 ]
 const maxLength = Math.max(...rows.map(([, v]) => v.length))
-const pad = (v) => v + ' '.repeat(maxLength - v.length)
-const div = '─'.repeat(maxLength)
+const pad   = (v) => v + ' '.repeat(maxLength - v.length)
+const div   = '─'.repeat(maxLength)
 const label = (l) => l.padStart(16)
 console.log(`\x1b[35m
     ╭${'─'.repeat(maxLength + 23)}╮
@@ -148,66 +146,40 @@ ${rows.map(([l, v], i) => [
 ].filter(Boolean).join('\n')).join('\n')}
     ╰──────────────────┴──${'━'.repeat(maxLength)}──╯\x1b[0m`)
 
-const dataDir = options.dataDir
-const registry = new RepoRegistry(async key => {
-  const repo = new Repo()
-  await archiveSync(repo, dataDir, key)
-  return repo
-})
-const streamo = await registry.open(publicKeyHex)
-streamo.attachSigner(signer, name)
-
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'
-  await fileSync(streamo, folder, options.dataDir)
+  await server.files(folder)
   console.log(`\x1b[32mmirroring files: ${folder}\x1b[0m`)
 }
 
 if (options.stateFile) {
-  stateFileSync(streamo, options.stateFile)
+  server.stateFile(options.stateFile)
   console.log(`\x1b[32mstate file: ${options.stateFile}\x1b[0m`)
 }
 
 if (options.s3Bucket) {
-  await s3Sync(streamo, publicKeyHex, {
-    bucket: options.s3Bucket,
-    endpoint: options.s3Endpoint,
-    region: options.s3Region,
-    accessKeyId: options.s3AccessKeyId,
-    secretAccessKey: options.s3SecretAccessKey
+  await server.s3({
+    bucket:          options.s3Bucket,
+    endpoint:        options.s3Endpoint,
+    region:          options.s3Region,
+    accessKeyId:     options.s3AccessKeyId,
+    secretAccessKey: options.s3SecretAccessKey,
   })
   console.log(`\x1b[32ms3: syncing to bucket ${options.s3Bucket}\x1b[0m`)
 }
 
-const peerOptions = {}
-if (options.chatRoom) {
-  if (!streamo.get('members')) {
-    streamo.set({ ...(streamo.get() ?? {}), members: [] })
-    console.log('\x1b[32m[chat] initialized chat room\x1b[0m')
-  }
-  peerOptions.onAnnounce = (key, topic) => {
-    if (topic !== publicKeyHex) return
-    const members = streamo.get('members') ?? []
-    if (!members.includes(key)) {
-      streamo.set({ ...(streamo.get() ?? {}), members: [...members, key] })
-      console.log(`\x1b[32m[chat] new member: ${key.slice(0, 12)}…\x1b[0m`)
-    }
-  }
-}
-
 if (options.web) {
-  await webSync(registry, publicKeyHex, +options.web, name, options.keyIterations, peerOptions)
+  await server.web(+options.web)
 }
 
 if (options.outlet) {
   const port = +options.outlet
-  outletSync(registry, port)
+  server.outlet(port)
   console.log(`\x1b[32moutlet: listening on port ${port}\x1b[0m`)
 }
 
 if (options.origin) {
-  const [host, port] = options.origin.split(':')
-  await originSync(streamo, publicKeyHex, host, +port)
+  await server.connect(options.origin)
   console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
 }
 
@@ -217,13 +189,10 @@ if (options.verbose) {
 }
 
 if (options.interactive) {
-  const get = (...args) => streamo.get(...args)
-  const set = (...args) => streamo.set(...args)
-  const ls = () => [...registry].map(([k, s]) => ({ key: k.slice(0, 8) + '…', bytes: s.byteLength }))
-  const connect = (hostPort) => {
-    const [host, port] = hostPort.split(':')
-    return originSync(streamo, publicKeyHex, host, +port)
-  }
+  const get     = (...args) => streamo.get(...args)
+  const set     = (...args) => streamo.set(...args)
+  const ls      = () => [...registry].map(([k, s]) => ({ key: k.slice(0, 8) + '…', bytes: s.byteLength }))
+  const connect = (hostPort) => server.connect(hostPort)
 
   Object.assign(globalThis, {
     // identity

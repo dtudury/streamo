@@ -98,6 +98,38 @@ Persistence is the last mile.
 
 ---
 
+## known limitations
+
+### multi-device write conflict detection
+
+Streamo streams are byte arrays addressed by **absolute offset**. This makes a
+repo effectively single-writer: if the same keypair commits from two devices
+while offline from each other, their streams diverge at the fork point.  Each
+commit's `dataAddress` is an offset that is only valid in the stream that
+produced it — the streams cannot be structurally merged.
+
+When the two devices reconnect, `makeVerifiedWritableStream` deduplicates shared
+chunks by content (correctly) but silently appends the conflicting commit from
+the second device at its new offset.  That commit's `dataAddress` now points to
+the wrong location in the merged stream.  No error is thrown; the second
+writer's data is silently corrupt.
+
+**What is safe today:** relays never call `commit()` so they are unaffected —
+they accumulate and re-serve bytes without introducing their own addresses.  The
+chat app is also unaffected because each user writes to their own repo from a
+single session.  The danger zone is one keypair writing from two places
+simultaneously (two browser tabs, phone + laptop while offline).
+
+**The fix** requires either (a) detecting the fork and throwing a clear error so
+the user can choose which version to keep, or (b) switching to chunk-level
+content addressing (à la git objects) so streams can be merged structurally
+rather than by concatenation.  Option (a) is a targeted addition to the sync
+layer; option (b) is an architectural change.  Not required for 1.0 but should
+be resolved before marketing streamo as a general-purpose multi-device sync
+library.
+
+---
+
 ## beyond 1.0
 
 Ideas that follow naturally from the architecture but aren't blocking anything.

@@ -56,18 +56,17 @@ Use this framing consistently across all public-facing text:
   components `(props) => nodes` work directly as tags in `h` with no class needed
 - `registrySync` — bidirectional multi-repo sync over a single WebSocket; works in Node
   and browser; content-driven discovery via `follow`
-- CLI `--chat-room` flag — when combined with `--web`, auto-accepts member announcements
-  and stores the member list in the server's own repo (backed by `archiveSync`);
-  the server's public key is the room key; `chat-server.js` is retired
+- CLI `--web` flag — starts a WebSocket relay + static file server; `chat-server.js` is
+  retired; `public/streamo/chat-cli.js` is the terminal chat client
 
-## what's next (toward 1.0)
+## what's next
 
-1. Chat signing — wire `repo.sign()` so messages are cryptographically verified
-2. Rebuild the browser app with `h` / `mount`
+1. Rebuild the browser app with `h` / `mount` — registry → repo → commit history → value
+   at commit; treat streamo as a black box (import from the public API only)
 
 ## commit style
 
 Commit and push at the end of every response that makes a change. Over-commit rather
 than over-think. Co-author line on every commit:
 
-    Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+    Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>

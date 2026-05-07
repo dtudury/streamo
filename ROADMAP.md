@@ -198,3 +198,18 @@ Other directions once the pattern is established: publisher-controlled article
 cards that travel with syndicated content (the layout is the author's, not
 the platform's); collaborative maps where each participant's marker is their
 own component; shared instrument components in a live music session.
+
+---
+
+## loose ideas
+
+Not planned, not prioritized — just things worth remembering.
+
+- **Claude as chat shell** — type `send a greeting to the chatroom` and
+  `CHATROOM: hello there 👋` appears in the chat. Natural language as a
+  thin shell over streamo operations, with Claude interpreting intent and
+  acting on it directly.
+
+- **Slick interactive CLI** — a terminal UI that lets you interact with the
+  demo apps live without opening a browser tab. Chat, inspect repos, send
+  messages — the full experience from the command line. Exciting ways TBD. 😄

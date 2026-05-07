@@ -1,1 +1,35 @@
-{}
+{
+  "alwaysThinkingEnabled": true,
+  "spinnerTipsEnabled": true,
+  "spinnerVerbs": {
+    "mode": "replace",
+    "verbs": [
+      "Syncing",
+      "Committing",
+      "Signing",
+      "Streaming",
+      "Hashing",
+      "Propagating",
+      "Archiving",
+      "Broadcasting",
+      "Relaying",
+      "Verifying",
+      "Diffing",
+      "Cloning"
+    ]
+  },
+  "spinnerTipsOverride": {
+    "excludeDefault": true,
+    "tips": [
+      "every write is provably yours",
+      "the server is a relay, not a gatekeeper",
+      "same credentials, same keypair, everywhere",
+      "same value → same bytes → same address",
+      "history is permanent and can't be forged",
+      "no key files. no seed phrases. no backup ritual.",
+      "disconnect the server — everything is still yours",
+      "peers reject unsigned or mis-signed data",
+      "the commit log is the source of truth"
+    ]
+  }
+}

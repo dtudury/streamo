@@ -78,7 +78,10 @@ joinBtn.onclick = async () => {
     }
 
     function watchRepo (keyHex, repo) {
-      repo.watch(`chat:${keyHex}`, triggerRender)
+      repo.watch(`chat:${keyHex}`, () => {
+        repo.byteLength  // register 'length' dep → re-fires on every commit and incoming sync chunk
+        triggerRender()
+      })
     }
 
     for (const [k, r] of registry) watchRepo(k, r)

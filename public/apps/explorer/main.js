@@ -761,12 +761,18 @@ function hexDump (bytes, maxLen = 256) {
 
 const appEl = document.getElementById('app')
 
+// Wrap each view in a data-keyed <section> so mount's tag-pool recycling
+// doesn't pull stale elements from one view into another. Without this,
+// returning RegistryView's <h2>repos</h2> after RepoView would recycle
+// RepoView's <h2>chunks (…)</h2> and keep its old text children (patchElement
+// only updates attrs). The data-key changes whenever the view's identity
+// changes (kind + the params that affect rendering), forcing a fresh mount.
 mount(h`${() => {
   dep()
   switch (view.kind) {
-    case 'registry': return RegistryView()
-    case 'repo':     return RepoView({ keyHex: view.keyHex })
-    case 'at':       return AtView({ keyHex: view.keyHex, address: view.address })
+    case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
+    case 'repo':     return h`<section class="view" data-key=${`view-repo-${view.keyHex}`}>${RepoView({ keyHex: view.keyHex })}</section>`
+    case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}-${view.address}`}>${AtView({ keyHex: view.keyHex, address: view.address })}</section>`
     default:         return h`<div class="empty">?</div>`
   }
 }}`, appEl, recaller)

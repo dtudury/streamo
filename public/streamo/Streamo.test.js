@@ -293,4 +293,50 @@ describe(import.meta.url, ({ test }) => {
     const { publicKey } = await signer.keysFor('test')
     assert.ok(await s.verify(sig, publicKey), 'verify must accept sign\'s output')
   })
+
+  test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {
+    // Before this fix, loading a streamo from bytes left signedLength=0 even
+    // though the loaded data already contained signatures. The next sign()
+    // would then re-sign all of history with signedFrom=0 — wasteful and
+    // visually random in the explorer ("why does every sig start at 0?").
+    const signer = new Signer('alice', 'secret')
+    const name = 'load-resumes-signed-cursor'
+    const keys = await signer.keysFor(name)
+
+    const original = new Streamo()
+    original.set({ a: 1 })
+    await original.sign(signer, name)
+    const cursorAfterFirstSig = original.signedLength
+    original.set('a', 2)
+    await original.sign(signer, name)
+    assert.ok(original.signedLength > cursorAfterFirstSig, 'sanity: cursor advances within one session')
+
+    // Replay the bytes into a fresh Streamo via the public writable stream —
+    // mirrors how archiveSync/registrySync deliver data on load.
+    const replay = new Streamo()
+    const writer = replay.makeVerifiedWritableStream(keys.publicKey).getWriter()
+    const bytes = original.slice(0, original.byteLength)
+    const framed = new Uint8Array(4 + bytes.length)
+    new DataView(framed.buffer).setUint32(0, bytes.length, true)
+    framed.set(bytes, 4)
+    // Reframe per chunk — makeVerifiedWritableStream parses one frame at a
+    // time. Walk chunks from the source to drive the loader correctly.
+    let addr = original.byteLength - 1
+    const chunks = []
+    while (addr >= 0) {
+      const code = original.resolve(addr)
+      chunks.unshift(code)
+      addr -= code.length
+    }
+    for (const code of chunks) {
+      const frame = new Uint8Array(4 + code.length)
+      new DataView(frame.buffer).setUint32(0, code.length, true)
+      frame.set(code, 4)
+      await writer.write(frame)
+    }
+    await writer.close()
+
+    assert.equal(replay.signedLength, original.signedLength,
+      'signedLength must be reconstructed from the loaded sig chunks')
+  })
 })

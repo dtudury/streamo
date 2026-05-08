@@ -110,6 +110,14 @@ export class Streamo extends CodecRegistry {
    */
   append (code) {
     const address = super.append(code)
+    // If the appended chunk is a SIGNATURE, advance the signed cursor — no
+    // matter whether the caller was sign(), an archive replay, or a peer
+    // stream. Otherwise a fresh load (signedLength=0) followed by a new
+    // sign() would re-sign all of history, producing a sig whose signedFrom
+    // collides with every prior sig.
+    if (this.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') {
+      this.#signedLength = super.byteLength - code.length
+    }
     this.#recaller.reportKeyMutation(this, 'length')
     return address
   }
@@ -364,7 +372,6 @@ export class Streamo extends CodecRegistry {
     if (super.byteLength !== before) throw new Error('streamo was modified while signing')
     const sig = new Signature(this.#signedLength, compactRawBytes)
     this.append(this.encode(sig))
-    this.#signedLength = before
     return sig
   }
 

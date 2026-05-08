@@ -23,12 +23,24 @@ export class ConflictError extends Error {
 /**
  * Yield every path where addrA and addrB differ, including the root.
  * Compares by address so unchanged subtrees are skipped in O(1).
+ *
+ * Uses streamo.asRefs (mutation-impossible) rather than decode(_, true)
+ * so the comparison cannot append chunks. Without this, calling
+ * changedPaths during Streamo.set could materialize inline children as
+ * separate chunks AFTER the new commit, moving valueAddress past the
+ * commit and corrupting Repo.lastCommit.
+ *
+ * Tradeoff: asRefs returns `undefined` for inline children's addresses,
+ * so changedPaths can't see differences that happen entirely inside
+ * inline-only subtrees. The parent path still fires, which is enough
+ * for any watcher that doesn't read at a depth past where the structure
+ * goes inline.
  */
 export function * changedPaths (streamo, addrA, addrB, path = []) {
   if (addrA === addrB) return
   yield path
-  const refsA = addrA !== undefined ? streamo.decode(addrA, true) : undefined
-  const refsB = addrB !== undefined ? streamo.decode(addrB, true) : undefined
+  const refsA = addrA !== undefined ? streamo.asRefs(addrA) : undefined
+  const refsB = addrB !== undefined ? streamo.asRefs(addrB) : undefined
   const isPlain = v => v != null && typeof v === 'object' && (Array.isArray(v) || Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null)
   const objA = isPlain(refsA)
   const objB = isPlain(refsB)

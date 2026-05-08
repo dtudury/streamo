@@ -54,8 +54,11 @@ const session = await registrySync(registry, host, port, {
   }
 })
 
-// Open my own repo, set profile if first time
+// Open my own repo and attach our signer so commits go out signed —
+// "every write is provably yours" only holds if we actually sign. Set
+// profile on first run.
 const myRepo = await registry.open(myKey)
+myRepo.attachSigner(signer, 'chat')
 if (!myRepo.get('name')) {
   myRepo.defaultMessage = `joined as ${username} (cli)`
   myRepo.set({ name: username, messages: [] })

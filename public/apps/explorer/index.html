@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamo explorer</title>
+  <link rel="stylesheet" href="/apps/styles/proto.css">
+  <style>
+    body { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; }
+
+    .header  { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.25rem; }
+    .wordmark { font-size: 1.6rem; letter-spacing: -0.02em; }
+    .crumbs  { font-size: 0.85rem; color: var(--ink-dim); }
+    .back    { cursor: pointer; color: var(--ink-dim); font-size: 0.85rem; display: inline-block; margin-bottom: 1rem; }
+    .back:hover { color: var(--ink); }
+
+    h2 { font-size: 1.05rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+    h2 .dim { font-weight: 400; font-size: 0.9rem; }
+
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 12rem 14rem;
+      gap: 0.75rem;
+      align-items: baseline;
+      padding: 0.55rem 0.75rem;
+      border: 1.5px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
+    }
+    .row:hover { border-color: var(--ink); background: rgba(254, 240, 138, 0.4); }
+    .row + .row { border-top-color: var(--rule); }
+    .row:hover + .row { border-top-color: transparent; }
+
+    .row .mono { font-size: 0.85rem; }
+    .row .when { font-size: 0.78rem; color: var(--ink-dim); }
+    .row .msg  { font-size: 0.85rem; }
+
+    .empty { color: var(--ink-dim); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+
+    .conn { font-size: 0.75rem; color: var(--ink-dim); margin-bottom: 1.5rem; }
+    .conn.ok  { color: #16a34a; }
+    .conn.err { color: #dc2626; }
+
+    .keyfull { font-family: monospace; font-size: 0.78rem; color: var(--ink-dim); word-break: break-all; }
+
+    pre.value {
+      font-family: monospace;
+      font-size: 0.8rem;
+      background: var(--rule);
+      border-radius: var(--radius);
+      padding: 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="wordmark">streamo</div>
+    <div class="crumbs">explorer</div>
+  </div>
+  <div id="conn" class="conn">connecting…</div>
+  <div id="app"></div>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

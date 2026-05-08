@@ -42,15 +42,25 @@ console.log(`root key: ${rootKey.slice(0, 16)}…`)
 console.log('─'.repeat(40))
 
 const registry = new RepoRegistry()
+// Track who we've announced ourselves back to (deduped to prevent
+// ping-pong) — see comment in chat/main.js for the discovery pattern.
+const announcedTo = new Set()
 const session = await registrySync(registry, host, port, {
   filter: k => k === rootKey,
   follow: (keyHex, repo, subscribe) => {
-    // Auto-follow all members listed in the root repo
+    // Auto-follow all members listed in the root repo (only present when
+    // the server has chat-room onAnnounce wiring).
     for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
   },
   onAnnounce: (key) => {
-    // When someone announces directly, subscribe to their repo immediately
+    // Subscribe to the announcer AND announce ourselves back so they
+    // learn we exist. Makes chat work even when the server has no
+    // member-tracking onAnnounce of its own.
     session.subscribe(key)
+    if (!announcedTo.has(key)) {
+      announcedTo.add(key)
+      session.announce(myKey, rootKey)
+    }
   }
 })
 

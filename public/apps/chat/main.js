@@ -43,12 +43,26 @@ joinBtn.onclick = async () => {
     const myKey   = bytesToHex(publicKey)
     const registry = new RepoRegistry()
 
+    // Track who we've already announced ourselves back to, so we don't
+    // ping-pong forever. Without this set, every peer-back ricochets into
+    // another peer-back and so on.
+    const announcedTo = new Set()
     const session = await registrySync(registry, location.hostname, Number(location.port) || 80, {
       filter:     k => k === rootKey,
       follow:     (keyHex, repo, subscribe) => {
                     for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
                   },
-      onAnnounce: key => session.subscribe(key)
+      // When a peer announces, subscribe to them AND announce ourselves
+      // back so they learn we exist — this makes peer discovery work
+      // through pure real-time fan-out, no server-side member tracking
+      // required. Late-joiner sees us, we see late-joiner.
+      onAnnounce: key => {
+        session.subscribe(key)
+        if (!announcedTo.has(key)) {
+          announcedTo.add(key)
+          session.announce(myKey, rootKey)
+        }
+      }
     })
 
     const myRepo = await registry.open(myKey)

@@ -20,10 +20,16 @@ class Duple {
   }
 
   flat () {
-    return [
-      this.v[0] instanceof Duple ? this.v[0].flat() : this.v[0],
-      this.v[1] instanceof Duple ? this.v[1].flat() : this.v[1]
-    ].flat()
+    // Walk the Duple tree, flattening only Duple nodes — never nested user
+    // values. (Earlier code used Array.prototype.flat() which silently
+    // flattened any nested array a caller had stored, so e.g. [3, [4,5]]
+    // would round-trip as [3, 4, 5].)
+    const out = []
+    for (const child of this.v) {
+      if (child instanceof Duple) out.push(...child.flat())
+      else out.push(child)
+    }
+    return out
   }
 
   flatDuples () {
@@ -353,10 +359,14 @@ export function makeCodecs (r) {
   }
 
   const EMPTY_OBJECT = {
+    // Accepts any non-array object with no own enumerable keys, including class
+    // instances. (OBJECT also doesn't check the prototype on encode, so empty
+    // class instances should be encodable too — keeping them symmetric.) Type
+    // information is lost on round-trip in both cases; the decoded value is a
+    // plain {}.
     encode (v) {
       if (!v || typeof v !== 'object' || Array.isArray(v)) return
-      const proto = Object.getPrototypeOf(v)
-      if (proto !== Object.prototype && proto !== null) return
+      if (v instanceof Uint8Array || v instanceof Date) return
       if (Object.keys(v).length === 0) return new Uint8Array([EMPTY_OBJECT.baseFooter])
     },
     decode: () => ({})
@@ -396,5 +406,13 @@ export function makeCodecs (r) {
     }
   }
 
-  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, VARIABLE }
+  // Empty-Uint8Array codec is appended at the END of the registration list so
+  // it doesn't shift the footer values of existing codecs — chunks created
+  // before this codec was added still decode correctly.
+  const EMPTY_UINT8ARRAY = {
+    encode: v => v instanceof Uint8Array && v.length === 0 && new Uint8Array([EMPTY_UINT8ARRAY.baseFooter]),
+    decode: () => new Uint8Array(0)
+  }
+
+  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, VARIABLE, EMPTY_UINT8ARRAY }
 }

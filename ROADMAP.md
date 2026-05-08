@@ -5,6 +5,37 @@ picture of where the project is and where it's headed.
 
 ---
 
+## where we are (3.1.0)
+
+3.1.0 is a codec contract pass — investigating `codecs.js` (the largest source
+file, historically the most-fixed area in the predecessor project) found two
+real bugs and a handful of behaviors worth pinning. New `codecs.test.js`
+exercises 17 scenarios covering primitives, boundaries, composites, dedup, and
+the deliberate quirks.
+
+**Fixed:**
+
+- `Duple.flat()` used `Array.prototype.flat()` which silently flattened **any**
+  nested array a caller had stored, not just the internal Duple tree. Effect:
+  `[3, [4, 5, 6]]` was round-tripping as `[3, 4, 5, 6]`. Encoding was already
+  correct — only the decode side was lossy. Replaced with explicit Duple-only
+  walk. Old chunks now decode correctly under the new code.
+- `new Uint8Array(0)` had no codec — WORD requires ≥1 byte, UINT8ARRAY
+  requires >4. Added `EMPTY_UINT8ARRAY` at the **end** of the codec list so
+  existing footer values don't shift; old data unaffected.
+- Empty class instance (`new (class {})()`) had no codec because EMPTY_OBJECT
+  rejected non-`Object.prototype` objects but OBJECT didn't. Made consistent;
+  both now accept class instances (with type info lost on round-trip, same as
+  before for non-empty class instances).
+
+**Pinned (not bugs, just deliberate quirks now documented):**
+
+- `-0` round-trips as `0` (UINT7 path).
+- Class instances always lose their prototype.
+- Object key insertion order is part of the chunk identity — `{x:1, y:2}` and
+  `{y:2, x:1}` are different chunks. Dedup is by bytes, not semantics.
+- Sparse arrays round-trip as sparse via the `length`-key encoding trick.
+
 ## where we are (3.0.0)
 
 3.0.0 fixes a signature-coverage off-by-one in `Streamo.sign` / `verify`.

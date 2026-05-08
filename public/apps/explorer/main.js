@@ -1,16 +1,20 @@
-// streamo explorer — read-only registry / repo / commit browser.
+// streamo explorer — read-only registry / repo / address browser.
 //
-// Three views, single click-through navigation: registry list → repo's
-// commit history → value at commit. State lives in plain JS variables;
-// reactivity is bridged from each Repo's internal Recaller into the
-// app-level Recaller via the `signal` pattern (see chat/main.js for the
-// same approach).
+// Three views, navigated by URL hash:
+//   #/                              — registry list
+//   #/repo/<keyHex>                 — chunks (commits + signatures) in a repo
+//   #/repo/<keyHex>/at/<address>    — the value at any address
+//
+// State lives in plain JS variables; reactivity is bridged from each Repo's
+// internal Recaller into the app-level Recaller via the `signal` pattern
+// (see chat/main.js for the same approach).
 
 import { h } from '../../streamo/h.js'
 import { mount } from '../../streamo/mount.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
+import { changedPaths } from '../../streamo/Streamo.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
@@ -29,17 +33,6 @@ try {
 }
 
 // ── App-level reactivity ──────────────────────────────────────────────────
-//
-// Each Repo has its own Recaller. mount() needs a single Recaller to drive
-// re-renders. Bridge by watching each repo's length (which fires on both
-// new local commits and incoming sync chunks) and forwarding a single
-// mutation onto the app-level recaller. Slots that depend on any registry
-// state call dep() to register the dependency.
-//
-// fire() is coalesced via requestAnimationFrame so the chaos of many repos
-// streaming chunks during initial sync collapses into one render per frame —
-// otherwise each chunk re-fires the outer slot and Recaller's flush loop
-// hits its iteration limit.
 
 const recaller = new Recaller('explorer')
 const signal = {}
@@ -67,27 +60,20 @@ function watchRepo (key, repo) {
 for (const [k, r] of registry) watchRepo(k, r)
 registry.onOpen((k, r) => { watchRepo(k, r); fire() })
 
-// ── Navigation ────────────────────────────────────────────────────────────
-//
-// View state is reflected in location.hash so refresh / bookmark / back-button
-// all work. Hash shapes:
-//   #/                              → registry
-//   #/repo/<keyHex>                 → repo
-//   #/repo/<keyHex>/commit/<addr>   → commit
-// Anything we don't understand falls back to registry.
+// ── Hash routing ──────────────────────────────────────────────────────────
 
 function viewFromHash () {
-  const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/commit\/(\d+))?\/?$/i)
+  const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(\d+))?\/?$/i)
   if (!m) return { kind: 'registry' }
-  if (m[2] != null) return { kind: 'commit', keyHex: m[1], dataAddress: +m[2] }
+  if (m[2] != null) return { kind: 'at', keyHex: m[1], address: +m[2] }
   return { kind: 'repo', keyHex: m[1] }
 }
 
 function hashFromView (v) {
   switch (v.kind) {
-    case 'repo':   return `#/repo/${v.keyHex}`
-    case 'commit': return `#/repo/${v.keyHex}/commit/${v.dataAddress}`
-    default:       return '#/'
+    case 'repo': return `#/repo/${v.keyHex}`
+    case 'at':   return `#/repo/${v.keyHex}/at/${v.address}`
+    default:     return '#/'
   }
 }
 
@@ -100,7 +86,7 @@ function go (next) {
 }
 window.addEventListener('hashchange', () => {
   const next = viewFromHash()
-  if (next.kind === view.kind && next.keyHex === view.keyHex && next.dataAddress === view.dataAddress) return
+  if (next.kind === view.kind && next.keyHex === view.keyHex && next.address === view.address) return
   view = next
   fire()
 })
@@ -108,7 +94,14 @@ window.addEventListener('hashchange', () => {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 const truncKey = k => k.slice(0, 12) + '…'
+const truncHex = (b, n = 16) => Array.from(b.subarray(0, n)).map(x => x.toString(16).padStart(2, '0')).join('') + (b.length > n ? '…' : '')
 const fmtDate  = d => d ? d.toLocaleString() : ''
+
+function isCommitShape (v) {
+  return v && typeof v === 'object' && !Array.isArray(v) &&
+    typeof v.message === 'string' && v.date instanceof Date &&
+    typeof v.dataAddress === 'number'
+}
 
 function safeJSON (value) {
   return JSON.stringify(value, (_, v) => {
@@ -118,16 +111,43 @@ function safeJSON (value) {
   }, 2)
 }
 
+// Walk every chunk newest-to-oldest. Each chunk's address is the index of
+// its last byte; the next chunk back ends at addr - chunk.length.
+function * repoEntries (repo) {
+  const len = repo.byteLength
+  if (len <= 0) return
+  let addr = len - 1
+  while (addr >= 0) {
+    const code = repo.resolve(addr)
+    if (!code || !code.length) return
+    const type = repo.footerToCodec[code.at(-1)]?.type
+    if (type === 'SIGNATURE') {
+      let sig
+      try { sig = repo.decode(addr) } catch { sig = null }
+      if (sig) yield { kind: 'signature', address: addr, signedFrom: sig.address, hex: truncHex(sig.compactRawBytes, 12) }
+    } else if (type === 'OBJECT') {
+      let value
+      try { value = repo.decode(addr) } catch { value = null }
+      if (isCommitShape(value)) {
+        yield { kind: 'commit', address: addr, message: value.message, date: value.date, dataAddress: value.dataAddress, parent: value.parent }
+      }
+    }
+    addr -= code.length
+  }
+}
+
+// Decode the value at an address but treat object/array as REFS (children
+// are addresses, not decoded recursively). For primitives, returns the
+// decoded value directly.
+function valueAndChildren (repo, address) {
+  const code = repo.resolve(address)
+  const codecType = repo.footerToCodec[code.at(-1)]?.type
+  const refs = repo.asRefs(address)
+  // refs is either an object/array of addresses or just the address itself for primitives
+  return { codecType, refs, decoded: repo.decode(address) }
+}
+
 // ── Views ─────────────────────────────────────────────────────────────────
-//
-// Rows are inlined as <div data-key=…> so mount's reconciler can recycle
-// them by key. The slot fns each call dep() at the top so reactive re-runs
-// fire on registry/repo state changes.
-//
-// Click handling uses event delegation (see below) rather than onclick=${fn}
-// in the h template — the latter is a reactive-cell pattern that treats the
-// function as `cell(el)` and assigns its return value to el.onclick, which
-// (a) calls the handler on every mount, (b) sets el.onclick to undefined.
 
 function RegistryView () {
   return h`
@@ -158,44 +178,178 @@ function RepoView ({ keyHex }) {
       dep()
       const repo = registry.get(keyHex)
       if (!repo) return h`<div class="empty">opening…</div>`
-      const commits = [...repo.history()]
-      if (!commits.length) {
+      const entries = [...repoEntries(repo)]
+      if (!entries.length) {
         return h`
-          <h2>commits <span class="dim">(0)</span></h2>
-          <div class="empty">no commits yet</div>
+          <h2>chunks <span class="dim">(0)</span></h2>
+          <div class="empty">no signed commits yet</div>
         `
       }
+      const commitCount = entries.filter(e => e.kind === 'commit').length
+      const sigCount = entries.length - commitCount
       return h`
-        <h2>commits <span class="dim">(${commits.length})</span></h2>
-        ${commits.map(c => h`
-          <div class="row" data-key=${c.dataAddress} data-action="open-commit"
-               data-keyhex=${keyHex} data-addr=${c.dataAddress}>
-            <span class="msg">${c.message || h`<span class="dim">(no message)</span>`}</span>
-            <span class="when">${fmtDate(c.date)}</span>
-            <span class="mono dim">@${c.dataAddress}</span>
-          </div>
-        `)}
+        <h2>chunks <span class="dim">(${commitCount} commit${commitCount === 1 ? '' : 's'} · ${sigCount} sig${sigCount === 1 ? '' : 's'})</span></h2>
+        ${entries.map(e => e.kind === 'commit'
+          ? h`
+            <div class="row commit" data-key=${`c${e.address}`} data-action="open-at"
+                 data-keyhex=${keyHex} data-addr=${e.address}>
+              <span class="kind">commit</span>
+              <span class="msg">${e.message || h`<span class="dim">(no message)</span>`}</span>
+              <span class="when">${fmtDate(e.date)}</span>
+              <span class="mono dim">@${e.address}</span>
+            </div>`
+          : h`
+            <div class="row signature" data-key=${`s${e.address}`} data-action="open-at"
+                 data-keyhex=${keyHex} data-addr=${e.address}>
+              <span class="kind">sig</span>
+              <span class="mono dim">covers @${e.signedFrom}…@${e.address - 1}</span>
+              <span class="mono dim">${e.hex}</span>
+              <span class="mono dim">@${e.address}</span>
+            </div>`
+        )}
       `
     }}
   `
 }
 
-function CommitView ({ keyHex, dataAddress }) {
+function AtView ({ keyHex, address }) {
   return h`
-    <a class="back" data-action="back-repo" data-keyhex=${keyHex}>← commits</a>
-    <div class="keyfull">${truncKey(keyHex)} @ ${dataAddress}</div>
+    <a class="back" data-action="back-repo" data-keyhex=${keyHex}>← chunks</a>
+    <div class="keyfull">${truncKey(keyHex)} @ ${address}</div>
     ${() => {
       dep()
       const repo = registry.get(keyHex)
       if (!repo) return h`<div class="empty">opening…</div>`
-      if (dataAddress >= repo.byteLength) return h`<div class="empty">loading…</div>`
-      let value
-      try { value = repo.decode(dataAddress) }
+      if (address >= repo.byteLength) return h`<div class="empty">loading…</div>`
+
+      let info
+      try { info = valueAndChildren(repo, address) }
       catch (e) { return h`<pre class="value">decode error: ${e.message}</pre>` }
-      return h`<pre class="value">${safeJSON(value)}</pre>`
+
+      const { codecType, refs, decoded } = info
+      const isCommit = isCommitShape(decoded)
+
+      // For commits, render the rich commit panel + changed paths.
+      if (isCommit) {
+        const parentDataAddr = decoded.parent !== undefined
+          ? safeGet(() => repo.decode(decoded.parent)?.dataAddress)
+          : undefined
+        const changes = parentDataAddr !== undefined
+          ? [...changedPaths(repo, parentDataAddr, decoded.dataAddress)]
+          : null
+        return h`
+          <div class="dim">codec: ${codecType} · this is a commit</div>
+          <table class="kv">
+            <tbody>
+              <tr><td>message</td><td>${decoded.message || h`<span class="dim">(empty)</span>`}</td></tr>
+              <tr><td>date</td><td>${fmtDate(decoded.date)}</td></tr>
+              <tr>
+                <td>dataAddress</td>
+                <td><a class="addr-link" data-action="open-at"
+                       data-keyhex=${keyHex} data-addr=${decoded.dataAddress}
+                       >@${decoded.dataAddress}</a></td>
+              </tr>
+              <tr>
+                <td>parent</td>
+                <td>${decoded.parent === undefined
+                  ? h`<span class="dim">(none — first commit)</span>`
+                  : h`<a class="addr-link" data-action="open-at"
+                         data-keyhex=${keyHex} data-addr=${decoded.parent}
+                         >@${decoded.parent}</a>`}</td>
+              </tr>
+            </tbody>
+          </table>
+          ${changes
+            ? h`
+              <h3>changed paths <span class="dim">(${changes.length})</span></h3>
+              ${changes.length
+                ? h`<ul class="paths">${changes.map(p => h`<li class="mono">${p.length === 0 ? '/' : p.join('.')}</li>`)}</ul>`
+                : h`<div class="dim">(no path-level changes — same dataAddress)</div>`}
+            `
+            : null}
+          <h3>raw</h3>
+          <pre class="value">${safeJSON(decoded)}</pre>
+        `
+      }
+
+      // Signature: dedicated layout.
+      if (codecType === 'SIGNATURE') {
+        return h`
+          <div class="dim">codec: ${codecType}</div>
+          <table class="kv">
+            <tbody>
+              <tr>
+                <td>covers</td>
+                <td><a class="addr-link" data-action="open-at"
+                       data-keyhex=${keyHex} data-addr=${decoded.address}
+                       >@${decoded.address}</a> through @${address - 1}</td>
+              </tr>
+              <tr><td>bytes</td><td class="mono">${truncHex(decoded.compactRawBytes, 32)}</td></tr>
+            </tbody>
+          </table>
+        `
+      }
+
+      // Object/array: clickable children with their addresses.
+      if (refs && typeof refs === 'object') {
+        const isArray = Array.isArray(refs)
+        const entries = isArray
+          ? refs.map((addr, i) => [String(i), addr])
+          : Object.entries(refs)
+        if (entries.length === 0) {
+          return h`
+            <div class="dim">codec: ${codecType}</div>
+            <div class="empty">${isArray ? '[]' : '{}'}</div>
+          `
+        }
+        return h`
+          <div class="dim">codec: ${codecType}</div>
+          <table class="kv">
+            <tbody>
+              ${entries.map(([k, childAddr]) => {
+                let preview = ''
+                try {
+                  const v = repo.decode(childAddr)
+                  preview = previewValue(v)
+                } catch { preview = '(error)' }
+                return h`
+                  <tr data-key=${k}>
+                    <td class="mono">${k}</td>
+                    <td>${preview}</td>
+                    <td><a class="addr-link" data-action="open-at"
+                           data-keyhex=${keyHex} data-addr=${childAddr}
+                           >@${childAddr}</a></td>
+                  </tr>
+                `
+              })}
+            </tbody>
+          </table>
+          <h3>raw</h3>
+          <pre class="value">${safeJSON(decoded)}</pre>
+        `
+      }
+
+      // Primitive: just show it.
+      return h`
+        <div class="dim">codec: ${codecType}</div>
+        <pre class="value">${safeJSON(decoded)}</pre>
+      `
     }}
   `
 }
+
+function previewValue (v) {
+  if (v == null) return String(v)
+  if (typeof v === 'string') return v.length > 60 ? JSON.stringify(v.slice(0, 60)) + '…' : JSON.stringify(v)
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  if (v instanceof Date) return v.toISOString()
+  if (v instanceof Uint8Array) return `Uint8Array(${v.length})`
+  if (Array.isArray(v)) return `[…] (${v.length})`
+  if (typeof v === 'object') return `{…} (${Object.keys(v).length})`
+  return String(v)
+}
+
+function safeGet (f) { try { return f() } catch { return undefined } }
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 
@@ -206,23 +360,19 @@ mount(h`${() => {
   switch (view.kind) {
     case 'registry': return RegistryView()
     case 'repo':     return RepoView({ keyHex: view.keyHex })
-    case 'commit':   return CommitView({ keyHex: view.keyHex, dataAddress: view.dataAddress })
+    case 'at':       return AtView({ keyHex: view.keyHex, address: view.address })
     default:         return h`<div class="empty">?</div>`
   }
 }}`, appEl, recaller)
 
 // ── Click delegation ──────────────────────────────────────────────────────
-//
-// Single listener, attached to the app container once. Survives every
-// re-render because the listener is on the container, not on rows that
-// come and go.
 
 appEl.addEventListener('click', e => {
   const el = e.target.closest('[data-action]')
   if (!el) return
   switch (el.dataset.action) {
     case 'open-repo':     return go({ kind: 'repo', keyHex: el.dataset.key })
-    case 'open-commit':   return go({ kind: 'commit', keyHex: el.dataset.keyhex, dataAddress: +el.dataset.addr })
+    case 'open-at':       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     case 'back-registry': return go({ kind: 'registry' })
     case 'back-repo':     return go({ kind: 'repo', keyHex: el.dataset.keyhex })
   }

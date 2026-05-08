@@ -31,11 +31,56 @@
     .row + .row { border-top-color: var(--rule); }
     .row:hover + .row { border-top-color: transparent; }
 
+    /* signature rows show 4 columns: kind, range, hex, addr */
+    .row.signature { grid-template-columns: 4rem 1fr 1fr 6rem; }
+    .row.commit    { grid-template-columns: 4rem 1fr 12rem 6rem; }
+
     .row .mono { font-size: 0.85rem; }
     .row .when { font-size: 0.78rem; color: var(--ink-dim); }
     .row .msg  { font-size: 0.85rem; }
+    .row .kind {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-dim);
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      padding: 0.05rem 0.5rem;
+      text-align: center;
+      align-self: center;
+    }
+    .row.commit .kind    { color: var(--accent); border-color: var(--accent); }
+    .row.signature .kind { color: var(--warn);   border-color: var(--warn); }
 
     .empty { color: var(--ink-dim); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+
+    /* key/value table for the at-view */
+    .kv { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.75rem 0; }
+    .kv td { padding: 0.4rem 0.6rem; vertical-align: top; }
+    .kv tr + tr td { border-top: 1px dashed var(--rule); }
+    .kv td:first-child {
+      color: var(--ink-dim);
+      width: 8rem;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    .addr-link {
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline dotted;
+    }
+    .addr-link:hover { background: var(--flash); text-decoration-style: solid; }
+
+    .paths { list-style: none; padding: 0; }
+    .paths li { padding: 0.2rem 0.5rem; font-size: 0.85rem; }
+    .paths li + li { border-top: 1px dashed var(--rule); }
+
+    h3 { font-size: 0.9rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+    h3 .dim { font-weight: 400; font-size: 0.85rem; }
 
     .conn { font-size: 0.75rem; color: var(--ink-dim); margin-bottom: 1.5rem; }
     .conn.ok  { color: #16a34a; }

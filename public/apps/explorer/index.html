@@ -52,6 +52,12 @@
     .row.commit .kind    { color: var(--accent); border-color: var(--accent); }
     .row.signature .kind { color: var(--warn);   border-color: var(--warn); }
 
+    .verify-badge { font-weight: 700; padding-left: 0.35em; font-size: 0.95em; }
+    .verify-badge.valid   { color: #16a34a; }
+    .verify-badge.invalid { color: #dc2626; }
+    .verify-badge.pending { color: var(--ink-dim); font-weight: 400; }
+    .verify-badge.error   { color: #ca8a04; }
+
     .empty { color: var(--ink-dim); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
 
     /* key/value table for the at-view */

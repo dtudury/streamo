@@ -15,6 +15,7 @@ import { Recaller } from '../../streamo/utils/Recaller.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { changedPaths } from '../../streamo/Streamo.js'
+import { hexToBytes } from '../../streamo/utils.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
@@ -214,7 +215,7 @@ function RepoView ({ keyHex }) {
           : h`
             <div class="row signature" data-key=${`s${e.address}`} data-action="open-at"
                  data-keyhex=${keyHex} data-addr=${e.address}>
-              <span class="kind">sig</span>
+              <span class="kind">sig ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.address), e.address)) }}</span>
               <span class="mono dim">covers @${e.signedFrom}…@${e.signedTo}</span>
               <span class="mono dim">${e.hex}</span>
               <span class="mono dim">@${e.address}</span>
@@ -296,6 +297,18 @@ function AtView ({ keyHex, address }) {
           <div class="dim">codec: ${codecType}</div>
           <table class="kv">
             <tbody>
+              <tr>
+                <td>verification</td>
+                <td>${() => {
+                  dep()  // wake up when fire() runs after async verify resolves
+                  const status = verifyStatus(repo, keyHex, decoded, address)
+                  const label = status === 'valid'   ? 'valid signature for this repo’s public key'
+                              : status === 'invalid' ? 'signature does NOT match this repo’s public key'
+                              : status === 'pending' ? 'verifying…'
+                              : `error: ${status?.error ?? 'unknown'}`
+                  return h`${verifyBadge(status)} <span>${label}</span>`
+                }}</td>
+              </tr>
               <tr>
                 <td>covers</td>
                 <td><a class="addr-link" data-action="open-at"
@@ -389,6 +402,34 @@ function previewValue (v) {
 }
 
 function safeGet (f) { try { return f() } catch { return undefined } }
+
+// ── Signature verification cache ──────────────────────────────────────────
+//
+// repo.verify(sig, publicKey) is async. Slots render synchronously, so we
+// cache results keyed by (keyHex, sigChunkAddress) and kick off the async
+// verify on first encounter. When it resolves, fire() so the slot re-runs
+// and the badge flips from "verifying…" to ✓ / ✗.
+//
+// One verify per signature per page load (~sub-ms each for secp256k1).
+
+const verifyCache = new Map()  // `${keyHex}:${addr}` → 'pending' | 'valid' | 'invalid' | { error }
+
+function verifyStatus (repo, keyHex, sig, sigAddress) {
+  const cacheKey = `${keyHex}:${sigAddress}`
+  if (verifyCache.has(cacheKey)) return verifyCache.get(cacheKey)
+  verifyCache.set(cacheKey, 'pending')
+  repo.verify(sig, hexToBytes(keyHex))
+    .then(valid => { verifyCache.set(cacheKey, valid ? 'valid' : 'invalid'); fire() })
+    .catch(e => { verifyCache.set(cacheKey, { error: e.message }); fire() })
+  return 'pending'
+}
+
+function verifyBadge (status) {
+  if (status === 'valid')   return h`<span class="verify-badge valid"   title="signature verified against repo's public key">✓</span>`
+  if (status === 'invalid') return h`<span class="verify-badge invalid" title="signature does NOT match repo's public key">✗</span>`
+  if (status === 'pending') return h`<span class="verify-badge pending" title="verifying…">…</span>`
+  return h`<span class="verify-badge error" title=${status?.error || 'verification error'}>⚠</span>`
+}
 
 // Hex dump of a chunk's raw bytes. Truncates at maxLen so a giant value
 // chunk doesn't blow up the page.

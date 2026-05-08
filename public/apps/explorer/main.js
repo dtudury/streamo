@@ -282,9 +282,13 @@ function AtView ({ keyHex, address }) {
       const { codecType, refs, decoded } = info
       const isCommit = isCommitShape(decoded)
 
-      // Storage tab: same content for every codec — bytes + referrers.
+      // Storage tab: same content for every codec — outgoing references,
+      // chunk bytes, and incoming referrers. The chunk graph from this
+      // chunk's perspective: what it points to, what it is, what points
+      // to it.
       if (atTab === 'storage') {
         return h`
+          ${outgoingReferencesSection(repo, keyHex, address)}
           ${rawChunkSection(repo, address)}
           ${referrersSection(repo, keyHex, address)}
         `
@@ -463,6 +467,40 @@ function rawChunkSection (repo, address) {
   return h`
     <h3>chunk bytes <span class="dim">(${bytes.length} bytes ending @${address})</span></h3>
     <pre class="value mono">${hexDump(bytes)}</pre>
+  `
+}
+
+// Outgoing references — what THIS chunk points to in the chunk graph (as
+// opposed to "referenced by", which is what points to this chunk). Walks
+// the codec's parts via repo.directReferences. Codec-by-codec — exposes
+// the storage chain so e.g. STRING → UINT8ARRAY → DUPLE → DUPLE → … → WORD
+// is browsable one click at a time.
+function outgoingReferencesSection (repo, keyHex, address) {
+  const refs = repo.directReferences(address)
+  if (!refs.length) return null
+  return h`
+    <h3>references <span class="dim">(${refs.length})</span></h3>
+    <table class="kv clickable">
+      <tbody>
+        ${refs.map((childAddr, i) => {
+          let codecType = '?'
+          let preview = ''
+          try {
+            const childCode = repo.resolve(childAddr)
+            codecType = repo.footerToCodec[childCode.at(-1)]?.type || '?'
+            preview = previewValue(repo.decode(childAddr))
+          } catch { preview = '(error)' }
+          return h`
+            <tr data-key=${`out${i}@${childAddr}`} data-action="open-at"
+                data-keyhex=${keyHex} data-addr=${childAddr}>
+              <td class="mono dim">${codecType}</td>
+              <td>${preview}</td>
+              <td class="mono dim">@${childAddr}</td>
+            </tr>
+          `
+        })}
+      </tbody>
+    </table>
   `
 }
 

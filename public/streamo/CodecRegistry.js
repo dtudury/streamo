@@ -145,6 +145,47 @@ export class CodecRegistry extends Addressifier {
   }
 
   /**
+   * Direct chunk-graph references — the addresses this chunk's bytes point
+   * to (NOT the user-level child values asRefs returns). Walks the codec's
+   * parts: addressed parts contribute their target address; inline parts
+   * are skipped (their bytes are embedded in this chunk, no separate
+   * address). Pure read; never mutates.
+   *
+   * What you see varies by codec:
+   *   - DUPLE   → up to 2 references (left, right)
+   *   - OBJECT/ARRAY/VARIABLE → 1 reference (the embedded Duple-tree or
+   *                              wrapped value, when stored separately)
+   *   - STRING/UINT8ARRAY/DATE/FLOAT64 → 1 reference (the encoded bytes,
+   *                                       when stored separately)
+   *   - WORD, UINT7, EMPTY_*, primitives → none
+   *   - SIGNATURE → none (its parts are data, not chunk references)
+   *
+   * Used by the explorer's storage tab to walk the chunk graph.
+   *
+   * @param {number} address
+   * @returns {number[]}
+   */
+  directReferences (address) {
+    const code = this.resolve(address)
+    const codec = this.footerToCodec[code.at(-1)]
+    if (!codec?.partReaders?.length) return []
+
+    const refs = []
+    const footer = code.at(-1)
+    let option = footer - codec.baseFooter
+    let end = -1
+    for (let i = codec.partReaders.length - 1; i >= 0; i--) {
+      const opts = codec.partReaders[i]
+      const reader = opts[option % opts.length]
+      option = Math.floor(option / opts.length)
+      const part = reader(code.subarray(0, end))
+      end -= part.width
+      if (part.address !== undefined) refs.unshift(part.address)
+    }
+    return refs
+  }
+
+  /**
    * Internal: like asRefs but materializes inline children when needed
    * (write context). Used by Streamo.set / setRefs during path traversal,
    * which DOES need real addresses to navigate composite values; and the

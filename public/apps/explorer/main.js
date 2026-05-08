@@ -87,10 +87,14 @@ function safeJSON (value) {
 
 // ── Views ─────────────────────────────────────────────────────────────────
 //
-// Rows are inlined as <div data-key=…> rather than function components so
-// mount's reconciler can recycle them by key on incremental updates (a new
-// commit landing or a new repo opening shouldn't tear down every existing
-// row). The slot fns each call dep() at the top so reactive re-runs fire.
+// Rows are inlined as <div data-key=…> so mount's reconciler can recycle
+// them by key. The slot fns each call dep() at the top so reactive re-runs
+// fire on registry/repo state changes.
+//
+// Click handling uses event delegation (see below) rather than onclick=${fn}
+// in the h template — the latter is a reactive-cell pattern that treats the
+// function as `cell(el)` and assigns its return value to el.onclick, which
+// (a) calls the handler on every mount, (b) sets el.onclick to undefined.
 
 function RegistryView () {
   return h`
@@ -101,7 +105,7 @@ function RegistryView () {
       for (const [keyHex, repo] of registry) {
         const last = repo.lastCommit
         rows.push(h`
-          <div class="row" data-key=${keyHex} onclick=${() => go({ kind: 'repo', keyHex })}>
+          <div class="row" data-key=${keyHex} data-action="open-repo">
             <span class="mono">${truncKey(keyHex)}</span>
             <span class="when">${last ? fmtDate(last.date) : '(no commits)'}</span>
             <span class="msg dim">${last?.message || ''}</span>
@@ -115,7 +119,7 @@ function RegistryView () {
 
 function RepoView ({ keyHex }) {
   return h`
-    <a class="back" onclick=${() => go({ kind: 'registry' })}>← all repos</a>
+    <a class="back" data-action="back-registry">← all repos</a>
     <div class="keyfull">${keyHex}</div>
     ${() => {
       dep()
@@ -131,8 +135,8 @@ function RepoView ({ keyHex }) {
       return h`
         <h2>commits <span class="dim">(${commits.length})</span></h2>
         ${commits.map(c => h`
-          <div class="row" data-key=${c.dataAddress}
-               onclick=${() => go({ kind: 'commit', keyHex, dataAddress: c.dataAddress })}>
+          <div class="row" data-key=${c.dataAddress} data-action="open-commit"
+               data-keyhex=${keyHex} data-addr=${c.dataAddress}>
             <span class="msg">${c.message || h`<span class="dim">(no message)</span>`}</span>
             <span class="when">${fmtDate(c.date)}</span>
             <span class="mono dim">@${c.dataAddress}</span>
@@ -145,7 +149,7 @@ function RepoView ({ keyHex }) {
 
 function CommitView ({ keyHex, dataAddress }) {
   return h`
-    <a class="back" onclick=${() => go({ kind: 'repo', keyHex })}>← commits</a>
+    <a class="back" data-action="back-repo" data-keyhex=${keyHex}>← commits</a>
     <div class="keyfull">${truncKey(keyHex)} @ ${dataAddress}</div>
     ${() => {
       dep()
@@ -162,6 +166,8 @@ function CommitView ({ keyHex, dataAddress }) {
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 
+const appEl = document.getElementById('app')
+
 mount(h`${() => {
   dep()
   switch (view.kind) {
@@ -170,4 +176,21 @@ mount(h`${() => {
     case 'commit':   return CommitView({ keyHex: view.keyHex, dataAddress: view.dataAddress })
     default:         return h`<div class="empty">?</div>`
   }
-}}`, document.getElementById('app'), recaller)
+}}`, appEl, recaller)
+
+// ── Click delegation ──────────────────────────────────────────────────────
+//
+// Single listener, attached to the app container once. Survives every
+// re-render because the listener is on the container, not on rows that
+// come and go.
+
+appEl.addEventListener('click', e => {
+  const el = e.target.closest('[data-action]')
+  if (!el) return
+  switch (el.dataset.action) {
+    case 'open-repo':     return go({ kind: 'repo', keyHex: el.dataset.key })
+    case 'open-commit':   return go({ kind: 'commit', keyHex: el.dataset.keyhex, dataAddress: +el.dataset.addr })
+    case 'back-registry': return go({ kind: 'registry' })
+    case 'back-repo':     return go({ kind: 'repo', keyHex: el.dataset.keyhex })
+  }
+})

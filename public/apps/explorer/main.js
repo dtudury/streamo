@@ -187,7 +187,7 @@ function RegistryView () {
 function RepoView ({ keyHex }) {
   return h`
     <a class="back" data-action="back-registry">← all repos</a>
-    <div class="keyfull">${keyHex}</div>
+    <div class="keyfull"><span class="mono">${keyHex}</span></div>
     ${() => {
       dep()
       const repo = registry.get(keyHex)
@@ -228,8 +228,11 @@ function RepoView ({ keyHex }) {
 
 function AtView ({ keyHex, address }) {
   return h`
-    <a class="back" data-action="back-repo" data-keyhex=${keyHex}>← chunks</a>
-    <div class="keyfull">${truncKey(keyHex)} @ ${address}</div>
+    <a class="back" data-action="back-registry">← all repos</a>
+    <div class="keyfull">
+      <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
+      <span class="dim"> @ ${address}</span>
+    </div>
     ${() => {
       dep()
       const repo = registry.get(keyHex)
@@ -284,6 +287,7 @@ function AtView ({ keyHex, address }) {
           <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
           ${rawChunkSection(repo, address)}
+          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -323,6 +327,7 @@ function AtView ({ keyHex, address }) {
             </tbody>
           </table>
           ${rawChunkSection(repo, address)}
+          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -363,6 +368,7 @@ function AtView ({ keyHex, address }) {
           <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
           ${rawChunkSection(repo, address)}
+          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -371,6 +377,7 @@ function AtView ({ keyHex, address }) {
         <div class="dim">codec: ${codecType}</div>
         <pre class="value">${safeJSON(decoded)}</pre>
         ${rawChunkSection(repo, address)}
+        ${() => { dep(); return referrersSection(repo, keyHex, address) }}
       `
     }}
   `
@@ -390,6 +397,35 @@ function rawChunkSection (repo, address) {
   `
 }
 
+// "Referenced by" — every chunk in the repo that contains this address as
+// a direct child. Lights up content-addressed dedup: the same value posted
+// twice in chat shows two referrers; a single value referenced from many
+// commits shows them all as a list.
+function referrersSection (repo, keyHex, address) {
+  const refs = findReferrers(repo, address)
+  if (!refs.length) {
+    return h`
+      <h3>referenced by <span class="dim">(0)</span></h3>
+      <div class="dim">no chunks in this repo reference this address as a direct child</div>
+    `
+  }
+  return h`
+    <h3>referenced by <span class="dim">(${refs.length} chunk${refs.length === 1 ? '' : 's'})</span></h3>
+    <table class="kv clickable">
+      <tbody>
+        ${refs.map(r => h`
+          <tr data-key=${`r${r.address}`} data-action="open-at"
+              data-keyhex=${keyHex} data-addr=${r.address}>
+            <td class="mono dim">${r.codecType || '?'}</td>
+            <td></td>
+            <td class="mono dim">@${r.address}</td>
+          </tr>
+        `)}
+      </tbody>
+    </table>
+  `
+}
+
 function previewValue (v) {
   if (v == null) return String(v)
   if (typeof v === 'string') return v.length > 60 ? JSON.stringify(v.slice(0, 60)) + '…' : JSON.stringify(v)
@@ -402,6 +438,43 @@ function previewValue (v) {
 }
 
 function safeGet (f) { try { return f() } catch { return undefined } }
+
+// Find chunks in the repo that reference `targetAddr` as a direct child
+// (via asRefs — covers OBJECT, ARRAY, VARIABLE, DUPLE references). Walks
+// every chunk newest-to-oldest. For typical repos (≤ a few hundred chunks)
+// this is fast enough to compute on render; for larger repos we'd want an
+// index but it's not currently a problem.
+function findReferrers (repo, targetAddr) {
+  const referrers = []
+  let addr = repo.byteLength - 1
+  while (addr >= 0) {
+    const code = repo.resolve(addr)
+    if (!code || !code.length) break
+    if (addr !== targetAddr) {
+      let refs
+      try { refs = repo.asRefs(addr) } catch { refs = null }
+      // refs shapes: object of {key: addr}, array of [addr, ...], Duple with .v,
+      // or just the address itself for primitives (no children).
+      let childAddrs = []
+      if (Array.isArray(refs)) {
+        childAddrs = refs.filter(x => typeof x === 'number')
+      } else if (refs && typeof refs === 'object') {
+        if (Array.isArray(refs.v)) {
+          // Duple
+          childAddrs = refs.v.filter(x => typeof x === 'number')
+        } else {
+          childAddrs = Object.values(refs).filter(x => typeof x === 'number')
+        }
+      }
+      if (childAddrs.includes(targetAddr)) {
+        const codec = repo.footerToCodec[code.at(-1)]
+        referrers.push({ address: addr, codecType: codec?.type })
+      }
+    }
+    addr -= code.length
+  }
+  return referrers
+}
 
 // ── Signature verification cache ──────────────────────────────────────────
 //

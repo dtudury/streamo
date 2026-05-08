@@ -97,7 +97,15 @@
     .conn.ok  { color: #16a34a; }
     .conn.err { color: #dc2626; }
 
-    .keyfull { font-family: monospace; font-size: 0.78rem; color: var(--ink-dim); word-break: break-all; }
+    .keyfull { font-size: 0.78rem; color: var(--ink-dim); word-break: break-all; }
+    .keyfull .mono { font-family: monospace; }
+    .repo-link {
+      font-family: monospace;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline dotted;
+    }
+    .repo-link:hover { background: var(--flash); text-decoration-style: solid; }
 
     pre.value {
       font-family: monospace;

@@ -124,7 +124,21 @@ function * repoEntries (repo) {
     if (type === 'SIGNATURE') {
       let sig
       try { sig = repo.decode(addr) } catch { sig = null }
-      if (sig) yield { kind: 'signature', address: addr, signedFrom: sig.address, hex: truncHex(sig.compactRawBytes, 12) }
+      if (sig) {
+        // Per Streamo.sign / .verify, signed range is [sig.address, sigAddr - chunkLen),
+        // i.e. last covered byte index = sigAddr - chunkLen - 1.
+        // The sig chunk itself spans [sigAddr - chunkLen + 1, sigAddr], so there's a
+        // one-byte gap at sigAddr - chunkLen that's neither signed nor part of the
+        // sig chunk — looks like an off-by-one in sign().
+        yield {
+          kind: 'signature',
+          address: addr,
+          signedFrom: sig.address,
+          signedTo: addr - code.length - 1,
+          chunkStart: addr - code.length + 1,
+          hex: truncHex(sig.compactRawBytes, 12)
+        }
+      }
     } else if (type === 'OBJECT') {
       let value
       try { value = repo.decode(addr) } catch { value = null }
@@ -202,7 +216,7 @@ function RepoView ({ keyHex }) {
             <div class="row signature" data-key=${`s${e.address}`} data-action="open-at"
                  data-keyhex=${keyHex} data-addr=${e.address}>
               <span class="kind">sig</span>
-              <span class="mono dim">covers @${e.signedFrom}…@${e.address - 1}</span>
+              <span class="mono dim">covers @${e.signedFrom}…@${e.signedTo}</span>
               <span class="mono dim">${e.hex}</span>
               <span class="mono dim">@${e.address}</span>
             </div>`
@@ -275,6 +289,11 @@ function AtView ({ keyHex, address }) {
 
       // Signature: dedicated layout.
       if (codecType === 'SIGNATURE') {
+        const chunk = repo.resolve(address)
+        const chunkLen = chunk.length
+        const signedTo = address - chunkLen - 1
+        const sigChunkStart = address - chunkLen + 1
+        const gapByte = address - chunkLen   // one-byte gap, see note below
         return h`
           <div class="dim">codec: ${codecType}</div>
           <table class="kv">
@@ -283,7 +302,16 @@ function AtView ({ keyHex, address }) {
                 <td>covers</td>
                 <td><a class="addr-link" data-action="open-at"
                        data-keyhex=${keyHex} data-addr=${decoded.address}
-                       >@${decoded.address}</a> through @${address - 1}</td>
+                       >@${decoded.address}</a> through @${signedTo}</td>
+              </tr>
+              <tr>
+                <td>sig chunk</td>
+                <td class="mono">@${sigChunkStart}…@${address} (${chunkLen} bytes)</td>
+              </tr>
+              <tr>
+                <td>note</td>
+                <td class="dim">byte @${gapByte} is neither signed nor part of the
+                  sig chunk — appears to be an off-by-one in Streamo.sign</td>
               </tr>
               <tr><td>bytes</td><td class="mono">${truncHex(decoded.compactRawBytes, 32)}</td></tr>
             </tbody>

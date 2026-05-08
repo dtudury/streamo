@@ -2,8 +2,11 @@
 //
 // Three views, navigated by URL hash:
 //   #/                              — registry list
-//   #/repo/<keyHex>                 — chunks (commits + signatures) in a repo
-//   #/repo/<keyHex>/at/<address>    — the value at any address
+//   #/repo/<keyHex>                 — signed commits in a repo, plus the
+//                                     storage chunks underneath
+//   #/repo/<keyHex>/at/<address>    — the value at any address; if address
+//                                     is a sig chunk, this is the polished
+//                                     "signed commit" detail view.
 //
 // State lives in plain JS variables; reactivity is bridged from each Repo's
 // internal Recaller into the app-level Recaller via the `signal` pattern
@@ -117,50 +120,95 @@ function safeJSON (value) {
   }, 2)
 }
 
-// Walk every chunk newest-to-oldest. Each chunk's address is the index of
-// its last byte; the next chunk back ends at addr - chunk.length.
+// Walk every chunk newest-to-oldest, bundling each signature with the
+// commit(s) it covers into one "signed commit" entry. A signed commit is
+// the natural unit of authored history — the sig is what makes the bytes
+// provably yours, and the commit gives those bytes meaning, so they read
+// as one thing. Concurrent commits batched into one sign produce a single
+// entry whose .commits is multi-element.
 //
-// `kind` distinguishes commits and signatures (the things you usually
-// browse) from "other" chunks (Duples, raw OBJECTs, ARRAYs, STRINGs, etc.
-// — the storage-level building blocks). The repo view shows all three
-// in separate sections.
-function * repoEntries (repo) {
+// Commits more recent than the latest sig (sign in flight, or none yet)
+// surface as 'unsignedCommit'. Everything else — Duples, OBJECTs that
+// aren't commits, ARRAYs, STRINGs, etc. — is 'other' and lives in the
+// storage section.
+function * signedCommits (repo) {
   const len = repo.byteLength
   if (len <= 0) return
   let addr = len - 1
+  let pendingSig = null   // most-recent sig still gathering its commits
+  let pendingCommits = [] // commits since the last yielded sig (newest first)
+
+  const flush = () => {
+    if (pendingSig) return [{ kind: 'signedCommit', ...pendingSig, commits: pendingCommits }]
+    return pendingCommits.map(c => ({ kind: 'unsignedCommit', ...c }))
+  }
+
   while (addr >= 0) {
     const code = repo.resolve(addr)
-    if (!code || !code.length) return
+    if (!code || !code.length) break
     const type = repo.footerToCodec[code.at(-1)]?.type
+
     if (type === 'SIGNATURE') {
+      for (const e of flush()) yield e
       let sig
       try { sig = repo.decode(addr) } catch { sig = null }
-      if (sig) {
-        yield {
-          kind: 'signature',
-          address: addr,
-          signedFrom: sig.address,
-          signedTo: addr - code.length,
-          chunkStart: addr - code.length + 1,
-          hex: truncHex(sig.compactRawBytes, 12),
-          codecType: type
-        }
-      }
+      pendingSig = sig
+        ? {
+            sigAddress: addr,
+            signedFrom: sig.address,
+            signedTo: addr - code.length,
+            sigHex: truncHex(sig.compactRawBytes, 12)
+          }
+        : null
+      pendingCommits = []
     } else if (type === 'OBJECT') {
       let value
       try { value = repo.decode(addr) } catch { value = null }
       if (isCommitShape(value)) {
-        yield { kind: 'commit', address: addr, message: value.message, date: value.date, dataAddress: value.dataAddress, parent: value.parent, codecType: type }
+        pendingCommits.push({
+          address: addr,
+          message: value.message,
+          date: value.date,
+          dataAddress: value.dataAddress,
+          parent: value.parent
+        })
       } else {
         yield { kind: 'other', address: addr, codecType: type }
       }
     } else {
-      // Anything else — Duples, ARRAYs, STRINGs, etc. — is "other": part of
-      // the storage tree but not a thing a user normally browses.
       yield { kind: 'other', address: addr, codecType: type }
     }
     addr -= code.length
   }
+  for (const e of flush()) yield e
+}
+
+// Find the commits (newest-first) covered by a particular signature. Used
+// by the at-view's SIGNATURE branch to assemble the "this is what you were
+// looking for" polished view from a sig address alone.
+function commitsCoveredBySignature (repo, signedFrom, signedTo) {
+  const commits = []
+  let addr = signedTo
+  while (addr >= signedFrom) {
+    const code = repo.resolve(addr)
+    if (!code || !code.length) break
+    const type = repo.footerToCodec[code.at(-1)]?.type
+    if (type === 'OBJECT') {
+      let value
+      try { value = repo.decode(addr) } catch { value = null }
+      if (isCommitShape(value)) {
+        commits.push({
+          address: addr,
+          message: value.message,
+          date: value.date,
+          dataAddress: value.dataAddress,
+          parent: value.parent
+        })
+      }
+    }
+    addr -= code.length
+  }
+  return commits
 }
 
 // Decode the value at an address but treat object/array as REFS (children
@@ -205,39 +253,51 @@ function RepoView ({ keyHex }) {
       dep()
       const repo = registry.get(keyHex)
       if (!repo) return h`<div class="empty">opening…</div>`
-      const entries = [...repoEntries(repo)]
+      const entries = [...signedCommits(repo)]
       if (!entries.length) {
         return h`
-          <h2>chunks <span class="dim">(0)</span></h2>
+          <h2>signed commits <span class="dim">(0)</span></h2>
           <div class="empty">no signed commits yet</div>
         `
       }
-      const commits = entries.filter(e => e.kind === 'commit')
-      const sigs = entries.filter(e => e.kind === 'signature')
+      const signed = entries.filter(e => e.kind === 'signedCommit')
+      const unsigned = entries.filter(e => e.kind === 'unsignedCommit')
       const others = entries.filter(e => e.kind === 'other')
       return h`
         ${byteStreamSection(repo, keyHex, null)}
-        <h2>chunks <span class="dim">(${commits.length} commit${commits.length === 1 ? '' : 's'} · ${sigs.length} sig${sigs.length === 1 ? '' : 's'} · ${others.length} other)</span></h2>
-        ${[...commits, ...sigs].map(e => e.kind === 'commit'
-          ? h`
-            <div class="row commit" data-key=${`c${e.address}`} data-action="open-at"
+        <h2>signed commits <span class="dim">(${signed.length})</span></h2>
+        ${signed.length
+          ? signed.map(e => {
+              const head = e.commits[0]   // newest commit in the batch
+              const headline = e.commits.length === 0
+                ? h`<span class="dim">(sig with no covered commits)</span>`
+                : e.commits.length === 1
+                  ? (head.message || h`<span class="dim">(no message)</span>`)
+                  : h`<span class="dim">${e.commits.length}× </span>${head?.message || ''}`
+              return h`
+                <div class="row signed-commit" data-key=${`sc${e.sigAddress}`} data-action="open-at"
+                     data-keyhex=${keyHex} data-addr=${e.sigAddress}>
+                  <span class="kind">signed ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.sigAddress), e.sigAddress)) }}</span>
+                  <span class="msg">${headline}</span>
+                  <span class="when">${head ? fmtDate(head.date) : ''}</span>
+                  <span class="mono dim">@${e.sigAddress}</span>
+                </div>`
+            })
+          : h`<div class="empty">no signed commits yet</div>`}
+        ${unsigned.length ? h`
+          <h3>unsigned <span class="dim">(${unsigned.length} — sign in flight or pending)</span></h3>
+          ${unsigned.map(e => h`
+            <div class="row unsigned-commit" data-key=${`u${e.address}`} data-action="open-at"
                  data-keyhex=${keyHex} data-addr=${e.address}>
-              <span class="kind">commit</span>
+              <span class="kind">unsigned</span>
               <span class="msg">${e.message || h`<span class="dim">(no message)</span>`}</span>
               <span class="when">${fmtDate(e.date)}</span>
               <span class="mono dim">@${e.address}</span>
-            </div>`
-          : h`
-            <div class="row signature" data-key=${`s${e.address}`} data-action="open-at"
-                 data-keyhex=${keyHex} data-addr=${e.address}>
-              <span class="kind">sig ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.address), e.address)) }}</span>
-              <span class="mono dim">covers @${e.signedFrom}…@${e.signedTo}</span>
-              <span class="mono dim">${e.hex}</span>
-              <span class="mono dim">@${e.address}</span>
-            </div>`
-        )}
+            </div>
+          `)}
+        ` : null}
         ${others.length ? h`
-          <h3>storage tree <span class="dim">(${others.length})</span></h3>
+          <h3>storage <span class="dim">(${others.length})</span></h3>
           <div class="dim" style="margin-bottom: 0.5rem;">the chunks underneath — Duples balance the tree, OBJECTs/ARRAYs/STRINGs hold the leaves. click to inspect.</div>
           <table class="kv clickable">
             <tbody>
@@ -360,28 +420,55 @@ function AtView ({ keyHex, address }) {
         `
       }
 
-      // Signature: dedicated layout.
+      // Signature: the polished "signed commit" view. A sig + the commit(s)
+      // it covers + the value at HEAD read as one authored unit, with the
+      // raw bytes / chunk metadata available below.
       if (codecType === 'SIGNATURE') {
         const chunk = repo.resolve(address)
         const chunkLen = chunk.length
         const signedTo = address - chunkLen          // last byte covered (inclusive)
         const sigChunkStart = address - chunkLen + 1 // first byte of the sig chunk
+        const covered = commitsCoveredBySignature(repo, decoded.address, signedTo)
+        const head = covered[0]  // newest covered commit
         return h`
-          <div class="dim">codec: ${codecType}</div>
+          <div class="signed-commit-banner">
+            <span class="signed-label">signed commit</span>
+            ${() => {
+              dep()
+              const status = verifyStatus(repo, keyHex, decoded, address)
+              const label = status === 'valid'   ? 'verified — bytes match this repo’s public key'
+                          : status === 'invalid' ? 'NOT VERIFIED — bytes do not match the repo key'
+                          : status === 'pending' ? 'verifying…'
+                          : `error: ${status?.error ?? 'unknown'}`
+              return h`${verifyBadge(status)} <span class="dim">${label}</span>`
+            }}
+          </div>
+          ${covered.length === 0
+            ? h`<div class="empty">this signature covers no commits (would only happen if a sign produced over a non-commit range)</div>`
+            : h`
+              <h3>${covered.length === 1 ? 'message' : `${covered.length} messages (batched into one signature)`}</h3>
+              ${covered.map(c => h`
+                <div class="commit-card" data-key=${`cc${c.address}`}>
+                  <div class="commit-msg">${c.message || h`<span class="dim">(no message)</span>`}</div>
+                  <div class="commit-meta dim">
+                    <span>${fmtDate(c.date)}</span>
+                    <span> · commit chunk <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${c.address}>@${c.address}</a></span>
+                    <span> · value <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${c.dataAddress}>@${c.dataAddress}</a></span>
+                  </div>
+                </div>
+              `)}
+              ${head ? (() => {
+                let value
+                try { value = repo.decode(head.dataAddress) } catch { value = undefined }
+                return h`
+                  <h3>value at this point</h3>
+                  <pre class="value">${value === undefined ? '(decode error)' : safeJSON(value)}</pre>
+                `
+              })() : null}
+            `}
+          <h3>signature</h3>
           <table class="kv">
             <tbody>
-              <tr>
-                <td>verification</td>
-                <td>${() => {
-                  dep()  // wake up when fire() runs after async verify resolves
-                  const status = verifyStatus(repo, keyHex, decoded, address)
-                  const label = status === 'valid'   ? 'valid signature for this repo’s public key'
-                              : status === 'invalid' ? 'signature does NOT match this repo’s public key'
-                              : status === 'pending' ? 'verifying…'
-                              : `error: ${status?.error ?? 'unknown'}`
-                  return h`${verifyBadge(status)} <span>${label}</span>`
-                }}</td>
-              </tr>
               <tr>
                 <td>covers</td>
                 <td><a class="addr-link" data-action="open-at"
@@ -395,6 +482,7 @@ function AtView ({ keyHex, address }) {
               <tr><td>bytes</td><td class="mono">${truncHex(decoded.compactRawBytes, 32)}</td></tr>
             </tbody>
           </table>
+          <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
         `
       }
 

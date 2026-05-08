@@ -31,10 +31,11 @@
     .row + .row { border-top-color: var(--rule); }
     .row:hover + .row { border-top-color: transparent; }
 
-    /* commit + signature rows share the same column template so the page
-       doesn't visually jitter as you scan a mixed list. cols: kind | content
-       | aux | addr. for commits aux=date; for sigs aux=hex preview. */
-    .row.commit, .row.signature { grid-template-columns: 4rem 1fr 14rem 6rem; }
+    /* signed-commit + unsigned-commit + commit + signature rows share the same
+       column template so the page doesn't visually jitter as you scan a mixed
+       list. cols: kind | message | date | addr. */
+    .row.signed-commit, .row.unsigned-commit,
+    .row.commit, .row.signature { grid-template-columns: 6rem 1fr 14rem 6rem; }
 
     .row .mono { font-size: 0.85rem; }
     .row .when { font-size: 0.78rem; color: var(--ink-dim); }
@@ -50,8 +51,28 @@
       text-align: center;
       align-self: center;
     }
-    .row.commit .kind    { color: var(--accent); border-color: var(--accent); }
-    .row.signature .kind { color: var(--warn);   border-color: var(--warn); }
+    .row.commit .kind          { color: var(--accent); border-color: var(--accent); }
+    .row.signature .kind       { color: var(--warn);   border-color: var(--warn); }
+    .row.signed-commit .kind   { color: #16a34a;       border-color: #16a34a; }
+    .row.unsigned-commit .kind { color: var(--warn);   border-color: var(--warn); }
+
+    /* Polished signed-commit detail view (AtView SIGNATURE branch). */
+    .signed-commit-banner {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.65rem 0.85rem; margin: 0.5rem 0 1rem;
+      border: 1.5px solid #16a34a; border-radius: var(--radius);
+      background: rgba(22, 163, 74, 0.06);
+    }
+    .signed-commit-banner .signed-label {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+      font-weight: 600; color: #16a34a;
+    }
+    .commit-card {
+      padding: 0.6rem 0.85rem; margin: 0.4rem 0;
+      border: 1px solid var(--rule); border-radius: var(--radius);
+    }
+    .commit-card .commit-msg { font-size: 0.95rem; margin-bottom: 0.25rem; }
+    .commit-card .commit-meta { font-size: 0.8rem; }
 
     .verify-badge { font-weight: 700; padding-left: 0.35em; font-size: 0.95em; }
     .verify-badge.valid   { color: #16a34a; }

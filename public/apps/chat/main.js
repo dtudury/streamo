@@ -53,7 +53,7 @@ joinBtn.onclick = async () => {
 
     const myRepo = await registry.open(myKey)
     myRepo.attachSigner(signer, 'chat')
-    myRepo.defaultMessage = 'web'
+    myRepo.defaultMessage = `joined as ${username} (web)`
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)
@@ -113,6 +113,8 @@ joinBtn.onclick = async () => {
       if (!text) return
       inputEl.value = ''
       const messages = myRepo.get('messages') ?? []
+      const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
+      myRepo.defaultMessage = `"${preview}" (web)`
       myRepo.set({ name: username, messages: [...messages, { text, at: Date.now() }] })
     }
 

@@ -56,8 +56,8 @@ const session = await registrySync(registry, host, port, {
 
 // Open my own repo, set profile if first time
 const myRepo = await registry.open(myKey)
-myRepo.defaultMessage = 'cli'
 if (!myRepo.get('name')) {
+  myRepo.defaultMessage = `joined as ${username} (cli)`
   myRepo.set({ name: username, messages: [] })
 }
 
@@ -111,6 +111,8 @@ rl.on('line', async line => {
   const text = line.trim()
   if (!text) { rl.prompt(); return }
   const messages = myRepo.get('messages') ?? []
+  const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
+  myRepo.defaultMessage = `"${preview}" (cli)`
   myRepo.set({ name: username, messages: [...messages, { text, at: Date.now() }] })
   rl.prompt()
 })

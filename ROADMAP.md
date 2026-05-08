@@ -64,11 +64,16 @@ Below is the underlying capability surface (unchanged in 2.0.0):
 
 **Apps**
 - Chat — full p2p messaging app. Each participant owns their own signed message
-  stream. `public/apps/chat/server.js` is the standalone server — its public key
-  is the room address, its member list is in its own repo, and it has no special
-  authority over anyone's data. Runs in the browser and from the terminal
-  (`chat-cli.js`). Message history persists across page reloads via server-side
-  archiving — rejoin with the same credentials and your history comes back.
+  stream. `public/apps/chat/server.js` is **the all-in-one demo entry point** —
+  it's both a chat room and a static-file server, serving the homepage, the
+  chat app, and the explorer on one port. Its public key is the room address,
+  its member list is in its own repo, and it has no special authority over
+  anyone's data. Runs in the browser and from the terminal (`chat-cli.js`).
+  Message history persists across page reloads via server-side archiving.
+- Explorer at `public/apps/explorer/` — read-only browser for the live
+  registry. Click a repo → see its commit history → click a commit → see the
+  value at that point. Hash-based routing so refresh / bookmark / back-button
+  all work.
 - Homepage at `public/index.html`.
 - `StreamoServer` — reusable class that wraps signer, registry, and all sync
   methods behind a clean API. `bin/streamo.js` is now a thin CLI parser on top
@@ -81,15 +86,22 @@ Below is the underlying capability surface (unchanged in 2.0.0):
 
 ## what's next
 
-### presence indicators
-Who's currently online? The `interest` / `announce` layer is ephemeral by design,
-so presence is a heartbeat + timeout — announce yourself periodically, time out
-peers you haven't heard from.
+### richer explorer
+The explorer (`public/apps/explorer/`) shipped as a thin slice — registry →
+repo → commit history → value-at-commit. Polish from here:
+- show signature chunks as their own commit-list entries (currently they're
+  invisible — `valueAddress` skips past them)
+- highlight changed paths between a commit and its parent (`changedPaths` is
+  already exported)
+- collapsible JSON tree for the value view (raw `JSON.stringify` is fine for
+  small repos; falls over on big arrays)
 
-### rebuild the browser app
-The old repository-browser app was left behind during the migration because its
-imports broke. Rebuilding it with `h` / `mount` would be the first substantial
-real-world test of the UI layer.
+### presence indicators
+Who's currently online? The WS-level keep-alive (20s JSON ping in
+`registrySync`) keeps connections from idle-closing, but doesn't surface
+"alice is here" anywhere in the UI. Presence proper would announce
+periodically via `interest`/`announce` and time out peers we haven't heard
+from. Ephemeral by design — not stored in any Repo.
 
 ---
 

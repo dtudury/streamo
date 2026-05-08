@@ -30,6 +30,12 @@ function adaptWebSocket (ws) {
 // to the correct repository without any per-connection state table.
 const KEY_BYTES = 33
 
+// Keep-alive: send a {type:'ping'} JSON frame periodically so PaaS hosts that
+// idle-close WebSockets don't drop us. Browsers don't expose WS ping/pong
+// frames, so we use a JSON message — the receiver silently ignores unknown
+// types, but the frame itself counts as activity.
+const KEEPALIVE_INTERVAL_MS = 20000
+
 /**
  * @typedef {Object} RegistrySyncOptions
  *
@@ -191,6 +197,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   // Announce what we already have
   sendCatalog()
 
+  // Keep-alive heartbeat — both sides ping; receivers ignore unknown types.
+  const keepalive = setInterval(() => {
+    if (ws.readyState === ws.OPEN) sendJson({ type: 'ping' })
+  }, KEEPALIVE_INTERVAL_MS)
+
   ws.on('message', async data => {
     // Normalize to Uint8Array — works for Node Buffer, ArrayBuffer, Uint8Array, string
     const buf = typeof data === 'string' ? new TextEncoder().encode(data)
@@ -245,6 +256,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   })
 
   function cleanup () {
+    clearInterval(keepalive)
     registry.offOpen(onNewRepo)
     for (const reader of readers.values()) reader.cancel().catch(() => {})
     for (const [keyHex, fn] of followFns) {

@@ -68,9 +68,42 @@ for (const [k, r] of registry) watchRepo(k, r)
 registry.onOpen((k, r) => { watchRepo(k, r); fire() })
 
 // ── Navigation ────────────────────────────────────────────────────────────
+//
+// View state is reflected in location.hash so refresh / bookmark / back-button
+// all work. Hash shapes:
+//   #/                              → registry
+//   #/repo/<keyHex>                 → repo
+//   #/repo/<keyHex>/commit/<addr>   → commit
+// Anything we don't understand falls back to registry.
 
-let view = { kind: 'registry' }
-function go (next) { view = next; fire() }
+function viewFromHash () {
+  const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/commit\/(\d+))?\/?$/i)
+  if (!m) return { kind: 'registry' }
+  if (m[2] != null) return { kind: 'commit', keyHex: m[1], dataAddress: +m[2] }
+  return { kind: 'repo', keyHex: m[1] }
+}
+
+function hashFromView (v) {
+  switch (v.kind) {
+    case 'repo':   return `#/repo/${v.keyHex}`
+    case 'commit': return `#/repo/${v.keyHex}/commit/${v.dataAddress}`
+    default:       return '#/'
+  }
+}
+
+let view = viewFromHash()
+function go (next) {
+  view = next
+  const target = hashFromView(next)
+  if (location.hash !== target) location.hash = target
+  fire()
+}
+window.addEventListener('hashchange', () => {
+  const next = viewFromHash()
+  if (next.kind === view.kind && next.keyHex === view.keyHex && next.dataAddress === view.dataAddress) return
+  view = next
+  fire()
+})
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 

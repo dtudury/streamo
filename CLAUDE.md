@@ -57,6 +57,21 @@ There is no CI. Run `npm test` (which is `node --test`) before any commit that t
 — the user's standing arrangement is "Claude is the gate." 79+ tests, ~2.3s. If a change
 lands without tests passing, you have failed the contract.
 
+## known footguns
+
+- **`onclick=${fn}` in h templates is a trap.** `attr=${fn}` is the *reactive
+  cell* pattern: mount calls `fn(el)` on every render and assigns the **return
+  value** to the attribute. For onclick this means the "handler" runs on every
+  mount and `el.onclick` becomes `undefined`. Use **event delegation** with
+  `data-action` attributes on a single listener attached to the app container
+  (see `public/apps/explorer/main.js`).
+- **Cross-Recaller bridging.** Each Repo has its own `Recaller`; mount() takes
+  a single one. To re-render on repo changes, set up `repo.watch(name, () => {
+  repo.byteLength; fire() })` and have UI slots `dep()` against an
+  app-level signal. Coalesce `fire()` via `requestAnimationFrame` if many
+  repos are streaming chunks concurrently — otherwise Recaller's flush loop
+  hits its iteration limit during initial sync.
+
 ## architecture notes
 
 - `Streamo` — content-addressed, append-only byte store with self-describing codec
@@ -73,14 +88,21 @@ lands without tests passing, you have failed the contract.
   generates address-based names; `defineComponent` registers render functions; function
   components `(props) => nodes` work directly as tags in `h` with no class needed
 - `registrySync` — bidirectional multi-repo sync over a single WebSocket; works in Node
-  and browser; content-driven discovery via `follow`
+  and browser; content-driven discovery via `follow`; sends 20-second JSON keep-alive
+  pings so idle-closing PaaS hosts don't drop the connection
 - CLI `--web` flag — starts a WebSocket relay + static file server; `chat-server.js` is
   retired; `public/streamo/chat-cli.js` is the terminal chat client
+- `public/apps/chat/server.js` is the **all-in-one demo entry point** — it's both a
+  chat room and a static-file server for the homepage + chat app + explorer. Running
+  it gives you the full demo on one port.
 
 ## what's next
 
-1. Rebuild the browser app with `h` / `mount` — registry → repo → commit history → value
-   at commit; treat streamo as a black box (import from the public API only)
+1. Polish the explorer further — richer commit view (signature chunks as their own
+   entries, changed-paths highlight between commit and parent, collapsible JSON tree)
+2. Presence indicators — heartbeat already exists at the WS level (keep-alive ping in
+   `registrySync`); the missing piece is surfacing "who's online" in the UI via the
+   `interest`/`announce` ephemeral layer
 
 ## commit style
 

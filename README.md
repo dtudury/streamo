@@ -177,17 +177,27 @@ For hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn
 | `s3Sync` | replicate chunks to S3-compatible object storage |
 | `stateFileSync` | write repo state as JSON on every change |
 
-## chat example
+## the all-in-one demo
+
+The chat server is also the website server. Run it once and you get the
+homepage, chat app, **and** the repo explorer all on the same origin:
 
 ```bash
-# start the server — its public key becomes the room key
+# start the all-in-one demo server
 STREAMO_NAME=my-chat STREAMO_USERNAME=relay STREAMO_PASSWORD=secret \
   node public/apps/chat/server.js
 
-# join from the browser
+# homepage with app cards
+open http://localhost:8080/
+
+# chat
 open http://localhost:8080/apps/chat/
 
-# join from the terminal
+# repo explorer — leave it open in another tab to watch commits roll in
+# as you chat
+open http://localhost:8080/apps/explorer/
+
+# join chat from the terminal
 node public/streamo/chat-cli.js alice secret localhost 8080
 ```
 

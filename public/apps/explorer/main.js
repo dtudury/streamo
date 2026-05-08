@@ -114,6 +114,11 @@ function safeJSON (value) {
 
 // Walk every chunk newest-to-oldest. Each chunk's address is the index of
 // its last byte; the next chunk back ends at addr - chunk.length.
+//
+// `kind` distinguishes commits and signatures (the things you usually
+// browse) from "other" chunks (Duples, raw OBJECTs, ARRAYs, STRINGs, etc.
+// — the storage-level building blocks). The repo view shows all three
+// in separate sections.
 function * repoEntries (repo) {
   const len = repo.byteLength
   if (len <= 0) return
@@ -126,25 +131,28 @@ function * repoEntries (repo) {
       let sig
       try { sig = repo.decode(addr) } catch { sig = null }
       if (sig) {
-        // Per Streamo.sign / .verify, signed range is [sig.address, sigAddr - chunkLen + 1),
-        // i.e. last covered byte index = sigAddr - chunkLen. The sig chunk itself
-        // spans [sigAddr - chunkLen + 1, sigAddr], so coverage runs right up to
-        // (but does not include) the sig chunk's first byte.
         yield {
           kind: 'signature',
           address: addr,
           signedFrom: sig.address,
           signedTo: addr - code.length,
           chunkStart: addr - code.length + 1,
-          hex: truncHex(sig.compactRawBytes, 12)
+          hex: truncHex(sig.compactRawBytes, 12),
+          codecType: type
         }
       }
     } else if (type === 'OBJECT') {
       let value
       try { value = repo.decode(addr) } catch { value = null }
       if (isCommitShape(value)) {
-        yield { kind: 'commit', address: addr, message: value.message, date: value.date, dataAddress: value.dataAddress, parent: value.parent }
+        yield { kind: 'commit', address: addr, message: value.message, date: value.date, dataAddress: value.dataAddress, parent: value.parent, codecType: type }
+      } else {
+        yield { kind: 'other', address: addr, codecType: type }
       }
+    } else {
+      // Anything else — Duples, ARRAYs, STRINGs, etc. — is "other": part of
+      // the storage tree but not a thing a user normally browses.
+      yield { kind: 'other', address: addr, codecType: type }
     }
     addr -= code.length
   }
@@ -199,11 +207,12 @@ function RepoView ({ keyHex }) {
           <div class="empty">no signed commits yet</div>
         `
       }
-      const commitCount = entries.filter(e => e.kind === 'commit').length
-      const sigCount = entries.length - commitCount
+      const commits = entries.filter(e => e.kind === 'commit')
+      const sigs = entries.filter(e => e.kind === 'signature')
+      const others = entries.filter(e => e.kind === 'other')
       return h`
-        <h2>chunks <span class="dim">(${commitCount} commit${commitCount === 1 ? '' : 's'} · ${sigCount} sig${sigCount === 1 ? '' : 's'})</span></h2>
-        ${entries.map(e => e.kind === 'commit'
+        <h2>chunks <span class="dim">(${commits.length} commit${commits.length === 1 ? '' : 's'} · ${sigs.length} sig${sigs.length === 1 ? '' : 's'} · ${others.length} other)</span></h2>
+        ${[...commits, ...sigs].map(e => e.kind === 'commit'
           ? h`
             <div class="row commit" data-key=${`c${e.address}`} data-action="open-at"
                  data-keyhex=${keyHex} data-addr=${e.address}>
@@ -221,6 +230,22 @@ function RepoView ({ keyHex }) {
               <span class="mono dim">@${e.address}</span>
             </div>`
         )}
+        ${others.length ? h`
+          <h3>storage tree <span class="dim">(${others.length})</span></h3>
+          <div class="dim" style="margin-bottom: 0.5rem;">the chunks underneath — Duples balance the tree, OBJECTs/ARRAYs/STRINGs hold the leaves. click to inspect.</div>
+          <table class="kv clickable">
+            <tbody>
+              ${others.map(e => h`
+                <tr data-key=${`o${e.address}`} data-action="open-at"
+                    data-keyhex=${keyHex} data-addr=${e.address}>
+                  <td class="mono dim">${e.codecType}</td>
+                  <td>${(() => { try { return previewValue(repo.decode(e.address)) } catch { return '' } })()}</td>
+                  <td class="mono dim">@${e.address}</td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        ` : null}
       `
     }}
   `
@@ -286,6 +311,30 @@ function AtView ({ keyHex, address }) {
             : null}
           <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
+          ${rawChunkSection(repo, address)}
+          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
+        `
+      }
+
+      // Duple: explain what this tree-node IS, then show its two children.
+      if (codecType === 'DUPLE') {
+        return h`
+          <div class="dim">codec: DUPLE</div>
+          <p class="explainer">
+            A <strong>Duple</strong> is a 2-tuple — the building block streamo uses
+            to balance binary trees of OBJECT entries and ARRAY elements. Each Duple
+            holds two slots; the slots are either values (a leaf) or other Duples
+            (an interior tree node). They're how content-addressing scales to
+            larger objects/arrays without rewriting the whole structure on every
+            small change — siblings keep their addresses, and dedup happens at
+            every level of the tree.
+          </p>
+          <table class="kv">
+            <tbody>
+              <tr><td class="mono">v[0]</td><td>${previewValue(decoded.v[0])}</td></tr>
+              <tr><td class="mono">v[1]</td><td>${previewValue(decoded.v[1])}</td></tr>
+            </tbody>
+          </table>
           ${rawChunkSection(repo, address)}
           ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
@@ -435,12 +484,23 @@ function referrersSection (repo, keyHex, address) {
   `
 }
 
-function previewValue (v) {
+// Detect a Duple instance — codecs.js doesn't export the class so we have to
+// duck-type. A Duple is an object whose only own property is `v`, a length-2
+// array. (Used so we can render Duples as `[a, b]` rather than `{…} (1)`.)
+function isDuple (v) {
+  return v && typeof v === 'object' && Array.isArray(v.v) && v.v.length === 2 && Object.keys(v).length === 1
+}
+
+function previewValue (v, depth = 0) {
   if (v == null) return String(v)
   if (typeof v === 'string') return v.length > 60 ? JSON.stringify(v.slice(0, 60)) + '…' : JSON.stringify(v)
   if (typeof v === 'number' || typeof v === 'boolean') return String(v)
   if (v instanceof Date) return v.toISOString()
   if (v instanceof Uint8Array) return `Uint8Array(${v.length})`
+  if (isDuple(v)) {
+    if (depth > 2) return 'Duple(…)'
+    return `Duple(${previewValue(v.v[0], depth + 1)}, ${previewValue(v.v[1], depth + 1)})`
+  }
   if (Array.isArray(v)) return `[…] (${v.length})`
   if (typeof v === 'object') return `{…} (${Object.keys(v).length})`
   return String(v)

@@ -32,9 +32,10 @@ export class Recaller {
   }
 
   unwatch (f) {
-    // Also drop f from the pending queue: a mutation may have queued it before
-    // unwatch was called, and the next #flush() would resurrect it via watch()
-    // — re-establishing all its dependencies and undoing the unwatch.
+    // Drop f from the pending queue (catches the case where unwatch happens
+    // before #flush() starts) and clear its deps/name. The complementary fix
+    // in #flush() — checking #names presence per item — handles the harder
+    // case where unwatch happens MID-flush, after the batch was snapshotted.
     this.#pending.delete(f)
     this.#disassociate(f)
   }
@@ -69,11 +70,14 @@ export class Recaller {
       }
       const batch = [...this.#pending]
       this.#pending = new Set()
-      batch.forEach(f => {
-        const name = this.#names.get(f) ?? f.name ?? '(unnamed)'
-        this.#disassociate(f)
-        this.watch(name, f)
-      })
+      for (const f of batch) {
+        // Skip watchers unwatched during this flush — e.g. when processing one
+        // watcher tears down DOM that contained another watcher's slot anchor.
+        // #names is the source of truth for "is this watcher still registered."
+        if (!this.#names.has(f)) continue
+        const name = this.#names.get(f)
+        this.watch(name, f)  // watch() handles its own #disassociate
+      }
       loops++
     }
     this.#flushing = false

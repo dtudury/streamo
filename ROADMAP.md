@@ -214,14 +214,17 @@ Specific items so far:
   without `append` and the write path can pass one with append. Bigger
   refactor — every codec's encode/decode signature changes — but
   worthwhile when this thread is a priority.
-- **Explainer comments at the top of each module** describing the
+- ~~**Explainer comments at the top of each module** describing the
   module's role, the public surface, and the one or two non-obvious
-  invariants someone reimplementing should preserve.
-- **A `design.md`** linking the modules together as a narrative —
+  invariants someone reimplementing should preserve.~~ *(landed —
+  core modules carry @file headers pointing at the design narrative)*
+- ~~**A `design.md`** linking the modules together as a narrative —
   "address, then codec, then registry, then signed log, then sync" —
-  so a reader can build a mental model in one sitting.
+  so a reader can build a mental model in one sitting.~~ *(landed —
+  see design.md at the project root)*
 
-These don't all need to land together; treat as a checklist.
+These don't all need to land together; treat as a checklist. Two of
+three done; the codecs `r`-per-call refactor is still on the list.
 
 ### presence indicators
 Who's currently online? The WS-level keep-alive (20s JSON ping in

@@ -1,3 +1,14 @@
+/**
+ * @file registrySync — bidirectional multi-repo WebSocket sync.
+ *
+ * After a "registry" handshake, both sides exchange JSON catalog/
+ * subscribe/interest/announce/ping messages and binary
+ * [33-byte-key-prefix][chunk] frames. Discovery happens via filter,
+ * follow (content-driven), or onAnnounce. 20-second keep-alive ping
+ * for PaaS hosts that idle-close.
+ *
+ * See design.md §10.
+ */
 // Use native WebSocket in the browser; fall back to the `ws` package in Node.
 const WS = globalThis.WebSocket ?? (await import('ws')).default
 

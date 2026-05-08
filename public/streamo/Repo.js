@@ -1,3 +1,13 @@
+/**
+ * @file Repo — a Streamo whose every set() becomes a signed commit.
+ *
+ * Each commit is a record { message, date, dataAddress, parent }. The
+ * commit log is what flows over the wire during sync. attachSigner
+ * makes commits sign automatically, with concurrent commits batched
+ * into one signature.
+ *
+ * See design.md §8.
+ */
 import { Recaller } from './utils/Recaller.js'
 import { Streamo, changedPaths } from './Streamo.js'
 

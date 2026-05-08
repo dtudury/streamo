@@ -1,3 +1,15 @@
+/**
+ * @file Streamo — reactive content-addressed signed byte store.
+ *
+ * Layers Recaller-driven path-level reactivity on top of CodecRegistry,
+ * plus a sign/verify API for secp256k1 attestations over byte ranges.
+ * `valueAddress` skips trailing SIGNATURE chunks so reading the latest
+ * value works whether or not it has been auto-signed yet.
+ *
+ * Exports: Streamo (the class), ConflictError, changedPaths.
+ *
+ * See design.md §5.
+ */
 import { Recaller } from './utils/Recaller.js'
 import { CodecRegistry } from './CodecRegistry.js'
 import { Signature } from './Signature.js'

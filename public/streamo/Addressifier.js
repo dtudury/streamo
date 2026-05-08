@@ -1,3 +1,12 @@
+/**
+ * @file Addressifier — append-only content-addressable byte store.
+ *
+ * The byte-level foundation. Knows nothing about types or values; just
+ * appends Uint8Array chunks and indexes them by content. Higher layers
+ * (CodecRegistry, Streamo, Repo, registrySync) build on this.
+ *
+ * See design.md §1.
+ */
 import { ContentMap } from './ContentMap.js'
 
 /**

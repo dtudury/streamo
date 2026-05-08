@@ -1,3 +1,14 @@
+/**
+ * @file Recaller — fine-grained reactive dependency tracker.
+ *
+ * watch(name, fn) runs fn on a tracking stack; reportKeyAccess(target,
+ * key) inside fn registers (target, key) → fn; reportKeyMutation
+ * elsewhere wakes any matching watcher on the next microtask. The flush
+ * loop is robust against unwatch happening mid-flight, which matters
+ * for slot watchers torn down during DOM reconciliation.
+ *
+ * See design.md §6.
+ */
 import { NestedSet } from './NestedSet.js'
 import { nextTick } from './nextTick.js'
 

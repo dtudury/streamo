@@ -1,3 +1,14 @@
+/**
+ * @file codecs — concrete codecs for every value type Streamo can encode.
+ *
+ * Primitives (UNDEFINED, NULL, FALSE, TRUE, UINT7, FLOAT64, DATE), bytes
+ * (WORD, UINT8ARRAY, EMPTY_UINT8ARRAY), strings, composites (OBJECT,
+ * ARRAY, EMPTY_*), the SIGNATURE chunk, and the internal balanced-tree
+ * node Duple used to scale OBJECT/ARRAY storage. Every codec is a
+ * { encode, decode, partReaders } object.
+ *
+ * See design.md §3.
+ */
 import { numberToVar, varToNumber, range } from './utils.js'
 import { Signature } from './Signature.js'
 

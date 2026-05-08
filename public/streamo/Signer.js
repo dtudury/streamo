@@ -1,3 +1,13 @@
+/**
+ * @file Signer — deterministic secp256k1 keypairs from credentials.
+ *
+ * PBKDF2-SHA256 (256 bits) is used twice — first to derive a hashword
+ * from password+username, then a private key per stream-name. No key
+ * files; same credentials always produce the same identity. KAT in
+ * Signer.test.js pins the byte output across runtime versions.
+ *
+ * See design.md §7.
+ */
 import { getPublicKey, signAsync, verify } from './utils/noble-secp256k1.js'
 
 const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle

@@ -1,3 +1,13 @@
+/**
+ * @file CodecRegistry — codec dispatcher on top of Addressifier.
+ *
+ * Resolves bytes ↔ JS values via a registered codec table; chunks identify
+ * their codec by their last byte (the footer). Public read APIs (asRefs,
+ * directReferences, decode) are mutation-impossible by construction; the
+ * write companion _asRefsForWrite is internal.
+ *
+ * See design.md §3–4.
+ */
 import { Addressifier } from './Addressifier.js'
 import { makeCodecs } from './codecs.js'
 

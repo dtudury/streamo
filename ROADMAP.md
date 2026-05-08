@@ -5,9 +5,34 @@ picture of where the project is and where it's headed.
 
 ---
 
+## where we are (3.0.0)
+
+3.0.0 fixes a signature-coverage off-by-one in `Streamo.sign` / `verify`.
+
+**The bug.** `sign` sliced bytes as `(signedLength, before - 1)` (exclusive
+end), dropping one byte from coverage — specifically the footer of the last
+chunk before the signature. `verify` and `makeVerifiedWritableStream`
+mirrored the same exclusive end, so signatures still validated, but a
+flipped byte at that exact index would not have been caught.
+
+**The fix.** All three sites now slice `(signedLength, before)` — the full
+pre-signature byte range. Regression test in `Streamo.test.js` independently
+computes the expected signature over the full range using RFC 6979
+deterministic ECDSA and asserts byte-equality against `sign`'s output.
+
+**Breaking.** Signatures created with 2.x cover a different byte range and
+will not verify under 3.x (and vice versa). Existing `.streamo/archive/`
+data still reads but its signatures will fail verification — fine for
+fresh dev environments, ugly if shared between clients on different
+versions. New code talks to new code.
+
+The 3.0.0 release also includes everything from the recent rich-explorer
+work: hash routing, signature/changed-paths visibility, address-aware
+drilldown, raw-bytes hex dump, and 20s WebSocket keep-alive pings.
+
 ## where we are (2.0.0)
 
-2.0.0 is a surface and correctness pass on top of 1.0:
+2.0.0 was a surface and correctness pass on top of 1.0:
 
 - **Cleaner package surface** — `index.js` exposes named exports, `exports` /
   `files` / `main` are explicit, test files no longer ship in the npm tarball.
@@ -20,7 +45,7 @@ picture of where the project is and where it's headed.
 - **Recaller `unwatch` bug** — a watcher already queued in `#pending` could
   resurrect itself on the next flush. Fixed; regression test added.
 
-Below is the underlying capability surface (unchanged in 2.0.0):
+Below is the underlying capability surface (unchanged in 3.0.0):
 
 **Core data layer**
 - `Streamo` — reactive, content-addressed, append-only byte store with a

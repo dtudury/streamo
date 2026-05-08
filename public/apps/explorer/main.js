@@ -125,16 +125,15 @@ function * repoEntries (repo) {
       let sig
       try { sig = repo.decode(addr) } catch { sig = null }
       if (sig) {
-        // Per Streamo.sign / .verify, signed range is [sig.address, sigAddr - chunkLen),
-        // i.e. last covered byte index = sigAddr - chunkLen - 1.
-        // The sig chunk itself spans [sigAddr - chunkLen + 1, sigAddr], so there's a
-        // one-byte gap at sigAddr - chunkLen that's neither signed nor part of the
-        // sig chunk — looks like an off-by-one in sign().
+        // Per Streamo.sign / .verify, signed range is [sig.address, sigAddr - chunkLen + 1),
+        // i.e. last covered byte index = sigAddr - chunkLen. The sig chunk itself
+        // spans [sigAddr - chunkLen + 1, sigAddr], so coverage runs right up to
+        // (but does not include) the sig chunk's first byte.
         yield {
           kind: 'signature',
           address: addr,
           signedFrom: sig.address,
-          signedTo: addr - code.length - 1,
+          signedTo: addr - code.length,
           chunkStart: addr - code.length + 1,
           hex: truncHex(sig.compactRawBytes, 12)
         }
@@ -291,9 +290,8 @@ function AtView ({ keyHex, address }) {
       if (codecType === 'SIGNATURE') {
         const chunk = repo.resolve(address)
         const chunkLen = chunk.length
-        const signedTo = address - chunkLen - 1
-        const sigChunkStart = address - chunkLen + 1
-        const gapByte = address - chunkLen   // one-byte gap, see note below
+        const signedTo = address - chunkLen          // last byte covered (inclusive)
+        const sigChunkStart = address - chunkLen + 1 // first byte of the sig chunk
         return h`
           <div class="dim">codec: ${codecType}</div>
           <table class="kv">
@@ -302,16 +300,11 @@ function AtView ({ keyHex, address }) {
                 <td>covers</td>
                 <td><a class="addr-link" data-action="open-at"
                        data-keyhex=${keyHex} data-addr=${decoded.address}
-                       >@${decoded.address}</a> through @${signedTo}</td>
+                       >@${decoded.address}</a> through @${signedTo} (${signedTo - decoded.address + 1} bytes)</td>
               </tr>
               <tr>
                 <td>sig chunk</td>
                 <td class="mono">@${sigChunkStart}…@${address} (${chunkLen} bytes)</td>
-              </tr>
-              <tr>
-                <td>note</td>
-                <td class="dim">byte @${gapByte} is neither signed nor part of the
-                  sig chunk — appears to be an off-by-one in Streamo.sign</td>
               </tr>
               <tr><td>bytes</td><td class="mono">${truncHex(decoded.compactRawBytes, 32)}</td></tr>
             </tbody>

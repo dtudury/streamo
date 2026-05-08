@@ -328,7 +328,11 @@ export class Streamo extends CodecRegistry {
    */
   async sign (signer, streamoName) {
     const before = super.byteLength
-    const bytes = this.slice(this.#signedLength, before - 1)
+    // Slice end is exclusive, so [signedLength, before) is the full byte range
+    // appended since the last signature. (Earlier code used `before - 1` here
+    // and dropped the final byte — the footer of the last pre-sig chunk —
+    // from the signature's coverage. Matching change in verify below.)
+    const bytes = this.slice(this.#signedLength, before)
     const compactRawBytes = await signer.sign(streamoName, bytes)
     if (super.byteLength !== before) throw new Error('streamo was modified while signing')
     const sig = new Signature(this.#signedLength, compactRawBytes)
@@ -346,7 +350,11 @@ export class Streamo extends CodecRegistry {
   async verify (sig, publicKey) {
     const sigCode = this.encode(sig)
     const sigAddress = this.addressOf(sigCode)
-    const bytes = this.slice(sig.address, sigAddress - sigCode.length)
+    // The sig chunk's first byte is at sigAddress - sigCode.length + 1, so
+    // the byte just before the sig chunk is at sigAddress - sigCode.length.
+    // Slice end is exclusive, so [sig.address, sigAddress - sigCode.length + 1)
+    // covers all bytes up to and including that byte — matching sign() above.
+    const bytes = this.slice(sig.address, sigAddress - sigCode.length + 1)
     return verifySignature(publicKey, bytes, sig.compactRawBytes)
   }
 
@@ -383,10 +391,13 @@ export class Streamo extends CodecRegistry {
 
           // If this is a SIGNATURE chunk, verify it covers the bytes since its
           // stated start address before we accept it into the store.
+          // self.byteLength here is the length BEFORE this sig chunk is
+          // appended, so [sig.address, self.byteLength) is the full pre-sig
+          // range — matching sign() / verify() above.
           const codec = self.footerToCodec[code.at(-1)]
           if (codec?.type === 'SIGNATURE') {
             const sig = self.decode(code)
-            const bytes = self.slice(sig.address, self.byteLength - 1)
+            const bytes = self.slice(sig.address, self.byteLength)
             const valid = await verifySignature(publicKey, bytes, sig.compactRawBytes)
             if (!valid) throw new Error('signature verification failed')
           }

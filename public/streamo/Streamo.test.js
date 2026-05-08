@@ -225,4 +225,30 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(paths.includes('items.2'),
       `expected items.2 (the changed index); got: ${JSON.stringify(paths)}`)
   })
+
+  test('sign covers the FULL pre-signature byte range — no off-by-one', async ({ assert }) => {
+    // Earlier versions sliced (signedLength, before - 1), dropping the footer
+    // byte of the last pre-sig chunk from coverage. Both sign and verify used
+    // the same broken slice so signatures still validated, but a flipped
+    // footer byte at that index wouldn't be caught.
+    //
+    // This test proves coverage spans [signedLength, before): we independently
+    // sign the full byte range (using the same Signer, which uses RFC 6979
+    // deterministic ECDSA via noble-secp256k1) and compare bytes. If sign
+    // covered fewer bytes, the signatures would differ.
+    const s = new Streamo()
+    const signer = new Signer('alice', 'hunter2', 1)
+    s.set({ msg: 'hello, world' })
+    const before = s.byteLength
+    const sig = await s.sign(signer, 'test')
+
+    const fullRangeBytes = s.slice(0, before)
+    const expectedSig = await signer.sign('test', fullRangeBytes)
+    assert.deepEqual([...sig.compactRawBytes], [...expectedSig],
+      'streamo signature must equal a fresh sig over [0, before) — covering every pre-sig byte')
+
+    // And verify must round-trip cleanly under the new slice.
+    const { publicKey } = await signer.keysFor('test')
+    assert.ok(await s.verify(sig, publicKey), 'verify must accept sign\'s output')
+  })
 })

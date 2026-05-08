@@ -92,6 +92,11 @@ window.addEventListener('hashchange', () => {
   fire()
 })
 
+// At-view tab state — persists across at-view navigations so a user who
+// wants to keep a "storage" lens on doesn't have to re-click after every
+// drill-down. Reset to default on registry/repo views (set in go()).
+let atTab = 'value'
+
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 const truncKey = k => k.slice(0, 12) + '…'
@@ -258,6 +263,12 @@ function AtView ({ keyHex, address }) {
       <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
       <span class="dim"> @ ${address}</span>
     </div>
+    <nav class="tabs">
+      <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
+         data-action="set-tab" data-tab="value">value</a>
+      <a class=${() => { dep(); return ['tab', atTab === 'storage' ? 'active' : null] }}
+         data-action="set-tab" data-tab="storage">storage</a>
+    </nav>
     ${() => {
       dep()
       const repo = registry.get(keyHex)
@@ -271,7 +282,15 @@ function AtView ({ keyHex, address }) {
       const { codecType, refs, decoded } = info
       const isCommit = isCommitShape(decoded)
 
-      // For commits, render the rich commit panel + changed paths.
+      // Storage tab: same content for every codec — bytes + referrers.
+      if (atTab === 'storage') {
+        return h`
+          ${rawChunkSection(repo, address)}
+          ${referrersSection(repo, keyHex, address)}
+        `
+      }
+
+      // Value tab — branches by codec.
       if (isCommit) {
         const parentDataAddr = decoded.parent !== undefined
           ? safeGet(() => repo.decode(decoded.parent)?.dataAddress)
@@ -311,8 +330,6 @@ function AtView ({ keyHex, address }) {
             : null}
           <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
-          ${rawChunkSection(repo, address)}
-          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -335,8 +352,6 @@ function AtView ({ keyHex, address }) {
               <tr><td class="mono">v[1]</td><td>${previewValue(decoded.v[1])}</td></tr>
             </tbody>
           </table>
-          ${rawChunkSection(repo, address)}
-          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -375,8 +390,6 @@ function AtView ({ keyHex, address }) {
               <tr><td>bytes</td><td class="mono">${truncHex(decoded.compactRawBytes, 32)}</td></tr>
             </tbody>
           </table>
-          ${rawChunkSection(repo, address)}
-          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -390,7 +403,6 @@ function AtView ({ keyHex, address }) {
           return h`
             <div class="dim">codec: ${codecType}</div>
             <div class="empty">${isArray ? '[]' : '{}'}</div>
-            ${rawChunkSection(repo, address)}
           `
         }
         return h`
@@ -428,8 +440,6 @@ function AtView ({ keyHex, address }) {
           </table>
           <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
-          ${rawChunkSection(repo, address)}
-          ${() => { dep(); return referrersSection(repo, keyHex, address) }}
         `
       }
 
@@ -437,8 +447,6 @@ function AtView ({ keyHex, address }) {
       return h`
         <div class="dim">codec: ${codecType}</div>
         <pre class="value">${safeJSON(decoded)}</pre>
-        ${rawChunkSection(repo, address)}
-        ${() => { dep(); return referrersSection(repo, keyHex, address) }}
       `
     }}
   `
@@ -650,5 +658,6 @@ appEl.addEventListener('click', e => {
     case 'open-at':       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     case 'back-registry': return go({ kind: 'registry' })
     case 'back-repo':     return go({ kind: 'repo', keyHex: el.dataset.keyhex })
+    case 'set-tab':       atTab = el.dataset.tab; return fire()
   }
 })

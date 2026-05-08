@@ -194,6 +194,35 @@ repo → commit history → value-at-commit. Polish from here:
 - collapsible JSON tree for the value view (raw `JSON.stringify` is fine for
   small repos; falls over on big arrays)
 
+### toward reference-quality clarity
+
+Streamo is small and deliberate enough that someone could reasonably
+reimplement it from this code in another language (or the same one). The
+goal of this thread is to make it ergonomic to read end-to-end —
+"reference code" rather than "production code that happens to work."
+
+Specific items so far:
+
+- **`codecs.js` should take `r` per-call**, not capture it in closure.
+  Right now codec helpers (`inlineOrAddressPart`, `decodeParts`,
+  `getPartAddress`, etc.) reference an `r` object that's bound at
+  registry-construction time. To make `asRefs` mutation-impossible we
+  introduced a `#runReadOnly` scope on `CodecRegistry` that flips
+  `r.readOnly`; while contained and clean, it's a one-off pattern in
+  the codebase. The structurally-pretty version is: codecs take `r` as
+  a function arg per call, so the read path can pass an `r` literally
+  without `append` and the write path can pass one with append. Bigger
+  refactor — every codec's encode/decode signature changes — but
+  worthwhile when this thread is a priority.
+- **Explainer comments at the top of each module** describing the
+  module's role, the public surface, and the one or two non-obvious
+  invariants someone reimplementing should preserve.
+- **A `design.md`** linking the modules together as a narrative —
+  "address, then codec, then registry, then signed log, then sync" —
+  so a reader can build a mental model in one sitting.
+
+These don't all need to land together; treat as a checklist.
+
 ### presence indicators
 Who's currently online? The WS-level keep-alive (20s JSON ping in
 `registrySync`) keeps connections from idle-closing, but doesn't surface

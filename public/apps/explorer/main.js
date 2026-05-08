@@ -282,12 +282,12 @@ function AtView ({ keyHex, address }) {
       const { codecType, refs, decoded } = info
       const isCommit = isCommitShape(decoded)
 
-      // Storage tab: same content for every codec — outgoing references,
-      // chunk bytes, and incoming referrers. The chunk graph from this
-      // chunk's perspective: what it points to, what it is, what points
-      // to it.
+      // Storage tab: spatial view of where this chunk lives in the byte
+      // stream + outgoing references + this chunk's bytes + incoming
+      // referrers. The chunk graph from this chunk's perspective.
       if (atTab === 'storage') {
         return h`
+          ${byteStreamSection(repo, keyHex, address)}
           ${outgoingReferencesSection(repo, keyHex, address)}
           ${rawChunkSection(repo, address)}
           ${referrersSection(repo, keyHex, address)}
@@ -467,6 +467,36 @@ function rawChunkSection (repo, address) {
   return h`
     <h3>chunk bytes <span class="dim">(${bytes.length} bytes ending @${address})</span></h3>
     <pre class="value mono">${hexDump(bytes)}</pre>
+  `
+}
+
+// Byte stream — render every chunk in the repo as a hex span in the order
+// they were appended (oldest first). The current chunk is outlined; hovering
+// any data-addr element elsewhere on the page highlights the matching chunk
+// here, so references and referrers light up spatially. Click any chunk to
+// navigate.
+function byteStreamSection (repo, keyHex, currentAddress) {
+  const chunks = []
+  let addr = repo.byteLength - 1
+  while (addr >= 0) {
+    const code = repo.resolve(addr)
+    if (!code || !code.length) break
+    const codec = repo.footerToCodec[code.at(-1)]
+    chunks.unshift({ address: addr, code, codecType: codec?.type || '?' })
+    addr -= code.length
+  }
+  if (!chunks.length) return null
+  return h`
+    <h3>byte stream <span class="dim">(${repo.byteLength} bytes · ${chunks.length} chunks)</span></h3>
+    <div class="byte-stream">
+      ${chunks.map(c => h`<span
+          class=${['chunk', c.address === currentAddress ? 'current' : null]}
+          data-action="open-at"
+          data-keyhex=${keyHex}
+          data-addr=${c.address}
+          title=${`${c.codecType} @${c.address} (${c.code.length} bytes)`}
+        >${Array.from(c.code).map(b => b.toString(16).padStart(2, '0')).join(' ')}</span>`)}
+    </div>
   `
 }
 
@@ -698,4 +728,22 @@ appEl.addEventListener('click', e => {
     case 'back-repo':     return go({ kind: 'repo', keyHex: el.dataset.keyhex })
     case 'set-tab':       atTab = el.dataset.tab; return fire()
   }
+})
+
+// Cross-highlight: hovering any element with data-addr highlights the
+// matching chunk in the byte-stream view. Makes reference-rows and
+// referrer-rows light up the chunk's position in the stream so you can
+// SEE where it lives.
+appEl.addEventListener('mouseover', e => {
+  const el = e.target.closest('[data-addr]')
+  if (!el) return
+  const addr = el.dataset.addr
+  appEl.querySelectorAll(`.byte-stream .chunk[data-addr="${addr}"]`)
+    .forEach(c => c.classList.add('hovered'))
+})
+appEl.addEventListener('mouseout', e => {
+  const el = e.target.closest('[data-addr]')
+  if (!el) return
+  appEl.querySelectorAll('.byte-stream .chunk.hovered')
+    .forEach(c => c.classList.remove('hovered'))
 })

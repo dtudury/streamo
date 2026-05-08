@@ -117,6 +117,36 @@
     }
     .repo-link:hover { background: var(--flash); text-decoration-style: solid; }
 
+    /* Byte stream — every chunk laid out spatially as hex */
+    .byte-stream {
+      font-family: monospace;
+      font-size: 0.7rem;
+      line-height: 1.55;
+      padding: 0.6rem 0.75rem;
+      background: #faf9f4;
+      border: 1.5px solid var(--rule);
+      border-radius: var(--radius);
+      max-height: 24rem;
+      overflow-y: auto;
+      word-break: break-all;
+      margin: 0.4rem 0 1rem;
+    }
+    .byte-stream .chunk {
+      display: inline;
+      padding: 0 0.18rem;
+      margin: 0 1px;
+      border-radius: 2px;
+      cursor: pointer;
+      transition: background-color 0.08s, box-shadow 0.08s;
+      box-shadow: inset 0 0 0 1px transparent;
+    }
+    .byte-stream .chunk:hover { box-shadow: inset 0 0 0 1px var(--ink-dim); }
+    .byte-stream .chunk.current {
+      background: var(--flash);
+      box-shadow: inset 0 0 0 1.5px var(--ink);
+    }
+    .byte-stream .chunk.hovered { background: rgba(37, 99, 235, 0.18); }
+
     /* Tab strip — hand-drawn underline aesthetic to match proto.css */
     .tabs {
       display: flex;

@@ -226,6 +226,48 @@ describe(import.meta.url, ({ test }) => {
       `expected items.2 (the changed index); got: ${JSON.stringify(paths)}`)
   })
 
+  test('asRefs cannot mutate the streamo (math-impossible by construction)', async ({ assert }) => {
+    // Earlier versions of asRefs would silently call r.append for inline
+    // multi-byte children that didn't have their own chunk address yet —
+    // a write triggered by a read. CodecRegistry now flips a #readOnly
+    // counter around the decode call inside asRefs; getPartAddress checks
+    // it and returns undefined instead of appending. Mutation is removed
+    // from the call graph by construction, not by caller discipline.
+
+    const author = new Streamo()
+    author.set({ a: 1, b: 'hi', c: [1, 2, 3], d: new Uint8Array([42]) })
+    const expectedLen = author.byteLength
+
+    // Receive author's bytes raw via makeWritableStream — so the peer's
+    // streamo is built *only* from incoming chunks, with no internal
+    // set() calls on the peer side that would have pre-materialized
+    // anything.
+    const peer = new Streamo()
+    const writer = peer.makeWritableStream().getWriter()
+    const reader = author.makeReadableStream().getReader()
+    while (peer.byteLength < expectedLen) {
+      const { value, done } = await reader.read()
+      if (done) break
+      await writer.write(value)
+    }
+    assert.equal(peer.byteLength, expectedLen, 'peer received all author bytes')
+
+    // Walk every navigable address from the top, calling asRefs everywhere.
+    // None of these calls is allowed to grow the peer's stream.
+    const before = peer.byteLength
+    function walk (addr, seen = new Set()) {
+      if (typeof addr !== 'number' || addr < 0 || seen.has(addr)) return
+      seen.add(addr)
+      const refs = peer.asRefs(addr)
+      if (refs && typeof refs === 'object') {
+        const vals = Array.isArray(refs) ? refs : Object.values(refs)
+        for (const v of vals) walk(v, seen)
+      }
+    }
+    walk(peer.valueAddress)
+    assert.equal(peer.byteLength, before, 'asRefs walk must not change byteLength on the peer')
+  })
+
   test('sign covers the FULL pre-signature byte range — no off-by-one', async ({ assert }) => {
     // Earlier versions sliced (signedLength, before - 1), dropping the footer
     // byte of the last pre-sig chunk from coverage. Both sign and verify used

@@ -5,6 +5,48 @@ picture of where the project is and where it's headed.
 
 ---
 
+## where we are (4.0.0)
+
+4.0.0 closes a long-standing design wart: **`asRefs` could mutate the streamo
+during a read.**
+
+The story: `getPartAddress` in `codecs.js` was called from `DUPLE.decode` to
+return a child's chunk address. For inline-multi-byte children that didn't
+have a separate chunk address yet, the only way to "give back an address"
+was to `r.append(code)` — materializing them. That branch ran from any read
+path that asked for refs. In practice it almost never fired, because
+`Streamo.set` internally calls `asRefs` during writes which pre-materializes
+along any path that gets touched. But the code path existed, which means a
+peer that *only* read (e.g., the explorer) could in principle grow its local
+stream — and a future change in encoding behavior could surface this.
+
+The fix makes mutation **structurally unreachable** from `asRefs`:
+
+- `CodecRegistry` keeps a `#readOnly` depth counter, exposed to codecs via
+  `r.readOnly`. The public `asRefs(addr)` increments the counter around its
+  internal `decode(addr, true)` call. `getPartAddress` checks the flag and
+  returns `undefined` for the inline-multi-byte case instead of appending.
+- Inline addresses come back as `undefined`. Callers that need addresses for
+  navigation (the explorer, `Repo.getRefs`) handle that case by rendering
+  the child without a navigable link.
+- `Streamo.set` and `setRefs` switched to a new internal `_asRefsForWrite`
+  that bypasses the counter; their materialization is appropriate because
+  they're already inside a write op.
+
+Regression test in `Streamo.test.js`: builds a peer streamo via raw
+`makeWritableStream` (so no internal `set` runs to pre-materialize), walks
+every reachable address calling `asRefs`, asserts `byteLength` does not
+change. **Reading is now mathematically incapable of mutating the
+streamo** — protection lives in the function, not the caller.
+
+Breaking: any external caller that somehow relied on `asRefs`'s old side
+effect would now see `undefined` for inline children. None known; the
+previous behavior was a bug, not a feature.
+
+Explorer: object/array views handle `undefined` child addresses by
+rendering the row non-clickably with the decoded preview pulled from the
+parent and an "(inline)" tag.
+
 ## where we are (3.1.0)
 
 3.1.0 is a codec contract pass — investigating `codecs.js` (the largest source

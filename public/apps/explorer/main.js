@@ -398,11 +398,23 @@ function AtView ({ keyHex, address }) {
           <table class="kv clickable">
             <tbody>
               ${entries.map(([k, childAddr]) => {
+                // asRefs is mutation-impossible, so it returns undefined for
+                // inline children that don't have a separate chunk address.
+                // Show those non-clickably with the decoded value pulled from
+                // the parent.
+                if (childAddr === undefined) {
+                  const inlineValue = isArray ? decoded[+k] : decoded[k]
+                  return h`
+                    <tr>
+                      <td class="mono">${k}</td>
+                      <td>${previewValue(inlineValue)}</td>
+                      <td class="dim">(inline)</td>
+                    </tr>
+                  `
+                }
                 let preview = ''
-                try {
-                  const v = repo.decode(childAddr)
-                  preview = previewValue(v)
-                } catch { preview = '(error)' }
+                try { preview = previewValue(repo.decode(childAddr)) }
+                catch { preview = '(error)' }
                 return h`
                   <tr data-key=${k} data-action="open-at"
                       data-keyhex=${keyHex} data-addr=${childAddr}>

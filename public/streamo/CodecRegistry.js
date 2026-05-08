@@ -21,6 +21,13 @@ export class CodecRegistry extends Addressifier {
   footerToCodec = []
 
   #codecs
+  // Depth counter for read-only mode. asRefs() increments this around the
+  // decode call so that codec-level helpers (specifically getPartAddress in
+  // codecs.js) know NOT to materialize inline children by appending. When
+  // > 0, any code path that would have mutated the store returns undefined
+  // instead. Write paths (Streamo.set / setRefs) bypass asRefs and call
+  // decode(addr, true) directly so this counter stays 0 — mutation allowed.
+  #readOnly = 0
 
   constructor () {
     super()
@@ -32,6 +39,7 @@ export class CodecRegistry extends Addressifier {
       resolve: addr => self.resolve(addr),
       addressOf: code => self.addressOf(code),
       get byteLength () { return self.byteLength },
+      get readOnly () { return self.#readOnly > 0 },
       footerToCodec: this.footerToCodec
     })
     this.#registerAll()
@@ -110,6 +118,33 @@ export class CodecRegistry extends Addressifier {
    * @returns {Object|Array|number}
    */
   asRefs (address) {
+    const code = this.resolve(address)
+    const { type } = this.footerToCodec[code.at(-1)]
+    if (type === 'VARIABLE' ||
+        type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
+        type === 'ARRAY'  || type === 'EMPTY_ARRAY') {
+      // Pure read: enter read-only mode for the duration of the decode so
+      // codecs cannot append inline children. Inline addresses come back
+      // as `undefined`; callers handle that case (e.g. by showing the
+      // child without a clickable link). Math-impossible to mutate from
+      // here regardless of caller — protection is in the function.
+      this.#readOnly++
+      try { return this.decode(address, true) }
+      finally { this.#readOnly-- }
+    }
+    return address
+  }
+
+  /**
+   * Internal: like asRefs but materializes inline children when needed
+   * (write context). Used by Streamo.set / setRefs during path traversal,
+   * which DOES need real addresses to navigate composite values; and the
+   * mutation it triggers is part of the same write op anyway. Public callers
+   * should use asRefs (above), which is mutation-impossible.
+   * @param {number} address
+   * @returns {Object|Array|number}
+   */
+  _asRefsForWrite (address) {
     const code = this.resolve(address)
     const { type } = this.footerToCodec[code.at(-1)]
     if (type === 'VARIABLE' ||

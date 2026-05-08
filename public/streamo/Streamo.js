@@ -153,16 +153,19 @@ export class Streamo extends CodecRegistry {
       }
       super.append(this.encode(encodedValue))
     } else {
-      // Path update: navigate via asRefs to avoid decoding untouched subtrees,
-      // then rebuild only the changed path bottom-up, reusing sibling addresses.
+      // Path update: navigate via _asRefsForWrite to avoid decoding untouched
+      // subtrees, then rebuild only the changed path bottom-up, reusing sibling
+      // addresses. (The public asRefs is mutation-impossible; the internal
+      // _asRefsForWrite allows materializing inline children, which is
+      // appropriate here because we're inside a write op.)
       const levels = []
       let addr = baseAddress
       for (let i = 0; i < path.length - 1; i++) {
-        const refs = this.asRefs(addr)
+        const refs = this._asRefsForWrite(addr)
         levels.push({ refs, key: path[i] })
         addr = Array.isArray(refs) ? refs[+path[i]] : refs[path[i]]
       }
-      levels.push({ refs: this.asRefs(addr), key: path[path.length - 1] })
+      levels.push({ refs: this._asRefsForWrite(addr), key: path[path.length - 1] })
 
       // Encode the new leaf value
       const leafCode = this.encode(value)
@@ -224,11 +227,11 @@ export class Streamo extends CodecRegistry {
     const levels = []
     let addr = baseAddress
     for (let i = 0; i < path.length - 1; i++) {
-      const refs = this.asRefs(addr)
+      const refs = this._asRefsForWrite(addr)
       levels.push({ refs, key: path[i] })
       addr = Array.isArray(refs) ? refs[+path[i]] : refs[path[i]]
     }
-    levels.push({ refs: this.asRefs(addr), key: path[path.length - 1] })
+    levels.push({ refs: this._asRefsForWrite(addr), key: path[path.length - 1] })
 
     for (let i = levels.length - 1; i >= 0; i--) {
       const { refs, key } = levels[i]

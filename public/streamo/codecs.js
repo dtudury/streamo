@@ -164,12 +164,23 @@ export function makeCodecs (r) {
     return parts
   }
 
-  // Stable address of a single-part value (needed for DUPLE decode with asRefs)
+  // Stable address of a single-part value (needed for DUPLE decode with asRefs).
+  //
+  // For inline multi-byte parts that aren't independently stored, the only
+  // way to "give back an address" is to materialize them as a separate chunk —
+  // i.e. mutate. That's appropriate in write contexts (Streamo.set) but a
+  // bug from a read context. When the registry is in read-only mode (set by
+  // CodecRegistry.asRefs around its decode), we return undefined instead of
+  // appending. The caller (asRefs's caller, e.g. the explorer) sees an
+  // undefined child address and renders it as inline.
   function getPartAddress (part) {
     if (part.address !== undefined) return part.address
     const code = part.getCode()
     if (code.length === 1) return -(code[0] + 1) // negative address for single-byte primitives
-    return r.addressOf(code) ?? r.append(code)
+    const existing = r.addressOf(code)
+    if (existing !== undefined) return existing
+    if (r.readOnly) return undefined
+    return r.append(code)
   }
 
   // ── Codec definitions ────────────────────────────────────────────────────

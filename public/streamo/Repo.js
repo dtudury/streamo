@@ -24,6 +24,14 @@ export class Repo extends Streamo {
   #signPending = false
 
   /**
+   * Default commit message attached to every commit made via set() / setRefs().
+   * Empty by default — clients opt in to set this for attribution. The chat web
+   * client sets 'web' so commits are visibly distinguishable from a CLI
+   * client's. Not enforced; explicit commit(working, msg) wins.
+   */
+  defaultMessage = ''
+
+  /**
    * Attach a signer so every commit is automatically signed.
    * Concurrent commits are batched: if a sign is in flight when another
    * commit lands, one more sign runs after the current one finishes,
@@ -109,7 +117,7 @@ export class Repo extends Streamo {
     const prevDataAddress = this.lastCommit?.dataAddress
     const working = this.checkout()
     working.set(...args)
-    const result = this.commit(working)
+    const result = this.commit(working, this.defaultMessage)
     const newDataAddress = this.lastCommit?.dataAddress
     for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
       this.recaller.reportKeyMutation(this, JSON.stringify(changed))
@@ -146,7 +154,7 @@ export class Repo extends Streamo {
     const prevDataAddress = this.lastCommit?.dataAddress
     const working = this.checkout()
     working.setRefs(...args)
-    const result = this.commit(working)
+    const result = this.commit(working, this.defaultMessage)
     const newDataAddress = this.lastCommit?.dataAddress
     for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
       this.recaller.reportKeyMutation(this, JSON.stringify(changed))

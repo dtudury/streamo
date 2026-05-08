@@ -53,6 +53,7 @@ joinBtn.onclick = async () => {
 
     const myRepo = await registry.open(myKey)
     myRepo.attachSigner(signer, 'chat')
+    myRepo.defaultMessage = 'web'
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)

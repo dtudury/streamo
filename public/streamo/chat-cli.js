@@ -56,6 +56,7 @@ const session = await registrySync(registry, host, port, {
 
 // Open my own repo, set profile if first time
 const myRepo = await registry.open(myKey)
+myRepo.defaultMessage = 'cli'
 if (!myRepo.get('name')) {
   myRepo.set({ name: username, messages: [] })
 }

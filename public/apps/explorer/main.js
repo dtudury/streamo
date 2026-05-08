@@ -267,8 +267,9 @@ function AtView ({ keyHex, address }) {
                 : h`<div class="dim">(no path-level changes — same dataAddress)</div>`}
             `
             : null}
-          <h3>raw</h3>
+          <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
+          ${rawChunkSection(repo, address)}
         `
       }
 
@@ -287,6 +288,7 @@ function AtView ({ keyHex, address }) {
               <tr><td>bytes</td><td class="mono">${truncHex(decoded.compactRawBytes, 32)}</td></tr>
             </tbody>
           </table>
+          ${rawChunkSection(repo, address)}
         `
       }
 
@@ -300,11 +302,12 @@ function AtView ({ keyHex, address }) {
           return h`
             <div class="dim">codec: ${codecType}</div>
             <div class="empty">${isArray ? '[]' : '{}'}</div>
+            ${rawChunkSection(repo, address)}
           `
         }
         return h`
-          <div class="dim">codec: ${codecType}</div>
-          <table class="kv">
+          <div class="dim">codec: ${codecType}${isArray ? ` · length ${entries.length}` : ''}</div>
+          <table class="kv clickable">
             <tbody>
               ${entries.map(([k, childAddr]) => {
                 let preview = ''
@@ -313,19 +316,19 @@ function AtView ({ keyHex, address }) {
                   preview = previewValue(v)
                 } catch { preview = '(error)' }
                 return h`
-                  <tr data-key=${k}>
+                  <tr data-key=${k} data-action="open-at"
+                      data-keyhex=${keyHex} data-addr=${childAddr}>
                     <td class="mono">${k}</td>
                     <td>${preview}</td>
-                    <td><a class="addr-link" data-action="open-at"
-                           data-keyhex=${keyHex} data-addr=${childAddr}
-                           >@${childAddr}</a></td>
+                    <td class="mono dim">@${childAddr}</td>
                   </tr>
                 `
               })}
             </tbody>
           </table>
-          <h3>raw</h3>
+          <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
+          ${rawChunkSection(repo, address)}
         `
       }
 
@@ -333,8 +336,23 @@ function AtView ({ keyHex, address }) {
       return h`
         <div class="dim">codec: ${codecType}</div>
         <pre class="value">${safeJSON(decoded)}</pre>
+        ${rawChunkSection(repo, address)}
       `
     }}
+  `
+}
+
+// Hex dump of the chunk at this address — the actual bytes that live in the
+// streamo for this value. For commits we also include this so you can see
+// the literal commit-record bytes.
+function rawChunkSection (repo, address) {
+  let bytes
+  try { bytes = repo.resolve(address) }
+  catch { return null }
+  if (!bytes || !bytes.length) return null
+  return h`
+    <h3>chunk bytes <span class="dim">(${bytes.length} bytes ending @${address})</span></h3>
+    <pre class="value mono">${hexDump(bytes)}</pre>
   `
 }
 
@@ -350,6 +368,22 @@ function previewValue (v) {
 }
 
 function safeGet (f) { try { return f() } catch { return undefined } }
+
+// Hex dump of a chunk's raw bytes. Truncates at maxLen so a giant value
+// chunk doesn't blow up the page.
+function hexDump (bytes, maxLen = 256) {
+  const lines = []
+  const len = Math.min(bytes.length, maxLen)
+  for (let i = 0; i < len; i += 16) {
+    const offset = i.toString(16).padStart(4, '0')
+    const slice = bytes.subarray(i, Math.min(i + 16, len))
+    const hex = Array.from(slice).map(b => b.toString(16).padStart(2, '0')).join(' ')
+    const ascii = Array.from(slice).map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '·').join('')
+    lines.push(`${offset}  ${hex.padEnd(48)}  ${ascii}`)
+  }
+  if (bytes.length > maxLen) lines.push(`…  (${bytes.length - maxLen} more bytes)`)
+  return lines.join('\n')
+}
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 

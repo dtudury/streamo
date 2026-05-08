@@ -1,5 +1,5 @@
 import { describe } from './utils/testing.js'
-import { Streamo, ConflictError } from './Streamo.js'
+import { Streamo, ConflictError, changedPaths } from './Streamo.js'
 import { Signer } from './Signer.js'
 import { Signature } from './Signature.js'
 
@@ -201,5 +201,28 @@ describe(import.meta.url, ({ test }) => {
     const snap = s.clone(addr1)
     assert.equal(snap.get('v'), 1, 'clone reflects state at snapshot address')
     assert.equal(s.get('v'), 2, 'original still reflects latest state')
+  })
+
+  test('changedPaths fires on array.length when arrays differ in length', ({ assert }) => {
+    // Watchers that read arr.length register a dep on [...path, 'length'],
+    // which is not in Object.keys(arr). changedPaths must yield it explicitly
+    // so length-watchers wake when an array grows or shrinks.
+    const s = new Streamo()
+    const addrA = s.set({ items: [1, 2, 3] })
+    const addrB = s.set({ items: [1, 2, 3, 4] })
+    const paths = [...changedPaths(s, addrA, addrB)].map(p => p.join('.'))
+    assert.ok(paths.includes('items.length'),
+      `expected items.length in paths; got: ${JSON.stringify(paths)}`)
+  })
+
+  test('changedPaths does not fire .length when length is unchanged', ({ assert }) => {
+    const s = new Streamo()
+    const addrA = s.set({ items: [1, 2, 3] })
+    const addrB = s.set({ items: [1, 2, 99] })  // index 2 changed; length same
+    const paths = [...changedPaths(s, addrA, addrB)].map(p => p.join('.'))
+    assert.ok(!paths.includes('items.length'),
+      `did not expect items.length; got: ${JSON.stringify(paths)}`)
+    assert.ok(paths.includes('items.2'),
+      `expected items.2 (the changed index); got: ${JSON.stringify(paths)}`)
   })
 })

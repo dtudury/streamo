@@ -66,6 +66,11 @@
       letter-spacing: 0.06em;
     }
 
+    /* clickable variant — whole row is the click target */
+    .kv.clickable tr { cursor: pointer; }
+    .kv.clickable tr:hover td { background: rgba(254, 240, 138, 0.4); }
+    .kv.clickable td:last-child { color: var(--accent); text-align: right; }
+
     .addr-link {
       font-family: monospace;
       font-size: 0.85rem;

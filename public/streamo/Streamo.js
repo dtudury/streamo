@@ -33,6 +33,13 @@ export function * changedPaths (streamo, addrA, addrB, path = []) {
   const objA = isPlain(refsA)
   const objB = isPlain(refsB)
   if (objA || objB) {
+    // Array length is not in Object.keys but watchers may read arr.length
+    // and register a dep on [...path, 'length']. Fire that path explicitly
+    // so length-watchers see length changes; without this, they only fire
+    // when an index they happen to read changes.
+    if (Array.isArray(refsA) && Array.isArray(refsB) && refsA.length !== refsB.length) {
+      yield [...path, 'length']
+    }
     const keys = new Set([...Object.keys(refsA ?? {}), ...Object.keys(refsB ?? {})])
     for (const key of keys) {
       const a = objA ? refsA[key] : undefined

@@ -216,6 +216,7 @@ function RepoView ({ keyHex }) {
       const sigs = entries.filter(e => e.kind === 'signature')
       const others = entries.filter(e => e.kind === 'other')
       return h`
+        ${byteStreamSection(repo, keyHex, null)}
         <h2>chunks <span class="dim">(${commits.length} commit${commits.length === 1 ? '' : 's'} · ${sigs.length} sig${sigs.length === 1 ? '' : 's'} · ${others.length} other)</span></h2>
         ${[...commits, ...sigs].map(e => e.kind === 'commit'
           ? h`

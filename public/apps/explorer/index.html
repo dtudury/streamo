@@ -31,9 +31,10 @@
     .row + .row { border-top-color: var(--rule); }
     .row:hover + .row { border-top-color: transparent; }
 
-    /* signature rows show 4 columns: kind, range, hex, addr */
-    .row.signature { grid-template-columns: 4rem 1fr 1fr 6rem; }
-    .row.commit    { grid-template-columns: 4rem 1fr 12rem 6rem; }
+    /* commit + signature rows share the same column template so the page
+       doesn't visually jitter as you scan a mixed list. cols: kind | content
+       | aux | addr. for commits aux=date; for sigs aux=hex preview. */
+    .row.commit, .row.signature { grid-template-columns: 4rem 1fr 14rem 6rem; }
 
     .row .mono { font-size: 0.85rem; }
     .row .when { font-size: 0.78rem; color: var(--ink-dim); }

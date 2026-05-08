@@ -179,11 +179,18 @@ For hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn
 
 ## the all-in-one demo
 
-The chat server is also the website server. Run it once and you get the
-homepage, chat app, **and** the repo explorer all on the same origin:
+```bash
+npm start
+```
+
+That's it. The chat server is also the website server — running it gives you
+the homepage, chat app, **and** the repo explorer all on the same origin (port
+8080), with the chat room's member-tracking wired up so participants are
+remembered across restarts. `npm run demo` and `npm run chat` are aliases.
+
+You can also run it directly with explicit env:
 
 ```bash
-# start the all-in-one demo server
 STREAMO_NAME=my-chat STREAMO_USERNAME=relay STREAMO_PASSWORD=secret \
   node public/apps/chat/server.js
 

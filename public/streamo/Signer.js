@@ -3,24 +3,27 @@ import { getPublicKey, signAsync, verify } from './utils/noble-secp256k1.js'
 const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
 
 /**
- * Derive a deterministic private key from (name, password) using PBKDF2.
- * @param {string} name
- * @param {string} password
+ * Derive a deterministic 256-bit private key from (name, password) using PBKDF2-SHA256.
+ *
+ * Uses deriveBits with an explicit length rather than deriveKey + exportKey: the
+ * key length is named in the call rather than relying on a WebCrypto default,
+ * so the output is invariant across runtimes. RFC 2898 PBKDF2 with named
+ * parameters is the only thing this function depends on.
+ *
+ * @param {string} name      passed as PBKDF2 salt
+ * @param {string} password  passed as PBKDF2 password
  * @param {number} [iterations=100000]
- * @returns {Promise.<string>} hex-encoded key
+ * @returns {Promise.<string>} hex-encoded 32 bytes
  */
 async function deriveKey (name, password, iterations = 100000) {
   const enc = new TextEncoder()
-  const base = await cryptoSubtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits', 'deriveKey'])
-  const key = await cryptoSubtle.deriveKey(
+  const base = await cryptoSubtle.importKey('raw', enc.encode(password), 'PBKDF2', false, ['deriveBits'])
+  const bits = await cryptoSubtle.deriveBits(
     { name: 'PBKDF2', salt: enc.encode(name), iterations, hash: 'SHA-256' },
     base,
-    { name: 'HMAC', hash: 'SHA-256' },
-    true,
-    ['sign']
+    256
   )
-  const raw = new Uint8Array(await cryptoSubtle.exportKey('raw', key))
-  return Array.from(raw.slice(32)).map(b => b.toString(16).padStart(2, '0')).join('')
+  return Array.from(new Uint8Array(bits)).map(b => b.toString(16).padStart(2, '0')).join('')
 }
 
 async function sha256 (uint8Array) {

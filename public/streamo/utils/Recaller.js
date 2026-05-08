@@ -32,6 +32,10 @@ export class Recaller {
   }
 
   unwatch (f) {
+    // Also drop f from the pending queue: a mutation may have queued it before
+    // unwatch was called, and the next #flush() would resurrect it via watch()
+    // — re-establishing all its dependencies and undoing the unwatch.
+    this.#pending.delete(f)
     this.#disassociate(f)
   }
 

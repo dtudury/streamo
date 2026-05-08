@@ -41,11 +41,29 @@ Use this framing consistently across all public-facing text:
 
 "Content-addressed" is technically important but not the lead. Start with ownership.
 
+## package surface
+
+- **`index.js`** — main barrel; `import { Repo, Signer, registrySync } from '@dtudury/streamo'`.
+  Excludes `StreamoComponent` (extends `HTMLElement`, browser-only — subpath-import it from
+  `'@dtudury/streamo/StreamoComponent.js'`).
+- **`exports` map** — `"."` → `index.js`; `"./*"` → `./public/streamo/*` so subpath imports
+  shed the `public/streamo/` prefix.
+- **`files` field** — positive list with negations; tests, `utils/testing.js`, and
+  `utils/mockDOM.js` are excluded from the npm tarball.
+
+## quality gate
+
+There is no CI. Run `npm test` (which is `node --test`) before any commit that touches code
+— the user's standing arrangement is "Claude is the gate." 79+ tests, ~2.3s. If a change
+lands without tests passing, you have failed the contract.
+
 ## architecture notes
 
 - `Streamo` — content-addressed, append-only byte store with self-describing codec
 - `Repo` — wraps Streamo; every `set()` is a signed commit (message, date, address, parent)
-- `Signer` — deterministic secp256k1 keypairs via PBKDF2 from username + password
+- `Signer` — deterministic secp256k1 keypairs via PBKDF2-SHA256 (256 bits, `deriveBits`)
+  from username + password. KAT in `Signer.test.js` pins the bytes — do not change the
+  derivation without updating the KAT and acknowledging it as a breaking change.
 - `Recaller` — fine-grained reactive dependency tracker; `watch(name, f)` / `unwatch(f)`
 - `h` — tagged template literal HTML parser → HElement / HText virtual tree
 - `mount` — reactive DOM renderer; slots are reactive cells; elements recycled by

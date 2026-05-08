@@ -56,8 +56,7 @@ streamo --env-file .env
 ### Streamo — reactive append-only store
 
 ```js
-import { Streamo } from '@dtudury/streamo/public/streamo/Streamo.js'
-import { Recaller } from '@dtudury/streamo/public/streamo/utils/Recaller.js'
+import { Streamo } from '@dtudury/streamo'
 
 const store = new Streamo()
 store.set({ name: 'alice', score: 42 })
@@ -72,7 +71,7 @@ Values are encoded with a self-describing codec (strings, numbers, dates, boolea
 `Repo` wraps a `Streamo` so every `set()` becomes a commit — message, date, data address, and parent pointer. The raw commit log is what syncs over the wire.
 
 ```js
-import { Repo } from '@dtudury/streamo/public/streamo/Repo.js'
+import { Repo } from '@dtudury/streamo'
 
 const repo = new Repo()
 repo.attachSigner(signer, 'my-dataset')  // auto-sign every commit
@@ -87,8 +86,7 @@ Signature chunks travel in the byte stream automatically — peers running `regi
 ### Signer — deterministic identity
 
 ```js
-import { Signer } from '@dtudury/streamo/public/streamo/Signer.js'
-import { bytesToHex } from '@dtudury/streamo/public/streamo/utils.js'
+import { Signer, bytesToHex } from '@dtudury/streamo'
 
 const signer = new Signer('alice', 'my-password')
 const { publicKey } = await signer.keysFor('my-dataset')
@@ -100,8 +98,7 @@ Keys are derived with PBKDF2 so the same username + password always produces the
 ### RepoRegistry — multi-repo store
 
 ```js
-import { RepoRegistry } from '@dtudury/streamo/public/streamo/RepoRegistry.js'
-import { archiveSync } from '@dtudury/streamo/public/streamo/archiveSync.js'
+import { RepoRegistry, Repo, archiveSync } from '@dtudury/streamo'
 
 const registry = new RepoRegistry(async key => {
   const repo = new Repo()
@@ -115,7 +112,7 @@ const repo = await registry.open(publicKeyHex)
 ### registrySync — peer sync over WebSocket
 
 ```js
-import { registrySync } from '@dtudury/streamo/public/streamo/registrySync.js'
+import { registrySync } from '@dtudury/streamo'
 
 const session = await registrySync(registry, 'localhost', 8080, {
   // only sync repos you care about
@@ -137,9 +134,7 @@ session.announce(myKey, rootKey) // tell interested peers about your repo
 ### h + mount — reactive UI
 
 ```js
-import { h } from '@dtudury/streamo/public/streamo/h.js'
-import { mount } from '@dtudury/streamo/public/streamo/mount.js'
-import { Recaller } from '@dtudury/streamo/public/streamo/utils/Recaller.js'
+import { h, mount, Recaller } from '@dtudury/streamo'
 
 const recaller = new Recaller('app')
 
@@ -153,10 +148,13 @@ mount(h`
 
 Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update. Elements are recycled across re-renders by `data-key` (or tag as a fallback), so user input and focus survive list reorders. SVG namespaces propagate automatically — `` h`<svg><path d="..."/></svg>` `` works without any extra wiring. `class` accepts an array (`['btn', isActive && 'active']`) or an object (`{btn: true, active: false}`); falsy entries are filtered out.
 
+> **For lists that can reorder**, always set `data-key` on each item — the unkeyed positional fallback will recycle elements by tag in document order, which can attach the wrong DOM node (and any user focus/input on it) to the wrong vnode after a reorder.
+
 Any function can be used directly as a tag — it receives `{ ...attrs, children }` and returns virtual nodes:
 
 ```js
-import { StreamoComponent, componentKey, defineComponent } from '@dtudury/streamo/public/streamo/StreamoComponent.js'
+// StreamoComponent extends HTMLElement, so it's only importable in a browser context:
+import { StreamoComponent, componentKey, defineComponent } from '@dtudury/streamo/StreamoComponent.js'
 
 function Card ({ title, children }) {
   return h`<div class="card"><h2>${title}</h2>${children}</div>`
@@ -198,7 +196,7 @@ Each participant owns their own message stream. The server is just another strea
 ## tests
 
 ```bash
-node --test                              # all tests
+npm test                                 # all tests
 node --test public/streamo/Repo.test.js  # single file
 ```
 

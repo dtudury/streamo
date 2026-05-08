@@ -5,9 +5,22 @@ picture of where the project is and where it's headed.
 
 ---
 
-## where we are (1.0.0)
+## where we are (2.0.0)
 
-The foundation is solid, tested, and shipped. Here's what's in:
+2.0.0 is a surface and correctness pass on top of 1.0:
+
+- **Cleaner package surface** — `index.js` exposes named exports, `exports` /
+  `files` / `main` are explicit, test files no longer ship in the npm tarball.
+  Imports go from `'@dtudury/streamo/public/streamo/Streamo.js'` to
+  `'@dtudury/streamo'`.
+- **Signer determinism made explicit** — derivation switched from
+  `deriveKey + exportKey + slice(32)` (which silently relied on the WebCrypto
+  HMAC-default key length) to `deriveBits(..., 256)`. A known-answer test pins
+  the byte output. **Breaking**: identities derived in 1.x do not match 2.x.
+- **Recaller `unwatch` bug** — a watcher already queued in `#pending` could
+  resurrect itself on the next flush. Fixed; regression test added.
+
+Below is the underlying capability surface (unchanged in 2.0.0):
 
 **Core data layer**
 - `Streamo` — reactive, content-addressed, append-only byte store with a

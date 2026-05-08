@@ -11,17 +11,34 @@ Streamo is a peer-to-peer sync library built around a simple promise: **no serve
 - **Every write is provably yours** — commits are signed with your keypair and append-only. History is permanent and can't be forged; peers reject unsigned or mis-signed data.
 - **Content-addressed** — data is identified by what it is, not where it lives. The same value always lands at the same address; deduplication and diffing are structural.
 
-## install
+## three ways to use streamo
+
+There are basically three audiences. Pick the one that's you:
+
+**1. As a library** — `npm install @dtudury/streamo` and import the pieces
+you want. See the *javascript api* section below for what's exported.
+
+**2. As a CLI** — `npx @dtudury/streamo --help` runs the streamo CLI
+without cloning anything. You bring credentials, point at files or peers,
+and get a personal streamo node. See the *cli* section.
+
+**3. As a reference / contributor** — clone this repo, then:
 
 ```bash
-npm install @dtudury/streamo
+npm install
+npm run dev      # starts the all-in-one demo on port 8080
 ```
 
-Or run the CLI directly:
+`npm run dev` runs the chat-room server (`public/apps/chat/server.js`) with
+the checked-in dev credentials in `.env.dev`. That one server hosts the
+homepage, chat app, **and** the repo explorer at `localhost:8080`. Modify
+any file, refresh, see the change.
 
-```bash
-npx @dtudury/streamo --help
-```
+For production deployment, your real `.env.prod` lives only on the
+production host, and `npm run prod` boots the same server against that
+env.
+
+`npm test` runs the test suite.
 
 ## cli
 
@@ -177,38 +194,29 @@ For hot-reloading, `componentKey(prefix, address)` and `defineComponent(name, fn
 | `s3Sync` | replicate chunks to S3-compatible object storage |
 | `stateFileSync` | write repo state as JSON on every change |
 
-## the all-in-one demo
+## what `npm run dev` actually starts
+
+The chat-room server. It's the all-in-one demo: the homepage, chat app,
+and repo explorer are all served by the same process on port 8080. The
+"server" is just another streamo node — it holds the room's member list
+in its own repo and auto-accepts anyone who announces to it. Its public
+key is the room address. No special authority, no hidden state.
+
+Useful URLs once it's running:
+
+- `http://localhost:8080/` — homepage with app cards
+- `http://localhost:8080/apps/chat/` — chat
+- `http://localhost:8080/apps/explorer/` — repo explorer (leave it open in
+  another tab to watch commits roll in as you chat)
+
+To join chat from a terminal instead of the browser:
 
 ```bash
-npm start
-```
-
-That's it. The chat server is also the website server — running it gives you
-the homepage, chat app, **and** the repo explorer all on the same origin (port
-8080), with the chat room's member-tracking wired up so participants are
-remembered across restarts. `npm run demo` and `npm run chat` are aliases.
-
-You can also run it directly with explicit env:
-
-```bash
-STREAMO_NAME=my-chat STREAMO_USERNAME=relay STREAMO_PASSWORD=secret \
-  node public/apps/chat/server.js
-
-# homepage with app cards
-open http://localhost:8080/
-
-# chat
-open http://localhost:8080/apps/chat/
-
-# repo explorer — leave it open in another tab to watch commits roll in
-# as you chat
-open http://localhost:8080/apps/explorer/
-
-# join chat from the terminal
 node public/streamo/chat-cli.js alice secret localhost 8080
 ```
 
-Each participant owns their own message stream. The server is just another streamo node — it holds the member list in its own repo and auto-accepts anyone who announces to it. Its public key is the room address. No special authority, no hidden state.
+Each participant owns their own message stream. Same data structure,
+different transport.
 
 ## tests
 

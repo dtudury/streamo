@@ -36,9 +36,7 @@
   },
   "scripts": {
     "test": "node --test",
-    "start": "node public/apps/chat/server.js --env-file .env.dev",
-    "demo":  "node public/apps/chat/server.js --env-file .env.dev",
-    "chat":  "node public/apps/chat/server.js --env-file .env.dev",
-    "serve": "node bin/streamo.js --env-file .env.dev --web 3000 --interactive"
+    "dev":  "node public/apps/chat/server.js --env-file .env.dev",
+    "prod": "node public/apps/chat/server.js --env-file .env.prod"
   }
 }

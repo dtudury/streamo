@@ -92,9 +92,9 @@ lands without tests passing, you have failed the contract.
   pings so idle-closing PaaS hosts don't drop the connection
 - CLI `--web` flag — starts a WebSocket relay + static file server; `chat-server.js` is
   retired; `public/streamo/chat-cli.js` is the terminal chat client
-- `public/apps/chat/server.js` is the **all-in-one demo entry point** — it's both a
-  chat room and a static-file server for the homepage + chat app + explorer. Running
-  it gives you the full demo on one port.
+- `public/apps/chat/server.js` is the **all-in-one demo / production server** —
+  chat room + static files for homepage + chat + explorer, on one port. `npm run
+  dev` runs it with `.env.dev`; `npm run prod` runs it with `.env.prod`.
 
 ## what's next
 

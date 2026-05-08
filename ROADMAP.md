@@ -177,8 +177,9 @@ Below is the underlying capability surface (unchanged in 3.0.0):
   methods behind a clean API. `bin/streamo.js` is now a thin CLI parser on top
   of it; `public/apps/chat/server.js` is a standalone chat server using the
   same class.
-- `npm run serve` — starts a streamo node (with REPL) using `.env.dev`
-  credentials. The dev server is a real peer, not a bare static file server.
+- `npm run dev` — runs `public/apps/chat/server.js` against `.env.dev`,
+  the canonical "play with the repo" entry point. `npm run prod` runs the
+  same server against `.env.prod` (lives only on the production host).
 
 ---
 

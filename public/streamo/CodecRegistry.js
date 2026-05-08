@@ -21,13 +21,9 @@ export class CodecRegistry extends Addressifier {
   footerToCodec = []
 
   #codecs
-  // Depth counter for read-only mode. asRefs() increments this around the
-  // decode call so that codec-level helpers (specifically getPartAddress in
-  // codecs.js) know NOT to materialize inline children by appending. When
-  // > 0, any code path that would have mutated the store returns undefined
-  // instead. Write paths (Streamo.set / setRefs) bypass asRefs and call
-  // decode(addr, true) directly so this counter stays 0 — mutation allowed.
-  #readOnly = 0
+  // Read-only scope depth — only mutated by #runReadOnly below, never
+  // touched directly. The codec interface exposes it as r.readOnly (boolean).
+  #readOnlyDepth = 0
 
   constructor () {
     super()
@@ -39,10 +35,25 @@ export class CodecRegistry extends Addressifier {
       resolve: addr => self.resolve(addr),
       addressOf: code => self.addressOf(code),
       get byteLength () { return self.byteLength },
-      get readOnly () { return self.#readOnly > 0 },
+      get readOnly () { return self.#readOnlyDepth > 0 },
       footerToCodec: this.footerToCodec
     })
     this.#registerAll()
+  }
+
+  /**
+   * Run `fn` in a read-only scope. Codec helpers see `r.readOnly === true`
+   * for the duration and avoid mutation paths (specifically getPartAddress
+   * in codecs.js returns undefined instead of materializing inline
+   * children). Used by asRefs.
+   *
+   * The depth counter handles the case where `fn` itself re-enters this
+   * method — outer scopes stay read-only until they all unwind.
+   */
+  #runReadOnly (fn) {
+    this.#readOnlyDepth++
+    try { return fn() }
+    finally { this.#readOnlyDepth-- }
   }
 
   // Re-expose byteLength so subclasses can override it
@@ -123,14 +134,12 @@ export class CodecRegistry extends Addressifier {
     if (type === 'VARIABLE' ||
         type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
         type === 'ARRAY'  || type === 'EMPTY_ARRAY') {
-      // Pure read: enter read-only mode for the duration of the decode so
-      // codecs cannot append inline children. Inline addresses come back
-      // as `undefined`; callers handle that case (e.g. by showing the
-      // child without a clickable link). Math-impossible to mutate from
-      // here regardless of caller — protection is in the function.
-      this.#readOnly++
-      try { return this.decode(address, true) }
-      finally { this.#readOnly-- }
+      // Decode in a read-only scope so codecs cannot materialize inline
+      // children. Inline addresses come back as `undefined`; callers
+      // handle that (e.g. by rendering the child without a clickable
+      // link). Mutation is unreachable from here regardless of caller —
+      // by control flow, not by caller discipline.
+      return this.#runReadOnly(() => this.decode(address, true))
     }
     return address
   }

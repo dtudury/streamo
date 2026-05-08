@@ -397,30 +397,39 @@ function rawChunkSection (repo, address) {
   `
 }
 
-// "Referenced by" — every chunk in the repo that contains this address as
-// a direct child. Lights up content-addressed dedup: the same value posted
-// twice in chat shows two referrers; a single value referenced from many
-// commits shows them all as a list.
+// "Referenced by" — walks up the Duple tree-scaffolding to find the chunks
+// that USE this address in a user-meaningful sense (OBJECT, ARRAY, VARIABLE,
+// SIGNATURE, etc.). Internal Duples are skipped — they're how the codec
+// builds balanced trees, not where the user thinks about the data living.
+//
+// Each row shows: codec, a one-line preview of the value, the address, and
+// — if more than one Duple path leads to the same ancestor — a path count.
 function referrersSection (repo, keyHex, address) {
-  const refs = findReferrers(repo, address)
+  const index = buildReferrerIndex(repo)
+  const refs = findUserReferrers(repo, address, index)
   if (!refs.length) {
     return h`
       <h3>referenced by <span class="dim">(0)</span></h3>
-      <div class="dim">no chunks in this repo reference this address as a direct child</div>
+      <div class="dim">no chunks in this repo reference this value</div>
     `
   }
   return h`
-    <h3>referenced by <span class="dim">(${refs.length} chunk${refs.length === 1 ? '' : 's'})</span></h3>
+    <h3>referenced by <span class="dim">(${refs.length} ${refs.length === 1 ? 'place' : 'places'})</span></h3>
     <table class="kv clickable">
       <tbody>
-        ${refs.map(r => h`
-          <tr data-key=${`r${r.address}`} data-action="open-at"
-              data-keyhex=${keyHex} data-addr=${r.address}>
-            <td class="mono dim">${r.codecType || '?'}</td>
-            <td></td>
-            <td class="mono dim">@${r.address}</td>
-          </tr>
-        `)}
+        ${refs.map(r => {
+          let preview = ''
+          try { preview = previewValue(repo.decode(r.address)) }
+          catch { preview = '(error)' }
+          return h`
+            <tr data-key=${`r${r.address}`} data-action="open-at"
+                data-keyhex=${keyHex} data-addr=${r.address}>
+              <td class="mono dim">${r.codecType || '?'}${r.count > 1 ? ` ×${r.count}` : ''}</td>
+              <td>${preview}</td>
+              <td class="mono dim">@${r.address}</td>
+            </tr>
+          `
+        })}
       </tbody>
     </table>
   `
@@ -439,41 +448,66 @@ function previewValue (v) {
 
 function safeGet (f) { try { return f() } catch { return undefined } }
 
-// Find chunks in the repo that reference `targetAddr` as a direct child
-// (via asRefs — covers OBJECT, ARRAY, VARIABLE, DUPLE references). Walks
-// every chunk newest-to-oldest. For typical repos (≤ a few hundred chunks)
-// this is fast enough to compute on render; for larger repos we'd want an
-// index but it's not currently a problem.
-function findReferrers (repo, targetAddr) {
-  const referrers = []
+// Build a child→parents index for the entire repo in one pass, so we can
+// answer "who references address X?" in O(1) per query and walk up parent
+// chains without re-scanning. Each entry maps a chunk's address to all the
+// chunks that have it as a DIRECT child (via asRefs).
+function buildReferrerIndex (repo) {
+  const index = new Map() // childAddr → [{ address, codecType }]
   let addr = repo.byteLength - 1
   while (addr >= 0) {
     const code = repo.resolve(addr)
     if (!code || !code.length) break
-    if (addr !== targetAddr) {
-      let refs
-      try { refs = repo.asRefs(addr) } catch { refs = null }
-      // refs shapes: object of {key: addr}, array of [addr, ...], Duple with .v,
-      // or just the address itself for primitives (no children).
-      let childAddrs = []
-      if (Array.isArray(refs)) {
-        childAddrs = refs.filter(x => typeof x === 'number')
-      } else if (refs && typeof refs === 'object') {
-        if (Array.isArray(refs.v)) {
-          // Duple
-          childAddrs = refs.v.filter(x => typeof x === 'number')
-        } else {
-          childAddrs = Object.values(refs).filter(x => typeof x === 'number')
-        }
-      }
-      if (childAddrs.includes(targetAddr)) {
-        const codec = repo.footerToCodec[code.at(-1)]
-        referrers.push({ address: addr, codecType: codec?.type })
+    let refs
+    try { refs = repo.asRefs(addr) } catch { refs = null }
+    let childAddrs = []
+    if (Array.isArray(refs)) {
+      childAddrs = refs.filter(x => typeof x === 'number')
+    } else if (refs && typeof refs === 'object') {
+      if (Array.isArray(refs.v)) childAddrs = refs.v.filter(x => typeof x === 'number')
+      else childAddrs = Object.values(refs).filter(x => typeof x === 'number')
+    }
+    if (childAddrs.length) {
+      const codec = repo.footerToCodec[code.at(-1)]
+      const entry = { address: addr, codecType: codec?.type }
+      for (const child of childAddrs) {
+        if (!index.has(child)) index.set(child, [])
+        index.get(child).push(entry)
       }
     }
     addr -= code.length
   }
-  return referrers
+  return index
+}
+
+// Walk up parent chains via the index. Internal Duple nodes are tree
+// scaffolding — the user-meaningful containers are OBJECT / ARRAY /
+// VARIABLE / SIGNATURE / etc. For each path that hits a non-Duple
+// ancestor, accumulate that ancestor with a count of how many paths
+// reach it. (Same value referenced from N different places yields N
+// distinct user-level ancestors.)
+function findUserReferrers (repo, targetAddr, index) {
+  const result = new Map() // ancestorAddr → { address, codecType, count }
+  function walkUp (from) {
+    const refs = index.get(from) ?? []
+    for (const r of refs) {
+      if (r.codecType === 'DUPLE') {
+        walkUp(r.address)
+      } else {
+        const existing = result.get(r.address)
+        if (existing) existing.count++
+        else result.set(r.address, { ...r, count: 1 })
+      }
+    }
+  }
+  walkUp(targetAddr)
+  return [...result.values()].sort((a, b) => b.address - a.address) // newest first
+}
+
+// Backwards-compat: if anyone wanted the raw direct referrers (Duples and
+// all), this still works.
+function findReferrers (repo, targetAddr) {
+  return buildReferrerIndex(repo).get(targetAddr) ?? []
 }
 
 // ── Signature verification cache ──────────────────────────────────────────

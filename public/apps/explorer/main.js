@@ -470,11 +470,28 @@ function rawChunkSection (repo, address) {
   `
 }
 
-// Byte stream — render every chunk in the repo as a hex span in the order
-// they were appended (oldest first). The current chunk is outlined; hovering
-// any data-addr element elsewhere on the page highlights the matching chunk
-// here, so references and referrers light up spatially. Click any chunk to
-// navigate.
+// Map a codec type to a visual category. Many distinct codecs map to a
+// shared category so the byte-stream stripe stays readable: commits (the
+// narrative anchors), signatures (attestations), composite values, the
+// Duple tree-scaffolding, strings, bytes, numbers, etc.
+function codecCategory (type) {
+  switch (type) {
+    case 'SIGNATURE': return 'sig'
+    case 'OBJECT': case 'EMPTY_OBJECT': case 'ARRAY': case 'EMPTY_ARRAY': return 'composite'
+    case 'DUPLE': return 'duple'
+    case 'STRING': case 'EMPTY_STRING': return 'string'
+    case 'WORD': case 'UINT8ARRAY': case 'EMPTY_UINT8ARRAY': return 'bytes'
+    case 'DATE': case 'FLOAT64': case 'UINT7': return 'num'
+    case 'VARIABLE': return 'var'
+    default: return 'other'
+  }
+}
+
+// Byte stream as a color-coded SVG strip — every chunk is a rect with width
+// proportional to its size. Click any rect to navigate; hover any data-addr
+// element elsewhere on the page to highlight the matching chunk here. The
+// detailed hex of the current chunk lives in the chunk-bytes section below;
+// this map gives spatial composition at any scale, including 2k+ chunks.
 function byteStreamSection (repo, keyHex, currentAddress) {
   const chunks = []
   let addr = repo.byteLength - 1
@@ -482,21 +499,59 @@ function byteStreamSection (repo, keyHex, currentAddress) {
     const code = repo.resolve(addr)
     if (!code || !code.length) break
     const codec = repo.footerToCodec[code.at(-1)]
-    chunks.unshift({ address: addr, code, codecType: codec?.type || '?' })
+    chunks.unshift({
+      address: addr,
+      start: addr - code.length + 1,
+      length: code.length,
+      codecType: codec?.type || '?'
+    })
     addr -= code.length
   }
   if (!chunks.length) return null
+
+  // Mark commit addresses by walking history once — cheap, lets commits
+  // appear as their own visual category instead of getting lumped in with
+  // generic OBJECTs.
+  const commitAddrs = new Set()
+  let walkAddr = repo.valueAddress
+  while (walkAddr !== undefined && walkAddr >= 0) {
+    let commit
+    try { commit = repo.decode(walkAddr) } catch { break }
+    if (!commit || typeof commit.message !== 'string' || !(commit.date instanceof Date)) break
+    commitAddrs.add(walkAddr)
+    walkAddr = commit.parent
+  }
+
+  const total = repo.byteLength
+  const W = 1200  // viewBox width; CSS scales to actual element width
+  const H = 32
   return h`
-    <h3>byte stream <span class="dim">(${repo.byteLength} bytes · ${chunks.length} chunks)</span></h3>
-    <div class="byte-stream">
-      ${chunks.map(c => h`<span
-          class=${['chunk', c.address === currentAddress ? 'current' : null]}
+    <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks)</span></h3>
+    <div class="byte-map-legend">
+      <span class="cat-commit">commit</span>
+      <span class="cat-sig">sig</span>
+      <span class="cat-composite">object/array</span>
+      <span class="cat-duple">duple</span>
+      <span class="cat-string">string</span>
+      <span class="cat-bytes">bytes</span>
+      <span class="cat-num">num</span>
+      <span class="cat-var">var</span>
+    </div>
+    <svg class="byte-map" viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none">
+      ${chunks.map(c => {
+        const x = (c.start / total) * W
+        const w = Math.max(0.6, (c.length / total) * W)
+        const cat = commitAddrs.has(c.address) ? 'commit' : codecCategory(c.codecType)
+        const cls = ['chunk', `cat-${cat}`, c.address === currentAddress ? 'current' : null]
+        return h`<rect
+          class=${cls}
+          x=${x} y="0" width=${w} height=${H}
           data-action="open-at"
           data-keyhex=${keyHex}
           data-addr=${c.address}
-          title=${`${c.codecType} @${c.address} (${c.code.length} bytes)`}
-        >${Array.from(c.code).map(b => b.toString(16).padStart(2, '0')).join(' ')}</span>`)}
-    </div>
+        ><title>${c.codecType} @${c.address} (${c.length} bytes)</title></rect>`
+      })}
+    </svg>
   `
 }
 
@@ -731,19 +786,18 @@ appEl.addEventListener('click', e => {
 })
 
 // Cross-highlight: hovering any element with data-addr highlights the
-// matching chunk in the byte-stream view. Makes reference-rows and
-// referrer-rows light up the chunk's position in the stream so you can
-// SEE where it lives.
+// matching chunk in the byte-map. References and referrers light up the
+// chunk's position in the stream so you can SEE where it lives.
 appEl.addEventListener('mouseover', e => {
   const el = e.target.closest('[data-addr]')
   if (!el) return
   const addr = el.dataset.addr
-  appEl.querySelectorAll(`.byte-stream .chunk[data-addr="${addr}"]`)
+  appEl.querySelectorAll(`.byte-map .chunk[data-addr="${addr}"]`)
     .forEach(c => c.classList.add('hovered'))
 })
 appEl.addEventListener('mouseout', e => {
   const el = e.target.closest('[data-addr]')
   if (!el) return
-  appEl.querySelectorAll('.byte-stream .chunk.hovered')
+  appEl.querySelectorAll('.byte-map .chunk.hovered')
     .forEach(c => c.classList.remove('hovered'))
 })

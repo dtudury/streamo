@@ -35,11 +35,25 @@ try {
 // new local commits and incoming sync chunks) and forwarding a single
 // mutation onto the app-level recaller. Slots that depend on any registry
 // state call dep() to register the dependency.
+//
+// fire() is coalesced via requestAnimationFrame so the chaos of many repos
+// streaming chunks during initial sync collapses into one render per frame —
+// otherwise each chunk re-fires the outer slot and Recaller's flush loop
+// hits its iteration limit.
 
 const recaller = new Recaller('explorer')
 const signal = {}
-const dep  = () => recaller.reportKeyAccess(signal, 'data')
-const fire = () => recaller.reportKeyMutation(signal, 'data')
+const dep = () => recaller.reportKeyAccess(signal, 'data')
+
+const schedule = typeof requestAnimationFrame !== 'undefined'
+  ? fn => requestAnimationFrame(fn)
+  : fn => queueMicrotask(fn)
+let scheduled = false
+function fire () {
+  if (scheduled) return
+  scheduled = true
+  schedule(() => { scheduled = false; recaller.reportKeyMutation(signal, 'data') })
+}
 
 const watched = new Set()
 function watchRepo (key, repo) {

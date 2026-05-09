@@ -57,7 +57,14 @@ const { dep, fire: bridgeFire } = bridgeRegistry(registry, recaller, 'explorer')
 // If both change but display stays stale → render diffing bug.
 const debug = { bf: 0, sr: 0, ms: 0 }
 function updateDebugCounter () {
-  if (connEl) connEl.textContent = `${location.hostname}:${port} · bf:${debug.bf} sr:${debug.sr} ms:${debug.ms}`
+  if (!connEl) return
+  // Dump the actual byteLength of each repo too — if bf is firing (meaning
+  // chunks are arriving) but every repo's byteLength reads as 0, that's
+  // evidence the chunks are landing on different Streamo instances than
+  // what the slot iterates from registry.
+  const lens = []
+  for (const [k, r] of registry) lens.push(`${k.slice(0, 4)}=${r.byteLength}`)
+  connEl.textContent = `${location.hostname}:${port} · bf:${debug.bf} sr:${debug.sr} ms:${debug.ms} · ${lens.join(' ') || '(empty)'}`
 }
 
 let stripSyncScheduled = false

@@ -1,12 +1,17 @@
-// streamo explorer — read-only registry / repo / address browser.
+// streamo explorer — read-only registry / address browser.
 //
-// Three views, navigated by URL hash:
-//   #/                              — registry list
-//   #/repo/<keyHex>                 — signed commits in a repo, plus the
-//                                     storage chunks underneath
-//   #/repo/<keyHex>/at/<address>    — the value at any address; if address
-//                                     is a sig chunk, this is the polished
-//                                     "signed commit" detail view.
+// Two view kinds, navigated by URL hash:
+//   #/                                — registry list
+//   #/repo/<keyHex>                   — at HEAD, the most-recent sig
+//                                       (symbolic, like git's HEAD ref).
+//                                       Shorthand for /at/HEAD.
+//   #/repo/<keyHex>/at/HEAD           — same thing, explicit form.
+//   #/repo/<keyHex>/at/<address>      — pinned to a specific byte address.
+//
+// When the resolved chunk is a SIGNATURE, the page is the polished
+// signed-commit view (selector dropdown at top, polished detail below,
+// storage chunks tucked into a <details>). Otherwise it's storage
+// drilling — value/storage tabs for that chunk, no selector.
 //
 // State lives in plain JS variables; reactivity is bridged from each Repo's
 // internal Recaller into the app-level Recaller via the `signal` pattern
@@ -73,18 +78,21 @@ registry.onOpen((k, r) => { watchRepo(k, r); fire() })
 // ── Hash routing ──────────────────────────────────────────────────────────
 
 function viewFromHash () {
-  const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(\d+))?\/?$/i)
+  const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(HEAD|\d+))?\/?$/i)
   if (!m) return { kind: 'registry' }
-  if (m[2] != null) return { kind: 'at', keyHex: m[1], address: +m[2] }
-  return { kind: 'repo', keyHex: m[1] }
+  // Bare `/repo/<hex>` is shorthand for `/at/HEAD` — the symbolic pointer
+  // to the most recent signed commit (like git's HEAD).
+  const raw = m[2]
+  const address = raw == null || raw.toUpperCase() === 'HEAD' ? 'HEAD' : +raw
+  return { kind: 'at', keyHex: m[1], address }
 }
 
 function hashFromView (v) {
-  switch (v.kind) {
-    case 'repo': return `#/repo/${v.keyHex}`
-    case 'at':   return `#/repo/${v.keyHex}/at/${v.address}`
-    default:     return '#/'
-  }
+  if (v.kind !== 'at') return '#/'
+  // Canonical form for HEAD is the bare URL — concise and analogous to
+  // tools that imply HEAD when no ref is given.
+  if (v.address === 'HEAD') return `#/repo/${v.keyHex}`
+  return `#/repo/${v.keyHex}/at/${v.address}`
 }
 
 let view = viewFromHash()
@@ -105,11 +113,6 @@ window.addEventListener('hashchange', () => {
 // wants to keep a "storage" lens on doesn't have to re-click after every
 // drill-down. Reset to default on registry/repo views (set in go()).
 let atTab = 'value'
-
-// Per-repo selected-signed-commit state for the repo-view dropdown. Default
-// (when not in the map) is HEAD (the newest signed commit). Selection is
-// ephemeral — not encoded in the URL — since it's exploration, not nav.
-const selectedSigByRepo = new Map()
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -325,104 +328,101 @@ function RegistryView () {
   `
 }
 
-function RepoView ({ keyHex }) {
+// Resolve the symbolic HEAD address to the most-recent sig chunk's
+// address. Returns undefined if the repo has no signatures yet.
+function resolveHead (repo) {
+  let walk = repo.byteLength - 1
+  while (walk >= 0) {
+    const code = repo.resolve(walk)
+    if (!code || !code.length) break
+    if (repo.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') return walk
+    walk -= code.length
+  }
+  return undefined
+}
+
+// Commit selector dropdown — used at the top of any sig at-view. The
+// summary is the currently-selected (= currently-viewed) signed commit
+// styled as a head-card; the body lists every signed commit with the
+// current one marked. Picking a different one (data-action=select-commit)
+// navigates to /at/<sigAddress> via the URL.
+function commitSelectorSection (repo, keyHex, currentSigAddr) {
+  const entries = [...signedCommits(repo)].filter(e => e.kind === 'signedCommit')
+  if (!entries.length) return null
+  const tagFor = i => i === 0 ? 'HEAD' : `HEAD-${i}`
+  const signedRow = (e, tag, { asSummary = false, isSelected = false } = {}) => {
+    const c0 = e.commits[0]
+    const headline = e.commits.length === 0
+      ? h`<span class="dim">(sig with no covered commits)</span>`
+      : e.commits.length === 1
+        ? (c0.message || h`<span class="dim">(no message)</span>`)
+        : h`<span class="dim">${e.commits.length}× </span>${c0?.message || ''}`
+    const cls = ['row', 'signed-commit',
+      asSummary ? 'head-card' : null,
+      isSelected ? 'selected' : null]
+    const action = asSummary ? null : 'select-commit'
+    return h`
+      <div class=${cls}
+           data-key=${`sc${e.sigAddress}`}
+           data-action=${action}
+           data-keyhex=${keyHex} data-addr=${e.sigAddress}>
+        <span class="kind">${tag} ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.sigAddress), e.sigAddress)) }}</span>
+        <span class="msg">${headline}</span>
+        <span class="when">${c0 ? fmtDate(c0.date) : ''}</span>
+        <span class="mono dim">@${e.sigAddress}</span>
+      </div>`
+  }
+  const selectedIdx = entries.findIndex(e => e.sigAddress === currentSigAddr)
+  const selected = selectedIdx >= 0 ? entries[selectedIdx] : entries[0]
   return h`
-    <a class="back" data-action="back-registry">← all repos</a>
-    <div class="keyfull"><span class="mono">${keyHex}</span></div>
-    ${() => {
-      dep()
-      const repo = registry.get(keyHex)
-      if (!repo) return h`<div class="empty">opening…</div>`
-      const entries = [...signedCommits(repo)]
-      if (!entries.length) {
-        return h`
-          <h2>signed commits <span class="dim">(0)</span></h2>
-          <div class="empty">no signed commits yet</div>
-        `
-      }
-      const signed = entries.filter(e => e.kind === 'signedCommit')
-      const unsigned = entries.filter(e => e.kind === 'unsignedCommit')
-      const others = entries.filter(e => e.kind === 'other')
-      const tagFor = i => i === 0 ? 'HEAD' : `HEAD-${i}`
-      // Render a single signed-commit row. Used for both the dropdown
-      // summary (the currently-selected commit) and the dropdown body.
-      // In the body, data-action='select-commit' picks a different
-      // commit. The summary doesn't need data-action — clicking the
-      // summary natively toggles the <details>.
-      const signedRow = (e, tag, { asSummary = false, isSelected = false } = {}) => {
-        const c0 = e.commits[0]
-        const headline = e.commits.length === 0
-          ? h`<span class="dim">(sig with no covered commits)</span>`
-          : e.commits.length === 1
-            ? (c0.message || h`<span class="dim">(no message)</span>`)
-            : h`<span class="dim">${e.commits.length}× </span>${c0?.message || ''}`
-        const cls = ['row', 'signed-commit',
-          asSummary ? 'head-card' : null,
-          isSelected ? 'selected' : null]
-        const action = asSummary ? null : 'select-commit'
-        return h`
-          <div class=${cls}
-               data-key=${`sc${e.sigAddress}`}
-               data-action=${action}
-               data-keyhex=${keyHex} data-addr=${e.sigAddress}>
-            <span class="kind">${tag} ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.sigAddress), e.sigAddress)) }}</span>
-            <span class="msg">${headline}</span>
-            <span class="when">${c0 ? fmtDate(c0.date) : ''}</span>
-            <span class="mono dim">@${e.sigAddress}</span>
-          </div>`
-      }
-      // Resolve the currently-selected signed commit. Default = HEAD; if
-      // the user picked something else (and it's still in the list),
-      // honor that. If the picked commit is gone (rare — repo rewound?),
-      // fall back to HEAD.
-      const head = signed[0]
-      const picked = selectedSigByRepo.get(keyHex)
-      const selectedIdx = picked !== undefined ? signed.findIndex(e => e.sigAddress === picked) : 0
-      const selected = selectedIdx >= 0 ? signed[selectedIdx] : head
-      return h`
-        <h2>signed commits <span class="dim">(${signed.length})</span></h2>
-        ${selected ? h`
-          <details class="commit-selector" data-key=${`selector-${keyHex}`}>
-            <summary>${signedRow(selected, tagFor(selectedIdx >= 0 ? selectedIdx : 0), { asSummary: true })}</summary>
-            ${signed.length > 1 ? h`
-              <div class="dropdown-body">
-                ${signed.map((e, i) => signedRow(e, tagFor(i), { isSelected: e === selected }))}
-              </div>
-            ` : null}
-          </details>
-        ` : h`<div class="empty">no signed commits yet</div>`}
-        ${selected ? signedCommitDetail(repo, keyHex, selected.sigAddress) : null}
-        ${unsigned.length ? h`
-          <h3>unsigned <span class="dim">(${unsigned.length} — sign in flight or pending)</span></h3>
-          ${unsigned.map(e => h`
-            <div class="row unsigned-commit" data-key=${`u${e.address}`} data-action="open-at"
-                 data-keyhex=${keyHex} data-addr=${e.address}>
-              <span class="kind">unsigned</span>
-              <span class="msg">${e.message || h`<span class="dim">(no message)</span>`}</span>
-              <span class="when">${fmtDate(e.date)}</span>
-              <span class="mono dim">@${e.address}</span>
-            </div>
-          `)}
-        ` : null}
-        ${others.length ? h`
-          <details class="other-storage">
-            <summary>storage chunks <span class="dim">(${others.length}) — the chunks underneath</span></summary>
-            <table class="kv clickable">
-              <tbody>
-                ${others.map(e => h`
-                  <tr data-key=${`o${e.address}`} data-action="open-at"
-                      data-keyhex=${keyHex} data-addr=${e.address}>
-                    <td class="mono dim">${e.codecType}</td>
-                    <td>${(() => { try { return previewValue(repo.decode(e.address)) } catch { return '' } })()}</td>
-                    <td class="mono dim">@${e.address}</td>
-                  </tr>
-                `)}
-              </tbody>
-            </table>
-          </details>
-        ` : null}
-      `
-    }}
+    <details class="commit-selector" data-key=${`selector-${keyHex}`}>
+      <summary>${signedRow(selected, tagFor(selectedIdx >= 0 ? selectedIdx : 0), { asSummary: true })}</summary>
+      ${entries.length > 1 ? h`
+        <div class="dropdown-body">
+          ${entries.map((e, i) => signedRow(e, tagFor(i), { isSelected: e === selected }))}
+        </div>
+      ` : null}
+    </details>
+  `
+}
+
+// Unsigned commits + the repo-wide "other storage chunks" list. Shown
+// below the polished detail on sig at-views and on the no-HEAD page,
+// so the repo's full inventory is always one click away.
+function repoExtras (repo, keyHex) {
+  const entries = [...signedCommits(repo)]
+  const unsigned = entries.filter(e => e.kind === 'unsignedCommit')
+  const others = entries.filter(e => e.kind === 'other')
+  return h`
+    ${unsigned.length ? h`
+      <h3>unsigned <span class="dim">(${unsigned.length} — sign in flight or pending)</span></h3>
+      ${unsigned.map(e => h`
+        <div class="row unsigned-commit" data-key=${`u${e.address}`} data-action="open-at"
+             data-keyhex=${keyHex} data-addr=${e.address}>
+          <span class="kind">unsigned</span>
+          <span class="msg">${e.message || h`<span class="dim">(no message)</span>`}</span>
+          <span class="when">${fmtDate(e.date)}</span>
+          <span class="mono dim">@${e.address}</span>
+        </div>
+      `)}
+    ` : null}
+    ${others.length ? h`
+      <details class="other-storage">
+        <summary>storage chunks <span class="dim">(${others.length}) — the chunks underneath</span></summary>
+        <table class="kv clickable">
+          <tbody>
+            ${others.map(e => h`
+              <tr data-key=${`o${e.address}`} data-action="open-at"
+                  data-keyhex=${keyHex} data-addr=${e.address}>
+                <td class="mono dim">${e.codecType}</td>
+                <td>${(() => { try { return previewValue(repo.decode(e.address)) } catch { return '' } })()}</td>
+                <td class="mono dim">@${e.address}</td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
+      </details>
+    ` : null}
   `
 }
 
@@ -433,34 +433,58 @@ function AtView ({ keyHex, address }) {
       <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
       <span class="dim"> @ ${address}</span>
     </div>
-    <nav class="tabs">
-      <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
-         data-action="set-tab" data-tab="value">value</a>
-      <a class=${() => { dep(); return ['tab', atTab === 'storage' ? 'active' : null] }}
-         data-action="set-tab" data-tab="storage">storage</a>
-    </nav>
     ${() => {
       dep()
       const repo = registry.get(keyHex)
       if (!repo) return h`<div class="empty">opening…</div>`
-      if (address >= repo.byteLength) return h`<div class="empty">loading…</div>`
+
+      // Resolve HEAD (symbolic) to the most-recent sig address. If the
+      // repo has no sigs yet, render a useful "no HEAD" page that still
+      // surfaces unsigned commits and storage chunks.
+      let resolvedAddr = address
+      if (address === 'HEAD') {
+        resolvedAddr = resolveHead(repo)
+        if (resolvedAddr === undefined) {
+          return h`
+            <h2>at HEAD <span class="dim">(no signed commits yet)</span></h2>
+            <div class="empty">this repo hasn't signed anything yet — once it does, HEAD will point to the most-recent signed commit and you'll land here automatically.</div>
+            ${repoExtras(repo, keyHex)}
+          `
+        }
+      }
+      if (resolvedAddr >= repo.byteLength) return h`<div class="empty">loading…</div>`
 
       let info
-      try { info = valueAndChildren(repo, address) }
+      try { info = valueAndChildren(repo, resolvedAddr) }
       catch (e) { return h`<pre class="value">decode error: ${e.message}</pre>` }
 
       const { codecType, refs, decoded } = info
       const isCommit = isCommitShape(decoded)
+      const isSig = codecType === 'SIGNATURE'
+
+      // Tabs are part of the page content (not the static header) so a
+      // sig at-view can render the commit selector ABOVE the tabs.
+      const tabs = h`
+        <nav class="tabs">
+          <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
+             data-action="set-tab" data-tab="value">value</a>
+          <a class=${() => { dep(); return ['tab', atTab === 'storage' ? 'active' : null] }}
+             data-action="set-tab" data-tab="storage">storage</a>
+        </nav>
+      `
+      const selector = isSig ? commitSelectorSection(repo, keyHex, resolvedAddr) : null
 
       // Storage tab: spatial view of where this chunk lives in the byte
       // stream + outgoing references + this chunk's bytes + incoming
       // referrers. The chunk graph from this chunk's perspective.
       if (atTab === 'storage') {
         return h`
-          ${byteStreamSection(repo, keyHex, address)}
-          ${outgoingReferencesSection(repo, keyHex, address)}
-          ${rawChunkSection(repo, address)}
-          ${referrersSection(repo, keyHex, address)}
+          ${selector}
+          ${tabs}
+          ${byteStreamSection(repo, keyHex, resolvedAddr)}
+          ${outgoingReferencesSection(repo, keyHex, resolvedAddr)}
+          ${rawChunkSection(repo, resolvedAddr)}
+          ${referrersSection(repo, keyHex, resolvedAddr)}
         `
       }
 
@@ -473,6 +497,7 @@ function AtView ({ keyHex, address }) {
           ? [...changedPaths(repo, parentDataAddr, decoded.dataAddress)]
           : null
         return h`
+          ${tabs}
           <div class="dim">codec: ${codecType} · this is a commit</div>
           <table class="kv">
             <tbody>
@@ -510,6 +535,7 @@ function AtView ({ keyHex, address }) {
       // Duple: explain what this tree-node IS, then show its two children.
       if (codecType === 'DUPLE') {
         return h`
+          ${tabs}
           <div class="dim">codec: DUPLE</div>
           <p class="explainer">
             A <strong>Duple</strong> is a 2-tuple — the building block streamo uses
@@ -529,11 +555,14 @@ function AtView ({ keyHex, address }) {
         `
       }
 
-      // Signature: the polished "signed commit" view. Shared with the
-      // repo view's selected-commit detail.
-      if (codecType === 'SIGNATURE') {
+      // Signature: the polished "signed commit" view + the unsigned/storage
+      // listing below. Shared with the storage tab's chunk-detail view.
+      if (isSig) {
         return h`
-          ${signedCommitDetail(repo, keyHex, address)}
+          ${selector}
+          ${tabs}
+          ${signedCommitDetail(repo, keyHex, resolvedAddr)}
+          ${repoExtras(repo, keyHex)}
           <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
         `
       }
@@ -546,11 +575,13 @@ function AtView ({ keyHex, address }) {
           : Object.entries(refs)
         if (entries.length === 0) {
           return h`
+            ${tabs}
             <div class="dim">codec: ${codecType}</div>
             <div class="empty">${isArray ? '[]' : '{}'}</div>
           `
         }
         return h`
+          ${tabs}
           <div class="dim">codec: ${codecType}${isArray ? ` · length ${entries.length}` : ''}</div>
           <table class="kv clickable">
             <tbody>
@@ -590,6 +621,7 @@ function AtView ({ keyHex, address }) {
 
       // Primitive: just show it.
       return h`
+        ${tabs}
         <div class="dim">codec: ${codecType}</div>
         <pre class="value">${safeJSON(decoded)}</pre>
       `
@@ -922,15 +954,14 @@ const appEl = document.getElementById('app')
 
 // Wrap each view in a data-keyed <section> so mount's tag-pool recycling
 // doesn't pull stale elements from one view into another. Without this,
-// returning RegistryView's <h2>repos</h2> after RepoView would recycle
-// RepoView's <h2>chunks (…)</h2> and keep its old text children (patchElement
-// only updates attrs). The data-key changes whenever the view's identity
-// changes (kind + the params that affect rendering), forcing a fresh mount.
+// switching from registry to an at-view would recycle the registry's
+// <h2> and keep its old text children (patchElement only updates attrs).
+// The data-key changes whenever the view's identity changes (kind + the
+// params that affect rendering), forcing a fresh mount.
 mount(h`${() => {
   dep()
   switch (view.kind) {
     case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
-    case 'repo':     return h`<section class="view" data-key=${`view-repo-${view.keyHex}`}>${RepoView({ keyHex: view.keyHex })}</section>`
     case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}-${view.address}`}>${AtView({ keyHex: view.keyHex, address: view.address })}</section>`
     default:         return h`<div class="empty">?</div>`
   }
@@ -947,18 +978,17 @@ appEl.addEventListener('click', e => {
   const el = e.target.closest('[data-action]')
   if (!el) return
   switch (el.dataset.action) {
-    case 'open-repo':     return go({ kind: 'repo', keyHex: el.dataset.key })
+    case 'open-repo':     return go({ kind: 'at', keyHex: el.dataset.key, address: 'HEAD' })
     case 'open-at':       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     case 'back-registry': return go({ kind: 'registry' })
-    case 'back-repo':     return go({ kind: 'repo', keyHex: el.dataset.keyhex })
+    case 'back-repo':     return go({ kind: 'at', keyHex: el.dataset.keyhex, address: 'HEAD' })
     case 'set-tab':       atTab = el.dataset.tab; return fire()
     case 'select-commit': {
-      // Set the picked commit, then close the dropdown that contains the
-      // clicked row so the user lands on the detail with the selector
-      // collapsed (matches native <select> behavior).
-      selectedSigByRepo.set(el.dataset.keyhex, +el.dataset.addr)
+      // Picking a commit is just navigation — go to /at/<sigAddress>.
+      // Close the dropdown imperatively so the new view renders with
+      // the selector collapsed (matches native <select> behavior).
       el.closest('details.commit-selector')?.removeAttribute('open')
-      return fire()
+      return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     }
   }
 })

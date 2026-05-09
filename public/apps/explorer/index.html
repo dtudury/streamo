@@ -248,6 +248,33 @@
     .byte-map .chunk.current { stroke: var(--ink); stroke-width: 2; }
     .byte-map .chunk.hovered { fill-opacity: 0.55; }
 
+    /* Streamo-typed value pills — every value gets a type-specific visual
+       identity instead of flattening through JSON.stringify. Colors echo
+       the byte-strip codec palette below so the visual language carries
+       across the page. */
+    .tv {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.05rem 0.4rem;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      max-width: 100%;
+      vertical-align: baseline;
+    }
+    .tv-string { color: #047857; background: rgba(16, 185, 129, 0.10); font-family: monospace; }
+    .tv-string .tv-quote { color: #10b981; opacity: 0.7; font-weight: 600; }
+    .tv-num    { color: #475569; background: rgba(100, 116, 139, 0.10); font-family: monospace; }
+    .tv-date   { color: #475569; background: rgba(100, 116, 139, 0.10); }
+    .tv-date .tv-glyph { font-size: 0.75rem; }
+    .tv-date time { font-variant-numeric: tabular-nums; }
+    .tv-bool.tv-true   { color: #15803d; background: rgba(22, 163, 74, 0.10); font-family: monospace; }
+    .tv-bool.tv-false  { color: #b91c1c; background: rgba(220, 38, 38, 0.10); font-family: monospace; }
+    .tv-null, .tv-undefined { color: var(--ink-dim); background: transparent; font-style: italic; font-family: monospace; }
+    .tv-bytes  { color: #4d7c0f; background: rgba(132, 204, 22, 0.10); font-family: monospace; }
+    .tv-array, .tv-object { color: #1e40af; background: rgba(59, 130, 246, 0.10); }
+    .tv-duple  { color: #6b21a8; background: rgba(168, 85, 247, 0.10); }
+
     /* codec category palette — used in both the legend and the SVG fills */
     .cat-commit    { fill: #f59e0b; background: #f59e0b; }
     .cat-sig       { fill: #ef4444; background: #ef4444; }

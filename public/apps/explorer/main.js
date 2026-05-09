@@ -407,7 +407,7 @@ function repoExtras (repo, keyHex) {
             <tr data-key=${`o${e.address}`} data-action="open-at"
                 data-keyhex=${keyHex} data-addr=${e.address}>
               <td class="mono dim">${e.codecType}</td>
-              <td>${(() => { try { return previewValue(repo.decode(e.address)) } catch { return '' } })()}</td>
+              <td>${(() => { try { return typedValue(repo.decode(e.address)) } catch { return '' } })()}</td>
               <td class="mono dim">@${e.address}</td>
             </tr>
           `)}
@@ -507,13 +507,13 @@ function AtView ({ keyHex, address }) {
                   return h`
                     <tr>
                       <td class="mono">${k}</td>
-                      <td>${previewValue(inlineValue)}</td>
+                      <td>${typedValue(inlineValue)}</td>
                       <td class="dim">(inline)</td>
                     </tr>
                   `
                 }
                 let preview = ''
-                try { preview = previewValue(repo.decode(childAddr)) }
+                try { preview = typedValue(repo.decode(childAddr)) }
                 catch { preview = '(error)' }
                 return h`
                   <tr data-key=${k} data-action="open-at"
@@ -605,8 +605,8 @@ function AtView ({ keyHex, address }) {
           </p>
           <table class="kv">
             <tbody>
-              <tr><td class="mono">v[0]</td><td>${previewValue(decoded.v[0])}</td></tr>
-              <tr><td class="mono">v[1]</td><td>${previewValue(decoded.v[1])}</td></tr>
+              <tr><td class="mono">v[0]</td><td>${typedValue(decoded.v[0])}</td></tr>
+              <tr><td class="mono">v[1]</td><td>${typedValue(decoded.v[1])}</td></tr>
             </tbody>
           </table>
         `
@@ -802,7 +802,7 @@ function outgoingReferencesSection (repo, keyHex, address) {
           try {
             const childCode = repo.resolve(childAddr)
             codecType = repo.footerToCodec[childCode.at(-1)]?.type || '?'
-            preview = previewValue(repo.decode(childAddr))
+            preview = typedValue(repo.decode(childAddr))
           } catch { preview = '(error)' }
           return h`
             <tr data-key=${`out${i}@${childAddr}`} data-action="open-at"
@@ -840,7 +840,7 @@ function referrersSection (repo, keyHex, address) {
       <tbody>
         ${refs.map(r => {
           let preview = ''
-          try { preview = previewValue(repo.decode(r.address)) }
+          try { preview = typedValue(repo.decode(r.address)) }
           catch { preview = '(error)' }
           return h`
             <tr data-key=${`r${r.address}`} data-action="open-at"
@@ -863,19 +863,44 @@ function isDuple (v) {
   return v && typeof v === 'object' && Array.isArray(v.v) && v.v.length === 2 && Object.keys(v).length === 1
 }
 
-function previewValue (v, depth = 0) {
-  if (v == null) return String(v)
-  if (typeof v === 'string') return v.length > 60 ? JSON.stringify(v.slice(0, 60)) + '…' : JSON.stringify(v)
-  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
-  if (v instanceof Date) return v.toISOString()
-  if (v instanceof Uint8Array) return `Uint8Array(${v.length})`
-  if (isDuple(v)) {
-    if (depth > 2) return 'Duple(…)'
-    return `Duple(${previewValue(v.v[0], depth + 1)}, ${previewValue(v.v[1], depth + 1)})`
+// Streamo-typed value renderer — every value gets a visual identity
+// matching its underlying codec, instead of being flattened through
+// JSON.stringify. Primitives render with type-specific styling
+// (string → quoted mono in green frame, date → <time> with calendar
+// chip, number → number chip, etc.); composites currently render as
+// count chips ({ N fields } / [ N elements ]) — depth-controlled
+// expansion is the next step in this thread (see THREADS.md).
+function typedValue (v, depth = 0) {
+  if (v === null) return h`<span class="tv tv-null">null</span>`
+  if (v === undefined) return h`<span class="tv tv-undefined">undefined</span>`
+  if (typeof v === 'boolean') {
+    return h`<span class=${['tv', 'tv-bool', v ? 'tv-true' : 'tv-false']}>${v ? '✓' : '✗'} ${String(v)}</span>`
   }
-  if (Array.isArray(v)) return `[…] (${v.length})`
-  if (typeof v === 'object') return `{…} (${Object.keys(v).length})`
-  return String(v)
+  if (typeof v === 'string') {
+    const display = v.length > 60 ? v.slice(0, 60) + '…' : v
+    return h`<span class="tv tv-string"><span class="tv-quote">“</span>${display}<span class="tv-quote">”</span></span>`
+  }
+  if (typeof v === 'number') {
+    return h`<span class="tv tv-num">${String(v)}</span>`
+  }
+  if (v instanceof Date) {
+    return h`<span class="tv tv-date"><span class="tv-glyph">📅</span><time datetime=${v.toISOString()}>${v.toLocaleString()}</time></span>`
+  }
+  if (v instanceof Uint8Array) {
+    return h`<span class="tv tv-bytes">Uint8Array(${v.length})</span>`
+  }
+  if (isDuple(v)) {
+    if (depth > 1) return h`<span class="tv tv-duple">Duple(…)</span>`
+    return h`<span class="tv tv-duple">Duple(${typedValue(v.v[0], depth + 1)}, ${typedValue(v.v[1], depth + 1)})</span>`
+  }
+  if (Array.isArray(v)) {
+    return h`<span class="tv tv-array">[ ${v.length} ${v.length === 1 ? 'element' : 'elements'} ]</span>`
+  }
+  if (typeof v === 'object') {
+    const n = Object.keys(v).length
+    return h`<span class="tv tv-object">{ ${n} ${n === 1 ? 'field' : 'fields'} }</span>`
+  }
+  return h`<span class="tv">${String(v)}</span>`
 }
 
 function safeGet (f) { try { return f() } catch { return undefined } }

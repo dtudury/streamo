@@ -44,6 +44,38 @@ expansion yet.
 
 ---
 
+## mount: recursive reconcile instead of trash-and-remount
+
+The current fix for "data-keyed elements never update their static
+text content" (commit `0f72346`) is correct but blunt: every recycled
+element rebuilds its entire subtree on every outer re-render. That
+means O(N) DOM ops per re-render where N is total descendants, and it
+forces re-creation of every inner slot's watchers. Invisible at
+explorer scale (5 rows). Becomes a perf cliff for chats with hundreds
+of messages, where every chunk arrival re-renders the messages list
+and rebuilds every existing message's DOM.
+
+**State.** Not started. The fix in `mount.js` is correct; this is
+follow-up work.
+
+**Right answer.** Recursive reconciliation: walk new vnode children
+in parallel with existing DOM children, match by tag/key, only update
+text nodes whose content actually changed, only patch attrs that
+differ, leave unchanged subtrees alone. ~50 more lines of mount.js.
+
+**The subtle case.** Inner slot cells (function children) — their
+closures change across outer re-renders, so preserving an existing
+slot risks running stale closures forever; recreating wastes work
+(loses cached async state). The pragmatic answer is probably:
+preserve the slot's anchor structure but call its watcher with the
+NEW cell function. That requires distinguishing slot anchors in the
+DOM, which is doable but isn't standard React-style reconciliation.
+
+**Trigger.** Look here when a chat with N>200 messages starts to
+feel laggy on chunk arrival. Until then, ship.
+
+---
+
 ## bring back the minimap (optional)
 
 Punted during 4.0.x. The single-strip detail-with-grab works well for

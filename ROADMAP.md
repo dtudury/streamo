@@ -5,6 +5,68 @@ picture of where the project is and where it's headed.
 
 ---
 
+## where we are (4.0.x — explorer reshape)
+
+A multi-day pass over the repo explorer. Each step was small; together
+they reframe the tool around the user-meaningful unit (a commit) and a
+git-like URL space, while fixing one real correctness bug along the way.
+
+**Real bug fix (`Streamo.js`, regression-tested):** `#signedLength` only
+advanced inside `sign()`. Loading a streamo from disk (archiveSync) or
+streaming chunks in from a peer left it at zero, so the next local
+`sign()` would re-sign all of history with `signedFrom=0`, producing a
+sig whose claimed coverage collided with every prior sig. Fixed by
+hooking into `Streamo.append()` — every sig chunk advances the cursor,
+no matter which path delivered it. Old over-covering sigs still verify
+(over-covering is harmless, just wasteful); new commits accumulate
+cleanly going forward.
+
+**Explorer reshape — shipping in the npm tarball as the demo:**
+
+- *URL space.* `#/repo/<hex>` is now shorthand for `at HEAD`, the
+  symbolic ref that resolves at render time to the most-recent commit.
+  Pinned addresses are `at/<num>`. `RepoView` is gone — `AtView` covers
+  every page in a repo. Browser back/forward and shareable URLs work
+  for every state including dropdown selection.
+- *Commits as the unit, not signatures.* The dropdown enumerates
+  commits (HEAD, HEAD-1, …) — 16 messages stay 16 dropdown rows even
+  when batched into one signature. Each commit has its own page; the
+  verifying sig is the credential, not the unit. Sigs are still
+  browseable at `at/<sig-addr>` but the page there is auxiliary.
+- *Detached state.* Like git's detached-HEAD: when the current address
+  isn't a commit (drilled into a Duple, a sig, raw bytes), the selector
+  summary shows a neutral "detached" card. The body still lists every
+  commit so you have an always-present way back. UI doesn't shift
+  between commit pages and storage drilling.
+- *Consistent banner.* A `kindBanner` at the top of every value tab
+  identifies "what this is" — `signed commit` / `commit (unsigned)` /
+  `signature chunk` / `object · 7 fields` / `duple` / `string` / etc.
+  Variants: green `verified` for commits or sigs with a valid covering
+  sig; dashed `unsigned` for commits awaiting one; default neutral for
+  storage codecs.
+- *Direct kv tables for commit content.* The polished inline-packed
+  headline ("today 14:32 · parent @X · commit chunk @Y") is replaced
+  with the same labelled-row table the Object branch uses — every
+  field on its own row with addresses as clickable links. A
+  verification table follows, linking to the covering sig.
+- *Draggable byte-strip.* Modestly zoomed (`ZOOM=2 + MIN_PX=8`) so
+  even 1-byte chunks are clickable; horizontally scrollable; click-drag
+  to pan with grab/grabbing cursors. Auto-scrolls to HEAD on first
+  render and stays pinned to the right edge unless the user drags
+  off. Hovering any element with a `data-addr` smooth-scrolls the
+  matching chunk into view in the strip. (No minimap — dropped in
+  favor of single-strip simplicity. Easy to add back.)
+
+**Other small fixes:**
+
+- Chat client (web + cli) now stores message timestamps as `new Date()`
+  instead of `Date.now()`, so they round-trip through the DATE codec
+  and render as dates everywhere. Old number-stored messages keep
+  rendering correctly thanks to coercion-tolerant display paths.
+- Cross-view DOM recycling fix: each top-level view is wrapped in a
+  data-keyed `<section>` so mount's tag pool can't keep stale text
+  children when you switch between views.
+
 ## where we are (4.0.0)
 
 4.0.0 closes a long-standing design wart: **`asRefs` could mutate the streamo
@@ -186,14 +248,56 @@ Below is the underlying capability surface (unchanged in 3.0.0):
 ## what's next
 
 ### richer explorer
-The explorer (`public/apps/explorer/`) shipped as a thin slice — registry →
-repo → commit history → value-at-commit. Polish from here:
-- show signature chunks as their own commit-list entries (currently they're
-  invisible — `valueAddress` skips past them)
-- highlight changed paths between a commit and its parent (`changedPaths` is
-  already exported)
-- collapsible JSON tree for the value view (raw `JSON.stringify` is fine for
-  small repos; falls over on big arrays)
+
+Most of the original list shipped during 4.0.x — the explorer now reads as
+a real tool, not a thin slice. Below is what *might* come next, ordered
+loosely from "small follow-up" to "could be its own session":
+
+**Small polishing threads** *(any of these is a 30-minute job)*
+
+- *Empty-repo polish.* The "no commits yet" page shows a plain message
+  + storage list. Fine, but could be friendlier — maybe a hint like
+  "send a message in the chat tab to make this come alive."
+- *Rehydrated section vs kv table.* The commit value tab shows BOTH a
+  named-row kv table AND a `safeJSON` rehydrated `<pre>`. Useful overlap
+  for now (the table shows addresses, the JSON shows nesting), but the
+  user might prefer dropping one once they've used it more.
+- *changedPaths richer.* Currently `<ul>` of dotted paths. Could highlight
+  the changed values inline, or color-code added/removed/modified.
+- *Search / filter in the dropdown.* Once a chat has 200 messages, the
+  HEAD-N list gets long. Type-to-filter would help, even if simple.
+- *Covering-sig hint on detached.* When detached at a chunk that IS
+  covered by a sig, the summary could say "covered by HEAD-2" instead
+  of just "detached" — turning detached into a more useful state.
+
+**Bigger threads** *(probably their own session each)*
+
+- *Diff view between commits.* `changedPaths` walks two snapshots; a
+  diff view could show old → new for each path. Best paired with the
+  changedPaths-richer polish above.
+- *Member visualization.* Walk a repo's `members` array, show each as
+  a clickable card linking to their repo. Adds a graph-y dimension to
+  the registry list.
+- *Presence layer.* Mentioned in its own section below — surfacing
+  "alice is here right now" via the `interest`/`announce` ephemeral
+  layer. The infrastructure is there; the UI isn't.
+- *Custom value-renderer per repo.* If a repo's value happens to be a
+  chat-shaped `{ messages: [...] }`, render it as a chat thread instead
+  of generic JSON. The principle generalizes: repos describe how they
+  want to be displayed (potentially via a `StreamoComponent`). This is
+  the bridge to the StreamoComponent demos thread further down.
+
+**Bring-back-the-minimap** *(the user reserved the right)*
+
+- A small overview strip above the draggable detail strip, with a
+  translucent viewport rectangle showing what the detail is looking at.
+  D3-brush style. Was prototyped during 4.0.x and pulled back in favor
+  of single-strip simplicity. The detail-strip-with-grab works well; the
+  minimap is the natural addition if "where am I in the whole stream"
+  becomes a felt need.
+
+The user's stated plan is to **meander** — pick whatever feels right,
+not work the list in order. Treat this as a menu, not a queue.
 
 ### toward reference-quality clarity
 

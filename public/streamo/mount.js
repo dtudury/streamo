@@ -192,29 +192,36 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
     old.remove()
   }
 
-  // Reinsert recycled elements (static attrs patched) and mount fresh ones, in order
+  // Reinsert recycled elements and mount fresh ones, in order. For
+  // recycled elements we re-mount: clean up the existing subtree's
+  // watchers, clear inner DOM and any attributes set on the outer
+  // element, then apply fresh attrs and mount fresh children. The
+  // OUTER node identity is preserved (so document position and DOM
+  // references survive), but inner state (focus, scroll, slot
+  // anchors) is rebuilt — a static `${value}` child captured at
+  // first mount would otherwise be stale on every re-render.
+  // Inputs that need focus preservation across re-renders should
+  // be kept in their own data-keyed slot so reconcileSlot's matcher
+  // recycles them in place separately from this outer rebuild.
   for (const vnode of newVNodes) {
     const recycled = vnodeToEl.get(vnode)
     if (recycled) {
-      patchElement(recycled, vnode)
+      cleanupNode(recycled, recaller)
+      while (recycled.firstChild) recycled.firstChild.remove()
+      // Clear all attributes (snapshot the names — removeAttribute mutates the live list)
+      const oldAttrNames = Array.from(recycled.attributes, a => a.name)
+      for (const name of oldAttrNames) recycled.removeAttribute(name)
+      for (const attr of vnode.attrs) {
+        if (attr == null) continue
+        applyAttr(recycled, attr, recaller)
+      }
+      mount(vnode.children, recycled, recaller, ns)
       end.before(recycled)
     } else {
       const frag = document.createDocumentFragment()
       mountNode(vnode, frag, recaller, ns)
       end.before(frag)
     }
-  }
-}
-
-// Update static attributes on a recycled element.
-// Reactive (function/array) attrs are already self-updating via their existing watchers.
-function patchElement (el, vnode) {
-  for (const attr of vnode.attrs) {
-    if (attr == null) continue
-    if (typeof attr === 'object' && !attr.name) continue // spread — skip
-    if (typeof attr.value === 'function' || Array.isArray(attr.value)) continue // reactive — skip
-    if (attr.value !== undefined) setAttr(el, attr.name, attr.value)
-    else el.toggleAttribute(attr.name, true)
   }
 }
 

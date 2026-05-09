@@ -47,20 +47,20 @@ const recaller = new Recaller('explorer')
 const signal = {}
 const dep = () => recaller.reportKeyAccess(signal, 'data')
 
-const schedule = typeof requestAnimationFrame !== 'undefined'
-  ? fn => requestAnimationFrame(fn)
-  : fn => queueMicrotask(fn)
-let scheduled = false
+// Mutate synchronously — the Recaller's nextTick flush already coalesces
+// multiple mutations in one tick into a single slot re-run, so wrapping
+// in rAF buys nothing for that and introduces a real failure mode: when
+// the tab loses focus, queued rAFs get throttled or paused, and a stuck
+// `scheduled = true` would make every subsequent fire() a no-op until
+// the rAF eventually drained — which from the user's view looks like
+// the display has frozen until a refresh. Side effects that DO need to
+// wait for layout (the byte-strip pinning) get their own rAF.
+let stripSyncScheduled = false
 function fire () {
-  if (scheduled) return
-  scheduled = true
-  schedule(() => {
-    scheduled = false
-    recaller.reportKeyMutation(signal, 'data')
-    // After mount has updated the DOM, sync byte-strip viewport indicators
-    // and (if appropriate) keep them pinned to HEAD on live updates.
-    syncByteStrips()
-  })
+  recaller.reportKeyMutation(signal, 'data')
+  if (stripSyncScheduled) return
+  stripSyncScheduled = true
+  requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
 }
 
 const watched = new Set()

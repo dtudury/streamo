@@ -126,7 +126,7 @@ rl.on('line', async line => {
   const messages = myRepo.get('messages') ?? []
   const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
   myRepo.defaultMessage = `"${preview}" (cli)`
-  myRepo.set({ name: username, messages: [...messages, { text, at: Date.now() }] })
+  myRepo.set({ name: username, messages: [...messages, { text, at: new Date() }] })
   rl.prompt()
 })
 

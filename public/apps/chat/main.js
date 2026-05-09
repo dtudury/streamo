@@ -13,8 +13,10 @@ function fmt (ts) {
 }
 
 function Msg ({ name, text, at, mine }) {
+  // +at coerces both Date and number to ms — stable key across old (number)
+  // and new (Date) message records as we transition.
   return h`
-    <div class=${['msg', mine ? 'mine' : 'theirs']} data-key=${at}>
+    <div class=${['msg', mine ? 'mine' : 'theirs']} data-key=${+at}>
       ${!mine ? h`<div class="sender">${name}</div>` : null}
       <div class="text">${text}</div>
       <div class="time">${fmt(at)}</div>
@@ -129,7 +131,7 @@ joinBtn.onclick = async () => {
       const messages = myRepo.get('messages') ?? []
       const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
       myRepo.defaultMessage = `"${preview}" (web)`
-      myRepo.set({ name: username, messages: [...messages, { text, at: Date.now() }] })
+      myRepo.set({ name: username, messages: [...messages, { text, at: new Date() }] })
     }
 
     sendBtn.onclick = sendMessage

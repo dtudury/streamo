@@ -298,23 +298,18 @@ function RegistryView () {
       dep()
       const rows = []
       for (const [keyHex, repo] of registry) {
-        // Distinguish "truly empty" (no chunks) from "still streaming" —
-        // during initial sync the last chunk to arrive may be a Duple or
-        // value chunk, not the commit, so lastCommit briefly returns null
-        // even for a populated repo. byteLength === 0 means actually empty;
-        // byteLength > 0 with no commit means data is still arriving (the
-        // watcher will fire fire() as more chunks land and we'll re-render).
+        // No claims about state we can't verify — show the date when we
+        // resolve a commit, otherwise show the byte count. byteLength
+        // is honest: it's what we actually have on hand. The watcher
+        // fires as more chunks land and the row settles to a date once
+        // the commit chunk resolves at the end of the stream.
         const last = repo.lastCommit
         const len = repo.byteLength
-        const when = last
-          ? fmtDate(last.date)
-          : len === 0
-            ? '(no commits)'
-            : '(loading…)'
+        const when = last ? fmtDate(last.date) : `${len} b`
         rows.push(h`
           <div class="row" data-key=${keyHex} data-action="open-repo">
             <span class="mono">${truncKey(keyHex)}</span>
-            <span class="when">${when}</span>
+            <span class=${['when', last ? null : 'dim']}>${when}</span>
             <span class="msg dim">${last?.message || ''}</span>
           </div>
         `)

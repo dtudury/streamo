@@ -49,7 +49,13 @@ let scheduled = false
 function fire () {
   if (scheduled) return
   scheduled = true
-  schedule(() => { scheduled = false; recaller.reportKeyMutation(signal, 'data') })
+  schedule(() => {
+    scheduled = false
+    recaller.reportKeyMutation(signal, 'data')
+    // After mount has updated the DOM, sync byte-strip viewport indicators
+    // and (if appropriate) keep them pinned to HEAD on live updates.
+    syncByteStrips()
+  })
 }
 
 const watched = new Set()
@@ -263,27 +269,39 @@ function RepoView ({ keyHex }) {
       const signed = entries.filter(e => e.kind === 'signedCommit')
       const unsigned = entries.filter(e => e.kind === 'unsignedCommit')
       const others = entries.filter(e => e.kind === 'other')
+      const head = signed[0]
+      const earlier = signed.slice(1)
+      // Render a single signed-commit row. `tag` is the chip text — "HEAD" for
+      // the most recent, "HEAD-1", "HEAD-2", … for earlier ones.
+      const signedRow = (e, tag) => {
+        const c0 = e.commits[0]
+        const headline = e.commits.length === 0
+          ? h`<span class="dim">(sig with no covered commits)</span>`
+          : e.commits.length === 1
+            ? (c0.message || h`<span class="dim">(no message)</span>`)
+            : h`<span class="dim">${e.commits.length}× </span>${c0?.message || ''}`
+        return h`
+          <div class="row signed-commit ${tag === 'HEAD' ? 'head-card' : ''}"
+               data-key=${`sc${e.sigAddress}`} data-action="open-at"
+               data-keyhex=${keyHex} data-addr=${e.sigAddress}>
+            <span class="kind">${tag} ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.sigAddress), e.sigAddress)) }}</span>
+            <span class="msg">${headline}</span>
+            <span class="when">${c0 ? fmtDate(c0.date) : ''}</span>
+            <span class="mono dim">@${e.sigAddress}</span>
+          </div>`
+      }
       return h`
         ${byteStreamSection(repo, keyHex, null)}
         <h2>signed commits <span class="dim">(${signed.length})</span></h2>
-        ${signed.length
-          ? signed.map(e => {
-              const head = e.commits[0]   // newest commit in the batch
-              const headline = e.commits.length === 0
-                ? h`<span class="dim">(sig with no covered commits)</span>`
-                : e.commits.length === 1
-                  ? (head.message || h`<span class="dim">(no message)</span>`)
-                  : h`<span class="dim">${e.commits.length}× </span>${head?.message || ''}`
-              return h`
-                <div class="row signed-commit" data-key=${`sc${e.sigAddress}`} data-action="open-at"
-                     data-keyhex=${keyHex} data-addr=${e.sigAddress}>
-                  <span class="kind">signed ${() => { dep(); return verifyBadge(verifyStatus(repo, keyHex, repo.decode(e.sigAddress), e.sigAddress)) }}</span>
-                  <span class="msg">${headline}</span>
-                  <span class="when">${head ? fmtDate(head.date) : ''}</span>
-                  <span class="mono dim">@${e.sigAddress}</span>
-                </div>`
-            })
+        ${head
+          ? signedRow(head, 'HEAD')
           : h`<div class="empty">no signed commits yet</div>`}
+        ${earlier.length ? h`
+          <details class="earlier-commits">
+            <summary>${earlier.length} earlier ${earlier.length === 1 ? 'commit' : 'commits'}</summary>
+            ${earlier.map((e, i) => signedRow(e, `HEAD-${i + 1}`))}
+          </details>
+        ` : null}
         ${unsigned.length ? h`
           <h3>unsigned <span class="dim">(${unsigned.length} — sign in flight or pending)</span></h3>
           ${unsigned.map(e => h`
@@ -576,11 +594,14 @@ function codecCategory (type) {
   }
 }
 
-// Byte stream as a color-coded SVG strip — every chunk is a rect with width
-// proportional to its size. Click any rect to navigate; hover any data-addr
-// element elsewhere on the page to highlight the matching chunk here. The
-// detailed hex of the current chunk lives in the chunk-bytes section below;
-// this map gives spatial composition at any scale, including 2k+ chunks.
+// Byte stream as a color-coded SVG strip — every chunk is a rect, color
+// coded by codec category. Modestly zoomed so even 1-byte chunks have a
+// clickable width; horizontally scrollable, click-drag-to-pan inside the
+// strip (cursor: grab/grabbing). First render auto-scrolls to HEAD (the
+// newest content, at the right) and stays pinned there if you haven't
+// dragged off it — so a live stream "follows" the newest activity. The
+// signed-commits dropdown above is for jumping to a known commit; this
+// strip is for poking around between them.
 function byteStreamSection (repo, keyHex, currentAddress) {
   const chunks = []
   let addr = repo.byteLength - 1
@@ -612,8 +633,23 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   }
 
   const total = repo.byteLength
-  const W = 1200  // viewBox width; CSS scales to actual element width
-  const H = 32
+  // Each chunk gets max(MIN_PX, proportional zoomed width). At ZOOM=2 the
+  // strip is roughly 2x viewport-wide for typical repos — enough to
+  // scroll/drag through without losing spatial sense, and MIN_PX keeps
+  // even 1-byte chunks clickable.
+  const ZOOM = 2
+  const MIN_PX = 8
+  const H = 36
+  const zoomedW = 1200 * ZOOM
+  let cursorX = 0
+  const layout = chunks.map(c => {
+    const propW = (c.length / total) * zoomedW
+    const w = Math.max(MIN_PX, propW)
+    const item = { ...c, x: cursorX, w }
+    cursorX += w
+    return item
+  })
+  const stripW = cursorX
   return h`
     <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks)</span></h3>
     <div class="byte-map-legend">
@@ -626,21 +662,21 @@ function byteStreamSection (repo, keyHex, currentAddress) {
       <span class="cat-num">num</span>
       <span class="cat-var">var</span>
     </div>
-    <svg class="byte-map" viewBox=${`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      ${chunks.map(c => {
-        const x = (c.start / total) * W
-        const w = Math.max(0.6, (c.length / total) * W)
-        const cat = commitAddrs.has(c.address) ? 'commit' : codecCategory(c.codecType)
-        const cls = ['chunk', `cat-${cat}`, c.address === currentAddress ? 'current' : null]
-        return h`<rect
-          class=${cls}
-          x=${x} y="0" width=${w} height=${H}
-          data-action="open-at"
-          data-keyhex=${keyHex}
-          data-addr=${c.address}
-        ><title>${c.codecType} @${c.address} (${c.length} bytes)</title></rect>`
-      })}
-    </svg>
+    <div class="byte-strip-container" data-key=${`strip-${keyHex}`}>
+      <svg class="byte-map byte-strip" width=${stripW} height=${H} viewBox=${`0 0 ${stripW} ${H}`}>
+        ${layout.map(c => {
+          const cat = commitAddrs.has(c.address) ? 'commit' : codecCategory(c.codecType)
+          const cls = ['chunk', `cat-${cat}`, c.address === currentAddress ? 'current' : null]
+          return h`<rect
+            class=${cls}
+            x=${c.x} y="0" width=${c.w} height=${H}
+            data-action="open-at"
+            data-keyhex=${keyHex}
+            data-addr=${c.address}
+          ><title>${c.codecType} @${c.address} (${c.length} bytes)</title></rect>`
+        })}
+      </svg>
+    </div>
   `
 }
 
@@ -868,7 +904,12 @@ mount(h`${() => {
 
 // ── Click delegation ──────────────────────────────────────────────────────
 
+let suppressClickUntil = 0
 appEl.addEventListener('click', e => {
+  // Suppress the click that fires at the end of a drag-to-pan, so dragging
+  // doesn't accidentally navigate to a chunk under the pointer when the
+  // user releases.
+  if (Date.now() < suppressClickUntil) return
   const el = e.target.closest('[data-action]')
   if (!el) return
   switch (el.dataset.action) {
@@ -879,6 +920,63 @@ appEl.addEventListener('click', e => {
     case 'set-tab':       atTab = el.dataset.tab; return fire()
   }
 })
+
+// ── Byte-strip drag-to-pan + auto-scroll-to-HEAD ─────────────────────────
+
+// On first render of a strip, scroll to the right edge (HEAD = newest
+// content). On subsequent renders, only re-pin if the user is already at
+// or near the right edge — so a live stream "follows" without dragging
+// you back if you've scrolled into history.
+function syncByteStrips () {
+  for (const container of appEl.querySelectorAll('.byte-strip-container')) {
+    const visible = container.clientWidth || 1
+    const atRight = container.scrollLeft + visible >= container.scrollWidth - 8
+    if (!container.dataset.pinned || atRight) {
+      container.dataset.pinned = '1'
+      container.scrollLeft = container.scrollWidth
+    }
+  }
+}
+
+// Click-drag-to-pan inside the detail strip. Threshold of 4px before
+// treating a pointerdown as a drag — under that, fall through to the
+// regular click handler so chunk-clicks still navigate.
+let dragState = null
+appEl.addEventListener('pointerdown', e => {
+  if (e.button !== undefined && e.button !== 0) return
+  const container = e.target?.closest?.('.byte-strip-container')
+  if (!container) return
+  dragState = {
+    container,
+    pointerId: e.pointerId,
+    startX: e.clientX,
+    startScroll: container.scrollLeft,
+    dragging: false
+  }
+})
+appEl.addEventListener('pointermove', e => {
+  if (!dragState || e.pointerId !== dragState.pointerId) return
+  const dx = e.clientX - dragState.startX
+  if (!dragState.dragging) {
+    if (Math.abs(dx) < 4) return
+    dragState.dragging = true
+    dragState.container.classList.add('dragging')
+    try { dragState.container.setPointerCapture(e.pointerId) } catch {}
+  }
+  dragState.container.scrollLeft = dragState.startScroll - dx
+  e.preventDefault()
+})
+function endDrag () {
+  if (!dragState) return
+  if (dragState.dragging) {
+    dragState.container.classList.remove('dragging')
+    try { dragState.container.releasePointerCapture?.(dragState.pointerId) } catch {}
+    suppressClickUntil = Date.now() + 100
+  }
+  dragState = null
+}
+appEl.addEventListener('pointerup', endDrag)
+appEl.addEventListener('pointercancel', endDrag)
 
 // Cross-highlight: hovering any element with data-addr highlights the
 // matching chunk in the byte-map. References and referrers light up the

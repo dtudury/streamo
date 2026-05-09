@@ -56,6 +56,32 @@
     .row.signed-commit .kind   { color: #16a34a;       border-color: #16a34a; }
     .row.unsigned-commit .kind { color: var(--warn);   border-color: var(--warn); }
 
+    /* HEAD card — the most-recent signed commit, prominent and self-orienting. */
+    .row.signed-commit.head-card {
+      border: 1.5px solid #16a34a;
+      background: rgba(22, 163, 74, 0.05);
+      padding: 0.85rem;
+    }
+    .row.signed-commit.head-card .msg { font-size: 1rem; font-weight: 500; }
+
+    /* Earlier-commits dropdown: keep the dropdown surface restrained so it
+       feels like a tucked-away secondary mode rather than a second list. */
+    details.earlier-commits {
+      margin: 0.5rem 0 1rem;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      padding: 0.25rem 0.5rem;
+    }
+    details.earlier-commits > summary {
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--ink-dim);
+      padding: 0.35rem 0.25rem;
+      list-style: revert;
+    }
+    details.earlier-commits[open] > summary { color: var(--ink); }
+    details.earlier-commits .row { padding: 0.45rem 0.5rem; }
+
     /* Polished signed-commit detail view (AtView SIGNATURE branch). */
     .signed-commit-banner {
       display: flex; align-items: center; gap: 0.5rem;
@@ -139,15 +165,23 @@
     }
     .repo-link:hover { background: var(--flash); text-decoration-style: solid; }
 
-    /* Byte stream map — every chunk as a color-coded rect, scaled to size */
-    .byte-map {
+    /* Byte stream — zoomed strip in a horizontally-scrollable container,
+       click-drag-to-pan inside for "look around" navigation. */
+    .byte-strip-container {
       width: 100%;
-      height: 32px;
-      display: block;
+      overflow-x: auto;
       background: #faf9f4;
       border: 1.5px solid var(--rule);
       border-radius: var(--radius);
       margin: 0.4rem 0 1rem;
+      cursor: grab;
+    }
+    .byte-strip-container.dragging { cursor: grabbing; user-select: none; }
+    .byte-strip-container.dragging .chunk { cursor: grabbing; }
+    .byte-strip { display: block; }
+
+    .byte-map {
+      display: block;
     }
     .byte-map .chunk {
       cursor: pointer;

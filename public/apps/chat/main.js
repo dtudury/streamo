@@ -4,6 +4,7 @@ import { Recaller } from '../../streamo/utils/Recaller.js'
 import { Signer } from '../../streamo/Signer.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
+import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { bytesToHex } from '../../streamo/utils.js'
 
 const { primaryKeyHex: rootKey } = await fetch('/api/info').then(r => r.json())
@@ -81,30 +82,25 @@ joinBtn.onclick = async () => {
     // ── Reactive message list ──────────────────────────────────────────────
     //
     // Each repo has its own internal Recaller, so repo.get() inside a mount
-    // slot won't automatically re-trigger mount's recaller. Bridge via
-    // reportKey*: repo.watch() calls reportKeyMutation when data changes;
-    // the slot calls reportKeyAccess to register the dependency.
+    // slot doesn't automatically re-trigger mount's recaller. bridgeRegistry
+    // wires every repo (existing and future) into a single signal on the
+    // chat recaller; dep() inside the slot subscribes to it. See design.md
+    // §6 for the cross-recaller pattern.
 
     const recaller = new Recaller('chat')
-    const signal   = {}
+    const { dep } = bridgeRegistry(registry, recaller, 'chat')
 
-    function triggerRender () {
-      recaller.reportKeyMutation(signal, 'data')
+    // Auto-scroll to the bottom whenever any chunk arrives. Subscribing
+    // via the same `dep` keeps it in lockstep with the mount slot — both
+    // re-run when the bridge fires, the slot updates the DOM, and this
+    // watcher schedules a post-layout scroll.
+    recaller.watch('chat-scroll', () => {
+      dep()
       requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight })
-    }
-
-    function watchRepo (keyHex, repo) {
-      repo.watch(`chat:${keyHex}`, () => {
-        repo.byteLength  // register 'length' dep → re-fires on every commit and incoming sync chunk
-        triggerRender()
-      })
-    }
-
-    for (const [k, r] of registry) watchRepo(k, r)
-    registry.onOpen((keyHex, repo) => { watchRepo(keyHex, repo); triggerRender() })
+    })
 
     mount(h`${function messages () {
-      recaller.reportKeyAccess(signal, 'data')
+      dep()
       const all = []
       for (const [keyHex, repo] of registry) {
         if (keyHex === rootKey) continue

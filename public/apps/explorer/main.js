@@ -13,15 +13,16 @@
 // storage chunks tucked into a <details>). Otherwise it's storage
 // drilling — value/storage tabs for that chunk, no selector.
 //
-// State lives in plain JS variables; reactivity is bridged from each Repo's
-// internal Recaller into the app-level Recaller via the `signal` pattern
-// (see chat/main.js for the same approach).
+// Reactivity is bridged from each Repo's internal Recaller into the
+// app-level Recaller via bridgeRegistry — see design.md §6 for why
+// each Repo has its own Recaller and how the bridge connects them.
 
 import { h } from '../../streamo/h.js'
 import { mount } from '../../streamo/mount.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
+import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { changedPaths } from '../../streamo/Streamo.js'
 import { hexToBytes } from '../../streamo/utils.js'
 
@@ -44,36 +45,20 @@ try {
 // ── App-level reactivity ──────────────────────────────────────────────────
 
 const recaller = new Recaller('explorer')
-const signal = {}
-const dep = () => recaller.reportKeyAccess(signal, 'data')
+const { dep, fire: bridgeFire } = bridgeRegistry(registry, recaller, 'explorer')
 
-// Mutate synchronously — the Recaller's nextTick flush already coalesces
-// multiple mutations in one tick into a single slot re-run, so wrapping
-// in rAF buys nothing for that and introduces a real failure mode: when
-// the tab loses focus, queued rAFs get throttled or paused, and a stuck
-// `scheduled = true` would make every subsequent fire() a no-op until
-// the rAF eventually drained — which from the user's view looks like
-// the display has frozen until a refresh. Side effects that DO need to
-// wait for layout (the byte-strip pinning) get their own rAF.
+// Wrap bridgeFire to also schedule the byte-strip pin-to-HEAD side effect
+// after the next render. Reactive mutation is synchronous (so the slot
+// re-runs at next tick); only the post-render DOM peek goes through rAF.
+// If rAF gets throttled (tab unfocused), syncByteStrips is delayed but
+// the rest of the UI keeps updating.
 let stripSyncScheduled = false
 function fire () {
-  recaller.reportKeyMutation(signal, 'data')
+  bridgeFire()
   if (stripSyncScheduled) return
   stripSyncScheduled = true
   requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
 }
-
-const watched = new Set()
-function watchRepo (key, repo) {
-  if (watched.has(key)) return
-  watched.add(key)
-  repo.watch(`explorer:${key}`, () => {
-    repo.byteLength
-    fire()
-  })
-}
-for (const [k, r] of registry) watchRepo(k, r)
-registry.onOpen((k, r) => { watchRepo(k, r); fire() })
 
 // ── Hash routing ──────────────────────────────────────────────────────────
 

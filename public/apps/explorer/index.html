@@ -51,10 +51,10 @@
       text-align: center;
       align-self: center;
     }
-    .row.commit .kind          { color: var(--accent); border-color: var(--accent); }
-    .row.signature .kind       { color: var(--warn);   border-color: var(--warn); }
-    .row.signed-commit .kind   { color: #16a34a;       border-color: #16a34a; }
-    .row.unsigned-commit .kind { color: var(--warn);   border-color: var(--warn); }
+    .row.commit .kind                 { color: var(--accent); border-color: var(--accent); }
+    .row.signature .kind              { color: var(--warn);   border-color: var(--warn); }
+    .row.signed-commit .kind          { color: #16a34a;       border-color: #16a34a; }
+    .row.signed-commit.unsigned .kind { color: var(--ink-dim); border-color: var(--ink-dim); }
 
     /* HEAD card — the most-recent signed commit, prominent and self-orienting. */
     .row.signed-commit.head-card {
@@ -129,21 +129,30 @@
     }
     details.other-storage[open] > summary { color: var(--ink); }
 
-    /* Polished signed-commit detail view (AtView SIGNATURE branch). */
+    /* Verification banner for the polished commit-detail view. Green when
+       a covering signature has been verified; neutral when the commit is
+       uncovered (sign in flight or pending). */
     .signed-commit-banner {
       display: flex; align-items: center; gap: 0.5rem;
       padding: 0.65rem 0.85rem; margin: 0.5rem 0 1rem;
       border: 1.5px solid #16a34a; border-radius: var(--radius);
       background: rgba(22, 163, 74, 0.06);
     }
+    .signed-commit-banner.unsigned {
+      border-color: var(--ink-dim);
+      background: transparent;
+    }
     .signed-commit-banner .signed-label {
       font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
       font-weight: 600; color: #16a34a;
     }
+    .signed-commit-banner.unsigned .signed-label { color: var(--ink-dim); }
     .commit-card {
       padding: 0.6rem 0.85rem; margin: 0.4rem 0;
       border: 1px solid var(--rule); border-radius: var(--radius);
     }
+    .commit-card.commit-headline { padding: 0.85rem; margin-bottom: 1rem; }
+    .commit-card.commit-headline .commit-msg { font-size: 1.05rem; font-weight: 500; }
     .commit-card .commit-msg { font-size: 0.95rem; margin-bottom: 0.25rem; }
     .commit-card .commit-meta { font-size: 0.8rem; }
 

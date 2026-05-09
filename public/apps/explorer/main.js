@@ -341,12 +341,14 @@ function resolveHead (repo) {
   return undefined
 }
 
-// Commit selector dropdown — used at the top of any sig at-view. The
-// summary is the currently-selected (= currently-viewed) signed commit
-// styled as a head-card; the body lists every signed commit with the
-// current one marked. Picking a different one (data-action=select-commit)
-// navigates to /at/<sigAddress> via the URL.
-function commitSelectorSection (repo, keyHex, currentSigAddr) {
+// Commit selector dropdown — always rendered at the top of an at-view
+// when the repo has any signatures. When the current address IS a sig,
+// the summary shows that sig as the selected commit (green HEAD-style
+// card); when it's not, the summary shows a "detached" card — same
+// layout, neutral styling — telling you you've drilled into raw memory
+// and offering the dropdown as the way back to a real commit. Borrowed
+// from git's detached-HEAD concept: you're not at a named ref.
+function commitSelectorSection (repo, keyHex, currentAddr) {
   const entries = [...signedCommits(repo)].filter(e => e.kind === 'signedCommit')
   if (!entries.length) return null
   const tagFor = i => i === 0 ? 'HEAD' : `HEAD-${i}`
@@ -372,16 +374,30 @@ function commitSelectorSection (repo, keyHex, currentSigAddr) {
         <span class="mono dim">@${e.sigAddress}</span>
       </div>`
   }
-  const selectedIdx = entries.findIndex(e => e.sigAddress === currentSigAddr)
-  const selected = selectedIdx >= 0 ? entries[selectedIdx] : entries[0]
+  const selectedIdx = entries.findIndex(e => e.sigAddress === currentAddr)
+  const isDetached = selectedIdx < 0
+  // Detached summary — neutral styling, can't be picked (not a navigable
+  // ref), but click toggles the dropdown so you can pick one.
+  const detachedSummary = (() => {
+    let codec = ''
+    try { codec = repo.footerToCodec[repo.resolve(currentAddr).at(-1)]?.type || '' } catch {}
+    return h`
+      <div class="row signed-commit detached-card" data-key="detached">
+        <span class="kind">detached</span>
+        <span class="msg dim">exploring raw memory${codec ? ` · ${codec}` : ''}</span>
+        <span class="when"></span>
+        <span class="mono dim">@${currentAddr}</span>
+      </div>`
+  })()
+  const summary = isDetached
+    ? detachedSummary
+    : signedRow(entries[selectedIdx], tagFor(selectedIdx), { asSummary: true })
   return h`
     <details class="commit-selector" data-key=${`selector-${keyHex}`}>
-      <summary>${signedRow(selected, tagFor(selectedIdx >= 0 ? selectedIdx : 0), { asSummary: true })}</summary>
-      ${entries.length > 1 ? h`
-        <div class="dropdown-body">
-          ${entries.map((e, i) => signedRow(e, tagFor(i), { isSelected: e === selected }))}
-        </div>
-      ` : null}
+      <summary>${summary}</summary>
+      <div class="dropdown-body">
+        ${entries.map((e, i) => signedRow(e, tagFor(i), { isSelected: !isDetached && i === selectedIdx }))}
+      </div>
     </details>
   `
 }
@@ -462,8 +478,11 @@ function AtView ({ keyHex, address }) {
       const isCommit = isCommitShape(decoded)
       const isSig = codecType === 'SIGNATURE'
 
-      // Tabs are part of the page content (not the static header) so a
-      // sig at-view can render the commit selector ABOVE the tabs.
+      // Tabs are part of the page content (not the static header) so the
+      // commit selector renders ABOVE the tabs. The selector is always
+      // present (when the repo has any sigs) so the UI doesn't shift as
+      // you click between commit pages and storage drilling — when the
+      // current address isn't a sig, the summary shows "detached".
       const tabs = h`
         <nav class="tabs">
           <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
@@ -472,7 +491,7 @@ function AtView ({ keyHex, address }) {
              data-action="set-tab" data-tab="storage">storage</a>
         </nav>
       `
-      const selector = isSig ? commitSelectorSection(repo, keyHex, resolvedAddr) : null
+      const selector = commitSelectorSection(repo, keyHex, resolvedAddr)
 
       // Storage tab: spatial view of where this chunk lives in the byte
       // stream + outgoing references + this chunk's bytes + incoming
@@ -488,6 +507,10 @@ function AtView ({ keyHex, address }) {
         `
       }
 
+      // Every value-tab branch below prepends ${selector}${tabs} so the
+      // UI is stable across navigation: the selector is always at the
+      // top of the page when the repo has any sigs.
+
       // Value tab — branches by codec.
       if (isCommit) {
         const parentDataAddr = decoded.parent !== undefined
@@ -497,6 +520,7 @@ function AtView ({ keyHex, address }) {
           ? [...changedPaths(repo, parentDataAddr, decoded.dataAddress)]
           : null
         return h`
+          ${selector}
           ${tabs}
           <div class="dim">codec: ${codecType} · this is a commit</div>
           <table class="kv">
@@ -535,6 +559,7 @@ function AtView ({ keyHex, address }) {
       // Duple: explain what this tree-node IS, then show its two children.
       if (codecType === 'DUPLE') {
         return h`
+          ${selector}
           ${tabs}
           <div class="dim">codec: DUPLE</div>
           <p class="explainer">
@@ -575,12 +600,14 @@ function AtView ({ keyHex, address }) {
           : Object.entries(refs)
         if (entries.length === 0) {
           return h`
+            ${selector}
             ${tabs}
             <div class="dim">codec: ${codecType}</div>
             <div class="empty">${isArray ? '[]' : '{}'}</div>
           `
         }
         return h`
+          ${selector}
           ${tabs}
           <div class="dim">codec: ${codecType}${isArray ? ` · length ${entries.length}` : ''}</div>
           <table class="kv clickable">
@@ -621,6 +648,7 @@ function AtView ({ keyHex, address }) {
 
       // Primitive: just show it.
       return h`
+        ${selector}
         ${tabs}
         <div class="dim">codec: ${codecType}</div>
         <pre class="value">${safeJSON(decoded)}</pre>

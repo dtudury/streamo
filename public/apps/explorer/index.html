@@ -64,6 +64,22 @@
     }
     .row.signed-commit.head-card .msg { font-size: 1rem; font-weight: 500; }
 
+    /* Detached card — same layout as the head-card but neutral styling.
+       Shown as the selector summary when the current address isn't a sig
+       (you've drilled into raw memory). The dropdown body is still the
+       way back — pick a real commit and you re-attach. */
+    .row.signed-commit.detached-card {
+      border: 1.5px dashed var(--rule);
+      background: transparent;
+      padding: 0.85rem;
+      cursor: pointer;
+    }
+    .row.signed-commit.detached-card .kind {
+      color: var(--ink-dim);
+      border-color: var(--ink-dim);
+    }
+    .row.signed-commit.detached-card .msg { font-size: 0.95rem; }
+
     /* Commit selector: a real dropdown widget. Summary = currently-selected
        commit (HEAD by default), styled as the green head-card. Body =
        full list of signed commits, with the selected one marked. */

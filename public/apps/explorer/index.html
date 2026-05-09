@@ -129,30 +129,29 @@
     }
     details.other-storage[open] > summary { color: var(--ink); }
 
-    /* Verification banner for the polished commit-detail view. Green when
-       a covering signature has been verified; neutral when the commit is
-       uncovered (sign in flight or pending). */
-    .signed-commit-banner {
+    /* "What this is" banner — top of every value tab. Default neutral
+       border for storage codecs; green .verified for commits or sigs
+       backed by a valid signature; dim .unsigned for commits awaiting
+       a signature. */
+    .kind-banner {
       display: flex; align-items: center; gap: 0.5rem;
       padding: 0.65rem 0.85rem; margin: 0.5rem 0 1rem;
-      border: 1.5px solid #16a34a; border-radius: var(--radius);
+      border: 1.5px solid var(--rule); border-radius: var(--radius);
+    }
+    .kind-banner.verified {
+      border-color: #16a34a;
       background: rgba(22, 163, 74, 0.06);
     }
-    .signed-commit-banner.unsigned {
-      border-color: var(--ink-dim);
-      background: transparent;
-    }
-    .signed-commit-banner .signed-label {
+    .kind-banner.unsigned { border-style: dashed; }
+    .kind-banner .kind-label {
       font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
-      font-weight: 600; color: #16a34a;
+      font-weight: 600; color: var(--ink-dim);
     }
-    .signed-commit-banner.unsigned .signed-label { color: var(--ink-dim); }
+    .kind-banner.verified .kind-label { color: #16a34a; }
     .commit-card {
       padding: 0.6rem 0.85rem; margin: 0.4rem 0;
       border: 1px solid var(--rule); border-radius: var(--radius);
     }
-    .commit-card.commit-headline { padding: 0.85rem; margin-bottom: 1rem; }
-    .commit-card.commit-headline .commit-msg { font-size: 1.05rem; font-weight: 500; }
     .commit-card .commit-msg { font-size: 0.95rem; margin-bottom: 0.25rem; }
     .commit-card .commit-meta { font-size: 0.8rem; }
 

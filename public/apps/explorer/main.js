@@ -187,26 +187,11 @@ function * commitsNewestFirst (repo) {
   }
 }
 
-// The polished commit detail view — the user-meaningful unit. A commit
-// is what *you* did (a message, a state); a signature is just how the
-// system attests to it. So this view leads with the commit's content
-// (message, date, parent, value at dataAddress) and shows the verifying
-// signature as the credential that backs it.
-//
-// If the commit is uncovered (sign in flight or never), shows a "pending
-// signature" badge instead of a verified one — same component, different
-// state. The covering signature (if any) might be batched with other
-// commits; that's a sigchunk implementation detail surfaced as a small
-// footnote, not as part of the commit's content.
-function commitDetail (repo, keyHex, commitAddr) {
-  let commit
-  try { commit = repo.decode(commitAddr) } catch { return h`<div class="empty">decode error</div>` }
-  if (!isCommitShape(commit)) return h`<div class="empty">not a commit</div>`
-  // Find the covering sig — the first signature chunk newer than this
-  // commit whose [signedFrom, signedTo] range includes commitAddr. If
-  // we walk past the commit's address without finding one, the commit
-  // is uncovered (sign in flight or pending).
-  let covering = null
+// Find the covering signature for a commit — the first signature chunk
+// newer than the commit whose [signedFrom, signedTo] range includes its
+// address. Returns { sigAddress, signedFrom, signedTo, decoded } or null
+// if the commit is uncovered (sign in flight or pending).
+function findCoveringSig (repo, commitAddr) {
   let scan = repo.byteLength - 1
   while (scan > commitAddr) {
     const code = repo.resolve(scan)
@@ -215,91 +200,27 @@ function commitDetail (repo, keyHex, commitAddr) {
       let sig
       try { sig = repo.decode(scan) } catch { sig = null }
       if (sig && sig.address <= commitAddr && (scan - code.length) >= commitAddr) {
-        covering = {
-          sigAddress: scan,
-          signedFrom: sig.address,
-          signedTo: scan - code.length,
-          decoded: sig
-        }
-        break
+        return { sigAddress: scan, signedFrom: sig.address, signedTo: scan - code.length, decoded: sig }
       }
     }
     scan -= code.length
   }
-  let value
-  try { value = repo.decode(commit.dataAddress) } catch { value = undefined }
-  return h`
-    <div class=${['signed-commit-banner', covering ? null : 'unsigned']}>
-      <span class="signed-label">${covering ? 'signed commit' : 'commit (unsigned)'}</span>
-      ${() => {
-        dep()
-        if (!covering) {
-          return h`<span class="verify-badge pending" title="not yet signed">…</span><span class="dim">not yet signed — sign in flight or pending</span>`
-        }
-        const status = verifyStatus(repo, keyHex, covering.decoded, covering.sigAddress)
-        const label = status === 'valid'   ? 'verified — bytes match this repo’s public key'
-                    : status === 'invalid' ? 'NOT VERIFIED — bytes do not match the repo key'
-                    : status === 'pending' ? 'verifying…'
-                    : `error: ${status?.error ?? 'unknown'}`
-        return h`${verifyBadge(status)} <span class="dim">${label}</span>`
-      }}
-    </div>
-    <div class="commit-card commit-headline" data-key="commit-headline">
-      <div class="commit-msg">${commit.message || h`<span class="dim">(no message)</span>`}</div>
-      <div class="commit-meta dim">
-        <span>${fmtDate(commit.date)}</span>
-        <span> · parent ${commit.parent === undefined
-          ? h`<span class="dim">(none)</span>`
-          : h`<a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${commit.parent}>@${commit.parent}</a>`}</span>
-        <span> · commit chunk <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${commitAddr}>@${commitAddr}</a></span>
-      </div>
-    </div>
-    <h3>value <span class="dim">at <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${commit.dataAddress}>@${commit.dataAddress}</a></span></h3>
-    <pre class="value">${value === undefined ? '(decode error)' : safeJSON(value)}</pre>
-    ${covering ? h`
-      <h3>verification</h3>
-      <table class="kv">
-        <tbody>
-          <tr>
-            <td>signature</td>
-            <td><a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${covering.sigAddress}>@${covering.sigAddress}</a></td>
-          </tr>
-          <tr>
-            <td>covers</td>
-            <td>@${covering.signedFrom} through @${covering.signedTo} (${covering.signedTo - covering.signedFrom + 1} bytes)</td>
-          </tr>
-          <tr><td>sig bytes</td><td class="mono">${truncHex(covering.decoded.compactRawBytes, 32)}</td></tr>
-        </tbody>
-      </table>
-    ` : null}
-  `
+  return null
 }
 
 // Sig-detail view — when you're at a sig chunk directly (e.g., from
 // drilling through storage). Sigs are auxiliary in the new model — the
 // user-level unit is the commit — so this page shows the sig's content
-// without trying to be the "polished signed commit" page.
-function sigDetail (repo, keyHex, sigAddress) {
-  let decoded
-  try { decoded = repo.decode(sigAddress) } catch { return h`<div class="empty">decode error</div>` }
+// without trying to be the "polished signed commit" page. The kindBanner
+// is rendered by the caller (AtView) so its variant matches the rest of
+// the value-tab branches.
+function sigDetailBody (repo, keyHex, sigAddress, decoded) {
   const chunk = repo.resolve(sigAddress)
   const chunkLen = chunk.length
   const signedTo = sigAddress - chunkLen
   const sigChunkStart = sigAddress - chunkLen + 1
   const covered = commitsCoveredBySignature(repo, decoded.address, signedTo)
   return h`
-    <div class="signed-commit-banner">
-      <span class="signed-label">signature chunk</span>
-      ${() => {
-        dep()
-        const status = verifyStatus(repo, keyHex, decoded, sigAddress)
-        const label = status === 'valid'   ? 'verified — these bytes are signed by this repo’s key'
-                    : status === 'invalid' ? 'NOT VERIFIED — bytes do not match the repo key'
-                    : status === 'pending' ? 'verifying…'
-                    : `error: ${status?.error ?? 'unknown'}`
-        return h`${verifyBadge(status)} <span class="dim">${label}</span>`
-      }}
-    </div>
     <table class="kv">
       <tbody>
         <tr>
@@ -566,90 +487,21 @@ function AtView ({ keyHex, address }) {
       // top of the page when the repo has any sigs.
 
       // Value tab — branches by codec.
-      if (isCommit) {
-        const parentDataAddr = decoded.parent !== undefined
-          ? safeGet(() => repo.decode(decoded.parent)?.dataAddress)
-          : undefined
-        const changes = parentDataAddr !== undefined
-          ? [...changedPaths(repo, parentDataAddr, decoded.dataAddress)]
-          : null
-        return h`
-          ${selector}
-          ${tabs}
-          ${commitDetail(repo, keyHex, resolvedAddr)}
-          ${changes
-            ? h`
-              <h3>changed paths <span class="dim">(${changes.length})</span></h3>
-              ${changes.length
-                ? h`<ul class="paths">${changes.map(p => h`<li class="mono">${p.length === 0 ? '/' : p.join('.')}</li>`)}</ul>`
-                : h`<div class="dim">(no path-level changes — same dataAddress)</div>`}
-            `
-            : null}
-          ${repoExtras(repo, keyHex)}
-        `
-      }
-
-      // Duple: explain what this tree-node IS, then show its two children.
-      if (codecType === 'DUPLE') {
-        return h`
-          ${selector}
-          ${tabs}
-          <div class="dim">codec: DUPLE</div>
-          <p class="explainer">
-            A <strong>Duple</strong> is a 2-tuple — the building block streamo uses
-            to balance binary trees of OBJECT entries and ARRAY elements. Each Duple
-            holds two slots; the slots are either values (a leaf) or other Duples
-            (an interior tree node). They're how content-addressing scales to
-            larger objects/arrays without rewriting the whole structure on every
-            small change — siblings keep their addresses, and dedup happens at
-            every level of the tree.
-          </p>
-          <table class="kv">
-            <tbody>
-              <tr><td class="mono">v[0]</td><td>${previewValue(decoded.v[0])}</td></tr>
-              <tr><td class="mono">v[1]</td><td>${previewValue(decoded.v[1])}</td></tr>
-            </tbody>
-          </table>
-        `
-      }
-
-      // Signature: the sig-detail page (auxiliary in the new model — sigs
-      // are how commits are verified, not the user-level unit). Lists
-      // the commits this sig covers; pick one to land on its commit page.
-      if (isSig) {
-        return h`
-          ${selector}
-          ${tabs}
-          ${sigDetail(repo, keyHex, resolvedAddr)}
-          <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
-        `
-      }
-
-      // Object/array: clickable children with their addresses.
-      if (refs && typeof refs === 'object') {
+      // Helper: render the kv-table of decoded fields for any Object/Array
+      // (including commits, which are just OBJECTs with a known shape).
+      // Inline children render their value directly; addressable children
+      // get a clickable @addr link in the third column.
+      const refsTable = () => {
+        if (!refs || typeof refs !== 'object') return null
         const isArray = Array.isArray(refs)
-        const entries = isArray
+        const fieldEntries = isArray
           ? refs.map((addr, i) => [String(i), addr])
           : Object.entries(refs)
-        if (entries.length === 0) {
-          return h`
-            ${selector}
-            ${tabs}
-            <div class="dim">codec: ${codecType}</div>
-            <div class="empty">${isArray ? '[]' : '{}'}</div>
-          `
-        }
+        if (fieldEntries.length === 0) return h`<div class="empty">${isArray ? '[]' : '{}'}</div>`
         return h`
-          ${selector}
-          ${tabs}
-          <div class="dim">codec: ${codecType}${isArray ? ` · length ${entries.length}` : ''}</div>
           <table class="kv clickable">
             <tbody>
-              ${entries.map(([k, childAddr]) => {
-                // asRefs is mutation-impossible, so it returns undefined for
-                // inline children that don't have a separate chunk address.
-                // Show those non-clickably with the decoded value pulled from
-                // the parent.
+              ${fieldEntries.map(([k, childAddr]) => {
                 if (childAddr === undefined) {
                   const inlineValue = isArray ? decoded[+k] : decoded[k]
                   return h`
@@ -674,8 +526,133 @@ function AtView ({ keyHex, address }) {
               })}
             </tbody>
           </table>
+        `
+      }
+
+      // Commit: same direct kv-table format as Object (it *is* an OBJECT —
+      // user requested the "dumber" version that names every field rather
+      // than packing them into a polished headline). Banner shows the
+      // verify state from the covering sig; the verification table at the
+      // bottom links to that sig and shows its bytes.
+      if (isCommit) {
+        const covering = findCoveringSig(repo, resolvedAddr)
+        const parentDataAddr = decoded.parent !== undefined
+          ? safeGet(() => repo.decode(decoded.parent)?.dataAddress)
+          : undefined
+        const changes = parentDataAddr !== undefined
+          ? [...changedPaths(repo, parentDataAddr, decoded.dataAddress)]
+          : null
+        const banner = kindBanner(
+          covering ? 'signed commit' : 'commit (unsigned)',
+          covering
+            ? () => {
+                dep()
+                const status = verifyStatus(repo, keyHex, covering.decoded, covering.sigAddress)
+                return h`${verifyBadge(status)} <span class="dim">${verifyLabel(status)}</span>`
+              }
+            : h`<span class="verify-badge pending">…</span><span class="dim">not yet signed — sign in flight or pending</span>`,
+          covering ? 'verified' : 'unsigned'
+        )
+        return h`
+          ${selector}
+          ${tabs}
+          ${banner}
+          ${refsTable()}
           <h3>rehydrated</h3>
           <pre class="value">${safeJSON(decoded)}</pre>
+          ${changes
+            ? h`
+              <h3>changed paths <span class="dim">(${changes.length})</span></h3>
+              ${changes.length
+                ? h`<ul class="paths">${changes.map(p => h`<li class="mono">${p.length === 0 ? '/' : p.join('.')}</li>`)}</ul>`
+                : h`<div class="dim">(no path-level changes — same dataAddress)</div>`}
+            `
+            : null}
+          ${covering ? h`
+            <h3>verification</h3>
+            <table class="kv">
+              <tbody>
+                <tr>
+                  <td>signature</td>
+                  <td><a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${covering.sigAddress}>@${covering.sigAddress}</a></td>
+                </tr>
+                <tr>
+                  <td>covers</td>
+                  <td>@${covering.signedFrom} through @${covering.signedTo} (${covering.signedTo - covering.signedFrom + 1} bytes)</td>
+                </tr>
+                <tr><td>sig bytes</td><td class="mono">${truncHex(covering.decoded.compactRawBytes, 32)}</td></tr>
+              </tbody>
+            </table>
+          ` : null}
+          ${repoExtras(repo, keyHex)}
+        `
+      }
+
+      // Duple: explain what this tree-node IS, then show its two children.
+      if (codecType === 'DUPLE') {
+        return h`
+          ${selector}
+          ${tabs}
+          ${kindBanner('duple', h`<span class="dim">2-tuple, tree scaffolding</span>`)}
+          <p class="explainer">
+            A <strong>Duple</strong> is a 2-tuple — the building block streamo uses
+            to balance binary trees of OBJECT entries and ARRAY elements. Each Duple
+            holds two slots; the slots are either values (a leaf) or other Duples
+            (an interior tree node). They're how content-addressing scales to
+            larger objects/arrays without rewriting the whole structure on every
+            small change — siblings keep their addresses, and dedup happens at
+            every level of the tree.
+          </p>
+          <table class="kv">
+            <tbody>
+              <tr><td class="mono">v[0]</td><td>${previewValue(decoded.v[0])}</td></tr>
+              <tr><td class="mono">v[1]</td><td>${previewValue(decoded.v[1])}</td></tr>
+            </tbody>
+          </table>
+        `
+      }
+
+      // Signature: the sig-detail page (auxiliary in the new model — sigs
+      // are how commits are verified, not the user-level unit). Lists
+      // the commits this sig covers; pick one to land on its commit page.
+      if (isSig) {
+        const banner = kindBanner(
+          'signature chunk',
+          () => {
+            dep()
+            const status = verifyStatus(repo, keyHex, decoded, resolvedAddr)
+            return h`${verifyBadge(status)} <span class="dim">${verifyLabel(status)}</span>`
+          },
+          'verified'
+        )
+        return h`
+          ${selector}
+          ${tabs}
+          ${banner}
+          ${sigDetailBody(repo, keyHex, resolvedAddr, decoded)}
+          <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
+        `
+      }
+
+      // Object/array: clickable children with their addresses.
+      if (refs && typeof refs === 'object') {
+        const isArray = Array.isArray(refs)
+        const fieldCount = isArray ? refs.length : Object.keys(refs).length
+        const dim = fieldCount === 0
+          ? null
+          : h`<span class="dim">${isArray ? `length ${fieldCount}` : `${fieldCount} field${fieldCount === 1 ? '' : 's'}`}</span>`
+        const label = fieldCount === 0
+          ? (isArray ? 'empty array' : 'empty object')
+          : (isArray ? 'array' : 'object')
+        return h`
+          ${selector}
+          ${tabs}
+          ${kindBanner(label, dim)}
+          ${refsTable()}
+          ${fieldCount > 0 ? h`
+            <h3>rehydrated</h3>
+            <pre class="value">${safeJSON(decoded)}</pre>
+          ` : null}
         `
       }
 
@@ -683,7 +660,7 @@ function AtView ({ keyHex, address }) {
       return h`
         ${selector}
         ${tabs}
-        <div class="dim">codec: ${codecType}</div>
+        ${kindBanner(codecType.toLowerCase())}
         <pre class="value">${safeJSON(decoded)}</pre>
       `
     }}
@@ -984,6 +961,28 @@ function verifyStatus (repo, keyHex, sig, sigAddress) {
     .then(valid => { verifyCache.set(cacheKey, valid ? 'valid' : 'invalid'); fire() })
     .catch(e => { verifyCache.set(cacheKey, { error: e.message }); fire() })
   return 'pending'
+}
+
+// Consistent "what this is" banner at the top of every value-tab branch.
+// label is the short codec/role name (e.g. "signed commit", "object",
+// "duple"); content is whatever else goes in the banner (verify badge +
+// label, field count, etc.); variant tints the surface — 'verified' for
+// commits/sigs with a covering signature, 'unsigned' for commits awaiting
+// one, undefined for everything else.
+function kindBanner (label, content, variant) {
+  return h`
+    <div class=${['kind-banner', variant || null]}>
+      <span class="kind-label">${label}</span>
+      ${content || null}
+    </div>
+  `
+}
+
+function verifyLabel (status) {
+  if (status === 'valid')   return 'verified — bytes match this repo’s public key'
+  if (status === 'invalid') return 'NOT VERIFIED — bytes do not match the repo key'
+  if (status === 'pending') return 'verifying…'
+  return `error: ${status?.error ?? 'unknown'}`
 }
 
 function verifyBadge (status) {

@@ -47,17 +47,34 @@ try {
 const recaller = new Recaller('explorer')
 const { dep, fire: bridgeFire } = bridgeRegistry(registry, recaller, 'explorer')
 
-// Wrap bridgeFire to also schedule the byte-strip pin-to-HEAD side effect
-// after the next render. Reactive mutation is synchronous (so the slot
-// re-runs at next tick); only the post-render DOM peek goes through rAF.
-// If rAF gets throttled (tab unfocused), syncByteStrips is delayed but
-// the rest of the UI keeps updating.
+// DEBUG instrumentation — three counters surfaced in the connection bar:
+//   bf: bridge fires      (how many chunk arrivals triggered the bridge)
+//   sr: slot reruns       (how many times the top-level slot re-evaluated)
+//   ms: most-recent ms    (timestamp of last bridge fire — should keep
+//                          changing while chunks are arriving)
+// If bf increases but sr doesn't → recaller subscription is broken.
+// If neither changes → bridge isn't firing, network/sync issue.
+// If both change but display stays stale → render diffing bug.
+const debug = { bf: 0, sr: 0, ms: 0 }
+function updateDebugCounter () {
+  if (connEl) connEl.textContent = `${location.hostname}:${port} · bf:${debug.bf} sr:${debug.sr} ms:${debug.ms}`
+}
+
 let stripSyncScheduled = false
 function fire () {
   bridgeFire()
   if (stripSyncScheduled) return
   stripSyncScheduled = true
   requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
+}
+
+// Wrap bridgeRegistry's signal so we can count chunk-arrival fires.
+const _origReportKeyMutation = recaller.reportKeyMutation.bind(recaller)
+recaller.reportKeyMutation = function (target, key) {
+  debug.bf++
+  debug.ms = Date.now() % 100000
+  updateDebugCounter()
+  return _origReportKeyMutation(target, key)
 }
 
 // ── Hash routing ──────────────────────────────────────────────────────────
@@ -1037,6 +1054,8 @@ const appEl = document.getElementById('app')
 // params that affect rendering), forcing a fresh mount.
 mount(h`${() => {
   dep()
+  debug.sr++
+  updateDebugCounter()
   switch (view.kind) {
     case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
     case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}-${view.address}`}>${AtView({ keyHex: view.keyHex, address: view.address })}</section>`

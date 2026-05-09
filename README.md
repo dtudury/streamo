@@ -126,6 +126,29 @@ const registry = new RepoRegistry(async key => {
 const repo = await registry.open(publicKeyHex)
 ```
 
+### bridgeRegistry — connect a multi-repo registry to your app's Recaller
+
+Each `Repo` owns its own `Recaller` (so it can do fine-grained tracking on its
+own internal keys), and your app uses a separate `Recaller` for its `mount()`
+slots. Reading `repo.byteLength` inside a slot registers a dep on the *repo's*
+recaller, not the app's, so without an explicit bridge the slot would never
+re-run when chunks arrive. `bridgeRegistry` is that bridge:
+
+```js
+import { Recaller, bridgeRegistry, h, mount } from '@dtudury/streamo'
+
+const recaller = new Recaller('app')
+const { dep, fire } = bridgeRegistry(registry, recaller)
+
+mount(h`${() => {
+  dep()
+  for (const [k, r] of registry) ...   // freely read any repo's state
+}}`, appEl, recaller)
+
+// Non-repo state changes (route, async results) — call fire() to force a re-render.
+window.addEventListener('hashchange', fire)
+```
+
 ### registrySync — peer sync over WebSocket
 
 ```js
@@ -163,7 +186,7 @@ mount(h`
 `, document.body, recaller)
 ```
 
-Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. No virtual DOM diffing; only the exact DOM nodes bound to changed data update. Elements are recycled across re-renders by `data-key` (or tag as a fallback), so user input and focus survive list reorders. SVG namespaces propagate automatically — `` h`<svg><path d="..."/></svg>` `` works without any extra wiring. `class` accepts an array (`['btn', isActive && 'active']`) or an object (`{btn: true, active: false}`); falsy entries are filtered out.
+Functions interpolated as `${() => ...}` are reactive cells — they re-run automatically whenever the data they read changes. Only the exact DOM nodes bound to changed data update. Elements with stable `data-key` are recycled across re-renders so the outer element's identity and document position survive (helpful for animations or external DOM references). The recycled element's inner content is rebuilt from the new vnode on each re-render, so static interpolations (`${value}`) reflect current state. SVG namespaces propagate automatically — `` h`<svg><path d="..."/></svg>` `` works without any extra wiring. `class` accepts an array (`['btn', isActive && 'active']`) or an object (`{btn: true, active: false}`); falsy entries are filtered out.
 
 > **For lists that can reorder**, always set `data-key` on each item — the unkeyed positional fallback will recycle elements by tag in document order, which can attach the wrong DOM node (and any user focus/input on it) to the wrong vnode after a reorder.
 

@@ -67,6 +67,55 @@ cleanly going forward.
   data-keyed `<section>` so mount's tag pool can't keep stale text
   children when you switch between views.
 
+**Foundation work that fell out:**
+
+- *`bridgeRegistry` (new public API).* The cross-recaller bridge —
+  forwarding repo-level mutations onto an app-level Recaller so a mount
+  slot can read from many repos and re-render on any-repo-changed — is
+  now a one-liner: `const { dep, fire } = bridgeRegistry(registry,
+  recaller)`. Both chat and explorer use it; ~10 lines of boilerplate
+  removed from each. design.md §9 explains why each Repo has its own
+  Recaller and why mutation must be synchronous (rAF wrapping was a
+  real failure mode — see below).
+- *`mount` recycle bug.* Recycling elements by `data-key` only patched
+  static attrs and reused inner DOM verbatim, so static `${value}`
+  interpolations captured at first mount stayed stale forever. Chat
+  survived only because each message has a unique data-key (no
+  recycling with new content); the explorer's stable per-repo data-keys
+  hit the bug hard. Fix: when an element is recycled, clean up the
+  subtree's watchers, clear inner DOM and outer attributes, then apply
+  fresh attrs and mount fresh children. Outer node identity is
+  preserved (so document position survives); inner state is rebuilt.
+  Correctness over speed; the recursive-reconcile follow-up is parked
+  in `THREADS.md` for when someone hits the perf cliff.
+- *`Streamo.append` advances the signed cursor on EVERY signature*,
+  not just sign()'s own. Loading from disk or peer-streaming was
+  leaving `#signedLength` at 0, so the next local `sign()` claimed
+  coverage from byte 0 — producing redundant over-covering signatures.
+  Fixed and locked in by a regression test.
+- *Async correctness in the reactivity bridge.* The explorer's `fire()`
+  used to wrap its `reportKeyMutation` in `requestAnimationFrame`
+  guarded by a `scheduled` flag. When the tab lost focus, queued rAFs
+  were throttled, the flag stayed `true`, and every subsequent
+  mutation became a no-op until the rAF eventually drained — the
+  display would freeze until the user came back to the tab. Mutate
+  synchronously; the Recaller's own `nextTick` flush already coalesces.
+- *Streamo-typed value displays.* Every primitive (string, number,
+  date, boolean, null/undefined, Uint8Array) renders with type-specific
+  visual identity instead of being flattened through `JSON.stringify`.
+  Strings get green smart-quoted mono frames; dates render as `<time>`
+  elements with 📅 + tabular-num clock; numbers, booleans, etc. each
+  have their own pill. Colors echo the byte-strip codec palette so the
+  visual language carries across the page. Composite expansion
+  (depth-controlled object/array rendering) is parked in `THREADS.md`
+  as the next polish.
+- *Detached commit selector.* The selector dropdown is now visible on
+  every at-view, not just signed-commit pages. When the address isn't
+  a commit, the summary shows a neutral "detached" card (mirroring
+  git's detached-HEAD). Body still lists every commit, so the
+  always-present way back is one click. UI no longer shifts between
+  commit pages and storage drilling.
+
 ## where we are (4.0.0)
 
 4.0.0 closes a long-standing design wart: **`asRefs` could mutate the streamo

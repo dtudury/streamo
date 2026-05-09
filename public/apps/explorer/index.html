@@ -64,23 +64,54 @@
     }
     .row.signed-commit.head-card .msg { font-size: 1rem; font-weight: 500; }
 
-    /* Earlier-commits dropdown: keep the dropdown surface restrained so it
-       feels like a tucked-away secondary mode rather than a second list. */
-    details.earlier-commits {
-      margin: 0.5rem 0 1rem;
+    /* Commit selector: a real dropdown widget. Summary = currently-selected
+       commit (HEAD by default), styled as the green head-card. Body =
+       full list of signed commits, with the selected one marked. */
+    details.commit-selector { margin: 0.5rem 0 1rem; }
+    details.commit-selector > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 0;
+    }
+    details.commit-selector > summary::-webkit-details-marker { display: none; }
+    details.commit-selector > summary::marker { display: none; }
+    details.commit-selector > summary::after {
+      content: '▾';
+      float: right;
+      margin: 0.5rem 0.85rem;
+      color: #16a34a;
+      font-size: 0.85rem;
+    }
+    details.commit-selector[open] > summary::after { content: '▴'; }
+    details.commit-selector .dropdown-body {
+      margin-top: 0.25rem;
       border: 1px solid var(--rule);
       border-radius: var(--radius);
-      padding: 0.25rem 0.5rem;
+      padding: 0.25rem;
     }
-    details.earlier-commits > summary {
+    details.commit-selector .dropdown-body .row { padding: 0.45rem 0.6rem; }
+    details.commit-selector .dropdown-body .row.selected {
+      background: rgba(22, 163, 74, 0.07);
+    }
+    details.commit-selector .dropdown-body .row.selected .kind::after {
+      content: ' ●';
+      color: #16a34a;
+    }
+
+    /* Tucked-away secondary "storage chunks" list at the bottom of the
+       repo view — a click away when you want to see the bytes underneath. */
+    details.other-storage {
+      margin: 1.25rem 0 0.5rem;
+      border-top: 1px solid var(--rule);
+      padding-top: 0.5rem;
+    }
+    details.other-storage > summary {
       cursor: pointer;
       font-size: 0.85rem;
       color: var(--ink-dim);
       padding: 0.35rem 0.25rem;
-      list-style: revert;
     }
-    details.earlier-commits[open] > summary { color: var(--ink); }
-    details.earlier-commits .row { padding: 0.45rem 0.5rem; }
+    details.other-storage[open] > summary { color: var(--ink); }
 
     /* Polished signed-commit detail view (AtView SIGNATURE branch). */
     .signed-commit-banner {

@@ -485,6 +485,8 @@ function AtView ({ keyHex }) {
              data-action="set-tab" data-tab="value">value</a>
           <a class=${() => { dep(); return ['tab', atTab === 'storage' ? 'active' : null] }}
              data-action="set-tab" data-tab="storage">storage</a>
+          <a class=${() => { dep(); return ['tab', atTab === 'refs' ? 'active' : null] }}
+             data-action="set-tab" data-tab="refs">refs</a>
         </nav>
       `
       const selector = commitSelectorSection(repo, keyHex, ctx.resolvedAddr)
@@ -542,6 +544,22 @@ function AtView ({ keyHex }) {
           <div class="storage-tree">${storageTree(repo, keyHex, contentAddr)}</div>
           ${rawChunkSection(repo, contentAddr)}
           ${referrersSection(repo, keyHex, contentAddr)}
+        `
+      }
+
+      // Refs tab: the inverse of storage. Where storage walks DOWN
+      // through directReferences, refs walks UP through directReferrers
+      // — every chunk that uses this one, recursively, until we hit
+      // graph roots (commits / signatures, the chunks nothing references
+      // in this repo). The leaves of THIS tree are the roots of the
+      // chunk graph.
+      if (atTab === 'refs') {
+        return h`
+          <h3>references <span class="dim">walks up the chunk graph from here</span></h3>
+          <p class="dim" style="font-size: 0.85rem; margin-bottom: 0.5rem; line-height: 1.5;">
+            every row is a chunk that references the row above it (or this chunk, at the top). Leaves of this tree are graph roots — typically commits and signatures, the chunks nothing else references in this repo. Same row shape as the storage tab; the direction is reversed.
+          </p>
+          <div class="storage-tree">${referenceTree(repo, keyHex, contentAddr)}</div>
         `
       }
 
@@ -1325,6 +1343,98 @@ function buildReferrerIndex (repo) {
   return index
 }
 
+// Like buildReferrerIndex but walks `directReferences` instead of asRefs,
+// so internal Duples are NOT collapsed away. Used by the refs tab where
+// the goal is the full chunk graph going UP — every duple in the path
+// from a leaf chunk to its containing commit shows as its own row,
+// mirroring what storageTree does going DOWN.
+function buildDirectReferrerIndex (repo) {
+  const index = new Map() // childAddr → [{ address, codecType }]
+  let addr = repo.byteLength - 1
+  while (addr >= 0) {
+    const code = repo.resolve(addr)
+    if (!code || !code.length) break
+    let refs = []
+    try { refs = repo.directReferences(addr) ?? [] } catch {}
+    if (refs.length) {
+      const codec = repo.footerToCodec[code.at(-1)]
+      const entry = { address: addr, codecType: codec?.type }
+      for (const child of refs) {
+        if (!index.has(child)) index.set(child, [])
+        index.get(child).push(entry)
+      }
+    }
+    addr -= code.length
+  }
+  return index
+}
+
+// Recursive reference tree — twin of storageTree but walks UP through
+// the chunk graph instead of DOWN. Where storageTree's leaves are
+// chunks that don't reference anything (a single-byte WORD), this
+// tree's leaves are chunks that NOTHING references — graph roots,
+// typically commits and signatures. The tree is rooted at the URL's
+// chunk and grows toward those roots: "who uses this? and who uses
+// THAT? and who uses that?" all the way up.
+//
+// Visually identical to storageTree (same row class, same toggle,
+// same chip + @addr + preview). Different state (refTreeForce*) so
+// expand/collapse decisions don't cross-pollute. Different child
+// label ("N referrers" vs. storage's "N refs") — small thing, but
+// the direction is ambiguous otherwise.
+const refTreeForceExpanded  = new Set()
+const refTreeForceCollapsed = new Set()
+
+function referenceTree (repo, keyHex, address, depth = 4, index = null) {
+  index = index ?? buildDirectReferrerIndex(repo)
+  let codecType = '?'
+  let preview = h`<span class="dim">…</span>`
+  try {
+    const code = repo.resolve(address)
+    codecType = repo.footerToCodec[code.at(-1)]?.type || '?'
+    preview = typedValue(repo.decode(address))
+  } catch (e) {
+    return h`<div class="storage-row"><span class="dim">(decode error @${address}: ${e.message})</span></div>`
+  }
+  const referrers = index.get(address) ?? []
+  const cat = codecCategory(codecType)
+  const k = `${keyHex}:${address}`
+  const userExpanded  = refTreeForceExpanded.has(k)
+  const userCollapsed = refTreeForceCollapsed.has(k)
+  const expand = userExpanded || (!userCollapsed && depth > 0)
+  const isLeaf = referrers.length === 0
+  const toggle = isLeaf
+    ? h`<span class="storage-toggle empty">·</span>`
+    : expand
+      ? h`<a class="storage-toggle" data-action="collapse-refs"
+              data-keyhex=${keyHex} data-addr=${address}
+              title="click to collapse">▾</a>`
+      : h`<a class="storage-toggle" data-action="expand-refs"
+              data-keyhex=${keyHex} data-addr=${address}
+              title="click to expand">▸</a>`
+  const header = h`
+    <div class="storage-row">
+      ${toggle}
+      <span class=${['codec-chip', `cat-${cat}`]}>${codecType}</span>
+      <a class="addr-link" data-action="open-at"
+         data-keyhex=${keyHex} data-addr=${address}>@${address}</a>
+      <span class="storage-preview">${preview}</span>
+      ${isLeaf
+        ? h`<span class="dim storage-childcount">graph root</span>`
+        : !expand
+          ? h`<span class="dim storage-childcount">${referrers.length} referrer${referrers.length === 1 ? '' : 's'}</span>`
+          : null}
+    </div>
+  `
+  if (!expand || isLeaf) return header
+  return h`
+    ${header}
+    <div class="storage-children">
+      ${referrers.map(r => referenceTree(repo, keyHex, r.address, depth - 1, index))}
+    </div>
+  `
+}
+
 // Walk up parent chains via the index. Internal Duple nodes are tree
 // scaffolding — the user-meaningful containers are OBJECT / ARRAY /
 // VARIABLE / SIGNATURE / etc. For each path that hits a non-Duple
@@ -1486,6 +1596,18 @@ appEl.addEventListener('click', e => {
       const k = `${el.dataset.keyhex}:${el.dataset.addr}`
       storageForceCollapsed.add(k)
       storageForceExpanded.delete(k)
+      return fire()
+    }
+    case 'expand-refs': {
+      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
+      refTreeForceExpanded.add(k)
+      refTreeForceCollapsed.delete(k)
+      return fire()
+    }
+    case 'collapse-refs': {
+      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
+      refTreeForceCollapsed.add(k)
+      refTreeForceExpanded.delete(k)
       return fire()
     }
     case 'collapse-tree': {

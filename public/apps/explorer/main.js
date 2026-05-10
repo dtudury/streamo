@@ -1491,11 +1491,14 @@ appEl.addEventListener('mouseout', e => {
   if (!el) return
   appEl.querySelectorAll('.byte-map .chunk.hovered').forEach(c => c.classList.remove('hovered'))
   appEl.querySelectorAll('.sig-coverage.active').forEach(o => o.classList.remove('active'))
-  // If the cursor is leaving the strip area entirely (not just moving
-  // between chunks within the strip), clear hoveredAddress so the page
-  // reverts to the URL's content.
-  const goingTo = e.relatedTarget?.closest?.('.byte-strip-container')
-  if (!goingTo && hoveredAddress !== null) {
+  // Clear hoveredAddress unless the cursor is moving to ANOTHER chunk
+  // on the strip. The previous check ("still inside .byte-strip-container")
+  // treated the direction labels and any blank-space as "still hovering,"
+  // which left the page stuck on the previously hovered chunk's content.
+  // Requiring .chunk[data-addr] specifically means moving off a chunk
+  // anywhere — out of the strip OR to its non-chunk regions — reverts.
+  const goingToChunk = e.relatedTarget?.closest?.('.byte-strip-container .chunk[data-addr]')
+  if (!goingToChunk && hoveredAddress !== null) {
     hoveredAddress = null
     hoverFire()
   }

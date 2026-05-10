@@ -4,18 +4,48 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>streamo</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22><text y=%2214%22 font-size=%2214%22>🌊</text></svg>">
   <link rel="stylesheet" href="/apps/styles/proto.css">
   <style>
     body { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem; }
 
     .wordmark { font-size: 2.4rem; letter-spacing: -0.02em; margin-bottom: 0.15rem; }
-    .tagline  { color: var(--ink-dim); font-size: 0.95rem; margin-bottom: 2rem; }
+    .tagline  { color: var(--ink-dim); font-size: 0.95rem; margin-bottom: 0.4rem; }
+
+    /* "what's running here" line — small, clickable, places the abstract
+       claims in the next paragraph onto a real running server. */
+    .here {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      margin-bottom: 2rem;
+      font-family: monospace;
+    }
+    .here a {
+      color: var(--ink-dim);
+      text-decoration: underline dotted;
+    }
+    .here a:hover { color: var(--ink); text-decoration-style: solid; }
+    .here .pulse {
+      display: inline-block;
+      width: 0.5rem;
+      height: 0.5rem;
+      border-radius: 50%;
+      background: #16a34a;
+      margin-right: 0.4rem;
+      vertical-align: 0.05em;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    .here .pulse.err { background: #dc2626; animation: none; }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.4; }
+      50%      { opacity: 1; }
+    }
 
     .ideas {
       display: flex;
       flex-direction: column;
       gap: 0.6rem;
-      margin-bottom: 2.5rem;
+      margin-bottom: 1.5rem;
     }
     .idea {
       display: flex;
@@ -26,6 +56,72 @@
     .idea-glyph { font-size: 1rem; flex-shrink: 0; width: 1.4rem; text-align: center; }
     .idea-text  { color: var(--ink-dim); }
     .idea-text strong { color: var(--ink); }
+
+    /* "try it" card — folds shut by default. When opened, derives a real
+       secp256k1 keypair from credentials in the browser. Concrete proof
+       of "your identity travels with you" instead of just claiming it. */
+    details.try-it {
+      border: 1.5px dashed var(--rule);
+      border-radius: var(--radius);
+      padding: 0.6rem 0.85rem;
+      margin-bottom: 2rem;
+    }
+    details.try-it[open] { border-color: var(--ink); border-style: solid; }
+    details.try-it > summary {
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--ink-dim);
+    }
+    details.try-it[open] > summary { color: var(--ink); margin-bottom: 0.65rem; }
+    details.try-it > summary::before {
+      content: '↳ ';
+      color: var(--ink-dim);
+    }
+    .try-it-note {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      line-height: 1.5;
+      margin: 0 0 0.65rem;
+    }
+    .try-it-note strong { color: var(--ink); }
+    .try-it-form {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-bottom: 0.65rem;
+    }
+    .try-it-form input {
+      flex: 1 1 8rem;
+      font-family: monospace;
+      font-size: 0.85rem;
+      padding: 0.35rem 0.55rem;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--ink);
+    }
+    .try-it-form input:focus {
+      outline: none;
+      border-color: var(--ink);
+    }
+    .derived-key {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      padding: 0.35rem 0.55rem;
+      border-radius: var(--radius);
+      background: rgba(0, 0, 0, 0.03);
+      word-break: break-all;
+    }
+    .derived-key .key-label {
+      display: block;
+      margin-bottom: 0.2rem;
+      font-family: monospace;
+    }
+    .derived-key .key-value {
+      font-family: monospace;
+      color: var(--ink);
+    }
+    .derived-key.computing .key-value { color: var(--ink-dim); font-style: italic; }
 
     hr { margin: 2rem 0; }
 
@@ -44,7 +140,9 @@
     }
 
     .app-card {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
       text-decoration: none;
       color: var(--ink);
       border: 1.5px solid var(--ink);
@@ -56,21 +154,40 @@
     .app-card:hover  { transform: translate(-1px, -1px); box-shadow: 3px 4px 0 var(--ink); }
     .app-card:active { transform: translate(1px, 2px); box-shadow: none; }
 
-    .app-name { font-size: 1rem; margin-bottom: 0.2rem; }
+    .app-name-row {
+      display: flex;
+      align-items: baseline;
+      gap: 0.45rem;
+    }
+    .app-glyph { font-size: 1.1rem; }
+    .app-name { font-size: 1rem; }
     .app-desc { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.4; }
 
     .footer {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
       margin-top: 3rem;
-      font-size: 0.75rem;
-      color: var(--ink-dim);
     }
-    .footer a { color: var(--ink-dim); }
+    .footer-chip {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      text-decoration: none;
+      padding: 0.25rem 0.6rem;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+    }
+    .footer-chip:hover { color: var(--ink); border-color: var(--ink); }
   </style>
 </head>
 <body>
 
   <div class="wordmark">streamo</div>
   <p class="tagline">every device is an equal author</p>
+
+  <p class="here" id="here">
+    <span class="pulse" id="pulse"></span><span id="here-text">connecting…</span>
+  </p>
 
   <div class="ideas">
     <div class="idea">
@@ -91,26 +208,106 @@
     </div>
   </div>
 
+  <details class="try-it">
+    <summary>try it — derive a streamo identity right here</summary>
+    <p class="try-it-note">
+      type any username and password. the keypair is computed in your browser via PBKDF2-SHA256 and is <strong>never sent</strong> anywhere. same inputs always produce the same key — that's how streamo identities travel without key files. <strong>don't use a real password</strong>; this is just a demo.
+    </p>
+    <div class="try-it-form">
+      <input type="text" placeholder="username" id="demo-username" autocomplete="off">
+      <input type="password" placeholder="password" id="demo-password" autocomplete="new-password">
+    </div>
+    <div class="derived-key" id="demo-key-row">
+      <span class="key-label">public key (secp256k1):</span>
+      <code class="key-value" id="demo-key">— enter credentials above —</code>
+    </div>
+  </details>
+
   <hr>
 
   <p class="apps-heading">apps</p>
   <div class="app-grid">
     <a class="app-card" href="/apps/chat/">
-      <div class="app-name">chat</div>
-      <div class="app-desc">p2p messaging — the server is a relay, not a gatekeeper</div>
+      <div class="app-name-row">
+        <span class="app-glyph">💬</span>
+        <span class="app-name">chat</span>
+      </div>
+      <div class="app-desc">p2p messaging — each participant owns their own signed message stream</div>
     </a>
     <a class="app-card" href="/apps/explorer/">
-      <div class="app-name">explorer</div>
-      <div class="app-desc">browse repos, commit history, and value at any commit</div>
+      <div class="app-name-row">
+        <span class="app-glyph">🔍</span>
+        <span class="app-name">explorer</span>
+      </div>
+      <div class="app-desc">browse repos, commit history, and the bytes underneath</div>
     </a>
   </div>
   <p class="dim" style="margin-top: 1rem; font-size: 0.78rem;">
     open both side by side — watch commits roll in as you chat
   </p>
 
-  <p class="footer">
-    <a href="https://github.com/dtudury/streamo">github</a>
-  </p>
+  <div class="footer">
+    <a class="footer-chip" href="https://github.com/dtudury/streamo">github</a>
+    <a class="footer-chip" href="https://github.com/dtudury/streamo/blob/main/design.md">design.md</a>
+    <a class="footer-chip" href="https://github.com/dtudury/streamo/blob/main/ROADMAP.md">roadmap</a>
+    <a class="footer-chip" href="https://www.npmjs.com/package/@dtudury/streamo">npm</a>
+  </div>
+
+  <script type="module">
+    import { Signer } from '/streamo/Signer.js'
+    import { bytesToHex } from '/streamo/utils.js'
+
+    // Surface "what's running here" — server's primary key as a clickable
+    // link to the explorer. Replaces the abstract "no server holds
+    // authority" claim above with a concrete, navigable instance of it.
+    const pulseEl = document.getElementById('pulse')
+    const hereEl  = document.getElementById('here-text')
+    try {
+      const info = await fetch('/api/info').then(r => r.json())
+      const truncKey = info.primaryKeyHex.slice(0, 12) + '…'
+      hereEl.innerHTML = `relaying <a href="/apps/explorer/#/repo/${info.primaryKeyHex}">${truncKey}</a> as "${info.name || 'this server'}"`
+    } catch (e) {
+      pulseEl.classList.add('err')
+      hereEl.textContent = 'not connected to a streamo server'
+    }
+
+    // Derive-on-type for the try-it widget. Debounced because PBKDF2 is
+    // intentionally slow; we don't want to hammer the browser per keystroke.
+    const u = document.getElementById('demo-username')
+    const p = document.getElementById('demo-password')
+    const out = document.getElementById('demo-key')
+    const row = document.getElementById('demo-key-row')
+    let timer = null
+    let inFlight = 0
+    function update () {
+      clearTimeout(timer)
+      const username = u.value.trim()
+      const password = p.value
+      if (!username || !password) {
+        row.classList.remove('computing')
+        out.textContent = '— enter credentials above —'
+        return
+      }
+      row.classList.add('computing')
+      out.textContent = 'computing PBKDF2…'
+      const me = ++inFlight
+      timer = setTimeout(async () => {
+        try {
+          const signer = new Signer(username, password, 1)
+          const { publicKey } = await signer.keysFor('chat')
+          if (me !== inFlight) return  // user kept typing; stale
+          row.classList.remove('computing')
+          out.textContent = '0x' + bytesToHex(publicKey)
+        } catch (e) {
+          if (me !== inFlight) return
+          row.classList.remove('computing')
+          out.textContent = `error: ${e.message}`
+        }
+      }, 300)
+    }
+    u.addEventListener('input', update)
+    p.addEventListener('input', update)
+  </script>
 
 </body>
 </html>

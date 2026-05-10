@@ -460,7 +460,9 @@ function AtView ({ keyHex, address }) {
       `
       const selector = commitSelectorSection(repo, keyHex, resolvedAddr)
       const bytes = byteStreamSection(repo, keyHex, resolvedAddr)
-      const header = h`${selector}${bytes}${tabs}`
+      // Wrap in a sticky container so the selector + strip + tabs stay
+      // anchored as you scroll long value trees or storage detail.
+      const header = h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
 
       // Storage tab: this chunk's outgoing refs, raw bytes, and
       // referrers. (byteStreamSection moved up into the header.)
@@ -717,12 +719,22 @@ function byteStreamSection (repo, keyHex, currentAddress) {
     const code = repo.resolve(addr)
     if (!code || !code.length) break
     const codec = repo.footerToCodec[code.at(-1)]
-    chunks.unshift({
+    const chunk = {
       address: addr,
       start: addr - code.length + 1,
       length: code.length,
       codecType: codec?.type || '?'
-    })
+    }
+    // For sigs: precompute the byte range covered, so hover anywhere on
+    // the page can light up that range as an overlay band on the strip.
+    if (chunk.codecType === 'SIGNATURE') {
+      try {
+        const sig = repo.decode(addr)
+        chunk.signedFrom = sig.address
+        chunk.signedTo = addr - code.length
+      } catch {}
+    }
+    chunks.unshift(chunk)
     addr -= code.length
   }
   if (!chunks.length) return null
@@ -758,6 +770,20 @@ function byteStreamSection (repo, keyHex, currentAddress) {
     return item
   })
   const stripW = cursorX
+  // Map byte address → strip x. Used by the sig-coverage overlay so hover
+  // anywhere on the page can light up "what bytes does this sig sign".
+  // Stored as data attrs on the strip container so the hover handler
+  // can read without recomputing.
+  const xForByte = (byteAddr) => {
+    // Find the chunk containing this byte and interpolate within it.
+    for (const c of layout) {
+      if (byteAddr >= c.start && byteAddr <= c.address) {
+        const frac = c.length === 1 ? 0 : (byteAddr - c.start) / (c.length - 1)
+        return c.x + frac * c.w
+      }
+    }
+    return 0
+  }
   return h`
     <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks)</span></h3>
     <div class="byte-map-legend">
@@ -770,21 +796,33 @@ function byteStreamSection (repo, keyHex, currentAddress) {
       <span class="cat-num">num</span>
       <span class="cat-var">var</span>
     </div>
-    <div class="byte-strip-container" data-key=${`strip-${keyHex}`}>
+    <div class="byte-strip-container" data-key=${`strip-${keyHex}`} data-strip-w=${stripW}>
       <svg class="byte-map byte-strip" width=${stripW} height=${H} viewBox=${`0 0 ${stripW} ${H}`}>
         ${layout.map(c => {
           const cat = commitAddrs.has(c.address) ? 'commit' : codecCategory(c.codecType)
           const cls = ['chunk', `cat-${cat}`, c.address === currentAddress ? 'current' : null]
+          // Sigs carry their coverage range in data-attrs so hover handlers
+          // (anywhere on the page) can position the coverage overlay.
+          // Non-sigs get null which removes the attrs.
+          const sigFromX = c.signedFrom != null ? xForByte(c.signedFrom) : null
+          const sigToX   = c.signedTo   != null ? xForByte(c.signedTo)   : null
           return h`<rect
             class=${cls}
             x=${c.x} y="0" width=${c.w} height=${H}
             data-action="open-at"
             data-keyhex=${keyHex}
             data-addr=${c.address}
+            data-codec=${c.codecType}
+            data-len=${c.length}
+            data-sig-from-x=${sigFromX}
+            data-sig-to-x=${sigToX}
           ><title>${c.codecType} @${c.address} (${c.length} bytes)</title></rect>`
         })}
+        <rect class="sig-coverage" x="0" y="0" width="0" height=${H} pointer-events="none"/>
       </svg>
+      <div class="strip-direction"><span>← older</span><span>newer →</span></div>
     </div>
+    <div class="chunk-inspector dim" data-key=${`inspector-${keyHex}`}>hover the strip to inspect a chunk</div>
   `
 }
 
@@ -875,34 +913,38 @@ function isDuple (v) {
 // count chips ({ N fields } / [ N elements ]) — depth-controlled
 // expansion is the next step in this thread (see THREADS.md).
 function typedValue (v, depth = 0) {
-  if (v === null) return h`<span class="tv tv-null">null</span>`
-  if (v === undefined) return h`<span class="tv tv-undefined">undefined</span>`
+  if (v === null) return h`<span class="tv tv-null" title="NULL">null</span>`
+  if (v === undefined) return h`<span class="tv tv-undefined" title="UNDEFINED">undefined</span>`
   if (typeof v === 'boolean') {
-    return h`<span class=${['tv', 'tv-bool', v ? 'tv-true' : 'tv-false']}>${v ? '✓' : '✗'} ${String(v)}</span>`
+    return h`<span class=${['tv', 'tv-bool', v ? 'tv-true' : 'tv-false']} title=${v ? 'TRUE' : 'FALSE'}>${v ? '✓' : '✗'} ${String(v)}</span>`
   }
   if (typeof v === 'string') {
     const display = v.length > 60 ? v.slice(0, 60) + '…' : v
-    return h`<span class="tv tv-string"><span class="tv-quote">“</span>${display}<span class="tv-quote">”</span></span>`
+    return h`<span class="tv tv-string" title=${v.length === 0 ? 'EMPTY_STRING' : 'STRING'}><span class="tv-quote">“</span>${display}<span class="tv-quote">”</span></span>`
   }
   if (typeof v === 'number') {
-    return h`<span class="tv tv-num">${String(v)}</span>`
+    // UINT7 is the codec for non-negative integers < 128; everything else
+    // routes through FLOAT64. Surfacing this distinction makes "why is
+    // this 1 byte vs 9" tactile when you hover.
+    const codec = (Number.isInteger(v) && v >= 0 && v < 128) ? 'UINT7' : 'FLOAT64'
+    return h`<span class="tv tv-num" title=${codec}>${String(v)}</span>`
   }
   if (v instanceof Date) {
-    return h`<span class="tv tv-date"><span class="tv-glyph">📅</span><time datetime=${v.toISOString()}>${v.toLocaleString()}</time></span>`
+    return h`<span class="tv tv-date" title="DATE"><span class="tv-glyph">📅</span><time datetime=${v.toISOString()}>${v.toLocaleString()}</time></span>`
   }
   if (v instanceof Uint8Array) {
-    return h`<span class="tv tv-bytes">Uint8Array(${v.length})</span>`
+    return h`<span class="tv tv-bytes" title=${v.length === 0 ? 'EMPTY_UINT8ARRAY' : (v.length <= 4 ? 'WORD or UINT8ARRAY' : 'UINT8ARRAY')}>Uint8Array(${v.length})</span>`
   }
   if (isDuple(v)) {
-    if (depth > 1) return h`<span class="tv tv-duple">Duple(…)</span>`
-    return h`<span class="tv tv-duple">Duple(${typedValue(v.v[0], depth + 1)}, ${typedValue(v.v[1], depth + 1)})</span>`
+    if (depth > 1) return h`<span class="tv tv-duple" title="DUPLE">Duple(…)</span>`
+    return h`<span class="tv tv-duple" title="DUPLE">Duple(${typedValue(v.v[0], depth + 1)}, ${typedValue(v.v[1], depth + 1)})</span>`
   }
   if (Array.isArray(v)) {
-    return h`<span class="tv tv-array">[ ${v.length} ${v.length === 1 ? 'element' : 'elements'} ]</span>`
+    return h`<span class="tv tv-array" title=${v.length === 0 ? 'EMPTY_ARRAY' : 'ARRAY'}>[ ${v.length} ${v.length === 1 ? 'element' : 'elements'} ]</span>`
   }
   if (typeof v === 'object') {
     const n = Object.keys(v).length
-    return h`<span class="tv tv-object">{ ${n} ${n === 1 ? 'field' : 'fields'} }</span>`
+    return h`<span class="tv tv-object" title=${n === 0 ? 'EMPTY_OBJECT' : 'OBJECT'}>{ ${n} ${n === 1 ? 'field' : 'fields'} }</span>`
   }
   return h`<span class="tv">${String(v)}</span>`
 }
@@ -1212,11 +1254,11 @@ appEl.addEventListener('pointerup', endDrag)
 appEl.addEventListener('pointercancel', endDrag)
 
 // Cross-highlight: hovering any element with data-addr highlights the
-// matching chunk in the byte-map. References and referrers light up the
-// chunk's position in the stream so you can SEE where it lives. If the
-// hover came from somewhere other than the strip itself, smooth-scroll
-// the matching chunk into view inside any byte-strip-container —
-// otherwise hover-elsewhere can highlight chunks that are off-screen.
+// matching chunk in the byte-map, populates the chunk inspector below
+// the strip with codec/addr/length, and (if the hovered chunk is a
+// signature) lights up its covered byte range as an overlay band on
+// the strip. If the hover came from somewhere other than the strip
+// itself, smooth-scroll the matching chunk into view in the strip.
 appEl.addEventListener('mouseover', e => {
   const el = e.target.closest('[data-addr]')
   if (!el) return
@@ -1230,10 +1272,37 @@ appEl.addEventListener('mouseover', e => {
       }
     })
   }
+  // Look up the chunk's data on the strip rect for inspector + sig coverage.
+  const stripRect = matches[0]?.closest('.byte-strip-container') ? matches[0]
+    : appEl.querySelector(`.byte-strip .chunk[data-addr="${addr}"]`)
+  if (stripRect) {
+    const codec = stripRect.dataset.codec
+    const len = stripRect.dataset.len
+    for (const ins of appEl.querySelectorAll('.chunk-inspector')) {
+      ins.textContent = codec ? `${codec} · @${addr} · ${len} bytes` : `chunk @${addr}`
+      ins.classList.remove('dim')
+      ins.classList.add('active')
+    }
+    const fromX = stripRect.getAttribute('data-sig-from-x')
+    const toX   = stripRect.getAttribute('data-sig-to-x')
+    if (fromX != null && toX != null) {
+      const overlay = stripRect.closest('.byte-strip').querySelector('.sig-coverage')
+      if (overlay) {
+        overlay.setAttribute('x', fromX)
+        overlay.setAttribute('width', String(parseFloat(toX) - parseFloat(fromX)))
+        overlay.classList.add('active')
+      }
+    }
+  }
 })
 appEl.addEventListener('mouseout', e => {
   const el = e.target.closest('[data-addr]')
   if (!el) return
-  appEl.querySelectorAll('.byte-map .chunk.hovered')
-    .forEach(c => c.classList.remove('hovered'))
+  appEl.querySelectorAll('.byte-map .chunk.hovered').forEach(c => c.classList.remove('hovered'))
+  appEl.querySelectorAll('.sig-coverage.active').forEach(o => o.classList.remove('active'))
+  for (const ins of appEl.querySelectorAll('.chunk-inspector')) {
+    ins.textContent = 'hover the strip to inspect a chunk'
+    ins.classList.remove('active')
+    ins.classList.add('dim')
+  }
 })

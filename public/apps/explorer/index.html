@@ -221,6 +221,19 @@
     }
     .repo-link:hover { background: var(--flash); text-decoration-style: solid; }
 
+    /* Sticky at-view header: selector + strip + tabs travel with you as
+       you scroll long value trees or storage detail. Background-cover so
+       content scrolling underneath doesn't bleed through. */
+    .atview-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg, #fefdf8);
+      padding-top: 0.25rem;
+      border-bottom: 1px solid var(--rule);
+      margin-bottom: 0.75rem;
+    }
+
     /* Byte stream — zoomed strip in a horizontally-scrollable container,
        click-drag-to-pan inside for "look around" navigation. */
     .byte-strip-container {
@@ -235,6 +248,45 @@
     .byte-strip-container.dragging { cursor: grabbing; user-select: none; }
     .byte-strip-container.dragging .chunk { cursor: grabbing; }
     .byte-strip { display: block; }
+
+    /* Sig-coverage overlay: when hovering a sig anywhere on the page,
+       this rect is positioned over its [signedFrom, signedTo] byte range
+       on the strip. Subtle dashed band — doesn't fight the chunk colors. */
+    .byte-strip .sig-coverage {
+      fill: rgba(239, 68, 68, 0.12);
+      stroke: rgba(239, 68, 68, 0.6);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 3;
+      opacity: 0;
+      transition: opacity 0.08s;
+    }
+    .byte-strip .sig-coverage.active { opacity: 1; }
+
+    /* "← older   newer →" labels under the strip — no UI action, just
+       Tour-Guide orientation so the append direction is obvious. */
+    .strip-direction {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.7rem;
+      color: var(--ink-dim);
+      padding: 0 0.25rem;
+      margin-top: 0.15rem;
+    }
+
+    /* Live readout of the hovered chunk — codec, address, length. Quiet
+       by default; lights up when something's hovered. */
+    .chunk-inspector {
+      font-family: monospace;
+      font-size: 0.8rem;
+      padding: 0.25rem 0.5rem;
+      margin: 0.25rem 0 0.75rem;
+      border-radius: var(--radius);
+      transition: color 0.08s, background 0.08s;
+    }
+    .chunk-inspector.active {
+      color: var(--ink);
+      background: var(--flash);
+    }
 
     .byte-map {
       display: block;

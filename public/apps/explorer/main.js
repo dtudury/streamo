@@ -543,13 +543,31 @@ function AtView ({ keyHex, address }) {
             : h`<span class="verify-badge pending">…</span><span class="dim">not yet signed — sign in flight or pending</span>`,
           covering ? 'verified' : 'unsigned'
         )
+        // Commit fields render with two semantic specials: dataAddress and
+        // parent are *byte-address pointers* (their numeric value IS a
+        // navigation target), so they're clickable address pills directly
+        // — the chunk holding the FLOAT64 value is incidental and we
+        // skip the chunk-address column for those rows.
+        const addrLink = (addr) => addr === undefined
+          ? h`<span class="dim">(none — first commit)</span>`
+          : h`<a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${addr}>@${addr}</a>`
+        const commitFieldsTable = h`
+          <table class="kv">
+            <tbody>
+              <tr><td class="mono">message</td><td>${typedValue(decoded.message)}</td></tr>
+              <tr><td class="mono">date</td><td>${typedValue(decoded.date)}</td></tr>
+              <tr><td class="mono">dataAddress</td><td>${addrLink(decoded.dataAddress)}</td></tr>
+              <tr><td class="mono">parent</td><td>${addrLink(decoded.parent)}</td></tr>
+            </tbody>
+          </table>
+        `
         return h`
           ${selector}
           ${tabs}
           ${banner}
-          ${refsTable()}
-          <h3>rehydrated</h3>
-          <pre class="value">${safeJSON(decoded)}</pre>
+          ${commitFieldsTable}
+          <h3>value <span class="dim">at <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${decoded.dataAddress}>@${decoded.dataAddress}</a></span></h3>
+          ${valueTree(repo, keyHex, decoded.dataAddress, 2)}
           ${changes
             ? h`
               <h3>changed paths <span class="dim">(${changes.length})</span></h3>
@@ -891,6 +909,57 @@ function typedValue (v, depth = 0) {
     return h`<span class="tv tv-object">{ ${n} ${n === 1 ? 'field' : 'fields'} }</span>`
   }
   return h`<span class="tv">${String(v)}</span>`
+}
+
+// Recursive typed-value tree — like typedValue, but expands composites
+// inline up to `depth` levels deep. Beyond depth, composites render as
+// un-expanded chips that drill into /at/<chunk-addr> on click.
+//
+// Walks asRefs at each level so addressable children become drillable
+// chips when un-expanded; inline children (no separate chunk address)
+// render as plain typedValue with no nav.
+//
+// Default depth=2: outer expanded, its children expanded, anything
+// nested below that becomes a chip. Bumping to 3 expands one more
+// level (e.g. for chat-shaped { name, messages: [{...}, ...] } where
+// the message objects' fields would otherwise be chips).
+function valueTree (repo, keyHex, address, depth = 2) {
+  let value, refs
+  try {
+    value = repo.decode(address)
+    refs = repo.asRefs(address)
+  } catch {
+    return h`<span class="dim">(decode error @${address})</span>`
+  }
+  // Primitive path — typedValue covers it.
+  if (typeof value !== 'object' || value === null || value instanceof Date || value instanceof Uint8Array) {
+    return typedValue(value)
+  }
+  // At depth 0, composites become drillable chips.
+  if (depth <= 0) {
+    return h`<a class="tv-drill" data-action="open-at" data-keyhex=${keyHex} data-addr=${address}>${typedValue(value)}</a>`
+  }
+  const isArray = Array.isArray(value)
+  const entries = isArray
+    ? value.map((v, i) => [String(i), v, refs?.[i]])
+    : Object.entries(value).map(([k, v]) => [k, v, refs?.[k]])
+  if (entries.length === 0) {
+    return h`<span class="tv ${isArray ? 'tv-array' : 'tv-object'}">${isArray ? '[ ]' : '{ }'}</span>`
+  }
+  return h`
+    <div class="tv-tree ${isArray ? 'tv-tree-array' : 'tv-tree-object'}">
+      <span class="tv-bracket">${isArray ? '[' : '{'}</span>
+      ${entries.map(([k, v, addr]) => h`
+        <div class="tv-tree-row">
+          <span class="tv-key">${k}:</span>
+          ${addr !== undefined
+            ? valueTree(repo, keyHex, addr, depth - 1)
+            : typedValue(v)}
+        </div>
+      `)}
+      <span class="tv-bracket">${isArray ? ']' : '}'}</span>
+    </div>
+  `
 }
 
 function safeGet (f) { try { return f() } catch { return undefined } }

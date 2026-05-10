@@ -276,6 +276,31 @@
     .tv-array, .tv-object { color: #1e40af; background: rgba(59, 130, 246, 0.10); }
     .tv-duple  { color: #6b21a8; background: rgba(168, 85, 247, 0.10); }
 
+    /* Recursive typed-value tree — used for rehydrated views. Outer levels
+       expand inline; un-expanded composites become drillable chips. */
+    .tv-tree {
+      font-size: 0.85rem;
+      line-height: 1.7;
+      font-family: monospace;
+      margin: 0.4rem 0;
+    }
+    .tv-tree-row {
+      padding-left: 1.5rem;
+    }
+    .tv-tree .tv-bracket {
+      color: var(--ink-dim);
+      font-weight: 600;
+    }
+    .tv-tree .tv-key {
+      color: var(--ink-dim);
+      margin-right: 0.4rem;
+    }
+    .tv-drill {
+      cursor: pointer;
+      text-decoration: underline dotted var(--ink-dim);
+    }
+    .tv-drill:hover { background: var(--flash); text-decoration-style: solid; }
+
     /* codec category palette — used in both the legend and the SVG fills */
     .cat-commit    { fill: #f59e0b; background: #f59e0b; }
     .cat-sig       { fill: #ef4444; background: #ef4444; }

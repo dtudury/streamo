@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/dtudury/streamo/main/public/streamo.svg" alt="streamo" width="140">
+</p>
+
 # streamo
 
 > every device is an equal author

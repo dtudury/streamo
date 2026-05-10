@@ -285,17 +285,6 @@
     }
     .byte-strip .sig-coverage.active { opacity: 1; }
 
-    /* "← older   newer →" labels under the strip — no UI action, just
-       Tour-Guide orientation so the append direction is obvious. */
-    .strip-direction {
-      display: flex;
-      justify-content: space-between;
-      font-size: 0.7rem;
-      color: var(--ink-dim);
-      padding: 0 0.25rem;
-      margin-top: 0.15rem;
-    }
-
     /* Persistent context line for the at-view's current chunk: codec,
        address, length, percentage. Quiet by default (it's permanent,
        not the focus), lights up when something else on the page is

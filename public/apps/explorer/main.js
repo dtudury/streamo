@@ -58,17 +58,30 @@ function fire () {
   requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
 }
 
-// Hover-only signal — separate from the bridge. The outer mount slot
-// reads `dep()` (bridge), so bridge fires re-render the entire at-view
-// (rebuilding the strip, dropping its scrollLeft). Hover events that
-// only set hoveredAddress fire hoverSignal instead — slots that read
-// hoverDep() re-run, slots that don't are left alone. This is the
-// minimum-viable signal decomposition: enough to keep hovering the
-// strip from re-rendering the strip itself. View / tab / expansion
-// signals are next steps once recursive reconcile lands.
+// Hover-only signal — separate from the bridge. Hover events that
+// only set hoveredAddress fire hoverSignal exclusively; slots that
+// read hoverDep() re-run, slots that don't are left alone. This is
+// what keeps hovering the strip from re-rendering the strip itself.
 const hoverSignal = {}
 const hoverDep = () => recaller.reportKeyAccess(hoverSignal, 'data')
 const hoverFire = () => recaller.reportKeyMutation(hoverSignal, 'data')
+
+// View-shape signal — fires only when view.kind or view.keyHex
+// changes. The outer mount slot watches this (NOT bridge), so
+// intra-repo navigation (address changes within an at-view) does
+// NOT re-run the outer slot, does NOT recreate AtView's inner slots,
+// does NOT fresh-mount the byte-strip-container. Inner slots watch
+// bridge — they re-run on address change, chunk arrivals, tab clicks,
+// async results — and recursive-reconcile preserves the strip's DOM
+// (scrollLeft, focus, keyed children) across those re-runs.
+//
+// Together with hoverSignal, this is the full signal decomposition:
+//   viewKindSignal — kind/keyHex (registry ↔ at-view, repo switch)
+//   bridge         — chunks, address, tab, async (everything else)
+//   hoverSignal    — strip hover preview
+const viewKindSignal = {}
+const viewKindDep = () => recaller.reportKeyAccess(viewKindSignal, 'data')
+const viewKindFire = () => recaller.reportKeyMutation(viewKindSignal, 'data')
 
 // ── Hash routing ──────────────────────────────────────────────────────────
 
@@ -92,15 +105,19 @@ function hashFromView (v) {
 
 let view = viewFromHash()
 function go (next) {
+  const kindChanged = next.kind !== view.kind || next.keyHex !== view.keyHex
   view = next
   const target = hashFromView(next)
   if (location.hash !== target) location.hash = target
+  if (kindChanged) viewKindFire()
   fire()
 }
 window.addEventListener('hashchange', () => {
   const next = viewFromHash()
   if (next.kind === view.kind && next.keyHex === view.keyHex && next.address === view.address) return
+  const kindChanged = next.kind !== view.kind || next.keyHex !== view.keyHex
   view = next
+  if (kindChanged) viewKindFire()
   fire()
 })
 
@@ -428,12 +445,15 @@ function repoExtras (repo, keyHex) {
   `
 }
 
-function AtView ({ keyHex, address }) {
-  // Shared by both slots — both need to resolve HEAD and gate on
-  // empty/loading state. Cheap to call twice.
+function AtView ({ keyHex }) {
+  // AtView's body is built once per repo (the outer mount slot only
+  // re-runs on view.kind / view.keyHex changes — see viewKindSignal).
+  // Anything that depends on view.address must read it fresh inside a
+  // reactive cell, NOT capture it in closure here. Same for resolved
+  // chunk lookups: each slot calls resolveContext(repo) on every run.
   const resolveContext = (repo) => {
-    let resolvedAddr = address
-    if (address === 'HEAD') {
+    let resolvedAddr = view.address
+    if (view.address === 'HEAD') {
       resolvedAddr = resolveHead(repo)
       if (resolvedAddr === undefined) return { state: 'no-head' }
     }
@@ -445,7 +465,7 @@ function AtView ({ keyHex, address }) {
     <a class="back" data-action="back-registry">← all repos</a>
     <div class="keyfull">
       <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
-      <span class="dim"> @ ${address}</span>
+      <span class="dim"> @ ${() => { dep(); return view.address }}</span>
     </div>
 
     ${() => {
@@ -869,7 +889,6 @@ function byteStreamSection (repo, keyHex, currentAddress) {
         })}
         <rect class="sig-coverage" x="0" y="0" width="0" height=${H} pointer-events="none"/>
       </svg>
-      <div class="strip-direction"><span>← older</span><span>newer →</span></div>
     </div>
     ${() => {
       // Inspector slot — reads hoverDep so it updates as the user moves
@@ -1322,22 +1341,24 @@ function hexDump (bytes, maxLen = 256) {
 
 const appEl = document.getElementById('app')
 
-// Wrap each view in a data-keyed <section> so mount's tag-pool recycling
-// doesn't pull stale elements from one view into another. Without this,
-// switching from registry to an at-view would recycle the registry's
-// <h2> and keep its old text children (patchElement only updates attrs).
-// The data-key changes whenever the view's identity changes (kind + the
-// params that affect rendering), forcing a fresh mount.
+// Outer mount slot. Reads viewKindDep ONLY — re-runs on view.kind
+// or view.keyHex changes (registry ↔ at, or switching repos). It does
+// NOT re-run on address changes, chunk arrivals, tab clicks, or any
+// other bridge fire. That's the whole point of the decomposition:
+// keep the at-view's <section> (and the strip-container inside it)
+// alive across intra-repo navigation so click-to-navigate doesn't
+// rebuild the strip and reset its scrollLeft.
+//
+// Each view gets a data-keyed <section> so mount's matcher distinguishes
+// them — switching from registry to an at-view, or between repos, drops
+// the old section and fresh-mounts the new one. RegistryView and AtView
+// each do their own internal reactivity (inner slots reading dep() and
+// hoverDep()) for everything within a view.
 mount(h`${() => {
-  dep()
+  viewKindDep()
   switch (view.kind) {
     case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
-    // data-key omits the address so navigations within the same repo
-    // recycle the section (preserving the byte strip's scrollLeft and
-    // any other browser state); only switching repos forces a fresh
-    // mount. The AtView's internal slots react to address changes via
-    // the recaller and update content reconcilably.
-    case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}`}>${AtView({ keyHex: view.keyHex, address: view.address })}</section>`
+    case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}`}>${AtView({ keyHex: view.keyHex })}</section>`
     default:         return h`<div class="empty">?</div>`
   }
 }}`, appEl, recaller)

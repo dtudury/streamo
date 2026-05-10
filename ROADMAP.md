@@ -5,6 +5,72 @@ picture of where the project is and where it's headed.
 
 ---
 
+## where we are (4.0.5 — instrument panel + brand)
+
+Nine commits past 4.0.4. The thread holding them together: make the
+explorer a stable *instrument panel* that doesn't lose your context,
+and give streamo a real visual identity to anchor it.
+
+**Reactive infrastructure that paid back immediately:**
+
+- *`mount`: recursive reconcile.* Recycled elements now have their
+  descendants reconciled in place (data-key first, then tag-pool),
+  not trash-and-rebuilt. DOM identity, scroll state, focus, and any
+  external attachments survive on every level — not just the outer
+  recycled element. This is what unlocks the rest of this list.
+- *Signal decomposition in the explorer.* Three signals replace one
+  bridge: `viewKindSignal` (kind/keyHex — repo switch only),
+  `bridge` (chunks, address, tab, async — everything else), and
+  `hoverSignal` (strip hover preview). Each slot reads exactly the
+  signals it depends on; intra-repo navigation no longer re-runs
+  the outer mount slot, which means the at-view <section> (and the
+  byte strip inside it) stays alive across clicks. Combined with
+  recursive reconcile, the strip is essentially permanent until you
+  switch repos.
+
+**Explorer polish riding on that foundation:**
+
+- *Live hover preview.* Hovering a chunk in the byte strip peeks the
+  page content below tabs at that chunk's value/storage; mouseout
+  reverts. The strip itself, the selector, and the tabs all stay
+  put — only the content area updates.
+- *Persistent chunk inspector.* A header line under the strip names
+  the current chunk's codec, address, length, and percentage of the
+  stream. Quiet by default; lights up to follow hover.
+- *Commit-reachability index.* The storage tab's "reachable from"
+  block now correctly reports which commits can reach a chunk —
+  even when the chunk is referenced via `dataAddress` or `parent`,
+  which are FLOAT64 number values rather than `asRefs` (BFS from
+  each commit's `dataAddress` through `asRefs` builds the index).
+- *→ glyph on commit pointers.* The `dataAddress` and `parent` rows
+  in the commit kv table show a "→ @addr" pill that reads as
+  navigable; without the arrow, the pointer looked like any other
+  numeric value.
+- *Storage tab: position context + codec colors.* "byte X of Y"
+  framing on every chunk, with a covering-sig hint and the strip
+  palette extended into the storage chrome.
+- *Scrollbar-gutter: stable.* The chrome no longer shifts when
+  content grows past the viewport.
+
+**Brand identity:**
+
+- *Yin-yang basketball seam mark* — seven named circles, every curve
+  provably-related to every other point; nothing freehand. Replaces
+  the 🌊 emoji everywhere it appeared.
+- *Lockup pattern.* `[mark + streamo]` is a clickable home link, with
+  page titles as a separate `<span>` after a `·` separator. Used on
+  the explorer, chat, and homepage.
+- *Color.* The mark is filled with `#1d4ed8` — readable on dark
+  monitors without losing the streamo blue.
+
+**Homepage:**
+
+- *Journal feature.* The home repo's `entries[]` array now renders
+  live on the homepage with a "see all entries in the explorer →"
+  link. Updates as new entries land.
+
+---
+
 ## where we are (4.0.x — explorer reshape)
 
 A multi-day pass over the repo explorer. Each step was small; together

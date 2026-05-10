@@ -901,10 +901,14 @@ function byteStreamSection (repo, keyHex, currentAddress) {
         const cat = commitAddrs.has(inspectorChunk.address)
           ? 'commit'
           : codecCategory(inspectorChunk.codecType)
+        // The chip's *label* is the user-level unit, not the raw codec.
+        // A commit is encoded as OBJECT but the user thinks of it as
+        // COMMIT — same logic the rest of the explorer uses.
+        const chipLabel = cat === 'commit' ? 'COMMIT' : inspectorChunk.codecType
         const pct = total > 0
           ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})`
           : ''
-        inspectorContent = h`<span class=${['codec-chip', `cat-${cat}`]}>${inspectorChunk.codecType}</span> <span class="dim">·</span> @${inspectorChunk.address} <span class="dim">·</span> ${inspectorChunk.length} bytes${pct}`
+        inspectorContent = h`<span class=${['codec-chip', `cat-${cat}`]}>${chipLabel}</span> <span class="dim">·</span> @${inspectorChunk.address} <span class="dim">·</span> ${inspectorChunk.length} bytes${pct}`
       } else {
         inspectorContent = `${chunks.length} chunks · ${total} bytes`
       }
@@ -1459,13 +1463,21 @@ function syncByteStrips () {
   for (const container of appEl.querySelectorAll('.byte-strip-container')) {
     const visible = container.clientWidth || 1
     const atRight = container.scrollLeft + visible >= container.scrollWidth - 8
-    // Auto-pin to HEAD only when the strip is freshly mounted (scroll
-    // hasn't been touched yet, so scrollLeft === 0). For recycled strips
-    // mount restores the previous scrollLeft, so this branch correctly
-    // skips and the user's position is preserved. Live updates still
-    // pin if the user is already at the right edge (atRight).
+    const currentChunk = container.querySelector('.chunk.current')
+    const currentAddr = currentChunk?.getAttribute('data-addr') ?? null
+    const lastCurrent = container.dataset.lastCurrent ?? null
+    const currentChanged = currentAddr !== null && currentAddr !== lastCurrent
+    if (currentAddr !== null) container.dataset.lastCurrent = currentAddr
+    // Auto-pin to HEAD when the strip is freshly mounted (scrollLeft === 0)
+    // or while the user is following live activity at the right edge.
+    // Otherwise, when navigation lands on a chunk that's off-screen
+    // (commit selector, click on a chip's @addr link, keyboard nav),
+    // bring it into view. Hover already pre-scrolls during dropdown
+    // peeks; this catches the cases hover didn't trigger.
     if (container.scrollLeft === 0 || atRight) {
       container.scrollLeft = container.scrollWidth
+    } else if (currentChanged && currentChunk) {
+      currentChunk.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
     }
   }
 }

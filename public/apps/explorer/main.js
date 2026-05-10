@@ -443,11 +443,13 @@ function AtView ({ keyHex, address }) {
       const isCommit = isCommitShape(decoded)
       const isSig = codecType === 'SIGNATURE'
 
-      // Tabs are part of the page content (not the static header) so the
-      // commit selector renders ABOVE the tabs. The selector is always
-      // present (when the repo has any commits) so the UI doesn't shift
-      // as you click between commit pages and storage drilling — when
-      // the current address isn't a commit, the summary shows "detached".
+      // Common header shown on every at-view: commit selector dropdown,
+      // byte-strip with the current chunk highlighted, then the value/
+      // storage tab nav. The byte-strip used to live only in the storage
+      // tab; promoting it lets you keep spatial context across tab and
+      // commit switches, and any data-addr hover (typed-tree chips,
+      // refs/referrers tables, kv addr links) cross-highlights and
+      // smooth-scrolls into view in the strip.
       const tabs = h`
         <nav class="tabs">
           <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
@@ -457,24 +459,23 @@ function AtView ({ keyHex, address }) {
         </nav>
       `
       const selector = commitSelectorSection(repo, keyHex, resolvedAddr)
+      const bytes = byteStreamSection(repo, keyHex, resolvedAddr)
+      const header = h`${selector}${bytes}${tabs}`
 
-      // Storage tab: spatial view of where this chunk lives in the byte
-      // stream + outgoing references + this chunk's bytes + incoming
-      // referrers. The chunk graph from this chunk's perspective.
+      // Storage tab: this chunk's outgoing refs, raw bytes, and
+      // referrers. (byteStreamSection moved up into the header.)
       if (atTab === 'storage') {
         return h`
-          ${selector}
-          ${tabs}
-          ${byteStreamSection(repo, keyHex, resolvedAddr)}
+          ${header}
           ${outgoingReferencesSection(repo, keyHex, resolvedAddr)}
           ${rawChunkSection(repo, resolvedAddr)}
           ${referrersSection(repo, keyHex, resolvedAddr)}
         `
       }
 
-      // Every value-tab branch below prepends ${selector}${tabs} so the
-      // UI is stable across navigation: the selector is always at the
-      // top of the page when the repo has any sigs.
+      // Every value-tab branch below prepends ${header} so the UI is
+      // stable across navigation: selector + byte-strip + tabs are
+      // always at the top of the page when the repo has any commits.
 
       // Value tab — branches by codec.
       // Helper: render the kv-table of decoded fields for any Object/Array
@@ -562,12 +563,11 @@ function AtView ({ keyHex, address }) {
           </table>
         `
         return h`
-          ${selector}
-          ${tabs}
+          ${header}
           ${banner}
           ${commitFieldsTable}
           <h3>value <span class="dim">at <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${decoded.dataAddress}>@${decoded.dataAddress}</a></span></h3>
-          ${valueTree(repo, keyHex, decoded.dataAddress, 2)}
+          ${valueTree(repo, keyHex, decoded.dataAddress)}
           ${changes
             ? h`
               <h3>changed paths <span class="dim">(${changes.length})</span></h3>
@@ -599,8 +599,7 @@ function AtView ({ keyHex, address }) {
       // Duple: explain what this tree-node IS, then show its two children.
       if (codecType === 'DUPLE') {
         return h`
-          ${selector}
-          ${tabs}
+          ${header}
           ${kindBanner('duple', h`<span class="dim">2-tuple, tree scaffolding</span>`)}
           <p class="explainer">
             A <strong>Duple</strong> is a 2-tuple — the building block streamo uses
@@ -634,8 +633,7 @@ function AtView ({ keyHex, address }) {
           'verified'
         )
         return h`
-          ${selector}
-          ${tabs}
+          ${header}
           ${banner}
           ${sigDetailBody(repo, keyHex, resolvedAddr, decoded)}
           <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
@@ -653,8 +651,7 @@ function AtView ({ keyHex, address }) {
           ? (isArray ? 'empty array' : 'empty object')
           : (isArray ? 'array' : 'object')
         return h`
-          ${selector}
-          ${tabs}
+          ${header}
           ${kindBanner(label, dim)}
           ${refsTable()}
           ${fieldCount > 0 ? h`
@@ -666,8 +663,7 @@ function AtView ({ keyHex, address }) {
 
       // Primitive: just show it.
       return h`
-        ${selector}
-        ${tabs}
+        ${header}
         ${kindBanner(codecType.toLowerCase())}
         <pre class="value">${safeJSON(decoded)}</pre>
       `
@@ -913,17 +909,18 @@ function typedValue (v, depth = 0) {
 
 // Recursive typed-value tree — like typedValue, but expands composites
 // inline up to `depth` levels deep. Beyond depth, composites render as
-// un-expanded chips that drill into /at/<chunk-addr> on click.
+// un-expanded chips. Click a chip to expand IN PLACE (forceExpanded);
+// click an expanded composite's opening bracket to collapse it back to
+// a chip (forceCollapsed). Force-expand and force-collapse override
+// the default depth-based decision.
 //
-// Walks asRefs at each level so addressable children become drillable
-// chips when un-expanded; inline children (no separate chunk address)
-// render as plain typedValue with no nav.
-//
-// Default depth=2: outer expanded, its children expanded, anything
-// nested below that becomes a chip. Bumping to 3 expands one more
-// level (e.g. for chat-shaped { name, messages: [{...}, ...] } where
-// the message objects' fields would otherwise be chips).
-function valueTree (repo, keyHex, address, depth = 2) {
+// Default depth=3 covers `{ name, messages: [{text, at}, ...] }` —
+// outer object expanded, messages array expanded, message objects
+// expanded, and primitives like text/at render inline.
+const forceExpanded  = new Set()  // `${keyHex}:${address}` → user clicked chip
+const forceCollapsed = new Set()  // `${keyHex}:${address}` → user clicked bracket
+
+function valueTree (repo, keyHex, address, depth = 3) {
   let value, refs
   try {
     value = repo.decode(address)
@@ -931,13 +928,18 @@ function valueTree (repo, keyHex, address, depth = 2) {
   } catch {
     return h`<span class="dim">(decode error @${address})</span>`
   }
-  // Primitive path — typedValue covers it.
   if (typeof value !== 'object' || value === null || value instanceof Date || value instanceof Uint8Array) {
     return typedValue(value)
   }
-  // At depth 0, composites become drillable chips.
-  if (depth <= 0) {
-    return h`<a class="tv-drill" data-action="open-at" data-keyhex=${keyHex} data-addr=${address}>${typedValue(value)}</a>`
+  const k = `${keyHex}:${address}`
+  const userExpanded  = forceExpanded.has(k)
+  const userCollapsed = forceCollapsed.has(k)
+  const expand = userExpanded || (!userCollapsed && depth > 0)
+  if (!expand) {
+    return h`<a class="tv-drill" data-action="expand-tree"
+                 data-keyhex=${keyHex} data-addr=${address}
+                 title="click to expand · drill via storage tab if you need a full at-view"
+              >${typedValue(value)}</a>`
   }
   const isArray = Array.isArray(value)
   const entries = isArray
@@ -948,7 +950,10 @@ function valueTree (repo, keyHex, address, depth = 2) {
   }
   return h`
     <div class="tv-tree ${isArray ? 'tv-tree-array' : 'tv-tree-object'}">
-      <span class="tv-bracket">${isArray ? '[' : '{'}</span>
+      <span class="tv-bracket clickable" data-action="collapse-tree"
+            data-keyhex=${keyHex} data-addr=${address}
+            title="click to collapse"
+        >${isArray ? '[' : '{'}</span>
       ${entries.map(([k, v, addr]) => h`
         <div class="tv-tree-row">
           <span class="tv-key">${k}:</span>
@@ -1133,6 +1138,18 @@ appEl.addEventListener('click', e => {
       // the selector collapsed (matches native <select> behavior).
       el.closest('details.commit-selector')?.removeAttribute('open')
       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
+    }
+    case 'expand-tree': {
+      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
+      forceExpanded.add(k)
+      forceCollapsed.delete(k)
+      return fire()
+    }
+    case 'collapse-tree': {
+      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
+      forceCollapsed.add(k)
+      forceExpanded.delete(k)
+      return fire()
     }
   }
 })

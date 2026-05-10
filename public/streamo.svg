@@ -21,7 +21,4 @@
 
   <!-- HIKM: Ball H→I, Yin I→K, Happy K→M, Little M→H -->
   <path d="M 412,611 A 280,280 0 0,1 340,620 A 140,140 0 0,1 200,465 A 302.4,302.4 0 0,0 327,535 A 70,70 0 0,0 412,611 Z"/>
-
-  <!-- Outer ring -->
-  <circle cx="340" cy="340" r="292" fill="none" stroke="currentColor" stroke-width="6"/>
 </svg>

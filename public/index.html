@@ -171,6 +171,46 @@
     .app-name { font-size: 1rem; }
     .app-desc { font-size: 0.78rem; color: var(--ink-dim); line-height: 1.4; }
 
+    /* Journal — the home repo's `entries` array, rendered live. Each entry
+       is a signed commit; click "see all" to land on the relay'd repo
+       in the explorer. The homepage demonstrates streamo by being made
+       of it. */
+    .journal-heading {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--ink-dim);
+      margin: 2.5rem 0 0.75rem;
+    }
+    .journal-entry {
+      padding: 0.75rem 0;
+      border-top: 1px solid var(--rule);
+    }
+    .journal-entry:last-child { border-bottom: 1px solid var(--rule); }
+    .journal-meta {
+      font-size: 0.7rem;
+      font-family: monospace;
+      margin-bottom: 0.25rem;
+    }
+    .journal-headline {
+      font-size: 0.95rem;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+    }
+    .journal-body {
+      font-size: 0.85rem;
+      line-height: 1.5;
+      color: var(--ink-dim);
+    }
+    .journal-more {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      margin-top: 0.6rem;
+      display: inline-block;
+      text-decoration: underline dotted;
+    }
+    .journal-more:hover { color: var(--ink); text-decoration-style: solid; }
+
     .footer {
       display: flex;
       flex-wrap: wrap;
@@ -231,6 +271,12 @@
     </div>
   </details>
 
+  <p class="journal-heading">journal</p>
+  <div id="journal-entries">
+    <p class="dim" style="font-size: 0.85rem;">loading…</p>
+  </div>
+  <a id="journal-more" class="journal-more" style="display:none">see all entries in the explorer →</a>
+
   <hr>
 
   <p class="apps-heading">apps</p>
@@ -264,19 +310,78 @@
   <script type="module">
     import { Signer } from '/streamo/Signer.js'
     import { bytesToHex } from '/streamo/utils.js'
+    import { Recaller } from '/streamo/utils/Recaller.js'
+    import { RepoRegistry } from '/streamo/RepoRegistry.js'
+    import { registrySync } from '/streamo/registrySync.js'
+    import { bridgeRegistry } from '/streamo/bridgeRegistry.js'
+    import { h } from '/streamo/h.js'
+    import { mount } from '/streamo/mount.js'
 
     // Surface "what's running here" — server's primary key as a clickable
     // link to the explorer. Replaces the abstract "no server holds
     // authority" claim above with a concrete, navigable instance of it.
     const pulseEl = document.getElementById('pulse')
     const hereEl  = document.getElementById('here-text')
+    let info = null
     try {
-      const info = await fetch('/api/info').then(r => r.json())
+      info = await fetch('/api/info').then(r => r.json())
       const truncKey = info.primaryKeyHex.slice(0, 12) + '…'
       hereEl.innerHTML = `relaying <a href="/apps/explorer/#/repo/${info.primaryKeyHex}">${truncKey}</a> as "${info.name || 'this server'}"`
     } catch (e) {
       pulseEl.classList.add('err')
       hereEl.textContent = 'not connected to a streamo server'
+    }
+
+    // Subscribe to the home repo and render its journal entries. The
+    // homepage IS made of streamo: each entry is a signed commit on
+    // the home repo, walked here at render time. Live — new entries
+    // appear without refresh.
+    if (info) {
+      try {
+        const registry = new RepoRegistry()
+        await registrySync(registry, location.hostname, +location.port || 80, {
+          filter: key => key === info.primaryKeyHex
+        })
+        const recaller = new Recaller('home')
+        const { dep } = bridgeRegistry(registry, recaller, 'home')
+        const entriesEl = document.getElementById('journal-entries')
+        const moreEl = document.getElementById('journal-more')
+        moreEl.href = `/apps/explorer/#/repo/${info.primaryKeyHex}`
+        const fmtDate = d => {
+          const date = d instanceof Date ? d : new Date(d)
+          return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+        }
+        // Replace the "loading…" placeholder with our reactive cell.
+        entriesEl.innerHTML = ''
+        mount(h`${() => {
+          dep()
+          const repo = registry.get(info.primaryKeyHex)
+          if (!repo) return h`<p class="dim" style="font-size: 0.85rem;">connecting…</p>`
+          const entries = repo.get('entries') ?? []
+          if (entries.length === 0) {
+            return h`<p class="dim" style="font-size: 0.85rem;">no entries yet — the deployer hasn't written anything to this repo.</p>`
+          }
+          // Newest-first; show up to 5.
+          const latest = entries.slice(-5).reverse()
+          if (entries.length > latest.length) {
+            moreEl.style.display = 'inline-block'
+            moreEl.textContent = `see all ${entries.length} entries in the explorer →`
+          } else {
+            moreEl.style.display = 'inline-block'
+            moreEl.textContent = `view in the explorer →`
+          }
+          return latest.map(e => h`
+            <div class="journal-entry">
+              <div class="journal-meta dim">${e.at != null ? fmtDate(e.at) : ''}</div>
+              <div class="journal-headline">${e.headline ?? '(no headline)'}</div>
+              <div class="journal-body">${e.body ?? ''}</div>
+            </div>
+          `)
+        }}`, entriesEl, recaller)
+      } catch (e) {
+        document.getElementById('journal-entries').innerHTML =
+          `<p class="dim" style="font-size: 0.85rem;">journal unavailable (${e.message})</p>`
+      }
     }
 
     // Derive-on-type for the try-it widget. Debounced because PBKDF2 is

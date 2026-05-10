@@ -18,9 +18,29 @@ const server = await StreamoServer.create({ name, username, password, dataDir, k
 console.log(`[chat] room key: ${server.publicKeyHex}`)
 console.log(`[chat] serving on http://localhost:${port}/apps/chat/`)
 
-if (!server.streamo.get('members')) {
-  server.streamo.set({ ...(server.streamo.get() ?? {}), members: [] })
-  console.log('[chat] initialized chat room')
+// Seed the primary repo with chat-room bookkeeping AND the journal —
+// the home repo doubles as the homepage's content source. Each future
+// journal entry is a new commit on this repo, and the homepage walks
+// `entries` to render. The relay link in the explorer now points
+// somewhere meaningful: the journal you just read on the homepage.
+{
+  const current = server.streamo.get() ?? {}
+  const seed = { ...current }
+  let needsCommit = false
+  if (!seed.members) { seed.members = []; needsCommit = true }
+  if (!Array.isArray(seed.entries) || seed.entries.length === 0) {
+    seed.entries = [{
+      headline: 'running streamo',
+      body: 'this is the streamo journal. each entry is a signed commit on this repo; the homepage walks them and the relay link in the explorer leads here. append-only history made visible.',
+      at: new Date()
+    }]
+    needsCommit = true
+  }
+  if (needsCommit) {
+    server.streamo.defaultMessage = seed.entries[seed.entries.length - 1].headline
+    server.streamo.set(seed)
+    console.log('[chat] initialized chat room + journal seed')
+  }
 }
 
 await server.web(port, {

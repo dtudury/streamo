@@ -530,35 +530,26 @@ function AtView ({ keyHex }) {
       const isCommit = isCommitShape(decoded)
       const isSig = codecType === 'SIGNATURE'
 
-      // Storage tab: reachable-from + chunk-graph tree (recursive,
-      // duples surfaced) + raw bytes + referrers. The tree is the
-      // value tab's tree's twin — same row shape (chip + @addr +
-      // preview), but rooted in the chunk graph instead of the
-      // user-meaningful asRefs view. Codec chips share their palette
-      // with the byte-strip and the typed-value previews, so a
-      // STRING chain reads emerald all the way across.
+      // Storage tab: this chunk's makeup — the chunk-graph tree going
+      // DOWN through directReferences (duples surfaced), then the raw
+      // bytes of THIS chunk. The previous reachable-from and
+      // referenced-by sections were partial earlier versions of what
+      // the refs tab now does in full; dropped here so storage and
+      // refs are clean mirror images.
       if (atTab === 'storage') {
         return h`
-          ${chunkContextSection(repo, keyHex, contentAddr)}
           <h3>chunk graph <span class="dim">storage tree rooted here</span></h3>
           <div class="storage-tree">${storageTree(repo, keyHex, contentAddr)}</div>
           ${rawChunkSection(repo, contentAddr)}
-          ${referrersSection(repo, keyHex, contentAddr)}
         `
       }
 
-      // Refs tab: the inverse of storage. Where storage walks DOWN
-      // through directReferences, refs walks UP through directReferrers
-      // — every chunk that uses this one, recursively, until we hit
-      // graph roots (commits / signatures, the chunks nothing references
-      // in this repo). The leaves of THIS tree are the roots of the
-      // chunk graph.
+      // Refs tab: the inverse of storage. Walks UP through the chunk
+      // graph until it hits graph roots (commits / signatures), each
+      // row visually identical to a storage-tab row.
       if (atTab === 'refs') {
         return h`
           <h3>references <span class="dim">walks up the chunk graph from here</span></h3>
-          <p class="dim" style="font-size: 0.85rem; margin-bottom: 0.5rem; line-height: 1.5;">
-            every row is a chunk that references the row above it (or this chunk, at the top). Leaves of this tree are graph roots — typically commits and signatures, the chunks nothing else references in this repo. Same row shape as the storage tab; the direction is reversed.
-          </p>
           <div class="storage-tree">${referenceTree(repo, keyHex, contentAddr)}</div>
         `
       }
@@ -941,154 +932,6 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   `
 }
 
-// Commit reachability — the *semantic* parent of every chunk. Commits
-// don't reference their data tree via asRefs; they store the address
-// as a number value (a FLOAT64), and the convention "follow this
-// number to find your data" is implicit. So the structural referrer
-// index doesn't connect chunks to their owning commits. This walk
-// makes the connection: for each commit, BFS from commit.dataAddress
-// through asRefs and mark every reachable chunk. Result: chunk
-// address → set of commit addresses whose dataAddress reach it.
-function buildCommitReachabilityIndex (repo) {
-  const reach = new Map()  // chunk addr → Set<commit addr>
-  let walk = repo.byteLength - 1
-  while (walk >= 0) {
-    const code = repo.resolve(walk)
-    if (!code || !code.length) break
-    const type = repo.footerToCodec[code.at(-1)]?.type
-    if (type === 'OBJECT') {
-      let value
-      try { value = repo.decode(walk) } catch {}
-      if (value && isCommitShape(value)) {
-        const visited = new Set()
-        const stack = [value.dataAddress]
-        while (stack.length) {
-          const a = stack.pop()
-          if (typeof a !== 'number' || visited.has(a)) continue
-          visited.add(a)
-          if (!reach.has(a)) reach.set(a, new Set())
-          reach.get(a).add(walk)
-          let refs
-          try { refs = repo.asRefs(a) } catch {}
-          if (Array.isArray(refs)) {
-            for (const c of refs) if (typeof c === 'number') stack.push(c)
-          } else if (refs && typeof refs === 'object' && !(refs instanceof Date) && !(refs instanceof Uint8Array)) {
-            if (Array.isArray(refs.v)) {
-              for (const c of refs.v) if (typeof c === 'number') stack.push(c)
-            } else {
-              for (const c of Object.values(refs)) if (typeof c === 'number') stack.push(c)
-            }
-          }
-        }
-      }
-    }
-    walk -= code.length
-  }
-  return reach
-}
-
-// Storage-tab context: which commits reach this chunk. (Position info
-// — byte range, percentage, codec — now lives in the persistent chunk
-// inspector under the byte strip, so this section focuses on the
-// "story" of the chunk's place in user data.) Uses the commit-
-// reachability index above, falling back to the structural referrer
-// BFS for chunks not reachable from any commit (typically sigs and
-// other top-level chunks).
-function chunkContextSection (repo, keyHex, address) {
-  const reach = buildCommitReachabilityIndex(repo)
-  const reachingCommits = reach.get(address)
-  let label = null
-  if (reachingCommits && reachingCommits.size) {
-    // Show the most recent commit (highest address) reaching this chunk,
-    // plus a count if there are more.
-    const sorted = [...reachingCommits].sort((a, b) => b - a)
-    const newest = sorted[0]
-    label = h`
-      <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${newest}>@${newest}</a>
-      ${sorted.length > 1
-        ? h` <span class="dim">(and ${sorted.length - 1} earlier commit${sorted.length === 2 ? '' : 's'})</span>`
-        : null}
-    `
-  } else {
-    // Fall back to the structural BFS — catches sig chunks (referenced
-    // by nothing in the asRefs sense, but the user might want to know
-    // some commit they cover).
-    const index = buildReferrerIndex(repo)
-    const visited = new Set()
-    let frontier = [address]
-    let depth = 0
-    while (frontier.length && depth < 64 && !label) {
-      const next = []
-      for (const a of frontier) {
-        if (visited.has(a)) continue
-        visited.add(a)
-        const parents = index.get(a) ?? []
-        for (const p of parents) {
-          try {
-            const decoded = repo.decode(p.address)
-            if (isCommitShape(decoded)) {
-              label = h`<a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${p.address}>@${p.address}</a> <span class="dim">(via structural ref)</span>`
-              break
-            }
-          } catch {}
-          next.push(p.address)
-        }
-        if (label) break
-      }
-      frontier = next
-      depth++
-    }
-  }
-  if (!label) {
-    label = h`<span class="dim">no commit references this chunk</span>`
-  }
-  return h`
-    <h3>reachable from <span class="dim">user-meaningful commits</span></h3>
-    <p class="dim" style="font-size: 0.85rem; margin-bottom: 0.4rem;">
-      commits hold their data's location as a number-valued <code>dataAddress</code> field, so reachability isn't a structural ref — it's "starting from each commit's data, this chunk shows up."
-    </p>
-    <p>${label}</p>
-  `
-}
-
-// "Referenced by" — walks up the Duple tree-scaffolding to find the chunks
-// that USE this address in a user-meaningful sense (OBJECT, ARRAY, VARIABLE,
-// SIGNATURE, etc.). Internal Duples are skipped — they're how the codec
-// builds balanced trees, not where the user thinks about the data living.
-//
-// Each row shows: codec, a one-line preview of the value, the address, and
-// — if more than one Duple path leads to the same ancestor — a path count.
-function referrersSection (repo, keyHex, address) {
-  const index = buildReferrerIndex(repo)
-  const refs = findUserReferrers(repo, address, index)
-  if (!refs.length) {
-    return h`
-      <h3>referenced by <span class="dim">(0)</span></h3>
-      <div class="dim">no chunks in this repo reference this value</div>
-    `
-  }
-  return h`
-    <h3>referenced by <span class="dim">(${refs.length} ${refs.length === 1 ? 'place' : 'places'})</span></h3>
-    <table class="kv clickable">
-      <tbody>
-        ${refs.map(r => {
-          let preview = ''
-          try { preview = typedValue(repo.decode(r.address)) }
-          catch { preview = '(error)' }
-          return h`
-            <tr data-key=${`r${r.address}`} data-action="open-at"
-                data-keyhex=${keyHex} data-addr=${r.address}>
-              <td class=${['mono', 'codec-tag', `codec-${codecCategory(r.codecType || '?')}`]}>${r.codecType || '?'}${r.count > 1 ? ` ×${r.count}` : ''}</td>
-              <td>${preview}</td>
-              <td class="mono dim">@${r.address}</td>
-            </tr>
-          `
-        })}
-      </tbody>
-    </table>
-  `
-}
-
 // Detect a Duple instance — codecs.js doesn't export the class so we have to
 // duck-type. A Duple is an object whose only own property is `v`, a length-2
 // array. (Used so we can render Duples as `[a, b]` rather than `{…} (1)`.)
@@ -1311,42 +1154,10 @@ function storageTree (repo, keyHex, address, depth = 3) {
 
 function safeGet (f) { try { return f() } catch { return undefined } }
 
-// Build a child→parents index for the entire repo in one pass, so we can
-// answer "who references address X?" in O(1) per query and walk up parent
-// chains without re-scanning. Each entry maps a chunk's address to all the
-// chunks that have it as a DIRECT child (via asRefs).
-function buildReferrerIndex (repo) {
-  const index = new Map() // childAddr → [{ address, codecType }]
-  let addr = repo.byteLength - 1
-  while (addr >= 0) {
-    const code = repo.resolve(addr)
-    if (!code || !code.length) break
-    let refs
-    try { refs = repo.asRefs(addr) } catch { refs = null }
-    let childAddrs = []
-    if (Array.isArray(refs)) {
-      childAddrs = refs.filter(x => typeof x === 'number')
-    } else if (refs && typeof refs === 'object') {
-      if (Array.isArray(refs.v)) childAddrs = refs.v.filter(x => typeof x === 'number')
-      else childAddrs = Object.values(refs).filter(x => typeof x === 'number')
-    }
-    if (childAddrs.length) {
-      const codec = repo.footerToCodec[code.at(-1)]
-      const entry = { address: addr, codecType: codec?.type }
-      for (const child of childAddrs) {
-        if (!index.has(child)) index.set(child, [])
-        index.get(child).push(entry)
-      }
-    }
-    addr -= code.length
-  }
-  return index
-}
-
-// Like buildReferrerIndex but walks `directReferences` instead of asRefs,
-// so internal Duples are NOT collapsed away. Used by the refs tab where
-// the goal is the full chunk graph going UP — every duple in the path
-// from a leaf chunk to its containing commit shows as its own row,
+// Build a child→parents index over the chunk graph in one pass, so we
+// can answer "who references address X?" in O(1) per query and walk
+// up parent chains without re-scanning. Walks `directReferences` (not
+// `asRefs`), so internal Duples are preserved as their own rows —
 // mirroring what storageTree does going DOWN.
 function buildDirectReferrerIndex (repo) {
   const index = new Map() // childAddr → [{ address, codecType }]
@@ -1433,36 +1244,6 @@ function referenceTree (repo, keyHex, address, depth = 4, index = null) {
       ${referrers.map(r => referenceTree(repo, keyHex, r.address, depth - 1, index))}
     </div>
   `
-}
-
-// Walk up parent chains via the index. Internal Duple nodes are tree
-// scaffolding — the user-meaningful containers are OBJECT / ARRAY /
-// VARIABLE / SIGNATURE / etc. For each path that hits a non-Duple
-// ancestor, accumulate that ancestor with a count of how many paths
-// reach it. (Same value referenced from N different places yields N
-// distinct user-level ancestors.)
-function findUserReferrers (repo, targetAddr, index) {
-  const result = new Map() // ancestorAddr → { address, codecType, count }
-  function walkUp (from) {
-    const refs = index.get(from) ?? []
-    for (const r of refs) {
-      if (r.codecType === 'DUPLE') {
-        walkUp(r.address)
-      } else {
-        const existing = result.get(r.address)
-        if (existing) existing.count++
-        else result.set(r.address, { ...r, count: 1 })
-      }
-    }
-  }
-  walkUp(targetAddr)
-  return [...result.values()].sort((a, b) => b.address - a.address) // newest first
-}
-
-// Backwards-compat: if anyone wanted the raw direct referrers (Duples and
-// all), this still works.
-function findReferrers (repo, targetAddr) {
-  return buildReferrerIndex(repo).get(targetAddr) ?? []
 }
 
 // ── Signature verification cache ──────────────────────────────────────────

@@ -280,11 +280,15 @@
       margin-top: 0.15rem;
     }
 
-    /* Live readout of the hovered chunk — codec, address, length. Quiet
-       by default; lights up when something's hovered. */
+    /* Persistent context line for the at-view's current chunk: codec,
+       address, length, percentage. Quiet by default (it's permanent,
+       not the focus), lights up when something else on the page is
+       hovered to show that chunk instead. Reverts via data-default
+       on mouseout. */
     .chunk-inspector {
       font-family: monospace;
       font-size: 0.8rem;
+      color: var(--ink-dim);
       padding: 0.25rem 0.5rem;
       margin: 0.25rem 0 0.75rem;
       border-radius: var(--radius);

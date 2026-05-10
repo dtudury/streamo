@@ -552,9 +552,15 @@ function AtView ({ keyHex, address }) {
         // navigation target), so they're clickable address pills directly
         // — the chunk holding the FLOAT64 value is incidental and we
         // skip the chunk-address column for those rows.
+        // dataAddress and parent are byte-address pointers held as
+        // FLOAT64 values. The → glyph signals "this number is a
+        // pointer; click to follow it." Without it, the address pill
+        // looks like any other typedValue(number) and the navigation
+        // hint depends on the user already knowing what these fields
+        // mean.
         const addrLink = (addr) => addr === undefined
           ? h`<span class="dim">(none — first commit)</span>`
-          : h`<a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${addr}>@${addr}</a>`
+          : h`<span class="dim">→ </span><a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${addr}>@${addr}</a>`
         const commitFieldsTable = h`
           <table class="kv">
             <tbody>
@@ -771,6 +777,16 @@ function byteStreamSection (repo, keyHex, currentAddress) {
     return item
   })
   const stripW = cursorX
+  // Default chunk-inspector text — codec, address, length, and the
+  // chunk's share of the total stream as a percentage. This is what
+  // the inspector shows when nothing is hovered; hover overrides it
+  // and mouseout reverts. Replaces the old "hover the strip to inspect
+  // a chunk" placeholder with persistent context for the at-view's
+  // current chunk.
+  const currentChunk = layout.find(c => c.address === currentAddress)
+  const currentDefault = currentChunk
+    ? `${currentChunk.codecType} · @${currentChunk.address} · ${currentChunk.length} bytes${total > 0 ? ` (${((currentChunk.length / total) * 100).toFixed(2)}% of ${total})` : ''}`
+    : `${chunks.length} chunks · ${total} bytes`
   // Map byte address → strip x. Used by the sig-coverage overlay so hover
   // anywhere on the page can light up "what bytes does this sig sign".
   // Stored as data attrs on the strip container so the hover handler
@@ -823,66 +839,119 @@ function byteStreamSection (repo, keyHex, currentAddress) {
       </svg>
       <div class="strip-direction"><span>← older</span><span>newer →</span></div>
     </div>
-    <div class="chunk-inspector dim" data-key=${`inspector-${keyHex}`}>hover the strip to inspect a chunk</div>
+    <div class="chunk-inspector"
+         data-key=${`inspector-${keyHex}`}
+         data-default=${currentDefault}>${currentDefault}</div>
   `
 }
 
-// Storage-tab context: where this chunk sits in the byte stream (start/
-// end addresses + share of total bytes), and which commit reaches it
-// (BFS up through the referrer index until we hit something
-// commit-shaped). Tactile orientation — every chunk has a position,
-// every chunk has a story about how user data uses it, and now both
-// are visible at a glance.
-function chunkContextSection (repo, keyHex, address) {
-  let chunk
-  try { chunk = repo.resolve(address) } catch { return null }
-  if (!chunk || !chunk.length) return null
-  const start = address - chunk.length + 1
-  const total = repo.byteLength
-  const pct = total > 0 ? ((chunk.length / total) * 100) : 0
-  // Reachable-from-commit BFS: walk up the referrer index, skipping
-  // Duples (which are the tree scaffolding, not user-meaningful), until
-  // we hit a chunk whose decoded value is commit-shaped. Capped to keep
-  // pathological graphs honest.
-  const index = buildReferrerIndex(repo)
-  let reachableCommit = null
-  const visited = new Set()
-  let frontier = [address]
-  let depth = 0
-  while (frontier.length && depth < 64 && !reachableCommit) {
-    const next = []
-    for (const a of frontier) {
-      if (visited.has(a)) continue
-      visited.add(a)
-      const parents = index.get(a) ?? []
-      for (const p of parents) {
-        try {
-          const decoded = repo.decode(p.address)
-          if (isCommitShape(decoded)) { reachableCommit = p.address; break }
-        } catch {}
-        next.push(p.address)
+// Commit reachability — the *semantic* parent of every chunk. Commits
+// don't reference their data tree via asRefs; they store the address
+// as a number value (a FLOAT64), and the convention "follow this
+// number to find your data" is implicit. So the structural referrer
+// index doesn't connect chunks to their owning commits. This walk
+// makes the connection: for each commit, BFS from commit.dataAddress
+// through asRefs and mark every reachable chunk. Result: chunk
+// address → set of commit addresses whose dataAddress reach it.
+function buildCommitReachabilityIndex (repo) {
+  const reach = new Map()  // chunk addr → Set<commit addr>
+  let walk = repo.byteLength - 1
+  while (walk >= 0) {
+    const code = repo.resolve(walk)
+    if (!code || !code.length) break
+    const type = repo.footerToCodec[code.at(-1)]?.type
+    if (type === 'OBJECT') {
+      let value
+      try { value = repo.decode(walk) } catch {}
+      if (value && isCommitShape(value)) {
+        const visited = new Set()
+        const stack = [value.dataAddress]
+        while (stack.length) {
+          const a = stack.pop()
+          if (typeof a !== 'number' || visited.has(a)) continue
+          visited.add(a)
+          if (!reach.has(a)) reach.set(a, new Set())
+          reach.get(a).add(walk)
+          let refs
+          try { refs = repo.asRefs(a) } catch {}
+          if (Array.isArray(refs)) {
+            for (const c of refs) if (typeof c === 'number') stack.push(c)
+          } else if (refs && typeof refs === 'object' && !(refs instanceof Date) && !(refs instanceof Uint8Array)) {
+            if (Array.isArray(refs.v)) {
+              for (const c of refs.v) if (typeof c === 'number') stack.push(c)
+            } else {
+              for (const c of Object.values(refs)) if (typeof c === 'number') stack.push(c)
+            }
+          }
+        }
       }
-      if (reachableCommit) break
     }
-    frontier = next
-    depth++
+    walk -= code.length
+  }
+  return reach
+}
+
+// Storage-tab context: which commits reach this chunk. (Position info
+// — byte range, percentage, codec — now lives in the persistent chunk
+// inspector under the byte strip, so this section focuses on the
+// "story" of the chunk's place in user data.) Uses the commit-
+// reachability index above, falling back to the structural referrer
+// BFS for chunks not reachable from any commit (typically sigs and
+// other top-level chunks).
+function chunkContextSection (repo, keyHex, address) {
+  const reach = buildCommitReachabilityIndex(repo)
+  const reachingCommits = reach.get(address)
+  let label = null
+  if (reachingCommits && reachingCommits.size) {
+    // Show the most recent commit (highest address) reaching this chunk,
+    // plus a count if there are more.
+    const sorted = [...reachingCommits].sort((a, b) => b - a)
+    const newest = sorted[0]
+    label = h`
+      <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${newest}>@${newest}</a>
+      ${sorted.length > 1
+        ? h` <span class="dim">(and ${sorted.length - 1} earlier commit${sorted.length === 2 ? '' : 's'})</span>`
+        : null}
+    `
+  } else {
+    // Fall back to the structural BFS — catches sig chunks (referenced
+    // by nothing in the asRefs sense, but the user might want to know
+    // some commit they cover).
+    const index = buildReferrerIndex(repo)
+    const visited = new Set()
+    let frontier = [address]
+    let depth = 0
+    while (frontier.length && depth < 64 && !label) {
+      const next = []
+      for (const a of frontier) {
+        if (visited.has(a)) continue
+        visited.add(a)
+        const parents = index.get(a) ?? []
+        for (const p of parents) {
+          try {
+            const decoded = repo.decode(p.address)
+            if (isCommitShape(decoded)) {
+              label = h`<a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${p.address}>@${p.address}</a> <span class="dim">(via structural ref)</span>`
+              break
+            }
+          } catch {}
+          next.push(p.address)
+        }
+        if (label) break
+      }
+      frontier = next
+      depth++
+    }
+  }
+  if (!label) {
+    label = h`<span class="dim">no commit references this chunk</span>`
   }
   return h`
-    <h3>position <span class="dim">in this stream</span></h3>
-    <table class="kv">
-      <tbody>
-        <tr>
-          <td>byte range</td>
-          <td class="mono">@${start}…@${address} <span class="dim">(${chunk.length} byte${chunk.length === 1 ? '' : 's'} · ${pct.toFixed(2)}% of ${total})</span></td>
-        </tr>
-        <tr>
-          <td>reachable from</td>
-          <td>${reachableCommit !== null
-            ? h`commit <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${reachableCommit}>@${reachableCommit}</a>`
-            : h`<span class="dim">no commit references this chunk</span>`}</td>
-        </tr>
-      </tbody>
-    </table>
+    <h3>reachable from <span class="dim">user-meaningful commits</span></h3>
+    <p class="dim" style="font-size: 0.85rem; margin-bottom: 0.4rem;">
+      commits hold their data's location as a number-valued <code>dataAddress</code> field, so reachability isn't a structural ref — it's "starting from each commit's data, this chunk shows up."
+    </p>
+    <p>${label}</p>
   `
 }
 
@@ -1341,7 +1410,6 @@ appEl.addEventListener('mouseover', e => {
     const len = stripRect.dataset.len
     for (const ins of appEl.querySelectorAll('.chunk-inspector')) {
       ins.textContent = codec ? `${codec} · @${addr} · ${len} bytes` : `chunk @${addr}`
-      ins.classList.remove('dim')
       ins.classList.add('active')
     }
     const fromX = stripRect.getAttribute('data-sig-from-x')
@@ -1362,8 +1430,7 @@ appEl.addEventListener('mouseout', e => {
   appEl.querySelectorAll('.byte-map .chunk.hovered').forEach(c => c.classList.remove('hovered'))
   appEl.querySelectorAll('.sig-coverage.active').forEach(o => o.classList.remove('active'))
   for (const ins of appEl.querySelectorAll('.chunk-inspector')) {
-    ins.textContent = 'hover the strip to inspect a chunk'
+    ins.textContent = ins.dataset.default || ''
     ins.classList.remove('active')
-    ins.classList.add('dim')
   }
 })

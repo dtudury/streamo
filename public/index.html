@@ -10,13 +10,16 @@
     body { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem; }
 
     .wordmark {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 0.6rem;
       font-size: 2.4rem;
       letter-spacing: -0.02em;
       margin-bottom: 0.15rem;
+      text-decoration: none;
+      color: inherit;
     }
+    .wordmark:hover { opacity: 0.85; }
     .wordmark img { width: 2.6rem; height: 2.6rem; }
     .tagline  { color: var(--ink-dim); font-size: 0.95rem; margin-bottom: 0.4rem; }
 
@@ -230,7 +233,7 @@
 </head>
 <body>
 
-  <div class="wordmark"><img src="/streamo.svg" alt="streamo">streamo</div>
+  <a class="wordmark" href="/" title="streamo home"><img src="/streamo.svg" alt="">streamo</a>
   <p class="tagline">every device is an equal author</p>
 
   <p class="here" id="here">

@@ -10,9 +10,17 @@
     :root { font-family: system-ui, sans-serif; font-size: 15px; --bg: #f5f5f5; --surface: #fff; --accent: #0070f3; --border: #ddd }
     body { background: var(--bg); height: 100dvh; display: flex; align-items: center; justify-content: center }
 
+    /* Brand lockup: clickable mark + wordmark linking home, with a
+       lighter page-title beside it. Same pattern in login and chat
+       headers so the relationship reads consistently. */
+    .brand-lockup { display: inline-flex; align-items: center; gap: .4rem; color: inherit; text-decoration: none; font-weight: 600 }
+    .brand-lockup:hover { opacity: .8 }
+    .page-title { font-weight: 400; color: #888; letter-spacing: .04em }
+    .page-title::before { content: '· '; opacity: .5 }
+
     /* Login */
     #login { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 2rem; width: min(360px, 90vw); display: flex; flex-direction: column; gap: .75rem }
-    #login h1 { font-size: 1.2rem; font-weight: 600; display: flex; align-items: center; gap: .5rem }
+    #login h1 { font-size: 1.2rem; font-weight: 600; display: flex; align-items: center; gap: .4rem }
     #login h1 img { width: 1.4rem; height: 1.4rem }
     #chat-header img { width: 1.1rem; height: 1.1rem }
     #login input { border: 1px solid var(--border); border-radius: 6px; padding: .5rem .75rem; font-size: 1rem; width: 100% }
@@ -41,7 +49,10 @@
 <body>
 
 <div id="login">
-  <h1><img src="/streamo.svg" alt="">streamo chat</h1>
+  <h1>
+    <a class="brand-lockup" href="/" title="streamo home"><img src="/streamo.svg" alt="">streamo</a>
+    <span class="page-title">chat</span>
+  </h1>
   <input id="username" placeholder="username" autocomplete="username">
   <input id="password" type="password" placeholder="password" autocomplete="current-password">
   <button id="join-btn">join</button>
@@ -50,7 +61,9 @@
 
 <div id="chat">
   <div id="chat-header">
-    <img src="/streamo.svg" alt="">streamo chat <span id="my-name"></span>
+    <a class="brand-lockup" href="/" title="streamo home"><img src="/streamo.svg" alt="">streamo</a>
+    <span class="page-title">chat</span>
+    <span id="my-name"></span>
   </div>
   <div id="messages"></div>
   <div id="input-row">

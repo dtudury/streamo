@@ -9,15 +9,27 @@
   <style>
     body { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; }
 
-    .header  { display: flex; align-items: baseline; gap: 0.75rem; margin-bottom: 0.25rem; }
-    .wordmark {
+    .header  { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.25rem; }
+    /* Brand lockup: mark + wordmark, single clickable unit linking home.
+       Page title ("explorer") sits beside it as a separate, lighter
+       element so the relationship reads as [home] · [you-are-here]. */
+    .brand-lockup {
       display: flex;
       align-items: center;
       gap: 0.5rem;
       font-size: 1.6rem;
       letter-spacing: -0.02em;
+      color: var(--ink);
+      text-decoration: none;
     }
-    .wordmark img { width: 1.8rem; height: 1.8rem; }
+    .brand-lockup img { width: 1.8rem; height: 1.8rem; }
+    .brand-lockup:hover { opacity: 0.8; }
+    .page-title {
+      font-size: 0.95rem;
+      color: var(--ink-dim);
+      letter-spacing: 0.04em;
+    }
+    .page-title::before { content: '· '; opacity: 0.5; }
     .crumbs  { font-size: 0.85rem; color: var(--ink-dim); }
     .back    { cursor: pointer; color: var(--ink-dim); font-size: 0.85rem; display: inline-block; margin-bottom: 1rem; }
     .back:hover { color: var(--ink); }
@@ -453,8 +465,10 @@
 </head>
 <body>
   <div class="header">
-    <div class="wordmark"><img src="/streamo.svg" alt="streamo">streamo</div>
-    <div class="crumbs">explorer</div>
+    <a class="brand-lockup" href="/" title="streamo home">
+      <img src="/streamo.svg" alt="">streamo
+    </a>
+    <span class="page-title">explorer</span>
   </div>
   <div id="conn" class="conn">connecting…</div>
   <div id="app"></div>

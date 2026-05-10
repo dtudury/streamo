@@ -388,6 +388,47 @@
     }
     .tv-drill:hover { background: var(--flash); text-decoration-style: solid; }
 
+    /* Storage tab's chunk-graph tree — same visual register as
+       tv-tree, but each row is a chunk (chip + @addr + value preview)
+       and indentation walks `directReferences`, surfacing the duples
+       that the value tree hides. */
+    .storage-tree {
+      font-size: 0.85rem;
+      margin: 0.4rem 0;
+    }
+    .storage-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.15rem 0;
+      flex-wrap: wrap;
+    }
+    .storage-row .codec-chip { flex-shrink: 0; }
+    .storage-toggle {
+      cursor: pointer;
+      width: 1rem;
+      text-align: center;
+      color: var(--ink-dim);
+      font-weight: 600;
+      text-decoration: none;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .storage-toggle:hover { color: var(--ink); }
+    .storage-toggle.empty { cursor: default; opacity: 0.35; }
+    .storage-toggle.empty:hover { color: var(--ink-dim); }
+    .storage-preview { color: var(--ink-dim); }
+    .storage-childcount {
+      font-size: 0.75rem;
+      color: var(--ink-dim);
+      margin-left: auto;
+    }
+    .storage-children {
+      padding-left: 1.25rem;
+      border-left: 1px solid var(--rule);
+      margin-left: 0.55rem;
+    }
+
     /* codec-tag — colored codec name in the refs/referrers tables. Same
        palette as the byte-strip and the typed-value pills, so a chunk's
        codec reads visually consistent everywhere it appears. */

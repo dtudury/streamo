@@ -528,14 +528,18 @@ function AtView ({ keyHex }) {
       const isCommit = isCommitShape(decoded)
       const isSig = codecType === 'SIGNATURE'
 
-      // Storage tab: position in stream + reachable commit, then this
-      // chunk's outgoing refs, raw bytes, and referrers. All for
-      // contentAddr (the peeked chunk during hover, otherwise the
-      // URL's address). Header is rendered by the sibling header slot.
+      // Storage tab: reachable-from + chunk-graph tree (recursive,
+      // duples surfaced) + raw bytes + referrers. The tree is the
+      // value tab's tree's twin — same row shape (chip + @addr +
+      // preview), but rooted in the chunk graph instead of the
+      // user-meaningful asRefs view. Codec chips share their palette
+      // with the byte-strip and the typed-value previews, so a
+      // STRING chain reads emerald all the way across.
       if (atTab === 'storage') {
         return h`
           ${chunkContextSection(repo, keyHex, contentAddr)}
-          ${outgoingReferencesSection(repo, keyHex, contentAddr)}
+          <h3>chunk graph <span class="dim">storage tree rooted here</span></h3>
+          <div class="storage-tree">${storageTree(repo, keyHex, contentAddr)}</div>
           ${rawChunkSection(repo, contentAddr)}
           ${referrersSection(repo, keyHex, contentAddr)}
         `
@@ -1029,41 +1033,6 @@ function chunkContextSection (repo, keyHex, address) {
   `
 }
 
-// Outgoing references — what THIS chunk points to in the chunk graph (as
-// opposed to "referenced by", which is what points to this chunk). Walks
-// the codec's parts via repo.directReferences. Codec-by-codec — exposes
-// the storage chain so e.g. STRING → UINT8ARRAY → DUPLE → DUPLE → … → WORD
-// is browsable one click at a time. Codec column is color-coded to match
-// the byte-strip palette so the chain reads visually.
-function outgoingReferencesSection (repo, keyHex, address) {
-  const refs = repo.directReferences(address)
-  if (!refs.length) return null
-  return h`
-    <h3>references <span class="dim">(${refs.length})</span></h3>
-    <table class="kv clickable">
-      <tbody>
-        ${refs.map((childAddr, i) => {
-          let codecType = '?'
-          let preview = ''
-          try {
-            const childCode = repo.resolve(childAddr)
-            codecType = repo.footerToCodec[childCode.at(-1)]?.type || '?'
-            preview = typedValue(repo.decode(childAddr))
-          } catch { preview = '(error)' }
-          return h`
-            <tr data-key=${`out${i}@${childAddr}`} data-action="open-at"
-                data-keyhex=${keyHex} data-addr=${childAddr}>
-              <td class=${['mono', 'codec-tag', `codec-${codecCategory(codecType)}`]}>${codecType}</td>
-              <td>${preview}</td>
-              <td class="mono dim">@${childAddr}</td>
-            </tr>
-          `
-        })}
-      </tbody>
-    </table>
-  `
-}
-
 // "Referenced by" — walks up the Duple tree-scaffolding to find the chunks
 // that USE this address in a user-meaningful sense (OBJECT, ARRAY, VARIABLE,
 // SIGNATURE, etc.). Internal Duples are skipped — they're how the codec
@@ -1259,6 +1228,69 @@ function valueTree (repo, keyHex, address, depth = 3) {
   `
 }
 
+// Recursive chunk-graph tree — like valueTree, but for the storage tab.
+// Two key differences:
+//   1. Walks `directReferences` (the actual chunk graph) instead of
+//      `asRefs` (the user-meaningful tree). DUPLEs that the value tab
+//      hides as scaffolding are surfaced here as their own rows —
+//      seeing them IS the storage view's job.
+//   2. Every node shows codec chip + clickable @addr + value preview.
+//      The chip and the preview share the codec palette, so a STRING
+//      reads emerald all the way across.
+// Shares the depth/expansion model with valueTree but keeps its own
+// expanded/collapsed sets, since "expand this chunk" means different
+// things in the two tabs (decoded value vs. chunk references).
+const storageForceExpanded  = new Set()
+const storageForceCollapsed = new Set()
+
+function storageTree (repo, keyHex, address, depth = 3) {
+  let codecType = '?'
+  let preview = h`<span class="dim">…</span>`
+  let refs = []
+  try {
+    const code = repo.resolve(address)
+    codecType = repo.footerToCodec[code.at(-1)]?.type || '?'
+    preview = typedValue(repo.decode(address))
+    refs = repo.directReferences(address)
+  } catch (e) {
+    return h`<div class="storage-row"><span class="dim">(decode error @${address}: ${e.message})</span></div>`
+  }
+  const cat = codecCategory(codecType)
+  const k = `${keyHex}:${address}`
+  const userExpanded  = storageForceExpanded.has(k)
+  const userCollapsed = storageForceCollapsed.has(k)
+  const expand = userExpanded || (!userCollapsed && depth > 0)
+  const isLeaf = refs.length === 0
+  const toggle = isLeaf
+    ? h`<span class="storage-toggle empty">·</span>`
+    : expand
+      ? h`<a class="storage-toggle" data-action="collapse-storage"
+              data-keyhex=${keyHex} data-addr=${address}
+              title="click to collapse">▾</a>`
+      : h`<a class="storage-toggle" data-action="expand-storage"
+              data-keyhex=${keyHex} data-addr=${address}
+              title="click to expand">▸</a>`
+  const header = h`
+    <div class="storage-row">
+      ${toggle}
+      <span class=${['codec-chip', `cat-${cat}`]}>${codecType}</span>
+      <a class="addr-link" data-action="open-at"
+         data-keyhex=${keyHex} data-addr=${address}>@${address}</a>
+      <span class="storage-preview">${preview}</span>
+      ${!isLeaf && !expand
+        ? h`<span class="dim storage-childcount">${refs.length} ref${refs.length === 1 ? '' : 's'}</span>`
+        : null}
+    </div>
+  `
+  if (!expand || isLeaf) return header
+  return h`
+    ${header}
+    <div class="storage-children">
+      ${refs.map(childAddr => storageTree(repo, keyHex, childAddr, depth - 1))}
+    </div>
+  `
+}
+
 function safeGet (f) { try { return f() } catch { return undefined } }
 
 // Build a child→parents index for the entire repo in one pass, so we can
@@ -1442,6 +1474,18 @@ appEl.addEventListener('click', e => {
       const k = `${el.dataset.keyhex}:${el.dataset.addr}`
       forceExpanded.add(k)
       forceCollapsed.delete(k)
+      return fire()
+    }
+    case 'expand-storage': {
+      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
+      storageForceExpanded.add(k)
+      storageForceCollapsed.delete(k)
+      return fire()
+    }
+    case 'collapse-storage': {
+      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
+      storageForceCollapsed.add(k)
+      storageForceExpanded.delete(k)
       return fire()
     }
     case 'collapse-tree': {

@@ -58,6 +58,18 @@ function fire () {
   requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
 }
 
+// Hover-only signal — separate from the bridge. The outer mount slot
+// reads `dep()` (bridge), so bridge fires re-render the entire at-view
+// (rebuilding the strip, dropping its scrollLeft). Hover events that
+// only set hoveredAddress fire hoverSignal instead — slots that read
+// hoverDep() re-run, slots that don't are left alone. This is the
+// minimum-viable signal decomposition: enough to keep hovering the
+// strip from re-rendering the strip itself. View / tab / expansion
+// signals are next steps once recursive reconcile lands.
+const hoverSignal = {}
+const hoverDep = () => recaller.reportKeyAccess(hoverSignal, 'data')
+const hoverFire = () => recaller.reportKeyMutation(hoverSignal, 'data')
+
 // ── Hash routing ──────────────────────────────────────────────────────────
 
 function viewFromHash () {
@@ -417,38 +429,73 @@ function repoExtras (repo, keyHex) {
 }
 
 function AtView ({ keyHex, address }) {
+  // Shared by both slots — both need to resolve HEAD and gate on
+  // empty/loading state. Cheap to call twice.
+  const resolveContext = (repo) => {
+    let resolvedAddr = address
+    if (address === 'HEAD') {
+      resolvedAddr = resolveHead(repo)
+      if (resolvedAddr === undefined) return { state: 'no-head' }
+    }
+    if (resolvedAddr >= repo.byteLength) return { state: 'loading' }
+    return { state: 'ok', resolvedAddr }
+  }
+
   return h`
     <a class="back" data-action="back-registry">← all repos</a>
     <div class="keyfull">
       <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
       <span class="dim"> @ ${address}</span>
     </div>
+
     ${() => {
+      // HEADER slot — bridge only. Re-runs on chunk arrivals, navigation,
+      // tab clicks, and async results. Does NOT re-run on hover (which
+      // fires hoverSignal exclusively), so hovering the strip leaves the
+      // selector + strip itself + tabs untouched. This is the whole
+      // reason the hover signal exists as a separate channel.
       dep()
       const repo = registry.get(keyHex)
+      if (!repo) return null
+      const ctx = resolveContext(repo)
+      if (ctx.state !== 'ok') return null
+      const tabs = h`
+        <nav class="tabs">
+          <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
+             data-action="set-tab" data-tab="value">value</a>
+          <a class=${() => { dep(); return ['tab', atTab === 'storage' ? 'active' : null] }}
+             data-action="set-tab" data-tab="storage">storage</a>
+        </nav>
+      `
+      const selector = commitSelectorSection(repo, keyHex, ctx.resolvedAddr)
+      const bytes = byteStreamSection(repo, keyHex, ctx.resolvedAddr)
+      return h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
+    }}
+
+    ${() => {
+      // CONTENT slot — bridge + hover. Re-runs on hover (so the page
+      // content peeks at the hovered chunk) AND on bridge fires (for
+      // chunk arrivals, tab clicks, async results). Renders the tab
+      // body for contentAddr — the hovered address if peeking, else the
+      // URL's address.
+      dep()
+      hoverDep()
+      const repo = registry.get(keyHex)
       if (!repo) return h`<div class="empty">opening…</div>`
-
-      // Resolve HEAD (symbolic) to the most-recent sig address. If the
-      // repo has no commits yet, render a useful "no HEAD" page that
-      // still surfaces any storage chunks.
-      let resolvedAddr = address
-      if (address === 'HEAD') {
-        resolvedAddr = resolveHead(repo)
-        if (resolvedAddr === undefined) {
-          return h`
-            <h2>at HEAD <span class="dim">(no commits yet)</span></h2>
-            <div class="empty">this repo doesn't have any commits yet — HEAD will resolve to the most-recent commit once one lands.</div>
-            ${repoExtras(repo, keyHex)}
-          `
-        }
+      const ctx = resolveContext(repo)
+      if (ctx.state === 'no-head') {
+        return h`
+          <h2>at HEAD <span class="dim">(no commits yet)</span></h2>
+          <div class="empty">this repo doesn't have any commits yet — HEAD will resolve to the most-recent commit once one lands.</div>
+          ${repoExtras(repo, keyHex)}
+        `
       }
-      if (resolvedAddr >= repo.byteLength) return h`<div class="empty">loading…</div>`
+      if (ctx.state === 'loading') return h`<div class="empty">loading…</div>`
+      const resolvedAddr = ctx.resolvedAddr
 
-      // Live hover preview: when the user hovers a chunk on the byte
-      // strip, contentAddr peeks at that chunk instead of the URL's
-      // address. The header (selector + strip + tabs) keeps showing
-      // resolvedAddr (the actual URL position) — only the page content
-      // below the tabs is the preview. Click the chunk to navigate.
+      // Live hover preview: contentAddr peeks at the hovered chunk;
+      // header still shows resolvedAddr (the URL position). Click to
+      // navigate.
       const contentAddr = hoveredAddress != null && hoveredAddress < repo.byteLength
         ? hoveredAddress
         : resolvedAddr
@@ -461,44 +508,18 @@ function AtView ({ keyHex, address }) {
       const isCommit = isCommitShape(decoded)
       const isSig = codecType === 'SIGNATURE'
 
-      // Common header shown on every at-view: commit selector dropdown,
-      // byte-strip with the current chunk highlighted, then the value/
-      // storage tab nav. The byte-strip used to live only in the storage
-      // tab; promoting it lets you keep spatial context across tab and
-      // commit switches, and any data-addr hover (typed-tree chips,
-      // refs/referrers tables, kv addr links) cross-highlights and
-      // smooth-scrolls into view in the strip.
-      const tabs = h`
-        <nav class="tabs">
-          <a class=${() => { dep(); return ['tab', atTab === 'value' ? 'active' : null] }}
-             data-action="set-tab" data-tab="value">value</a>
-          <a class=${() => { dep(); return ['tab', atTab === 'storage' ? 'active' : null] }}
-             data-action="set-tab" data-tab="storage">storage</a>
-        </nav>
-      `
-      const selector = commitSelectorSection(repo, keyHex, resolvedAddr)
-      const bytes = byteStreamSection(repo, keyHex, resolvedAddr)
-      // Wrap in a sticky container so the selector + strip + tabs stay
-      // anchored as you scroll long value trees or storage detail.
-      const header = h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
-
       // Storage tab: position in stream + reachable commit, then this
       // chunk's outgoing refs, raw bytes, and referrers. All for
       // contentAddr (the peeked chunk during hover, otherwise the
-      // URL's address).
+      // URL's address). Header is rendered by the sibling header slot.
       if (atTab === 'storage') {
         return h`
-          ${header}
           ${chunkContextSection(repo, keyHex, contentAddr)}
           ${outgoingReferencesSection(repo, keyHex, contentAddr)}
           ${rawChunkSection(repo, contentAddr)}
           ${referrersSection(repo, keyHex, contentAddr)}
         `
       }
-
-      // Every value-tab branch below prepends ${header} so the UI is
-      // stable across navigation: selector + byte-strip + tabs are
-      // always at the top of the page when the repo has any commits.
 
       // Value tab — branches by codec.
       // Helper: render the kv-table of decoded fields for any Object/Array
@@ -592,7 +613,6 @@ function AtView ({ keyHex, address }) {
           </table>
         `
         return h`
-          ${header}
           ${banner}
           ${commitFieldsTable}
           <h3>value <span class="dim">at <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${decoded.dataAddress}>@${decoded.dataAddress}</a></span></h3>
@@ -628,7 +648,6 @@ function AtView ({ keyHex, address }) {
       // Duple: explain what this tree-node IS, then show its two children.
       if (codecType === 'DUPLE') {
         return h`
-          ${header}
           ${kindBanner('duple', h`<span class="dim">2-tuple, tree scaffolding</span>`)}
           <p class="explainer">
             A <strong>Duple</strong> is a 2-tuple — the building block streamo uses
@@ -662,7 +681,6 @@ function AtView ({ keyHex, address }) {
           'verified'
         )
         return h`
-          ${header}
           ${banner}
           ${sigDetailBody(repo, keyHex, contentAddr, decoded)}
           <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
@@ -680,7 +698,6 @@ function AtView ({ keyHex, address }) {
           ? (isArray ? 'empty array' : 'empty object')
           : (isArray ? 'array' : 'object')
         return h`
-          ${header}
           ${kindBanner(label, dim)}
           ${refsTable()}
           ${fieldCount > 0 ? h`
@@ -692,7 +709,6 @@ function AtView ({ keyHex, address }) {
 
       // Primitive: just show it.
       return h`
-        ${header}
         ${kindBanner(codecType.toLowerCase())}
         <pre class="value">${safeJSON(decoded)}</pre>
       `
@@ -801,16 +817,8 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   // the at-view's current chunk (currentAddress) but follows the
   // hovered chunk when the user is peeking at one on the strip. The
   // slot re-renders on hover (via the live-preview path), so reading
-  // hoveredAddress here propagates correctly without a separate
-  // direct-DOM update.
-  const inspectorAddr = hoveredAddress != null && hoveredAddress < total
-    ? hoveredAddress
-    : currentAddress
-  const inspectorChunk = layout.find(c => c.address === inspectorAddr)
-  const inspectorText = inspectorChunk
-    ? `${inspectorChunk.codecType} · @${inspectorChunk.address} · ${inspectorChunk.length} bytes${total > 0 ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})` : ''}`
-    : `${chunks.length} chunks · ${total} bytes`
-  const isPeekActive = hoveredAddress != null && hoveredAddress !== currentAddress
+  // hoveredAddress in a nested slot below — reacts to hoverDep so its
+  // text updates without re-rendering the strip itself.
   // Map byte address → strip x. Used by the sig-coverage overlay so hover
   // anywhere on the page can light up "what bytes does this sig sign".
   // Stored as data attrs on the strip container so the hover handler
@@ -863,8 +871,26 @@ function byteStreamSection (repo, keyHex, currentAddress) {
       </svg>
       <div class="strip-direction"><span>← older</span><span>newer →</span></div>
     </div>
-    <div class=${['chunk-inspector', isPeekActive ? 'active' : null]}
-         data-key=${`inspector-${keyHex}`}>${inspectorText}</div>
+    ${() => {
+      // Inspector slot — reads hoverDep so it updates as the user moves
+      // across the strip, but doesn't re-render the strip itself. layout,
+      // total, currentAddress are closed over from byteStreamSection's
+      // call (which only runs on bridge fires; chunk content is fixed
+      // per render). isPeekActive lights up the .active background only
+      // when the inspector is showing something other than the URL's
+      // chunk.
+      hoverDep()
+      const inspectorAddr = hoveredAddress != null && hoveredAddress < total
+        ? hoveredAddress
+        : currentAddress
+      const inspectorChunk = layout.find(c => c.address === inspectorAddr)
+      const inspectorText = inspectorChunk
+        ? `${inspectorChunk.codecType} · @${inspectorChunk.address} · ${inspectorChunk.length} bytes${total > 0 ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})` : ''}`
+        : `${chunks.length} chunks · ${total} bytes`
+      const isPeekActive = hoveredAddress != null && hoveredAddress !== currentAddress
+      return h`<div class=${['chunk-inspector', isPeekActive ? 'active' : null]}
+                    data-key=${`inspector-${keyHex}`}>${inspectorText}</div>`
+    }}
   `
 }
 
@@ -1457,7 +1483,7 @@ appEl.addEventListener('mouseover', e => {
   const newHover = onStrip ? +addr : null
   if (newHover !== hoveredAddress) {
     hoveredAddress = newHover
-    fire()
+    hoverFire()
   }
 })
 appEl.addEventListener('mouseout', e => {
@@ -1471,6 +1497,6 @@ appEl.addEventListener('mouseout', e => {
   const goingTo = e.relatedTarget?.closest?.('.byte-strip-container')
   if (!goingTo && hoveredAddress !== null) {
     hoveredAddress = null
-    fire()
+    hoverFire()
   }
 })

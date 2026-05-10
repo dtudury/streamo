@@ -7,6 +7,10 @@
   <link rel="icon" type="image/svg+xml" href="/streamo.svg">
   <link rel="stylesheet" href="/apps/styles/proto.css">
   <style>
+    /* scrollbar-gutter reserves the scrollbar's width whether or not it's
+       drawn, so a sudden scroll-needed (e.g. when the value pane grows
+       under hover preview) doesn't shift everything left by ~15px. */
+    html { scrollbar-gutter: stable; }
     body { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; }
 
     .header  { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.25rem; }

@@ -157,14 +157,12 @@
       gap: 0.25rem;
       text-decoration: none;
       color: var(--ink);
-      border: 1.5px solid var(--ink);
+      border: 1px solid var(--rule);
       border-radius: var(--radius);
-      box-shadow: 2px 3px 0 var(--ink);
       padding: 0.9rem 1rem;
-      transition: transform 0.08s, box-shadow 0.08s;
+      transition: border-color 0.1s, background 0.1s;
     }
-    .app-card:hover  { transform: translate(-1px, -1px); box-shadow: 3px 4px 0 var(--ink); }
-    .app-card:active { transform: translate(1px, 2px); box-shadow: none; }
+    .app-card:hover  { border-color: var(--ink); background: rgba(0, 0, 0, 0.02); }
 
     .app-name-row {
       display: flex;

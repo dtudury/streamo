@@ -1,8 +1,11 @@
 /*
- * proto.css — shared prototype stylesheet
+ * proto.css — shared base stylesheet
  *
- * Deliberately rough. Use this so design bikeshedding doesn't happen.
- * Replace per-app when the app is ready to grow up.
+ * Started as a deliberately-rough proto theme; grown into the streamo
+ * base. The body now uses the system-ui stack (matching what most
+ * platform UIs expect), and the radius is a clean 6px. Color tokens
+ * and structural rules are still simple — apps layer their own type
+ * ramps and chrome on top.
  */
 
 :root {
@@ -13,13 +16,13 @@
   --accent:   #2563eb;
   --warn:     #ca8a04;
   --flash:    #fef08a;
-  --radius:   2px 8px 3px 7px / 7px 3px 8px 2px;
+  --radius:   6px;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
-  font-family: cursive;
+  font-family: system-ui, -apple-system, sans-serif;
   background: var(--paper);
   color: var(--ink);
   padding: 1.25rem;
@@ -29,17 +32,15 @@ body {
 /* data / code always monospace */
 code, pre, .mono { font-family: monospace; }
 
-/* hand-drawn border feel */
+/* simple bordered card */
 .box {
-  border: 1.5px solid var(--ink);
+  border: 1px solid var(--rule);
   border-radius: var(--radius);
-  box-shadow: 2px 3px 0 var(--ink);
   padding: 0.75rem 1rem;
 }
 
 /* status pill */
 .pill {
-  font-family: cursive;
   font-size: 0.75rem;
   padding: 0.15rem 0.6rem;
   border: 1.5px solid currentColor;

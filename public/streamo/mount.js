@@ -192,47 +192,149 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
     old.remove()
   }
 
-  // Reinsert recycled elements and mount fresh ones, in order. For
-  // recycled elements we re-mount: clean up the existing subtree's
-  // watchers, clear inner DOM and any attributes set on the outer
-  // element, then apply fresh attrs and mount fresh children. The
-  // OUTER node identity is preserved (so document position and DOM
-  // references survive), but inner state (focus, scroll, slot
-  // anchors) is rebuilt — a static `${value}` child captured at
-  // first mount would otherwise be stale on every re-render.
-  // Inputs that need focus preservation across re-renders should
-  // be kept in their own data-keyed slot so reconcileSlot's matcher
-  // recycles them in place separately from this outer rebuild.
+  // Reinsert recycled elements (recursively reconciled) and mount fresh
+  // ones, in order. Recursive reconcile preserves descendant DOM and
+  // watchers — only attrs of the matched element are reset, children
+  // that match by data-key/tag are themselves reconciled in place. This
+  // is what lets a deeply nested data-keyed element (e.g. the byte
+  // strip's container) survive an outer-slot re-render with its
+  // scrollLeft, focus, and inner slot state intact.
   for (const vnode of newVNodes) {
     const recycled = vnodeToEl.get(vnode)
     if (recycled) {
-      // Preserve browser-scroll state across child rebuild — scrollLeft/
-      // scrollTop are user-set browser state, not vnode-driven. Clearing
-      // attributes and rebuilding children would otherwise reset them to
-      // 0, jumping any scrollable container back to the start on every
-      // re-render. (Concrete trigger: the explorer's byte-strip would
-      // snap back to HEAD on every navigation.)
-      const scrollLeft = recycled.scrollLeft
-      const scrollTop = recycled.scrollTop
-      cleanupNode(recycled, recaller)
-      while (recycled.firstChild) recycled.firstChild.remove()
-      // Clear all attributes (snapshot the names — removeAttribute mutates the live list)
-      const oldAttrNames = Array.from(recycled.attributes, a => a.name)
-      for (const name of oldAttrNames) recycled.removeAttribute(name)
-      for (const attr of vnode.attrs) {
-        if (attr == null) continue
-        applyAttr(recycled, attr, recaller)
-      }
-      mount(vnode.children, recycled, recaller, ns)
-      // Restore scroll AFTER children are mounted (browser needs the
-      // intrinsic content size to clamp scrollLeft to a valid range).
-      recycled.scrollLeft = scrollLeft
-      recycled.scrollTop = scrollTop
+      reconcileElement(recycled, vnode, recaller, ns)
       end.before(recycled)
     } else {
       const frag = document.createDocumentFragment()
       mountNode(vnode, frag, recaller, ns)
       end.before(frag)
+    }
+  }
+}
+
+// ── Recursive reconcile ──────────────────────────────────────────────────
+//
+// reconcileElement updates a matched element's attributes and recursively
+// reconciles its children — preserving descendant DOM (and any browser
+// state on it: scrollLeft, focus, scroll positions, inner slot anchors)
+// when the new vnode tree's structure agrees with the existing one.
+//
+// The element's OWN attr watchers are unwatched and re-applied (their
+// closures may have changed across the outer render). Descendant
+// watchers are NOT touched — only re-applied where their containing
+// element gets reconciled itself, deeper in the recursion.
+//
+// Children that don't match a new vnode (by data-key for keyed elements,
+// by tag-pool for unkeyed) are cleaned up and removed; new vnodes that
+// don't match an existing child are fresh-mounted.
+
+function reconcileElement (el, vnode, recaller, ns) {
+  // Determine child namespace, mirroring mountNode
+  const nsAttr = vnode.attrs.find(a => a?.name === 'xmlns')?.value
+  const elemNs = nsAttr
+    ?? (vnode.tag === 'svg' ? SVG_NS
+      : vnode.tag === 'foreignObject' ? HTML_NS
+      : ns)
+  // Snapshot scrollLeft/scrollTop so a hypothetical reflow during
+  // child reconcile doesn't lose the user's scroll position.
+  const scrollLeft = el.scrollLeft
+  const scrollTop = el.scrollTop
+  reconcileAttrs(el, vnode, recaller)
+  reconcileChildren(el, vnode.children, recaller, elemNs)
+  el.scrollLeft = scrollLeft
+  el.scrollTop = scrollTop
+}
+
+function reconcileAttrs (el, vnode, recaller) {
+  // Cleanup el's OWN attr watchers — descendants' watchers are NOT
+  // touched (they belong to elements that may themselves be matched
+  // and reconciled deeper in the recursion).
+  const fns = nodeCleanups.get(el)
+  if (fns) {
+    for (const f of fns) recaller.unwatch(f)
+    nodeCleanups.delete(el)
+  }
+  const oldAttrNames = Array.from(el.attributes, a => a.name)
+  for (const name of oldAttrNames) el.removeAttribute(name)
+  for (const attr of vnode.attrs) {
+    if (attr == null) continue
+    applyAttr(el, attr, recaller)
+  }
+}
+
+function reconcileChildren (parent, vnodeChildren, recaller, ns) {
+  // Flatten arrays/null in the vnode list so positional walking is clean.
+  const flat = []
+  const flatten = (v) => {
+    if (v == null) return
+    if (Array.isArray(v)) v.forEach(flatten)
+    else flat.push(v)
+  }
+  vnodeChildren.forEach(flatten)
+
+  // Collect existing element children (only elements are recyclable —
+  // text nodes, comments, and slot anchors get cleaned up + rebuilt).
+  const existingEls = []
+  for (const child of parent.childNodes) {
+    if (child.nodeType === Node.ELEMENT_NODE) existingEls.push(child)
+  }
+
+  // Same matching strategy as reconcileSlot: keyed-by-data-key first,
+  // unkeyed by tag pool.
+  const keyedMap = new Map()
+  const tagPool = new Map()
+  for (const el of existingEls) {
+    const key = el.getAttribute('data-key')
+    if (key != null) {
+      keyedMap.set(key, el)
+    } else {
+      const tag = el.tagName.toLowerCase()
+      if (!tagPool.has(tag)) tagPool.set(tag, [])
+      tagPool.get(tag).push(el)
+    }
+  }
+
+  const recycledEls = new Set()
+  const vnodeToEl = new Map()
+  for (const vnode of flat) {
+    if (!(vnode instanceof HElement)) continue
+    if (typeof vnode.tag === 'function') continue  // function components mount fresh
+    const keyAttr = vnode.attrs.find(a => a?.name === 'data-key')
+    const keyVal = keyAttr?.value
+    const key = (keyVal != null && typeof keyVal !== 'function' && !Array.isArray(keyVal))
+      ? String(keyVal) : null
+    let el = null
+    if (key != null) {
+      const candidate = keyedMap.get(key)
+      if (candidate && !recycledEls.has(candidate)) el = candidate
+    } else {
+      const pool = tagPool.get(vnode.tag)
+      if (pool) el = pool.find(e => !recycledEls.has(e)) ?? null
+    }
+    if (el) {
+      recycledEls.add(el)
+      vnodeToEl.set(vnode, el)
+    }
+  }
+
+  // Detach recycled, cleanup + remove the rest (text nodes, comments,
+  // unmatched elements all go through cleanupNode so any watchers in
+  // their subtrees are released).
+  for (const el of recycledEls) el.remove()
+  while (parent.firstChild) {
+    const old = parent.firstChild
+    cleanupNode(old, recaller)
+    old.remove()
+  }
+
+  // Insert in order: recursively reconcile recycled, mount fresh otherwise.
+  for (const vnode of flat) {
+    const recycled = vnodeToEl.get(vnode)
+    if (recycled) {
+      reconcileElement(recycled, vnode, recaller, ns)
+      parent.appendChild(recycled)
+    } else {
+      mountNode(vnode, parent, recaller, ns)
     }
   }
 }

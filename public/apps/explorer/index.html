@@ -344,32 +344,44 @@
     .tv-array, .tv-object { color: #1e40af; background: rgba(59, 130, 246, 0.10); }
     .tv-duple  { color: #6b21a8; background: rgba(168, 85, 247, 0.10); }
 
-    /* Recursive typed-value tree — used for rehydrated views. Outer levels
-       expand inline; un-expanded composites become drillable chips. */
+    /* Recursive typed-value tree — used for rehydrated views. Composites
+       render in two modes: tv-tree-inline (Chrome-console-style, one
+       line, used when every child is a primitive and the line fits) and
+       tv-tree (multi-line, used otherwise). Both expose the same
+       click-to-collapse opening bracket. */
     .tv-tree {
       font-size: 0.85rem;
-      line-height: 1.7;
+      line-height: 1.4;
       font-family: monospace;
-      margin: 0.4rem 0;
+      margin: 0.3rem 0;
     }
     .tv-tree-row {
-      padding-left: 1.5rem;
+      padding-left: 1.25rem;
     }
-    .tv-tree .tv-bracket {
+    .tv-tree .tv-bracket,
+    .tv-tree-inline .tv-bracket {
       color: var(--ink-dim);
       font-weight: 600;
     }
-    .tv-tree .tv-bracket.clickable {
+    .tv-tree .tv-bracket.clickable,
+    .tv-tree-inline .tv-bracket.clickable {
       cursor: pointer;
     }
-    .tv-tree .tv-bracket.clickable:hover {
+    .tv-tree .tv-bracket.clickable:hover,
+    .tv-tree-inline .tv-bracket.clickable:hover {
       background: var(--flash);
       color: var(--ink);
     }
-    .tv-tree .tv-key {
+    .tv-tree .tv-key,
+    .tv-tree-inline .tv-key {
       color: var(--ink-dim);
-      margin-right: 0.4rem;
+      margin-right: 0.25rem;
     }
+    .tv-tree-inline {
+      font-size: 0.85rem;
+      font-family: monospace;
+    }
+    .tv-tree-inline .tv-sep { color: var(--ink-dim); }
     .tv-drill {
       cursor: pointer;
       text-decoration: underline dotted var(--ink-dim);
@@ -390,7 +402,8 @@
     .codec-tag.codec-var       { color: #b45309; }
     .codec-tag.codec-other     { color: var(--ink-dim); }
 
-    /* codec category palette — used in both the legend and the SVG fills */
+    /* codec category palette — used by the SVG fills, the inspector chip,
+       and any chip-styled element that wants to read as a chunk type. */
     .cat-commit    { fill: #f59e0b; background: #f59e0b; }
     .cat-sig       { fill: #ef4444; background: #ef4444; }
     .cat-composite { fill: #3b82f6; background: #3b82f6; }
@@ -401,24 +414,26 @@
     .cat-var       { fill: #fbbf24; background: #fbbf24; }
     .cat-other     { fill: #cbd5e1; background: #cbd5e1; }
 
-    .byte-map-legend {
-      display: flex;
-      gap: 0.5rem;
-      flex-wrap: wrap;
+    /* codec chip — inline tag colored by codec category. Foreground
+       colors are picked by relative luminance (Y = 0.2126R + 0.7152G +
+       0.0722B): high-luminance backgrounds (lime, amber, yellow, light
+       gray) use black text; mid-low luminance (red, blue, purple, slate)
+       use white. Saturated mid-tones like emerald lean to white by
+       convention even though the WCAG-correct call is marginal. */
+    .codec-chip {
+      display: inline-block;
+      padding: 0.05rem 0.45rem;
+      border-radius: var(--radius);
       font-size: 0.7rem;
-      color: var(--ink-dim);
-      margin-top: 0.5rem;
-    }
-    .byte-map-legend span {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.3rem;
-      padding: 0.05rem 0.45rem 0.05rem 0.3rem;
-      border-radius: 999px;
-      color: #fff;
       font-weight: 500;
       letter-spacing: 0.02em;
+      vertical-align: baseline;
+      color: #fff;
     }
+    .codec-chip.cat-commit,
+    .codec-chip.cat-bytes,
+    .codec-chip.cat-var,
+    .codec-chip.cat-other { color: #000; }
 
     /* Tab strip — hand-drawn underline aesthetic to match proto.css */
     .tabs {

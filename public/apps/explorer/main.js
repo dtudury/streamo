@@ -855,16 +855,6 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   }
   return h`
     <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks)</span></h3>
-    <div class="byte-map-legend">
-      <span class="cat-commit">commit</span>
-      <span class="cat-sig">sig</span>
-      <span class="cat-composite">object/array</span>
-      <span class="cat-duple">duple</span>
-      <span class="cat-string">string</span>
-      <span class="cat-bytes">bytes</span>
-      <span class="cat-num">num</span>
-      <span class="cat-var">var</span>
-    </div>
     <div class="byte-strip-container" data-key=${`strip-${keyHex}`} data-strip-w=${stripW}>
       <svg class="byte-map byte-strip" width=${stripW} height=${H} viewBox=${`0 0 ${stripW} ${H}`}>
         ${layout.map(c => {
@@ -903,12 +893,24 @@ function byteStreamSection (repo, keyHex, currentAddress) {
         ? hoveredAddress
         : currentAddress
       const inspectorChunk = layout.find(c => c.address === inspectorAddr)
-      const inspectorText = inspectorChunk
-        ? `${inspectorChunk.codecType} · @${inspectorChunk.address} · ${inspectorChunk.length} bytes${total > 0 ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})` : ''}`
-        : `${chunks.length} chunks · ${total} bytes`
+      let inspectorContent
+      if (inspectorChunk) {
+        // Codec-color chip replaces the standalone legend — the chip
+        // colors the type name with the same palette the strip uses,
+        // so a glance at the inspector reads as a glance at the strip.
+        const cat = commitAddrs.has(inspectorChunk.address)
+          ? 'commit'
+          : codecCategory(inspectorChunk.codecType)
+        const pct = total > 0
+          ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})`
+          : ''
+        inspectorContent = h`<span class=${['codec-chip', `cat-${cat}`]}>${inspectorChunk.codecType}</span> <span class="dim">·</span> @${inspectorChunk.address} <span class="dim">·</span> ${inspectorChunk.length} bytes${pct}`
+      } else {
+        inspectorContent = `${chunks.length} chunks · ${total} bytes`
+      }
       const isPeekActive = hoveredAddress != null && hoveredAddress !== currentAddress
       return h`<div class=${['chunk-inspector', isPeekActive ? 'active' : null]}
-                    data-key=${`inspector-${keyHex}`}>${inspectorText}</div>`
+                    data-key=${`inspector-${keyHex}`}>${inspectorContent}</div>`
     }}
   `
 }
@@ -1160,6 +1162,29 @@ function typedValue (v, depth = 0) {
 const forceExpanded  = new Set()  // `${keyHex}:${address}` → user clicked chip
 const forceCollapsed = new Set()  // `${keyHex}:${address}` → user clicked bracket
 
+// Cheap width estimator for inline rendering — we only inline when
+// every entry is a primitive, so we can predict rendered width without
+// touching the DOM. Conservative: real chips have padding/quotes that
+// add ~2-3 chars beyond the bare value.
+function isInlinablePrimitive (v) {
+  if (v === null || v === undefined) return true
+  const t = typeof v
+  if (t === 'number' || t === 'boolean' || t === 'string') return true
+  if (v instanceof Date || v instanceof Uint8Array) return true
+  return false
+}
+function estimateEntryWidth (k, v, isArray) {
+  let w = isArray ? 0 : (String(k).length + 2)
+  if (v === null) w += 4
+  else if (v === undefined) w += 9
+  else if (typeof v === 'boolean') w += v ? 6 : 7
+  else if (typeof v === 'number') w += String(v).length
+  else if (typeof v === 'string') w += Math.min(v.length, 60) + 2
+  else if (v instanceof Date) w += 22
+  else if (v instanceof Uint8Array) w += 12 + String(v.length).length
+  return w
+}
+
 function valueTree (repo, keyHex, address, depth = 3) {
   let value, refs
   try {
@@ -1188,6 +1213,29 @@ function valueTree (repo, keyHex, address, depth = 3) {
   if (entries.length === 0) {
     return h`<span class="tv ${isArray ? 'tv-array' : 'tv-object'}">${isArray ? '[ ]' : '{ }'}</span>`
   }
+
+  // Inline rendering — Chrome-console-style. When every child is a
+  // primitive AND the projected line width fits, lay the composite out
+  // as `{k: v, k: v}` or `[v, v]` instead of one row per entry. Saves
+  // a lot of vertical space on small leaf records (e.g. `{name, role,
+  // active}`); falls back to multi-line for composites that wouldn't
+  // fit on one line.
+  const allPrimitive = entries.every(([_, v]) => isInlinablePrimitive(v))
+  if (allPrimitive) {
+    let width = 2
+    for (const [k, v] of entries) width += estimateEntryWidth(k, v, isArray) + 2
+    if (width <= 70) {
+      return h`<span class=${['tv-tree-inline', isArray ? 'tv-tree-array' : 'tv-tree-object']}>
+        <span class="tv-bracket clickable" data-action="collapse-tree"
+              data-keyhex=${keyHex} data-addr=${address}
+              title="click to collapse"
+          >${isArray ? '[' : '{'}</span>
+        ${entries.map(([k, v], i) => h`${i > 0 ? h`<span class="tv-sep">, </span>` : null}${!isArray ? h`<span class="tv-key">${k}:</span> ` : null}${typedValue(v)}`)}
+        <span class="tv-bracket">${isArray ? ']' : '}'}</span>
+      </span>`
+    }
+  }
+
   return h`
     <div class="tv-tree ${isArray ? 'tv-tree-array' : 'tv-tree-object'}">
       <span class="tv-bracket clickable" data-action="collapse-tree"

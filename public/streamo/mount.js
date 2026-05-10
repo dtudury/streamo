@@ -206,6 +206,14 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
   for (const vnode of newVNodes) {
     const recycled = vnodeToEl.get(vnode)
     if (recycled) {
+      // Preserve browser-scroll state across child rebuild — scrollLeft/
+      // scrollTop are user-set browser state, not vnode-driven. Clearing
+      // attributes and rebuilding children would otherwise reset them to
+      // 0, jumping any scrollable container back to the start on every
+      // re-render. (Concrete trigger: the explorer's byte-strip would
+      // snap back to HEAD on every navigation.)
+      const scrollLeft = recycled.scrollLeft
+      const scrollTop = recycled.scrollTop
       cleanupNode(recycled, recaller)
       while (recycled.firstChild) recycled.firstChild.remove()
       // Clear all attributes (snapshot the names — removeAttribute mutates the live list)
@@ -216,6 +224,10 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
         applyAttr(recycled, attr, recaller)
       }
       mount(vnode.children, recycled, recaller, ns)
+      // Restore scroll AFTER children are mounted (browser needs the
+      // intrinsic content size to clamp scrollLeft to a valid range).
+      recycled.scrollLeft = scrollLeft
+      recycled.scrollTop = scrollTop
       end.before(recycled)
     } else {
       const frag = document.createDocumentFragment()

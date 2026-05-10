@@ -367,6 +367,20 @@
     }
     .tv-drill:hover { background: var(--flash); text-decoration-style: solid; }
 
+    /* codec-tag — colored codec name in the refs/referrers tables. Same
+       palette as the byte-strip and the typed-value pills, so a chunk's
+       codec reads visually consistent everywhere it appears. */
+    .codec-tag { font-weight: 500; }
+    .codec-tag.codec-commit    { color: #c2410c; }
+    .codec-tag.codec-sig       { color: #b91c1c; }
+    .codec-tag.codec-composite { color: #1e40af; }
+    .codec-tag.codec-duple     { color: #6b21a8; }
+    .codec-tag.codec-string    { color: #047857; }
+    .codec-tag.codec-bytes     { color: #4d7c0f; }
+    .codec-tag.codec-num       { color: #475569; }
+    .codec-tag.codec-var       { color: #b45309; }
+    .codec-tag.codec-other     { color: var(--ink-dim); }
+
     /* codec category palette — used in both the legend and the SVG fills */
     .cat-commit    { fill: #f59e0b; background: #f59e0b; }
     .cat-sig       { fill: #ef4444; background: #ef4444; }

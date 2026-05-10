@@ -464,11 +464,12 @@ function AtView ({ keyHex, address }) {
       // anchored as you scroll long value trees or storage detail.
       const header = h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
 
-      // Storage tab: this chunk's outgoing refs, raw bytes, and
-      // referrers. (byteStreamSection moved up into the header.)
+      // Storage tab: position in stream + reachable commit, then this
+      // chunk's outgoing refs, raw bytes, and referrers.
       if (atTab === 'storage') {
         return h`
           ${header}
+          ${chunkContextSection(repo, keyHex, resolvedAddr)}
           ${outgoingReferencesSection(repo, keyHex, resolvedAddr)}
           ${rawChunkSection(repo, resolvedAddr)}
           ${referrersSection(repo, keyHex, resolvedAddr)}
@@ -826,11 +827,71 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   `
 }
 
+// Storage-tab context: where this chunk sits in the byte stream (start/
+// end addresses + share of total bytes), and which commit reaches it
+// (BFS up through the referrer index until we hit something
+// commit-shaped). Tactile orientation — every chunk has a position,
+// every chunk has a story about how user data uses it, and now both
+// are visible at a glance.
+function chunkContextSection (repo, keyHex, address) {
+  let chunk
+  try { chunk = repo.resolve(address) } catch { return null }
+  if (!chunk || !chunk.length) return null
+  const start = address - chunk.length + 1
+  const total = repo.byteLength
+  const pct = total > 0 ? ((chunk.length / total) * 100) : 0
+  // Reachable-from-commit BFS: walk up the referrer index, skipping
+  // Duples (which are the tree scaffolding, not user-meaningful), until
+  // we hit a chunk whose decoded value is commit-shaped. Capped to keep
+  // pathological graphs honest.
+  const index = buildReferrerIndex(repo)
+  let reachableCommit = null
+  const visited = new Set()
+  let frontier = [address]
+  let depth = 0
+  while (frontier.length && depth < 64 && !reachableCommit) {
+    const next = []
+    for (const a of frontier) {
+      if (visited.has(a)) continue
+      visited.add(a)
+      const parents = index.get(a) ?? []
+      for (const p of parents) {
+        try {
+          const decoded = repo.decode(p.address)
+          if (isCommitShape(decoded)) { reachableCommit = p.address; break }
+        } catch {}
+        next.push(p.address)
+      }
+      if (reachableCommit) break
+    }
+    frontier = next
+    depth++
+  }
+  return h`
+    <h3>position <span class="dim">in this stream</span></h3>
+    <table class="kv">
+      <tbody>
+        <tr>
+          <td>byte range</td>
+          <td class="mono">@${start}…@${address} <span class="dim">(${chunk.length} byte${chunk.length === 1 ? '' : 's'} · ${pct.toFixed(2)}% of ${total})</span></td>
+        </tr>
+        <tr>
+          <td>reachable from</td>
+          <td>${reachableCommit !== null
+            ? h`commit <a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${reachableCommit}>@${reachableCommit}</a>`
+            : h`<span class="dim">no commit references this chunk</span>`}</td>
+        </tr>
+      </tbody>
+    </table>
+  `
+}
+
 // Outgoing references — what THIS chunk points to in the chunk graph (as
 // opposed to "referenced by", which is what points to this chunk). Walks
 // the codec's parts via repo.directReferences. Codec-by-codec — exposes
 // the storage chain so e.g. STRING → UINT8ARRAY → DUPLE → DUPLE → … → WORD
-// is browsable one click at a time.
+// is browsable one click at a time. Codec column is color-coded to match
+// the byte-strip palette so the chain reads visually.
 function outgoingReferencesSection (repo, keyHex, address) {
   const refs = repo.directReferences(address)
   if (!refs.length) return null
@@ -849,7 +910,7 @@ function outgoingReferencesSection (repo, keyHex, address) {
           return h`
             <tr data-key=${`out${i}@${childAddr}`} data-action="open-at"
                 data-keyhex=${keyHex} data-addr=${childAddr}>
-              <td class="mono dim">${codecType}</td>
+              <td class=${['mono', 'codec-tag', `codec-${codecCategory(codecType)}`]}>${codecType}</td>
               <td>${preview}</td>
               <td class="mono dim">@${childAddr}</td>
             </tr>
@@ -887,7 +948,7 @@ function referrersSection (repo, keyHex, address) {
           return h`
             <tr data-key=${`r${r.address}`} data-action="open-at"
                 data-keyhex=${keyHex} data-addr=${r.address}>
-              <td class="mono dim">${r.codecType || '?'}${r.count > 1 ? ` ×${r.count}` : ''}</td>
+              <td class=${['mono', 'codec-tag', `codec-${codecCategory(r.codecType || '?')}`]}>${r.codecType || '?'}${r.count > 1 ? ` ×${r.count}` : ''}</td>
               <td>${preview}</td>
               <td class="mono dim">@${r.address}</td>
             </tr>

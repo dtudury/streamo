@@ -1131,13 +1131,20 @@ function storageTree (repo, keyHex, address, depth = 3) {
       : h`<a class="storage-toggle" data-action="expand-storage"
               data-keyhex=${keyHex} data-addr=${address}
               title="click to expand">▸</a>`
+  // DUPLE preview is suppressed in the chunk graph: a duple's whole
+  // content is its two children, which already render as their own
+  // rows directly below. typedValue's "Duple(left, right)" inline
+  // form was duplicating those two children one line above where
+  // they live. The purple DUPLE chip carries the identity; the tree
+  // structure carries the content.
+  const showPreview = codecType !== 'DUPLE'
   const header = h`
     <div class="storage-row">
       ${toggle}
       <span class=${['codec-chip', `cat-${cat}`]}>${codecType}</span>
       <a class="addr-link" data-action="open-at"
          data-keyhex=${keyHex} data-addr=${address}>@${address}</a>
-      <span class="storage-preview">${preview}</span>
+      ${showPreview ? h`<span class="storage-preview">${preview}</span>` : null}
       ${!isLeaf && !expand
         ? h`<span class="dim storage-childcount">${refs.length} ref${refs.length === 1 ? '' : 's'}</span>`
         : null}
@@ -1223,13 +1230,15 @@ function referenceTree (repo, keyHex, address, depth = 4, index = null) {
       : h`<a class="storage-toggle" data-action="expand-refs"
               data-keyhex=${keyHex} data-addr=${address}
               title="click to expand">▸</a>`
+  // Same DUPLE suppression as storageTree — see comment there.
+  const showPreview = codecType !== 'DUPLE'
   const header = h`
     <div class="storage-row">
       ${toggle}
       <span class=${['codec-chip', `cat-${cat}`]}>${codecType}</span>
       <a class="addr-link" data-action="open-at"
          data-keyhex=${keyHex} data-addr=${address}>@${address}</a>
-      <span class="storage-preview">${preview}</span>
+      ${showPreview ? h`<span class="storage-preview">${preview}</span>` : null}
       ${isLeaf
         ? h`<span class="dim storage-childcount">graph root</span>`
         : !expand

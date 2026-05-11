@@ -22,6 +22,27 @@ as a proper writing experience — typography-driven, longer-form, with
 permalinks via the explorer. Discussed 2026-05-11 as the next thing
 to build after 4.0.7.
 
+**Bonus content idea (2026-05-11):** replay this project's own git
+history into the journal Repo as initial content — each git commit
+becomes a journal entry (`{ headline: commit subject, body: commit
+message + changed-files summary, at: commit date }`). Then the
+journal demo doubles as the **best possible explorer demo** — a real
+project's history, with thoughtful commits mixed in with auto-
+generated tool output, all signed and timestamped, all browsable in
+the explorer. The "authors" who wrote it really did write it. The
+journal app itself can append fresh entries to that same Repo,
+making the project's history both the demo content AND a living
+document.
+
+### hello — the smallest streamo app
+
+Already shipped (2026-05-11) at `/apps/hello/`. Five-move starter
+template: identity → registry+sync → my repo+signer → reactive view
+→ write. Writes `{ text, at }` entries; growing it into the full
+journal app is "add fields and typography," not "rewrite." Lives
+alongside chat and explorer as a peer app — a copy-and-adapt
+starting point for new streamo apps.
+
 ---
 
 ## imperfect-fits (with some creativity)

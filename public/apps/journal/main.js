@@ -38,6 +38,57 @@ const setLoggedIn = () => {
 // Populated by `login` before setLoggedIn fires.
 let myRepo, myKey, dep
 
+// Reactive edit signal. `editing()` returns either `null` (compose
+// mode) or `{ id, headline, body }` describing the entry currently
+// being revised. The form's value=${} cells re-run when this fires,
+// pre-populating the inputs; the form button text and the "cancel"
+// button also key off the same signal.
+const editSig = {}
+const editing = () => {
+  recaller.reportKeyAccess(editSig, 'data')
+  return editSig.data ?? null
+}
+function startEdit (entry) {
+  editSig.data = { id: entry.id, headline: entry.headline, body: entry.body }
+  recaller.reportKeyMutation(editSig, 'data')
+  // Focus the headline once the form's cells have re-run and the
+  // input's value has been updated. rAF gets us past the recaller's
+  // microtask flush.
+  requestAnimationFrame(() => {
+    const el = document.querySelector('input[name="headline"]')
+    el?.focus()
+    el?.select()
+  })
+}
+function cancelEdit () {
+  editSig.data = null
+  recaller.reportKeyMutation(editSig, 'data')
+}
+
+// Group entries by `id` so multiple versions of the same entry collapse
+// to one displayed item (the latest version wins). Entries written
+// before edit was a feature don't have an `id` — fall back to a
+// per-timestamp synthetic id so each becomes its own group, the same
+// as if you'd written it as a brand-new entry today. Newest groups
+// (by ORIGINAL creation time) appear first.
+function groupEntries (entries) {
+  const byId = new Map()
+  for (const e of entries) {
+    const id = e.id ?? `legacy-${+e.at}`
+    if (!byId.has(id)) byId.set(id, [])
+    byId.get(id).push(e)
+  }
+  return [...byId.values()].map(versions => {
+    versions.sort((a, b) => +a.at - +b.at)
+    return {
+      id: versions[0].id ?? `legacy-${+versions[0].at}`,
+      original: versions[0],
+      latest: versions[versions.length - 1],
+      versions
+    }
+  }).sort((a, b) => +b.original.at - +a.original.at)
+}
+
 // ── handlers ─────────────────────────────────────────────────────────
 
 async function login (e) {
@@ -74,12 +125,19 @@ function publish (e) {
   const headline   = headlineEl.value.trim()
   const body       = bodyEl.value.trim()
   if (!headline && !body) return
+  // If we're in edit mode, reuse the existing id — the new entry
+  // is another VERSION of the same one, not a separate post. Streamo
+  // keeps both versions in the chunk graph; the view (groupEntries)
+  // collapses them to the latest. If we're composing fresh, mint a
+  // new id.
+  const editingEntry = editing()
+  const id = editingEntry?.id ?? crypto.randomUUID()
   const entries = myRepo.get('entries') ?? []
   const preview = headline || body.slice(0, 40)
-  myRepo.defaultMessage = `entry: "${preview.slice(0, 40)}${preview.length > 40 ? '…' : ''}"`
-  myRepo.set({ entries: [...entries, { headline, body, at: new Date() }] })
-  headlineEl.value = ''
-  bodyEl.value = ''
+  const verb = editingEntry ? 'edit' : 'entry'
+  myRepo.defaultMessage = `${verb}: "${preview.slice(0, 40)}${preview.length > 40 ? '…' : ''}"`
+  myRepo.set({ entries: [...entries, { id, headline, body, at: new Date() }] })
+  cancelEdit()         // clears form via the editSig→cell→el.value path
   headlineEl.focus()
 }
 
@@ -227,6 +285,11 @@ mount(h`
       outline: none;
       border-color: #1d4ed8;
     }
+    .new-entry-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
     .new-entry button {
       padding: 0.55rem 1.1rem;
       background: #1d4ed8;
@@ -236,10 +299,20 @@ mount(h`
       font-size: 0.95rem;
       cursor: pointer;
       font-family: inherit;
-      align-self: flex-start;
     }
     .new-entry button:hover {
       opacity: 0.88;
+    }
+    .new-entry .cancel-btn {
+      background: none;
+      color: #666;
+      border: 1px solid #ddd;
+      padding: 0.5rem 0.9rem;
+    }
+    .new-entry .cancel-btn:hover {
+      color: #1c1917;
+      border-color: #1c1917;
+      opacity: 1;
     }
 
     .explorer-link {
@@ -309,11 +382,37 @@ mount(h`
         color: #333;
         white-space: pre-wrap;
       }
+      .entry-meta {
+        display: flex;
+        align-items: baseline;
+        gap: 0.6rem;
+        margin-top: 0.5rem;
+      }
       .entry-time {
         font-size: 0.72rem;
         color: #999;
-        margin-top: 0.5rem;
         font-variant-numeric: tabular-nums;
+      }
+      .entry-edited {
+        font-size: 0.65rem;
+        color: #999;
+        font-style: italic;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .entry-edit-btn {
+        margin-left: auto;
+        background: none;
+        border: none;
+        color: #1d4ed8;
+        font-size: 0.78rem;
+        cursor: pointer;
+        padding: 0;
+        text-decoration: underline dotted;
+        font-family: inherit;
+      }
+      .entry-edit-btn:hover {
+        text-decoration-style: solid;
       }
     </style>
     <ol>
@@ -326,11 +425,20 @@ mount(h`
         if (entries.length === 0) {
           return h`<li class="empty">no entries yet — write the first one below.</li>`
         }
-        return entries.slice().reverse().map(e => h`
-          <li class="entry" data-key=${+e.at}>
-            <div class="entry-headline">${e.headline || '(untitled)'}</div>
-            <div class="entry-body">${e.body || ''}</div>
-            <div class="entry-time">${new Date(e.at).toLocaleString()}</div>
+        // Group versions by id; latest version per id wins the display.
+        // The full history is still in the repo and visible in the
+        // explorer — this view is the "present" lens.
+        return groupEntries(entries).map(g => h`
+          <li class="entry" data-key=${g.id}>
+            <div class="entry-headline">${g.latest.headline || '(untitled)'}</div>
+            <div class="entry-body">${g.latest.body || ''}</div>
+            <div class="entry-meta">
+              <span class="entry-time">${new Date(g.latest.at).toLocaleString()}</span>
+              ${g.versions.length > 1
+                ? h`<span class="entry-edited">edited · ${g.versions.length} versions</span>`
+                : null}
+              <button class="entry-edit-btn" onclick=${() => () => startEdit(g.latest)}>edit</button>
+            </div>
           </li>
         `)
       }}
@@ -338,11 +446,14 @@ mount(h`
   `)}/>
 
   ${when(loggedIn, h`
-    <h2>new entry</h2>
+    <h2>${() => editing() ? 'edit entry' : 'new entry'}</h2>
     <form class="new-entry" onsubmit=${() => publish}>
-      <input name="headline" placeholder="title">
-      <textarea name="body" placeholder="what happened?"></textarea>
-      <button>publish</button>
+      <input name="headline" placeholder="title" value=${() => editing()?.headline ?? ''}>
+      <textarea name="body" placeholder="what happened?" value=${() => editing()?.body ?? ''}></textarea>
+      <div class="new-entry-actions">
+        <button>${() => editing() ? 'save changes' : 'publish'}</button>
+        ${when(editing, h`<button type="button" class="cancel-btn" onclick=${() => cancelEdit}>cancel</button>`)}
+      </div>
     </form>
   `)}
 

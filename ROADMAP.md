@@ -545,33 +545,56 @@ presentation travels with the content — no server controls the framing.
 
 ### Caching relay server
 
-A streamo proxy that doesn't hold every repo in memory. The model is
-simple enough to be worth pinning before it ages out: per `(publicKey,
-name)`, hold raw bytes + a list of subscribers + an upstream connection.
-Bytes flow both directions through the same data structure — upstream
-appends propagate down to local subscribers, client writes propagate up
-to the upstream server. When total cached bytes exceed a budget, evict
-the least-recently-active repo (with no current subscribers). A new
-subscriber for an evicted repo triggers a fresh fetch from upstream,
-which may in turn evict something else. The proxy never decodes
-chunks — streamo's content-addressed signed design lets clients verify
-integrity themselves, so the proxy is dumb-pipe infrastructure.
+A streamo proxy that doesn't hold every repo in memory. Per `(publicKey,
+name)`: raw bytes + a list of subscribers + an upstream connection.
+When total cached bytes exceed a budget, evict the least-recently-active
+repo (one with no current subscribers). A new subscriber for an evicted
+repo triggers a fresh fetch from upstream, which may in turn evict
+something else. The proxy never decodes chunks — streamo's content-
+addressed signed design lets clients verify integrity themselves, so
+the proxy is dumb-pipe infrastructure.
 
-Asymmetric trust is the key property. We trust the upstream we picked
-not to send us garbage; we don't trust the clients connecting to us
-(anyone can). So reads pass through unverified, but client writes get
-verified before being forwarded upstream — protecting upstream from
-being DDoS-amplified through us. Verification needs the bytes the
-signature covers, so it works opportunistically: warm cache → verify
-locally, cold cache → forward unverified and let upstream be the
-authority. Graceful degradation, no thundering-herd of pointless
-re-fetches just to verify a write we're about to forward.
+**The key invariant: broadcast only from upstream, never from
+downstream.** Bytes from upstream fan out to all local subscribers.
+Client writes are *relayed* upstream as a one-way pipe; they are
+never echoed to other local subscribers. Other clients see a new
+commit only when it comes back down from upstream, which is when
+upstream has accepted it. A misbehaving or buggy client can cost us a
+socket and some upstream bandwidth but *cannot infect their peers
+through us* — only upstream-blessed data fans out.
+
+Why verify at all, given the one-direction broadcast? Not to gate
+forwarding (writes are unconditionally relayed upstream), but to
+**detect bad actors and kick them**. A client sending forked or
+garbage data still costs us resources even though peers are safe.
+Verification lets us cut them off. Three ways to do that detection:
+
+1. **Opportunistic local verification.** Verify each new signed write
+   against the public key when our cache covers the signed range; skip
+   when it doesn't. Cheap and bounded, but spotty — dormant repos
+   getting a fresh write fall back to trust.
+2. **Stream-commitment crypto** (next entry) — sign a running
+   accumulator over the byte stream. Verification needs only the
+   accumulator + the new chunks + the signature, no cached history.
+   Cleaner and uniformly available.
+3. **Upstream-signaled rejection** — upstream verifies signatures (it
+   would reject invalid writes anyway) and tells the proxy "the write
+   from session-id X was signed wrong, kick them." No crypto change;
+   just a rejection-with-session-id message back from upstream, plus
+   session-id threading on every forwarded write. Couples the proxy
+   to a specific upstream protocol vocabulary.
+
+The natural target is (2) — verification is purely local, the proxy
+needs no protocol coordination with upstream beyond reading bytes.
+Until (2) lands, (1) gives reasonable coverage for the common case
+(active repos with warm caches).
 
 Roughly 300-500 lines on top of `registrySync`'s existing transport.
 The first version uses static upstream config — one URL listed at
 startup. Multi-upstream selection ("knows who to ask for what") becomes
-interesting only past one upstream: for 2-5 in a gossip mesh, "ask all,
-take first" works; for many, consistent hashing on the repo identity.
+interesting only past one upstream: for 2-5 in a gossip mesh, "ask
+all, take first" works; for many, consistent hashing on the repo
+identity.
 
 Known complexities, in roughly the order they'd bite:
 
@@ -585,20 +608,16 @@ Known complexities, in roughly the order they'd bite:
   byte 500 disconnects, comes back to find we're at byte 1500 or
   have evicted entirely. Protocol needs both "here's 500..now" and
   "your offset is gone, re-fetch."
-- **Repos bigger than budget** — a single repo that exceeds the
-  cache budget can't be cached at all. Options: refuse, stream-
-  through without caching, or move to chunk-level sparse storage
-  (the deeper version not described here).
-- **Optimistic vs buffered fanout on writes** — if a client's write
-  is propagated to other local subscribers before upstream acks, an
-  upstream rejection creates a fork. Buffer-then-fanout costs one
-  round trip, avoids the problem entirely.
+- **Repos bigger than budget** — a single repo that exceeds the cache
+  budget can't be cached at all. Options: refuse, stream-through
+  without caching, or move to chunk-level sparse storage (the deeper
+  version not described here).
 
 What we already get right by streamo's design: signed chunks mean a
 malicious proxy can't lie undetectably; append-only means cached bytes
-never go stale (no invalidation problem — most caching systems' hardest
-half); the protocol is "send me from offset X" and that's the whole
-surface.
+never go stale (no invalidation problem — most caching systems'
+hardest half); the protocol is "send me from offset X" and that's the
+whole surface.
 
 ### Stream-commitment cryptography
 

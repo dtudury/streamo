@@ -5,6 +5,131 @@ for what's next.
 
 ---
 
+## 4.0.6 — transparency + finish
+
+Two thrusts. The explorer surfaces streamo's own mechanics — reuse,
+structure, value-as-chunk-tree both directions, byte content rather
+than type names. The chat and the broader visual surface pass through
+a typography revision that drops the prototype feel and lands on a
+streamo-native register.
+
+**Explorer: reuse and economics, made visible.**
+
+- *Dedup-leverage indicator on the byte-stream header* — "(N bytes ·
+  M chunks · K× via reuse)" tells the compression story at a glance.
+  Always shown, even at 1.00×, because honest is better than coy.
+- *Per-codec table* under the byte strip — chunks, bytes, and
+  leverage per codec type. The DUPLE row's "3.4×" surfaces the dedup
+  work the chunk graph is doing under the hood. Graph roots (COMMIT,
+  SIGNATURE) get "—" instead of "0×" because they're not reuse
+  candidates by design.
+- *Per-value economics footer* on every value-tab page — for the
+  chunk you're viewing: subtree size, dependency size, naive cost,
+  savings, leverage. Honest variants for graph roots (no reuse
+  possible) and single-use values (no reuse yet).
+- *Per-chunk reuse count in the inspector* — "in N commits" appended
+  after the bytes/percentage line when N > 0.
+
+**Explorer: chunk-graph as a symmetric pair.**
+
+- *Storage tab* became a chunk-graph tree rooted at the current
+  chunk, walking DOWN through `directReferences`. Surfaces the
+  duples the value tab hides as scaffolding. Each row: codec chip +
+  clickable @addr + value preview + collapse toggle.
+- *Refs tab* — the twin going UP. Walks `directReferrers` until it
+  hits graph roots (commits, signatures — the chunks nothing else
+  references). Same row shape; the leaves of this tree are the
+  roots of the chunk graph.
+- *Storage tab cleaned up* — `chunkContextSection` and
+  `referrersSection` (partial one-level views) removed; the refs
+  tab does it all. Storage = "what this chunk is made of," refs =
+  "what uses this chunk." Clean mirror.
+- *DUPLE preview suppressed in tree rows* — "Duple(left, right)"
+  was re-rendering the duple's two children one line above where
+  they already live. Tree structure carries that information now.
+
+**Bytes, not type names.**
+
+- *Uint8Array previews show contents* — printable ASCII as `"alice"`,
+  non-printable as hex (`61 6c 69 00`), truncated past 8 bytes with
+  the full length pinned. The whole reason to walk down into chunks
+  is to see the bytes; being told there are bytes is the wrong
+  answer.
+- *Three-row byte chart* for WORD/UINT8ARRAY previews AND the raw
+  chunk-bytes section in the value tab — hex / character / decimal
+  stacked one column per byte, monospace-aligned in an olive-tinted
+  card. The chunk-bytes section adds offset labels in the left
+  column and 16 bytes per row, traditional hex-dump width.
+
+**Codec chip in the inspector.**
+
+- The persistent header under the byte strip now leads with a
+  colored chip (`[OBJECT]`, `[STRING]`, `[SIGNATURE]`) using the same
+  cat-* palette the strip itself uses. Reads as "looking at the
+  inspector = looking at the strip" in one glance. Black text on
+  bright codes (amber, lime, yellow), white on saturated mid-tones —
+  WCAG-luminance-correct, not just "white text everywhere."
+- Commit chunks display "COMMIT" in the chip, even though the codec
+  is OBJECT — same logic the rest of the explorer uses for the
+  dropdown / banner / kindBanner.
+
+**Scroll-to-current-chunk on navigation.** Clicking a commit in the
+dropdown (or anywhere else that navigates) now smoothly scrolls the
+byte strip to bring the new current chunk into view. Tracked per
+container via `dataset.lastCurrent` so it only fires on actual
+change, not on every chunk arrival.
+
+**Typography pass — moving past the prototype.**
+
+- `proto.css` body font changed from `cursive` (Apple Chancery on
+  macOS, Comic Sans on Windows) to `system-ui, -apple-system,
+  sans-serif`. The pre-existing comment in proto.css already said
+  "Replace per-app when the app is ready to grow up" — streamo grew
+  up.
+- `--radius` simplified from `2px 8px 3px 7px / 7px 3px 8px 2px` to
+  a clean `6px`. The asymmetry was a hand-drawn flourish; chips,
+  inputs, cards, the byte-strip-container all now read precise.
+- Homepage app cards lost the offset 2D hard shadow, gained a 1px
+  rule border that darkens to ink on hover. Less rough; more
+  finished.
+
+**Chat: streamo-native ritual.**
+
+- *Accent color* aligned to streamo blue (`#1d4ed8`). No more
+  two-blues clash with the rest of the project.
+- *Identity-as-color.* Each participant gets a deterministic hue
+  derived from their publicKey. Same key always renders in the same
+  color, everywhere, for everyone — visual identity = cryptographic
+  identity. Bubble accent strips and sender labels take the hue;
+  the chat header's "(username)" carries a small swatch showing your
+  own color.
+- *Date separators* between messages from different days — "today"
+  / "yesterday" / weekday for the past week / locale dates for
+  older. Only emitted when the day actually rolls over.
+- *Empty-state message* when no one has said anything yet, beating
+  the old behavior of staring at literal nothing.
+
+**Documentation reorganization.**
+
+- *Created `CHANGELOG.md`* (this file). Release history moved here
+  from ROADMAP. ROADMAP is now future-focused: current state +
+  what's next + known limitations + "the longer view" (renamed from
+  "beyond 1.0", which was version-pegged in a way that ages poorly)
+  + loose ideas.
+- *Caching relay server* design captured under "the longer view" —
+  the multi-session architecture conversation, including the
+  broadcast-only-from-upstream invariant, the asymmetric trust
+  model, and live-website hosting as the first concrete deployment.
+- *Stream-commitment cryptography* entry — the natural successor to
+  the relay's write-verification problem (Merkle accumulator over
+  the byte stream, no cached history needed to verify writes).
+- *Repo size — practical caps and lifecycle* under known
+  limitations, reasoning through the UX bands (2 MB chat-shaped,
+  5-10 MB longer-form, 50+ MB needs different infrastructure) and
+  the successor-ref lifecycle pattern.
+
+---
+
 ## 4.0.5 — instrument panel + brand
 
 Nine commits past 4.0.4. The thread holding them together: make the

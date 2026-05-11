@@ -10,12 +10,12 @@
 // would still work; we keep Recaller because it's part of streamo's
 // kit, not part of the html-in-js story.
 
-import { Signer }         from '/streamo/Signer.js'
-import { Recaller }       from '/streamo/utils/Recaller.js'
-import { RepoRegistry }   from '/streamo/RepoRegistry.js'
-import { registrySync }   from '/streamo/registrySync.js'
-import { bridgeRegistry } from '/streamo/bridgeRegistry.js'
-import { bytesToHex }     from '/streamo/utils.js'
+import { Signer }         from '../../streamo/Signer.js'
+import { Recaller }       from '../../streamo/utils/Recaller.js'
+import { RepoRegistry }   from '../../streamo/RepoRegistry.js'
+import { registrySync }   from '../../streamo/registrySync.js'
+import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
+import { bytesToHex }     from '../../streamo/utils.js'
 
 // ── DOM refs ─────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ loginForm.addEventListener('submit', async e => {
   keyEl.classList.remove('hidden')
   addHeading.classList.remove('hidden')
   addForm.classList.remove('hidden')
-  explorerLink.href = `/apps/explorer/#/repo/${myKey}`
+  explorerLink.href = `../explorer/#/repo/${myKey}`
   explorerLink.classList.remove('hidden')
   addForm.elements.text.focus()
 })

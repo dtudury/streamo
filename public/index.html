@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>streamo</title>
-  <link rel="icon" type="image/svg+xml" href="/streamo.svg">
-  <link rel="stylesheet" href="/apps/styles/proto.css">
+  <link rel="icon" type="image/svg+xml" href="streamo.svg">
+  <link rel="stylesheet" href="apps/styles/proto.css">
   <style>
     html { scrollbar-gutter: stable; }
     body { max-width: 44rem; margin: 0 auto; padding: 2.5rem 1.25rem; }
@@ -232,7 +232,7 @@
 </head>
 <body>
 
-  <a class="wordmark" href="/" title="streamo home"><img src="/streamo.svg" alt="">streamo</a>
+  <a class="wordmark" href="./" title="streamo home"><img src="streamo.svg" alt="">streamo</a>
   <p class="tagline">every device is an equal author</p>
 
   <p class="here" id="here">
@@ -283,35 +283,35 @@
 
   <p class="apps-heading">apps</p>
   <div class="app-grid">
-    <a class="app-card" href="/apps/chat/">
+    <a class="app-card" href="apps/chat/">
       <div class="app-name-row">
         <span class="app-glyph">💬</span>
         <span class="app-name">chat</span>
       </div>
       <div class="app-desc">p2p messaging — each participant owns their own signed message stream</div>
     </a>
-    <a class="app-card" href="/apps/explorer/">
+    <a class="app-card" href="apps/explorer/">
       <div class="app-name-row">
         <span class="app-glyph">🔍</span>
         <span class="app-name">explorer</span>
       </div>
       <div class="app-desc">browse repos, commit history, and the bytes underneath</div>
     </a>
-    <a class="app-card" href="/apps/hello/">
+    <a class="app-card" href="apps/hello/">
       <div class="app-name-row">
         <span class="app-glyph">👋</span>
         <span class="app-name">hello</span>
       </div>
       <div class="app-desc">the smallest possible streamo app — five moves, copy and adapt</div>
     </a>
-    <a class="app-card" href="/apps/journal/">
+    <a class="app-card" href="apps/journal/">
       <div class="app-name-row">
         <span class="app-glyph">📓</span>
         <span class="app-name">journal</span>
       </div>
       <div class="app-desc">a minimal writing surface — title + body, signed and append-only</div>
     </a>
-    <a class="app-card" href="/apps/hello-vanilla/">
+    <a class="app-card" href="apps/hello-vanilla/">
       <div class="app-name-row">
         <span class="app-glyph">🧱</span>
         <span class="app-name">hello (vanilla)</span>
@@ -331,14 +331,14 @@
   </div>
 
   <script type="module">
-    import { Signer } from '/streamo/Signer.js'
-    import { bytesToHex } from '/streamo/utils.js'
-    import { Recaller } from '/streamo/utils/Recaller.js'
-    import { RepoRegistry } from '/streamo/RepoRegistry.js'
-    import { registrySync } from '/streamo/registrySync.js'
-    import { bridgeRegistry } from '/streamo/bridgeRegistry.js'
-    import { h } from '/streamo/h.js'
-    import { mount } from '/streamo/mount.js'
+    import { Signer } from './streamo/Signer.js'
+    import { bytesToHex } from './streamo/utils.js'
+    import { Recaller } from './streamo/utils/Recaller.js'
+    import { RepoRegistry } from './streamo/RepoRegistry.js'
+    import { registrySync } from './streamo/registrySync.js'
+    import { bridgeRegistry } from './streamo/bridgeRegistry.js'
+    import { h } from './streamo/h.js'
+    import { mount } from './streamo/mount.js'
 
     // Surface "what's running here" — server's primary key as a clickable
     // link to the explorer. Replaces the abstract "no server holds
@@ -349,7 +349,7 @@
     try {
       info = await fetch('/api/info').then(r => r.json())
       const truncKey = info.primaryKeyHex.slice(0, 12) + '…'
-      hereEl.innerHTML = `relaying <a href="/apps/explorer/#/repo/${info.primaryKeyHex}">${truncKey}</a> as "${info.name || 'this server'}"`
+      hereEl.innerHTML = `relaying <a href="apps/explorer/#/repo/${info.primaryKeyHex}">${truncKey}</a> as "${info.name || 'this server'}"`
     } catch (e) {
       pulseEl.classList.add('err')
       hereEl.textContent = 'not connected to a streamo server'

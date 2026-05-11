@@ -4,15 +4,15 @@
 // call near the bottom of this file. See `dear-future-claudes.md` at
 // the project root for the style preferences this app demonstrates.
 
-import { h }                            from '/streamo/h.js'
-import { mount }                        from '/streamo/mount.js'
-import { Signer }                       from '/streamo/Signer.js'
-import { Recaller }                     from '/streamo/utils/Recaller.js'
-import { RepoRegistry }                 from '/streamo/RepoRegistry.js'
-import { registrySync }                 from '/streamo/registrySync.js'
-import { bridgeRegistry }               from '/streamo/bridgeRegistry.js'
-import { bytesToHex }                   from '/streamo/utils.js'
-import { defineComponent }              from '/streamo/StreamoComponent.js'
+import { h }                            from '../../streamo/h.js'
+import { mount }                        from '../../streamo/mount.js'
+import { Signer }                       from '../../streamo/Signer.js'
+import { Recaller }                     from '../../streamo/utils/Recaller.js'
+import { RepoRegistry }                 from '../../streamo/RepoRegistry.js'
+import { registrySync }                 from '../../streamo/registrySync.js'
+import { bridgeRegistry }               from '../../streamo/bridgeRegistry.js'
+import { bytesToHex }                   from '../../streamo/utils.js'
+import { defineComponent }              from '../../streamo/StreamoComponent.js'
 
 // `when(cond, vnode)` — render `vnode` when cond() is truthy, nothing
 // otherwise. The vnode is kept by reference; mount tears it down on
@@ -83,84 +83,20 @@ function publish (e) {
   headlineEl.focus()
 }
 
-// ── EntriesList: a StreamoComponent custom element ───────────────────
-//
-// Demonstrates the custom-element flavor of streamo components — its
-// own Recaller, its own shadow DOM, ships its own styles inline.
-// Reactive deps reach across to the outer app's recaller (the slot
-// inside calls `dep()`, which subscribes the component's slot-watcher
-// to the journal recaller). It works; it's also more machinery than
-// a function-as-slot would need for this case — see
-// dear-future-claudes.md for when each is the right tool. Kept here
-// as exposition.
-
-defineComponent('journal-entries', () => h`
-  <style>
-    :host {
-      display: block;
-      font-family: system-ui, -apple-system, sans-serif;
-      color: #1c1917;
-    }
-    ol {
-      list-style: none;
-      display: flex;
-      flex-direction: column;
-      gap: 1.25rem;
-      padding: 0;
-      margin: 0;
-    }
-    li.entry {
-      padding: 1rem 1.1rem;
-      border: 1px solid #eee;
-      border-radius: 6px;
-      background: white;
-    }
-    li.empty {
-      font-size: 0.88rem;
-      color: #999;
-      font-style: italic;
-      padding: 0.75rem 0;
-    }
-    .entry-headline {
-      font-size: 1.05rem;
-      font-weight: 600;
-      margin-bottom: 0.35rem;
-    }
-    .entry-body {
-      font-size: 0.95rem;
-      line-height: 1.6;
-      color: #333;
-      white-space: pre-wrap;
-    }
-    .entry-time {
-      font-size: 0.72rem;
-      color: #999;
-      margin-top: 0.5rem;
-      font-variant-numeric: tabular-nums;
-    }
-  </style>
-  <ol>
-    ${() => {
-      if (!loggedIn()) {
-        return h`<li class="empty">login above; entries will appear here.</li>`
-      }
-      dep?.()
-      const entries = myRepo?.get('entries') ?? []
-      if (entries.length === 0) {
-        return h`<li class="empty">no entries yet — write the first one below.</li>`
-      }
-      return entries.slice().reverse().map(e => h`
-        <li class="entry" data-key=${+e.at}>
-          <div class="entry-headline">${e.headline || '(untitled)'}</div>
-          <div class="entry-body">${e.body || ''}</div>
-          <div class="entry-time">${new Date(e.at).toLocaleString()}</div>
-        </li>
-      `)
-    }}
-  </ol>
-`)
-
 // ── mount ────────────────────────────────────────────────────────────
+//
+// The entries list is a `defineComponent` custom element registered
+// inline as a slot tag: `<${defineComponent(name, renderFn)}/>`.
+// `defineComponent` returns the tag name string; h takes a slot value
+// in tag position; mount sees a string tag and instantiates the
+// registered custom element. Idempotent — re-evaluating the template
+// re-registers (no-op after first time) and re-embeds the same name.
+//
+// For this app it's exposition value rather than necessity — a plain
+// function-as-slot would do the same job with less machinery (shadow
+// DOM, own Recaller). The pattern earns its place when shadow-style
+// encapsulation is wanted or when `componentKey(prefix, address)`
+// generates a fresh element name per content version (hot-reload).
 
 mount(h`
   <style>
@@ -316,8 +252,8 @@ mount(h`
   </style>
 
   <h1>
-    <a class="brand-lockup" href="/" title="streamo home">
-      <img src="/streamo.svg" alt="">streamo
+    <a class="brand-lockup" href="../../" title="streamo home">
+      <img src="../../streamo.svg" alt="">streamo
     </a>
     <span class="page-title">journal</span>
   </h1>
@@ -331,7 +267,71 @@ mount(h`
   </form>
 
   <h2>entries</h2>
-  <journal-entries></journal-entries>
+  <${defineComponent('journal-entries', () => h`
+    <style>
+      :host {
+        display: block;
+        font-family: system-ui, -apple-system, sans-serif;
+        color: #1c1917;
+      }
+      ol {
+        list-style: none;
+        display: flex;
+        flex-direction: column;
+        gap: 1.25rem;
+        padding: 0;
+        margin: 0;
+      }
+      li.entry {
+        padding: 1rem 1.1rem;
+        border: 1px solid #eee;
+        border-radius: 6px;
+        background: white;
+      }
+      li.empty {
+        font-size: 0.88rem;
+        color: #999;
+        font-style: italic;
+        padding: 0.75rem 0;
+      }
+      .entry-headline {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin-bottom: 0.35rem;
+      }
+      .entry-body {
+        font-size: 0.95rem;
+        line-height: 1.6;
+        color: #333;
+        white-space: pre-wrap;
+      }
+      .entry-time {
+        font-size: 0.72rem;
+        color: #999;
+        margin-top: 0.5rem;
+        font-variant-numeric: tabular-nums;
+      }
+    </style>
+    <ol>
+      ${() => {
+        if (!loggedIn()) {
+          return h`<li class="empty">login above; entries will appear here.</li>`
+        }
+        dep?.()
+        const entries = myRepo?.get('entries') ?? []
+        if (entries.length === 0) {
+          return h`<li class="empty">no entries yet — write the first one below.</li>`
+        }
+        return entries.slice().reverse().map(e => h`
+          <li class="entry" data-key=${+e.at}>
+            <div class="entry-headline">${e.headline || '(untitled)'}</div>
+            <div class="entry-body">${e.body || ''}</div>
+            <div class="entry-time">${new Date(e.at).toLocaleString()}</div>
+          </li>
+        `)
+      }}
+    </ol>
+  `)}/>
 
   ${when(loggedIn, h`
     <h2>new entry</h2>
@@ -343,7 +343,7 @@ mount(h`
   `)}
 
   ${when(loggedIn, h`
-    <a class="explorer-link" href=${() => `/apps/explorer/#/repo/${myKey ?? ''}`}>
+    <a class="explorer-link" href=${() => `../explorer/#/repo/${myKey ?? ''}`}>
       see this journal in the explorer →
     </a>
   `)}

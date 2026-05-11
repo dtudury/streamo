@@ -6,14 +6,14 @@
 // `dear-future-claudes.md` at the project root; this app and the
 // journal app are the worked examples of that style.
 
-import { h }              from '/streamo/h.js'
-import { mount }          from '/streamo/mount.js'
-import { Signer }         from '/streamo/Signer.js'
-import { Recaller }       from '/streamo/utils/Recaller.js'
-import { RepoRegistry }   from '/streamo/RepoRegistry.js'
-import { registrySync }   from '/streamo/registrySync.js'
-import { bridgeRegistry } from '/streamo/bridgeRegistry.js'
-import { bytesToHex }     from '/streamo/utils.js'
+import { h }              from '../../streamo/h.js'
+import { mount }          from '../../streamo/mount.js'
+import { Signer }         from '../../streamo/Signer.js'
+import { Recaller }       from '../../streamo/utils/Recaller.js'
+import { RepoRegistry }   from '../../streamo/RepoRegistry.js'
+import { registrySync }   from '../../streamo/registrySync.js'
+import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
+import { bytesToHex }     from '../../streamo/utils.js'
 
 // `when(cond, vnode)` — render `vnode` when cond() is truthy.
 const when = (cond, vnode) => () => cond() ? vnode : null
@@ -270,8 +270,8 @@ mount(h`
   </style>
 
   <h1>
-    <a class="brand-lockup" href="/" title="streamo home">
-      <img src="/streamo.svg" alt="">streamo
+    <a class="brand-lockup" href="../../" title="streamo home">
+      <img src="../../streamo.svg" alt="">streamo
     </a>
     <span class="page-title">hello</span>
   </h1>
@@ -317,7 +317,7 @@ mount(h`
   `)}
 
   ${when(loggedIn, h`
-    <a class="explorer-link" href=${() => `/apps/explorer/#/repo/${myKey ?? ''}`}>
+    <a class="explorer-link" href=${() => `../explorer/#/repo/${myKey ?? ''}`}>
       see this repo in the explorer →
     </a>
   `)}

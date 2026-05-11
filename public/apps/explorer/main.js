@@ -780,6 +780,67 @@ function codecCategory (type) {
   }
 }
 
+// Dedup leverage: for each chunk, count how many distinct commits'
+// data trees include it (BFS from each commit's dataAddress through
+// asRefs). A chunk that shows up in 10 commits "earned" 9 free reuses;
+// without dedup, those 9 reuses would've cost chunk.length each.
+//
+// Repo rollup: naiveBytes = Σ(chunk.length × uses) is what the stream
+// would've cost without dedup; actualReusable = Σ(chunk.length) over
+// the reachable chunks is what streamo actually stores. Leverage =
+// naiveBytes / actualReusable — "this many effective bytes per actual
+// byte." Grows monotonically as commits reuse existing chunks.
+//
+// The savings narrative the user reached for: "earlier bytes become
+// more efficient over time" — a chunk's price is fixed at first-
+// encoding-time; its value compounds with every later commit that
+// references it. This computes the snapshot.
+function repoReuseStats (repo) {
+  const uses = new Map()  // chunkAddr → number of commits reaching it
+  let addr = repo.byteLength - 1
+  while (addr >= 0) {
+    const code = repo.resolve(addr)
+    if (!code || !code.length) break
+    if (repo.footerToCodec[code.at(-1)]?.type === 'OBJECT') {
+      let val
+      try { val = repo.decode(addr) } catch {}
+      if (val && isCommitShape(val)) {
+        const visited = new Set()
+        const stack = [val.dataAddress]
+        while (stack.length) {
+          const a = stack.pop()
+          if (typeof a !== 'number' || visited.has(a)) continue
+          visited.add(a)
+          uses.set(a, (uses.get(a) ?? 0) + 1)
+          let refs
+          try { refs = repo.asRefs(a) } catch {}
+          if (Array.isArray(refs)) {
+            for (const c of refs) if (typeof c === 'number') stack.push(c)
+          } else if (refs && typeof refs === 'object' && !(refs instanceof Date) && !(refs instanceof Uint8Array)) {
+            if (Array.isArray(refs.v)) {
+              for (const c of refs.v) if (typeof c === 'number') stack.push(c)
+            } else {
+              for (const c of Object.values(refs)) if (typeof c === 'number') stack.push(c)
+            }
+          }
+        }
+      }
+    }
+    addr -= code.length
+  }
+  let naiveBytes = 0
+  let actualReusable = 0
+  for (const [a, count] of uses) {
+    let code
+    try { code = repo.resolve(a) } catch { continue }
+    if (!code) continue
+    naiveBytes += code.length * count
+    actualReusable += code.length
+  }
+  const leverage = actualReusable > 0 ? naiveBytes / actualReusable : 1
+  return { uses, naiveBytes, actualReusable, leverage }
+}
+
 // Byte stream as a color-coded SVG strip — every chunk is a rect, color
 // coded by codec category. Modestly zoomed so even 1-byte chunks have a
 // clickable width; horizontally scrollable, click-drag-to-pan inside the
@@ -866,8 +927,16 @@ function byteStreamSection (repo, keyHex, currentAddress) {
     }
     return 0
   }
+  // Snapshot dedup leverage. Used both in the byte-stream <h3>
+  // headline (rollup) and inside the inspector slot below (per-chunk
+  // use count). Recomputed on each bridge fire; cheap for normal-sized
+  // repos.
+  const reuse = repoReuseStats(repo)
+  const leverageTxt = reuse.leverage > 1.05
+    ? ` · ${reuse.leverage.toFixed(1)}× via reuse`
+    : ''
   return h`
-    <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks)</span></h3>
+    <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks${leverageTxt})</span></h3>
     <div class="byte-strip-container" data-key=${`strip-${keyHex}`} data-strip-w=${stripW}>
       <svg class="byte-map byte-strip" width=${stripW} height=${H} viewBox=${`0 0 ${stripW} ${H}`}>
         ${layout.map(c => {
@@ -921,7 +990,13 @@ function byteStreamSection (repo, keyHex, currentAddress) {
         const pct = total > 0
           ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})`
           : ''
-        inspectorContent = h`<span class=${['codec-chip', `cat-${cat}`]}>${chipLabel}</span> <span class="dim">·</span> @${inspectorChunk.address} <span class="dim">·</span> ${inspectorChunk.length} bytes${pct}`
+        // Show reuse count when the chunk is referenced by more than one
+        // commit's data tree — that's the "compounding savings" signal.
+        const useCount = reuse.uses.get(inspectorChunk.address) ?? 0
+        const reusePart = useCount > 1
+          ? h` <span class="dim">·</span> in ${useCount} commits`
+          : null
+        inspectorContent = h`<span class=${['codec-chip', `cat-${cat}`]}>${chipLabel}</span> <span class="dim">·</span> @${inspectorChunk.address} <span class="dim">·</span> ${inspectorChunk.length} bytes${pct}${reusePart}`
       } else {
         inspectorContent = `${chunks.length} chunks · ${total} bytes`
       }

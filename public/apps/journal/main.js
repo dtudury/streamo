@@ -12,7 +12,6 @@ import { RepoRegistry }                 from '../../streamo/RepoRegistry.js'
 import { registrySync }                 from '../../streamo/registrySync.js'
 import { bridgeRegistry }               from '../../streamo/bridgeRegistry.js'
 import { bytesToHex }                   from '../../streamo/utils.js'
-import { defineComponent }              from '../../streamo/StreamoComponent.js'
 
 // `when(cond, vnode)` — render `vnode` when cond() is truthy, nothing
 // otherwise. The vnode is kept by reference; mount tears it down on
@@ -143,18 +142,18 @@ function publish (e) {
 
 // ── mount ────────────────────────────────────────────────────────────
 //
-// The entries list is a `defineComponent` custom element registered
-// inline as a slot tag: `<${defineComponent(name, renderFn)}/>`.
-// `defineComponent` returns the tag name string; h takes a slot value
-// in tag position; mount sees a string tag and instantiates the
-// registered custom element. Idempotent — re-evaluating the template
-// re-registers (no-op after first time) and re-embeds the same name.
-//
-// For this app it's exposition value rather than necessity — a plain
-// function-as-slot would do the same job with less machinery (shadow
-// DOM, own Recaller). The pattern earns its place when shadow-style
-// encapsulation is wanted or when `componentKey(prefix, address)`
-// generates a fresh element name per content version (hot-reload).
+// Note: the entries list used to be a `defineComponent` custom
+// element with its own Recaller and shadow DOM. We pulled it back to
+// a plain function-as-slot because cross-recaller dep tracking
+// doesn't work transparently: the slot watcher inside the component
+// was registered with the component's Recaller, but the signals it
+// read (loggedIn, the bridge dep) lived on the journal Recaller.
+// When those fired, the component's watcher never heard about it.
+// The function-as-slot pattern puts everything on one Recaller, no
+// bridge needed. The inline `<${defineComponent(...)}/>` pattern is
+// still real and useful — just for cases where the component is
+// genuinely self-contained, not for cases that need to read
+// app-level reactive state.
 
 mount(h`
   <style>
@@ -281,6 +280,70 @@ mount(h`
       outline: none;
       border-color: #1d4ed8;
     }
+    .entries {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      padding: 0;
+      margin: 0;
+    }
+    .entry {
+      padding: 1rem 1.1rem;
+      border: 1px solid #eee;
+      border-radius: 6px;
+      background: white;
+    }
+    .entry-headline {
+      font-size: 1.05rem;
+      font-weight: 600;
+      margin-bottom: 0.35rem;
+    }
+    .entry-body {
+      font-size: 0.95rem;
+      line-height: 1.6;
+      color: #333;
+      white-space: pre-wrap;
+    }
+    .entry-meta {
+      display: flex;
+      align-items: baseline;
+      gap: 0.6rem;
+      margin-top: 0.5rem;
+    }
+    .entry-time {
+      font-size: 0.72rem;
+      color: #999;
+      font-variant-numeric: tabular-nums;
+    }
+    .entry-edited {
+      font-size: 0.65rem;
+      color: #999;
+      font-style: italic;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .entry-edit-btn {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #1d4ed8;
+      font-size: 0.78rem;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline dotted;
+      font-family: inherit;
+    }
+    .entry-edit-btn:hover {
+      text-decoration-style: solid;
+    }
+    .empty {
+      font-size: 0.88rem;
+      color: #999;
+      font-style: italic;
+      padding: 0.75rem 0;
+    }
+
     .new-entry-actions {
       display: flex;
       align-items: center;
@@ -340,106 +403,34 @@ mount(h`
   </form>
 
   <h2>entries</h2>
-  <${defineComponent('journal-entries', () => h`
-    <style>
-      :host {
-        display: block;
-        font-family: system-ui, -apple-system, sans-serif;
-        color: #1c1917;
+  <ol class="entries">
+    ${() => {
+      if (!loggedIn()) {
+        return h`<li class="empty">login above; entries will appear here.</li>`
       }
-      ol {
-        list-style: none;
-        display: flex;
-        flex-direction: column;
-        gap: 1.25rem;
-        padding: 0;
-        margin: 0;
+      dep?.()
+      const entries = myRepo?.get('entries') ?? []
+      if (entries.length === 0) {
+        return h`<li class="empty">no entries yet — write the first one below.</li>`
       }
-      li.entry {
-        padding: 1rem 1.1rem;
-        border: 1px solid #eee;
-        border-radius: 6px;
-        background: white;
-      }
-      li.empty {
-        font-size: 0.88rem;
-        color: #999;
-        font-style: italic;
-        padding: 0.75rem 0;
-      }
-      .entry-headline {
-        font-size: 1.05rem;
-        font-weight: 600;
-        margin-bottom: 0.35rem;
-      }
-      .entry-body {
-        font-size: 0.95rem;
-        line-height: 1.6;
-        color: #333;
-        white-space: pre-wrap;
-      }
-      .entry-meta {
-        display: flex;
-        align-items: baseline;
-        gap: 0.6rem;
-        margin-top: 0.5rem;
-      }
-      .entry-time {
-        font-size: 0.72rem;
-        color: #999;
-        font-variant-numeric: tabular-nums;
-      }
-      .entry-edited {
-        font-size: 0.65rem;
-        color: #999;
-        font-style: italic;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-      .entry-edit-btn {
-        margin-left: auto;
-        background: none;
-        border: none;
-        color: #1d4ed8;
-        font-size: 0.78rem;
-        cursor: pointer;
-        padding: 0;
-        text-decoration: underline dotted;
-        font-family: inherit;
-      }
-      .entry-edit-btn:hover {
-        text-decoration-style: solid;
-      }
-    </style>
-    <ol>
-      ${() => {
-        if (!loggedIn()) {
-          return h`<li class="empty">login above; entries will appear here.</li>`
-        }
-        dep?.()
-        const entries = myRepo?.get('entries') ?? []
-        if (entries.length === 0) {
-          return h`<li class="empty">no entries yet — write the first one below.</li>`
-        }
-        // Group versions by id; latest version per id wins the display.
-        // The full history is still in the repo and visible in the
-        // explorer — this view is the "present" lens.
-        return groupEntries(entries).map(g => h`
-          <li class="entry" data-key=${g.id}>
-            <div class="entry-headline">${g.latest.headline || '(untitled)'}</div>
-            <div class="entry-body">${g.latest.body || ''}</div>
-            <div class="entry-meta">
-              <span class="entry-time">${new Date(g.latest.at).toLocaleString()}</span>
-              ${g.versions.length > 1
-                ? h`<span class="entry-edited">edited · ${g.versions.length} versions</span>`
-                : null}
-              <button class="entry-edit-btn" onclick=${() => () => startEdit(g.latest)}>edit</button>
-            </div>
-          </li>
-        `)
-      }}
-    </ol>
-  `)}/>
+      // Group versions by id; latest version per id wins the display.
+      // The full history is still in the repo and visible in the
+      // explorer — this view is the "present" lens.
+      return groupEntries(entries).map(g => h`
+        <li class="entry" data-key=${g.id}>
+          <div class="entry-headline">${g.latest.headline || '(untitled)'}</div>
+          <div class="entry-body">${g.latest.body || ''}</div>
+          <div class="entry-meta">
+            <span class="entry-time">${new Date(g.latest.at).toLocaleString()}</span>
+            ${g.versions.length > 1
+              ? h`<span class="entry-edited">edited · ${g.versions.length} versions</span>`
+              : null}
+            <button class="entry-edit-btn" onclick=${() => () => startEdit(g.latest)}>edit</button>
+          </div>
+        </li>
+      `)
+    }}
+  </ol>
 
   ${when(loggedIn, h`
     <h2>${() => editing() ? 'edit entry' : 'new entry'}</h2>

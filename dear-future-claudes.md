@@ -82,6 +82,22 @@ unit with its own Recaller and shadow DOM (the typical motivator is
 hot-reload via `componentKey`, or shipping a "stylable widget" that
 travels with its own CSS). For routine page structure, just inline.
 
+**Cross-recaller gotcha.** Each `StreamoComponent` instance gets its
+*own* Recaller. Reactive cells inside the component register their
+watchers against that local recaller. If those cells read signals
+that live on the *outer* (app) recaller — like a module-level
+`loggedIn()` or a `bridgeRegistry`'s `dep()` — the cross-recaller
+subscription doesn't form: the outer recaller fires, but the
+component's watcher never hears it. The component just doesn't
+re-render. The journal app hit this when its entries list lived in
+a `defineComponent` and read `loggedIn()`; entries stayed frozen on
+the logged-out branch even after login flipped. Fix was to pull the
+list back to a function-as-slot in the main mount, where it shares
+the journal's single recaller. Until we build a real bridge from one
+recaller into another (the `bridgeRegistry` pattern is the model),
+keep `defineComponent` for cases that are genuinely self-contained
+— don't reach into app-level signals from inside one.
+
 ## reactivity-only changes don't need component boundaries
 
 If something needs to re-render reactively, a function-as-slot in the

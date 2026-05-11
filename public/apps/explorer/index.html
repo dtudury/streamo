@@ -344,6 +344,51 @@
     .tv-array, .tv-object { color: #1e40af; background: rgba(59, 130, 246, 0.10); }
     .tv-duple  { color: #6b21a8; background: rgba(168, 85, 247, 0.10); }
 
+    /* Three-row byte chart: hex / char / decimal. One column per byte,
+       widths driven by the widest cell so dec values up to 255 align
+       cleanly. Olive on a very-faint olive wash keeps the cat-bytes
+       identity; rows have distinct visual weight so you can pick the
+       layer you're reading (chars for meaning, hex for canonical,
+       decimal for math). Offset column shows on rawChunkSection. */
+    .bytes-chart {
+      display: inline-block;
+      vertical-align: middle;
+      background: rgba(132, 204, 22, 0.06);
+      border: 1px solid rgba(132, 204, 22, 0.18);
+      padding: 0.25rem 0.4rem;
+      border-radius: var(--radius);
+      font-family: monospace;
+      line-height: 1.15;
+    }
+    .bytes-group {
+      border-collapse: collapse;
+      border-spacing: 0;
+    }
+    .bytes-group + .bytes-group { margin-top: 0.25rem; }
+    .bytes-group td, .bytes-group th {
+      padding: 0 0.25rem;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      font-weight: normal;
+    }
+    .bytes-group .hex td  { font-size: 0.78rem; color: #4d7c0f; }
+    .bytes-group .char td.printable { font-size: 0.85rem; color: var(--ink); font-weight: 500; }
+    .bytes-group .char td.nonprint  { font-size: 0.85rem; color: var(--ink-dim); }
+    .bytes-group .dec td  { font-size: 0.65rem; color: var(--ink-dim); }
+    .bytes-group th {
+      color: var(--ink-dim);
+      font-size: 0.7rem;
+      padding-right: 0.6rem;
+      text-align: right;
+      font-weight: normal;
+    }
+    .bytes-group.with-offset .hex th { color: #4d7c0f; }
+    .bytes-chart-more {
+      font-size: 0.75rem;
+      margin-top: 0.3rem;
+      font-style: italic;
+    }
+
     /* Recursive typed-value tree — used for rehydrated views. Composites
        render in two modes: tv-tree-inline (Chrome-console-style, one
        line, used when every child is a primitive and the line fits) and

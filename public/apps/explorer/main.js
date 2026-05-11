@@ -759,7 +759,7 @@ function rawChunkSection (repo, address) {
   if (!bytes || !bytes.length) return null
   return h`
     <h3>chunk bytes <span class="dim">(${bytes.length} bytes ending @${address})</span></h3>
-    <pre class="value mono">${hexDump(bytes)}</pre>
+    ${bytesChart(bytes, { showOffset: true, perRow: 16, max: 512 })}
   `
 }
 
@@ -967,32 +967,10 @@ function typedValue (v, depth = 0) {
     return h`<span class="tv tv-date" title="DATE"><span class="tv-glyph">📅</span><time datetime=${v.toISOString()}>${v.toLocaleString()}</time></span>`
   }
   if (v instanceof Uint8Array) {
-    // Show the bytes themselves, not a "Uint8Array(N)" type-name. For
-    // chunks that hold UTF-8 string fragments, this is "are these the
-    // bytes I'd expect for that text?" answered inline. Printable ASCII
-    // renders as a quoted string; anything with non-printable bytes
-    // falls back to hex. Past MAX bytes, truncate with the full length
-    // pinned at the end. The olive cat-bytes color keeps this visually
-    // distinct from STRING (emerald) even when the content reads the
-    // same.
-    const len = v.length
-    if (len === 0) {
-      return h`<span class="tv tv-bytes" title="EMPTY_UINT8ARRAY">(empty)</span>`
-    }
-    const MAX = 8
-    const slice = v.subarray(0, MAX)
-    const truncated = len > MAX
-    const allPrintable = slice.every(b => b >= 0x20 && b <= 0x7E)
-    let display
-    if (allPrintable) {
-      const str = String.fromCharCode(...slice)
-      display = truncated ? `"${str}…" ${len}b` : `"${str}"`
-    } else {
-      const hex = Array.from(slice, b => b.toString(16).padStart(2, '0')).join(' ')
-      display = truncated ? `${hex}… ${len}b` : hex
-    }
-    const titleText = len <= 4 ? 'WORD or UINT8ARRAY' : 'UINT8ARRAY'
-    return h`<span class="tv tv-bytes" title=${titleText}>${display}</span>`
+    // bytesChart shows hex / char / decimal as three stacked rows,
+    // one column per byte. The chart conveys "this is bytes" by
+    // structure; the old tv-bytes pill wrapper is dropped.
+    return bytesChart(v, { max: 8 })
   }
   if (isDuple(v)) {
     if (depth > 1) return h`<span class="tv tv-duple" title="DUPLE">Duple(…)</span>`
@@ -1029,7 +1007,8 @@ function isInlinablePrimitive (v) {
   if (v === null || v === undefined) return true
   const t = typeof v
   if (t === 'number' || t === 'boolean' || t === 'string') return true
-  if (v instanceof Date || v instanceof Uint8Array) return true
+  if (v instanceof Date) return true
+  // Uint8Array now renders as a multi-row bytes chart — not inlinable.
   return false
 }
 function estimateEntryWidth (k, v, isArray) {
@@ -1040,7 +1019,6 @@ function estimateEntryWidth (k, v, isArray) {
   else if (typeof v === 'number') w += String(v).length
   else if (typeof v === 'string') w += Math.min(v.length, 60) + 2
   else if (v instanceof Date) w += 22
-  else if (v instanceof Uint8Array) w += Math.min(v.length, 8) * 3 + 5
   return w
 }
 
@@ -1332,18 +1310,49 @@ function verifyBadge (status) {
 
 // Hex dump of a chunk's raw bytes. Truncates at maxLen so a giant value
 // chunk doesn't blow up the page.
-function hexDump (bytes, maxLen = 256) {
-  const lines = []
-  const len = Math.min(bytes.length, maxLen)
-  for (let i = 0; i < len; i += 16) {
-    const offset = i.toString(16).padStart(4, '0')
-    const slice = bytes.subarray(i, Math.min(i + 16, len))
-    const hex = Array.from(slice).map(b => b.toString(16).padStart(2, '0')).join(' ')
-    const ascii = Array.from(slice).map(b => (b >= 0x20 && b < 0x7f) ? String.fromCharCode(b) : '·').join('')
-    lines.push(`${offset}  ${hex.padEnd(48)}  ${ascii}`)
+// Three-row byte chart: hex / char / decimal, with each byte in a
+// fixed-width column. Tries to honor "beautifully formatted while
+// also being tight" — monospace, narrow gutters, dim subordinate
+// rows. Used by typedValue for inline Uint8Array previews (8 bytes,
+// no offset) and by rawChunkSection for the full chunk dump
+// (offset column on the left, 16 bytes per group, capped at 256).
+//
+//   ┌──────────────────────────────────────────┐
+//   │     61   6c   69   63   65   20   66  6f │  ← hex (olive)
+//   │      a    l    i    c    e         f   o │  ← char (ink, dim for non-printable)
+//   │     97  108  105   99  101   32  102 111 │  ← decimal (dim, smaller)
+//   └──────────────────────────────────────────┘
+function bytesChart (bytes, options = {}) {
+  const { max = Infinity, perRow = 8, showOffset = false } = options
+  const len = bytes.length
+  if (len === 0) return h`<span class="dim mono">(empty)</span>`
+  const showLen = Math.min(len, max)
+  const slice = bytes.subarray(0, showLen)
+  const truncated = len > showLen
+  const groups = []
+  for (let i = 0; i < slice.length; i += perRow) {
+    groups.push({ offset: i, bytes: slice.subarray(i, Math.min(i + perRow, slice.length)) })
   }
-  if (bytes.length > maxLen) lines.push(`…  (${bytes.length - maxLen} more bytes)`)
-  return lines.join('\n')
+  return h`<div class="bytes-chart">
+    ${groups.map(group => h`<table class=${['bytes-group', showOffset ? 'with-offset' : null]}>
+      <tr class="hex">
+        ${showOffset ? h`<th>${group.offset.toString(16).padStart(4, '0')}</th>` : null}
+        ${[...group.bytes].map(b => h`<td>${b.toString(16).padStart(2, '0')}</td>`)}
+      </tr>
+      <tr class="char">
+        ${showOffset ? h`<th></th>` : null}
+        ${[...group.bytes].map(b => {
+          const printable = b >= 0x20 && b <= 0x7E
+          return h`<td class=${printable ? 'printable' : 'nonprint'}>${printable ? String.fromCharCode(b) : '·'}</td>`
+        })}
+      </tr>
+      <tr class="dec">
+        ${showOffset ? h`<th></th>` : null}
+        ${[...group.bytes].map(b => h`<td>${b}</td>`)}
+      </tr>
+    </table>`)}
+    ${truncated ? h`<div class="bytes-chart-more dim">… +${len - showLen} more bytes</div>` : null}
+  </div>`
 }
 
 // ── Mount ─────────────────────────────────────────────────────────────────

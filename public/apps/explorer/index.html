@@ -304,6 +304,33 @@
       background: var(--flash);
     }
 
+    /* Per-codec reuse breakdown — quiet table under the byte strip
+       showing each codec type's chunk count, total bytes, and dedup
+       leverage. "—" in the leverage column marks chunks that aren't
+       reachable from any commit's data tree (commit + signature
+       chunks by structure — they're graph roots, not reuse candidates). */
+    .reuse-by-type {
+      width: auto;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin: 0.25rem 0 0.75rem;
+    }
+    .reuse-by-type th,
+    .reuse-by-type td {
+      padding: 0.15rem 0.6rem 0.15rem 0;
+      text-align: left;
+      font-weight: normal;
+      font-variant-numeric: tabular-nums;
+    }
+    .reuse-by-type th {
+      color: var(--ink-dim);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .reuse-by-type tbody tr + tr td { border-top: 1px solid var(--rule); }
+    .reuse-by-type td.mono { font-family: monospace; }
+
     .byte-map {
       display: block;
     }

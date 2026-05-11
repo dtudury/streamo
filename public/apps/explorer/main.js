@@ -929,12 +929,29 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   }
   // Snapshot dedup leverage. Used both in the byte-stream <h3>
   // headline (rollup) and inside the inspector slot below (per-chunk
-  // use count). Recomputed on each bridge fire; cheap for normal-sized
-  // repos.
+  // use count). Always shown — even 1.00× tells you something honest
+  // about the repo's state (no reuse yet, or all chunks are unique).
   const reuse = repoReuseStats(repo)
-  const leverageTxt = reuse.leverage > 1.05
-    ? ` · ${reuse.leverage.toFixed(1)}× via reuse`
-    : ''
+  const leverageTxt = ` · ${reuse.leverage.toFixed(2)}× via reuse`
+  // Per-type rollup: for each codec type, sum (chunks, bytes, naive
+  // bytes-if-no-dedup). Chunks not reachable from any commit's data
+  // tree (the graph roots — commit + signature chunks) have leverage
+  // of zero by construction; rendered as "—" rather than "0×" so the
+  // distinction is visible.
+  const byType = new Map()
+  let scanAddr = repo.byteLength - 1
+  while (scanAddr >= 0) {
+    const code = repo.resolve(scanAddr)
+    if (!code || !code.length) break
+    const type = repo.footerToCodec[code.at(-1)]?.type || '?'
+    if (!byType.has(type)) byType.set(type, { type, chunks: 0, bytes: 0, naive: 0 })
+    const e = byType.get(type)
+    e.chunks += 1
+    e.bytes += code.length
+    e.naive += code.length * (reuse.uses.get(scanAddr) ?? 0)
+    scanAddr -= code.length
+  }
+  const typeRows = [...byType.values()].sort((a, b) => b.bytes - a.bytes)
   return h`
     <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks${leverageTxt})</span></h3>
     <div class="byte-strip-container" data-key=${`strip-${keyHex}`} data-strip-w=${stripW}>
@@ -990,12 +1007,12 @@ function byteStreamSection (repo, keyHex, currentAddress) {
         const pct = total > 0
           ? ` (${((inspectorChunk.length / total) * 100).toFixed(2)}% of ${total})`
           : ''
-        // Show reuse count when the chunk is referenced by more than one
-        // commit's data tree — that's the "compounding savings" signal.
+        // Always show the reuse count — 0 means "this chunk isn't in
+        // any commit's data tree" (true for commits + sigs by
+        // structure), 1 means "appears in one commit," >1 means
+        // streamo is saving you (count-1) × bytes by dedup.
         const useCount = reuse.uses.get(inspectorChunk.address) ?? 0
-        const reusePart = useCount > 1
-          ? h` <span class="dim">·</span> in ${useCount} commits`
-          : null
+        const reusePart = h` <span class="dim">·</span> in ${useCount} commit${useCount === 1 ? '' : 's'}`
         inspectorContent = h`<span class=${['codec-chip', `cat-${cat}`]}>${chipLabel}</span> <span class="dim">·</span> @${inspectorChunk.address} <span class="dim">·</span> ${inspectorChunk.length} bytes${pct}${reusePart}`
       } else {
         inspectorContent = `${chunks.length} chunks · ${total} bytes`
@@ -1004,6 +1021,24 @@ function byteStreamSection (repo, keyHex, currentAddress) {
       return h`<div class=${['chunk-inspector', isPeekActive ? 'active' : null]}
                     data-key=${`inspector-${keyHex}`}>${inspectorContent}</div>`
     }}
+    <table class="reuse-by-type">
+      <thead><tr><th>type</th><th>chunks</th><th>bytes</th><th>via reuse</th></tr></thead>
+      <tbody>
+        ${typeRows.map(e => {
+          const cat = e.type === 'OBJECT' ? 'composite' : codecCategory(e.type)
+          const isRoot = e.naive === 0
+          const leverage = isRoot ? null : e.naive / e.bytes
+          return h`
+            <tr data-key=${e.type}>
+              <td><span class=${['codec-chip', `cat-${cat}`]}>${e.type}</span></td>
+              <td class="mono">${e.chunks}</td>
+              <td class="mono">${e.bytes}</td>
+              <td class="mono">${isRoot ? h`<span class="dim">—</span>` : `${leverage.toFixed(2)}×`}</td>
+            </tr>
+          `
+        })}
+      </tbody>
+    </table>
   `
 }
 

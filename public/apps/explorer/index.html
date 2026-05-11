@@ -331,6 +331,28 @@
     .reuse-by-type tbody tr + tr td { border-top: 1px solid var(--rule); }
     .reuse-by-type td.mono { font-family: monospace; }
 
+    /* Per-value economics footer — appears under every value-tab page,
+       showing this value's subtree size, use count, and dedup story.
+       Secondary information: dim by default, numbers in ink, leverage
+       in slightly bolder ink. Dashed top rule to separate from the
+       main value display without competing with content. */
+    .value-economics {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      line-height: 1.6;
+      margin: 1.5rem 0 0.5rem;
+      padding-top: 0.65rem;
+      border-top: 1px dashed var(--rule);
+      font-family: monospace;
+    }
+    .value-economics .num {
+      color: var(--ink);
+      font-weight: 500;
+    }
+    .value-economics .num.leverage {
+      font-weight: 600;
+    }
+
     .byte-map {
       display: block;
     }

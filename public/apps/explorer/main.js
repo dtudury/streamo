@@ -530,6 +530,25 @@ function AtView ({ keyHex }) {
       const isCommit = isCommitShape(decoded)
       const isSig = codecType === 'SIGNATURE'
 
+      // Per-value economics — a small dim footer block for every
+      // value-tab page. Reports the chunk's subtree size (this chunk
+      // + asRefs dependencies), how many commits reference it, and
+      // the resulting naive/streamo cost story. Honest about graph
+      // roots (uses=0): "no reuse possible by construction." Honest
+      // about no-reuse-yet (uses=1): "1.00× — no reuse yet." Only
+      // when uses>1 does the savings narrative kick in.
+      const valueReuse = repoReuseStats(repo)
+      const econ = valueEconomics(repo, contentAddr, valueReuse.uses)
+      const econHead = econ.dependenciesBytes > 0
+        ? h`<span class="num">${econ.chunkBytes}</span> bytes (this chunk) + <span class="num">${econ.dependenciesBytes}</span> in dependencies = <span class="num">${econ.subtreeBytes}</span> total. `
+        : h`<span class="num">${econ.chunkBytes}</span> bytes (this chunk, no asRefs subtree). `
+      const econTail = econ.uses === 0
+        ? h`Not referenced from any commit's data tree — <span class="dim">graph root</span>.`
+        : econ.uses === 1
+          ? h`Used in <span class="num">1</span> commit · <span class="num leverage">1.00×</span> via reuse (no reuse yet).`
+          : h`Used in <span class="num">${econ.uses}</span> commits → naive cost <span class="num">${econ.naiveCost}</span> bytes (<span class="num">${econ.subtreeBytes}</span> × <span class="num">${econ.uses}</span>), saved <span class="num">${econ.savings}</span>. <span class="num leverage">${econ.leverage.toFixed(2)}×</span> via reuse.`
+      const economicsBlock = h`<div class="value-economics">${econHead}${econTail}</div>`
+
       // Storage tab: this chunk's makeup — the chunk-graph tree going
       // DOWN through directReferences (duples surfaced), then the raw
       // bytes of THIS chunk. The previous reachable-from and
@@ -675,6 +694,7 @@ function AtView ({ keyHex }) {
             </table>
           ` : null}
           ${repoExtras(repo, keyHex)}
+          ${economicsBlock}
         `
       }
 
@@ -697,6 +717,7 @@ function AtView ({ keyHex }) {
               <tr><td class="mono">v[1]</td><td>${typedValue(decoded.v[1])}</td></tr>
             </tbody>
           </table>
+          ${economicsBlock}
         `
       }
 
@@ -717,6 +738,7 @@ function AtView ({ keyHex }) {
           ${banner}
           ${sigDetailBody(repo, keyHex, contentAddr, decoded)}
           <div class="dim" style="margin-top: 0.5rem;">switch to the <strong>storage</strong> tab above to see the raw chunk bytes, outgoing references, and what else points at this address.</div>
+          ${economicsBlock}
         `
       }
 
@@ -737,6 +759,7 @@ function AtView ({ keyHex }) {
             <h3>rehydrated</h3>
             <pre class="value">${safeJSON(decoded)}</pre>
           ` : null}
+          ${economicsBlock}
         `
       }
 
@@ -744,6 +767,7 @@ function AtView ({ keyHex }) {
       return h`
         ${kindBanner(codecType.toLowerCase())}
         <pre class="value">${safeJSON(decoded)}</pre>
+        ${economicsBlock}
       `
     }}
   `
@@ -839,6 +863,60 @@ function repoReuseStats (repo) {
   }
   const leverage = actualReusable > 0 ? naiveBytes / actualReusable : 1
   return { uses, naiveBytes, actualReusable, leverage }
+}
+
+// Per-value economics — for the chunk at address A, sum the bytes of
+// its full asRefs subtree (the chunks streamo actually stores to
+// represent A), then combine with A's repo-wide use count to express
+// the "naive vs. actual" story for THIS specific value:
+//
+//   subtree bytes = sum of every chunk reachable from A via asRefs
+//   uses_A        = commits whose data tree includes A
+//   naive cost    = subtree_bytes × uses_A
+//                   ("if every commit re-encoded the whole subtree")
+//   actual cost   = subtree_bytes
+//                   (streamo stores it once and references it after)
+//   leverage      = naive / actual = uses_A
+//
+// Honest about graph roots (uses_A = 0 — commits and signatures): no
+// reuse possible by construction, so the block reports it that way
+// rather than dividing by zero or pretending.
+function valueEconomics (repo, address, uses) {
+  let chunkBytes = 0
+  try { chunkBytes = repo.resolve(address)?.length ?? 0 } catch {}
+  let subtreeBytes = 0
+  const visited = new Set()
+  const stack = [address]
+  while (stack.length) {
+    const a = stack.pop()
+    if (typeof a !== 'number' || visited.has(a)) continue
+    visited.add(a)
+    let code
+    try { code = repo.resolve(a) } catch { continue }
+    if (!code) continue
+    subtreeBytes += code.length
+    let refs
+    try { refs = repo.asRefs(a) } catch {}
+    if (Array.isArray(refs)) {
+      for (const c of refs) if (typeof c === 'number') stack.push(c)
+    } else if (refs && typeof refs === 'object' && !(refs instanceof Date) && !(refs instanceof Uint8Array)) {
+      if (Array.isArray(refs.v)) {
+        for (const c of refs.v) if (typeof c === 'number') stack.push(c)
+      } else {
+        for (const c of Object.values(refs)) if (typeof c === 'number') stack.push(c)
+      }
+    }
+  }
+  const useCount = uses.get(address) ?? 0
+  return {
+    chunkBytes,
+    subtreeBytes,
+    dependenciesBytes: Math.max(0, subtreeBytes - chunkBytes),
+    uses: useCount,
+    naiveCost: subtreeBytes * useCount,
+    savings: useCount > 0 ? subtreeBytes * (useCount - 1) : 0,
+    leverage: useCount  // value-as-a-whole framing: leverage = use count
+  }
 }
 
 // Byte stream as a color-coded SVG strip — every chunk is a rect, color

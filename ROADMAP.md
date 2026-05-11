@@ -370,6 +370,79 @@ motivate the cryptographic work — until then the opportunistic
 verification path is fine, since active repos (the common case) keep
 their bytes warm.
 
+### Service-worker relay (in-browser streamo node)
+
+A streamo node that runs as a service worker inside the browser. Two
+related jobs for one piece of infrastructure:
+
+**Job 1: shared caching across tabs.** One service worker per origin,
+shared by every tab open at that origin. Holds a cache of Repos
+(persisted to IndexedDB for cross-session durability), maintains a
+single upstream WebSocket to the relay server, and fans out updates
+to every tab via `MessageChannel` / `BroadcastChannel`. New tab
+asking for repo K: SW checks its cache → if hot, instant; if cold,
+fetches upstream and streams to the tab while persisting. Survives
+the tab closing; next visit, the cache is warm. Same data model as
+the server-side caching relay (cache + subscribers + upstream + LRU
+budget) — just running where the user is.
+
+**Job 2: serving files from Repos via URL paths.** The SW intercepts
+`fetch` events. A URL pattern like `/streamo/<keyHex>/<path>`
+resolves to "get the Repo at `keyHex`, walk its value tree to
+`<path>`, return the file bytes as the HTTP response." This is
+content-addressed website serving, performed in the browser. The
+"site" is a streamo Repo whose value is a tree of files; the same
+publicKey serves the same content forever, and new author appends
+mean new versions. No origin server is required for static
+serving — the relay only holds the Repo bytes, the SW does the
+HTML/JS/image extraction.
+
+**Boot-time decision: SW or direct WS?** First-time visit to a
+streamo origin won't have an installed SW yet, so the page connects
+WebSocket directly to upstream. After SW installs, future loads go
+through it. A small wrapper that detects "is the SW alive?" and
+chooses between `chrome.serviceWorker.controller.postMessage` and
+`new WebSocket(...)` covers both cases. The streamo client API stays
+the same; the transport is the variable.
+
+**Persistent storage + eviction in the browser.** IndexedDB gives
+durability; browser storage budgets (Chrome ≈ 10% of disk, Safari
+≈ 1 GB) are real ceilings. The SW's eviction policy needs to fit
+within those — LRU over the same total-bytes budget the server-side
+relay uses, with the SW additionally aware that "the user is right
+here" so eviction shouldn't drop the currently-displayed repo even
+if it's not most-recent.
+
+**Three sync channels.** The SW is the node where they meet:
+
+- **Upstream WebSocket** — one connection, many repos multiplexed.
+- **Browser-page socket** — one `MessageChannel` (or `BroadcastChannel`)
+  per tab, fanning out updates the same way the server-side relay
+  fans out to subscribers.
+- **IndexedDB** — the persistent layer; SW writes new chunks as they
+  arrive, reads on cache miss before going upstream.
+
+**Reconnection logic is no longer optional.** A SW lives across tab
+navigations and possibly for hours. Today's `registrySync` doesn't
+reconnect on connection loss — the 20-second keep-alive prevents
+idle close, but a genuine network blip ends the session. The
+service-worker variant needs: detect close → exponential-back-off
+reconnect → resume subscriptions → catch up on missed bytes (each
+repo's known `byteLength` + "send me from offset X"). The relay
+work needs this too; the SW just makes it impossible to defer.
+
+**What this unlocks.** The streamo-backed personal site becomes
+practical: author publishes by writing to their Repo; visitors' SWs
+serve the bytes locally, with the relay as the upstream source of
+record. No central CDN required once content has propagated through
+a few peers; no DNS for any individual site (just `<keyHex>` as
+identity); same identity serves the same content forever.
+
+Substantial project — interacts with the caching-relay design,
+demands reconnection logic, brings in browser-storage budgeting,
+and requires the URL-pattern → Repo-content resolver. Most of the
+pieces are already in flight; this is where they meet.
+
 ### StreamoComponent demos — shared components as content
 
 `StreamoComponent` makes most sense as a post-1.0 story, after chat signing

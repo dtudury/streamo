@@ -186,7 +186,7 @@ poorly; apps and servers carry the practical caps.
 
 ---
 
-## beyond 1.0
+## the longer view
 
 Ideas that follow naturally from the architecture but aren't blocking anything.
 

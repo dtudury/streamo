@@ -401,9 +401,27 @@ HTML/JS/image extraction.
 streamo origin won't have an installed SW yet, so the page connects
 WebSocket directly to upstream. After SW installs, future loads go
 through it. A small wrapper that detects "is the SW alive?" and
-chooses between `chrome.serviceWorker.controller.postMessage` and
-`new WebSocket(...)` covers both cases. The streamo client API stays
-the same; the transport is the variable.
+chooses between `serviceWorker.controller.postMessage` and `new
+WebSocket(...)` covers both cases. The streamo client API stays the
+same; the transport is the variable.
+
+A briefly-patient version of that check is probably the right
+default: give the SW maybe 100ms to register / wake up before
+falling back to direct WS. The wait is invisible when the SW is
+ready (it always wins the race); the wait is also acceptable when
+the SW is genuinely absent because the fallback path stays fast.
+
+**Plain HTTP + localhost is a first-class path, not a degraded
+mode.** Service workers require HTTPS (with `localhost` as the
+explicit dev exception); during normal development against
+`http://localhost:8080` there *is* no SW, and that's fine — the
+direct WebSocket path is fast enough on a loopback connection that
+the SW would barely help. The boot-time wrapper above should fall
+through to direct WS without ceremony on plain-HTTP origins, with
+the SW path being an upgrade on HTTPS deployments rather than a
+prerequisite for the app to function. Supporting plain HTTP isn't a
+compatibility wart; it's the development workflow this project
+actually runs in.
 
 **Persistent storage + eviction in the browser.** IndexedDB gives
 durability; browser storage budgets (Chrome ≈ 10% of disk, Safari

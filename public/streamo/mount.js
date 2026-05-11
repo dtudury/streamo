@@ -60,6 +60,13 @@ export function dismount (root, recaller) {
  * @param {string} [ns]  XML namespace inherited from parent (defaults to XHTML)
  */
 export function mount (nodes, container, recaller, ns = HTML_NS) {
+  // mount() owns its container — clear any pre-existing children
+  // before rendering. This makes the contract predictable: whatever
+  // was in the container before is replaced wholesale. (The earlier
+  // append-only behavior had a footgun: a loading shim in body
+  // would sit stacked above the mounted app forever, because mount
+  // didn't know it was supposed to take over.)
+  for (const child of [...container.childNodes]) child.remove()
   for (const node of [nodes].flat()) {
     mountNode(node, container, recaller, ns)
   }

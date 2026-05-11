@@ -87,12 +87,7 @@ function add (e) {
 }
 
 // ── mount ────────────────────────────────────────────────────────────
-//
-// mount() appends to its container; it doesn't clear. Wipe the
-// loading shim out of body first, otherwise it sits stacked above
-// the mounted app forever. (See dear-future-claudes.md.)
 
-document.body.innerHTML = ''
 mount(h`
   <style>
     *, *::before, *::after {

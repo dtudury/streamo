@@ -1,8 +1,8 @@
 // journal — minimal viable writing surface on streamo.
 //
-// The whole page is mounted via a single `h` template at the bottom
-// of this file. The HTML at boot is just a loading shim; everything
-// you see in the running app comes from this script.
+// The entire page lives in one `mount(h\`...\`, document.body, recaller)`
+// call near the bottom of this file. The HTML at boot is just a loading
+// shim; everything you see in the running app comes from this script.
 //
 // ── indenting convention ─────────────────────────────────────────────
 //
@@ -23,16 +23,7 @@
 //   5. Multi-line arrow functions in `${}` follow the same shape as
 //      function calls.
 //
-// The result reads like nested HTML at the outer level and like
-// nested JS at the inner level, without either fighting the other.
-//
 // ── helpers ──────────────────────────────────────────────────────────
-//
-// Each helper returns a function that mount treats as a reactive slot.
-// The condition function is read inside the slot, so reactive signals
-// it touches trigger re-renders. The vnode arguments are kept by
-// reference — the helpers swap which one mount renders rather than
-// rebuilding templates.
 
 import { h }              from '/streamo/h.js'
 import { mount }          from '/streamo/mount.js'
@@ -48,17 +39,6 @@ import { bytesToHex }     from '/streamo/utils.js'
 // false and re-mounts the same reference on true (with the usual
 // watcher cleanup in between).
 const when = (cond, vnode) => () => cond() ? vnode : null
-
-// `showIfElse(cond, a, b)` — swap between two pre-built vnode trees
-// based on cond(). Both trees are kept around; mount swaps which
-// one is rendered when cond flips.
-const showIfElse = (cond, a, b) => () => cond() ? a : b
-
-// `each(list, fn)` — map a reactive array into vnodes. `list` is a
-// function returning the current array (so reading reactive deps
-// inside it triggers re-renders); `fn(item, index)` returns the
-// vnode for each item.
-const each = (list, fn) => () => list().map(fn)
 
 // ── app-level state ──────────────────────────────────────────────────
 
@@ -77,17 +57,26 @@ const setLoggedIn = () => {
   recaller.reportKeyMutation(loginSig, 'in')
 }
 
-// Populated by start() before setLoggedIn fires.
+// Populated by `login` before setLoggedIn fires.
 let myRepo, myKey, dep
 
-// ── boot + actions ───────────────────────────────────────────────────
+// ── handlers ─────────────────────────────────────────────────────────
+//
+// Each handler receives the DOM Event from the form it's attached to.
+// `e.target` is the <form>; `e.target.elements.<name>` is the named
+// input inside it. preventDefault on submit keeps the page from
+// reloading.
 
-async function start () {
-  const username = document.getElementById('username').value.trim()
-  const password = document.getElementById('password').value.trim()
-  if (!username || !password) return
-  document.getElementById('username').disabled = true
-  document.getElementById('password').disabled = true
+async function login (e) {
+  e.preventDefault()
+  const f = e.target
+  const usernameEl = f.elements.username
+  const passwordEl = f.elements.password
+  const username = usernameEl.value.trim()
+  const password = passwordEl.value.trim()
+  if (!username) { usernameEl.focus(); return }
+  if (!password) { passwordEl.focus(); return }
+  usernameEl.disabled = passwordEl.disabled = true
 
   // Identity: deterministic keypair from credentials.
   const signer = new Signer(username, password, 1)
@@ -102,29 +91,55 @@ async function start () {
   myRepo = await registry.open(myKey)
   myRepo.attachSigner(signer, 'journal')
 
-  // Wire the repo's chunk-level signal onto our app recaller.
+  // Wire repo chunk-level signals onto our app recaller.
   dep = bridgeRegistry(registry, recaller, 'journal').dep
 
-  // Flip the login signal — every slot that reads loggedIn() re-runs.
+  // Flip the login signal — every slot that reads loggedIn() re-runs,
+  // bringing the new-entry form and explorer link into the page.
   setLoggedIn()
 }
 
-function publish () {
-  const headlineEl = document.getElementById('headline-input')
-  const bodyEl     = document.getElementById('body-input')
+function publish (e) {
+  e.preventDefault()
+  const f = e.target
+  const headlineEl = f.elements.headline
+  const bodyEl     = f.elements.body
   const headline   = headlineEl.value.trim()
   const body       = bodyEl.value.trim()
   if (!headline && !body) return
-  headlineEl.value = ''
-  bodyEl.value     = ''
   const entries = myRepo.get('entries') ?? []
   const preview = headline || body.slice(0, 40)
   myRepo.defaultMessage = `entry: "${preview.slice(0, 40)}${preview.length > 40 ? '…' : ''}"`
   myRepo.set({ entries: [...entries, { headline, body, at: new Date() }] })
+  headlineEl.value = ''
+  bodyEl.value = ''
   headlineEl.focus()
 }
 
-// ── styles (lives in <body> via the mounted template) ───────────────
+// ── reactive list ────────────────────────────────────────────────────
+//
+// Reads `dep()` (bridge fires) and `loggedIn()` (empty-state copy).
+// Returns either a single empty-state <li> or the entries newest-first.
+
+const entriesList = () => {
+  if (!loggedIn()) {
+    return h`<li class="empty">login above; entries will appear here.</li>`
+  }
+  dep?.()
+  const entries = myRepo?.get('entries') ?? []
+  if (entries.length === 0) {
+    return h`<li class="empty">no entries yet — write the first one below.</li>`
+  }
+  return entries.slice().reverse().map(e => h`
+    <li class="entry" data-key=${+e.at}>
+      <div class="entry-headline">${e.headline || '(untitled)'}</div>
+      <div class="entry-body">${e.body || ''}</div>
+      <div class="entry-time">${new Date(e.at).toLocaleString()}</div>
+    </li>
+  `)
+}
+
+// ── styles (ship inside the mounted <body> via the template) ────────
 
 const css = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
@@ -142,6 +157,8 @@ const css = `
   .login input { padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 6px; font-size: 1rem; font-family: monospace }
   .login input:focus { outline: none; border-color: #1d4ed8 }
   .login input:disabled { background: #f9f9f9 }
+  .login button { padding: 0.55rem 1.1rem; background: #1d4ed8; color: white; border: none; border-radius: 6px; font-size: 0.95rem; cursor: pointer; font-family: inherit; align-self: flex-start }
+  .login button:hover { opacity: 0.88 }
   .entries { list-style: none; display: flex; flex-direction: column; gap: 1.25rem }
   .entry { padding: 1rem 1.1rem; border: 1px solid #eee; border-radius: 6px; background: white }
   .entry-headline { font-size: 1.05rem; font-weight: 600; margin-bottom: 0.35rem }
@@ -158,103 +175,40 @@ const css = `
   .explorer-link:hover { border-bottom-style: solid }
 `
 
-// ── pre-built vnode fragments ────────────────────────────────────────
-//
-// These are h-templates evaluated once at module load. Helpers like
-// `when(...)` pass them around by reference; mount swaps which one
-// is rendered as conditions flip, but the vnode objects themselves
-// aren't rebuilt.
+// ── mount ────────────────────────────────────────────────────────────
 
-const brandHeader = h`
+mount(h`
+  <style>${css}</style>
   <h1>
     <a class="brand-lockup" href="/" title="streamo home">
       <img src="/streamo.svg" alt="">streamo
     </a>
     <span class="page-title">journal</span>
   </h1>
-`
-
-const loginForm = h`
-  <h2>identity</h2>
-  <div class="login">
-    <input id="username" placeholder="username" autocomplete="username">
-    <input id="password" type="password" placeholder="password" autocomplete="current-password">
-  </div>
-`
-
-const newEntryForm = h`
-  <h2>new entry</h2>
-  <div class="new-entry">
-    <input id="headline-input" placeholder="title">
-    <textarea id="body-input" placeholder="what happened?"></textarea>
-    <button data-action="publish">publish</button>
-  </div>
-`
-
-// The explorer link's href depends on myKey, which isn't known
-// until after login. The cell inside `href=${() => ...}` runs at
-// mount time (which is after the login flip), so myKey is set when
-// it evaluates.
-const explorerLink = h`
-  <a class="explorer-link" href=${() => `/apps/explorer/#/repo/${myKey ?? ''}`}>
-    see this journal in the explorer →
-  </a>
-`
-
-const emptyEntry = h`<li class="empty">login above; entries will appear here.</li>`
-const noEntries  = h`<li class="empty">no entries yet — write the first one below.</li>`
-
-// Entries list — reactive on the bridge signal (chunks arriving)
-// and on the login signal (empty-state copy differs). Newest first.
-const entriesList = () => {
-  dep?.()
-  if (!loggedIn()) return emptyEntry
-  const entries = myRepo?.get('entries') ?? []
-  if (entries.length === 0) return noEntries
-  return entries.slice().reverse().map(e => h`
-    <li class="entry" data-key=${+e.at}>
-      <div class="entry-headline">${e.headline || '(untitled)'}</div>
-      <div class="entry-body">${e.body || ''}</div>
-      <div class="entry-time">${new Date(e.at).toLocaleString()}</div>
-    </li>
-  `)
-}
-
-// ── mount ────────────────────────────────────────────────────────────
-//
-// One mount call brings the whole app to life. The <style> ships
-// inside the template so it travels with the markup; the loading
-// content in body is replaced wholesale at first render.
-
-mount(h`
-  <style>${css}</style>
-  ${brandHeader}
   <p class="tagline">A minimal journaling surface. Each entry is a signed commit on your own streamo Repo — yours forever, append-only, replayable in the explorer.</p>
-  ${loginForm}
+
+  <h2>identity</h2>
+  <form class="login" onsubmit=${() => login}>
+    <input name="username" placeholder="username" autocomplete="username">
+    <input name="password" type="password" placeholder="password" autocomplete="current-password">
+    <button>sign in</button>
+  </form>
+
   <h2>entries</h2>
   <ol class="entries">${entriesList}</ol>
-  ${when(loggedIn, newEntryForm)}
-  ${when(loggedIn, explorerLink)}
+
+  ${when(loggedIn, h`
+    <h2>new entry</h2>
+    <form class="new-entry" onsubmit=${() => publish}>
+      <input name="headline" placeholder="title">
+      <textarea name="body" placeholder="what happened?"></textarea>
+      <button>publish</button>
+    </form>
+  `)}
+
+  ${when(loggedIn, h`
+    <a class="explorer-link" href=${() => `/apps/explorer/#/repo/${myKey ?? ''}`}>
+      see this journal in the explorer →
+    </a>
+  `)}
 `, document.body, recaller)
-
-// ── event delegation ─────────────────────────────────────────────────
-//
-// One listener at the root handles every interactive moment in the
-// app — Enter-to-advance, Cmd/Ctrl-Enter to publish, clicks on
-// data-action elements. Keeping handlers OFF individual elements
-// means the helpers above stay free to swap their vnodes in and out
-// without re-binding.
-
-document.body.addEventListener('keydown', e => {
-  if (e.key !== 'Enter') return
-  const id = e.target?.id
-  const meta = e.metaKey || e.ctrlKey
-  if (id === 'username') { e.preventDefault(); document.getElementById('password').focus() }
-  else if (id === 'password') { e.preventDefault(); start() }
-  else if (id === 'headline-input' && !meta) { e.preventDefault(); document.getElementById('body-input').focus() }
-  else if ((id === 'headline-input' || id === 'body-input') && meta) { e.preventDefault(); publish() }
-})
-
-document.body.addEventListener('click', e => {
-  if (e.target.closest('[data-action="publish"]')) publish()
-})

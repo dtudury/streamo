@@ -18,8 +18,11 @@ after any meaningful change — not as an afterthought, but as part of the work:
   the README's framing
 - **`package.json`** — version, name (`@dtudury/streamo`), description, and keywords;
   version bumps immediately after the user says they've published
-- **`ROADMAP.md`** — public on GitHub; mark items done when they ship, update "start
-  here" to the next priority, keep the "toward 1.0" list current
+- **`ROADMAP.md`** — public on GitHub; future-focused — what's next + known limitations
+  + beyond 1.0. Move items done into CHANGELOG; keep the menu of future threads current
+- **`CHANGELOG.md`** — public on GitHub; release-by-release narrative history.
+  When a version ships, move the "where we are" entry from ROADMAP into a new top
+  section here
 
 Stale public-facing docs erode trust faster than bugs do.
 

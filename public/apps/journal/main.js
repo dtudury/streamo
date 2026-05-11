@@ -98,6 +98,10 @@ function publish (e) {
 // encapsulation is wanted or when `componentKey(prefix, address)`
 // generates a fresh element name per content version (hot-reload).
 
+// mount() appends to its container; it doesn't clear. Wipe the
+// loading shim out of body first, otherwise it sits stacked above
+// the mounted app forever. (See dear-future-claudes.md.)
+document.body.innerHTML = ''
 mount(h`
   <style>
     *, *::before, *::after {

@@ -34,8 +34,13 @@ seeing the page's structure in one place. For streamo apps that means:
   fragment the markup itself.
 - `index.html` can be a minimal shim — `<head>` with the
   `<script type="module">` tag (deferred by default), `<body>` with
-  a styled loading message. The mount call replaces the body content
-  at first render.
+  a styled loading message. **Wipe the body before the mount call** —
+  `mount()` appends to its container, it doesn't clear; without the
+  wipe the loading shim sits stacked above the mounted app forever.
+  The pattern:
+
+      document.body.innerHTML = ''
+      mount(h\`…\`, document.body, recaller)
 
 The journal app at `public/apps/journal/main.js` is the worked
 example. If you see another app drift from this shape and the human

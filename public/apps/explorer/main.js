@@ -967,7 +967,32 @@ function typedValue (v, depth = 0) {
     return h`<span class="tv tv-date" title="DATE"><span class="tv-glyph">📅</span><time datetime=${v.toISOString()}>${v.toLocaleString()}</time></span>`
   }
   if (v instanceof Uint8Array) {
-    return h`<span class="tv tv-bytes" title=${v.length === 0 ? 'EMPTY_UINT8ARRAY' : (v.length <= 4 ? 'WORD or UINT8ARRAY' : 'UINT8ARRAY')}>Uint8Array(${v.length})</span>`
+    // Show the bytes themselves, not a "Uint8Array(N)" type-name. For
+    // chunks that hold UTF-8 string fragments, this is "are these the
+    // bytes I'd expect for that text?" answered inline. Printable ASCII
+    // renders as a quoted string; anything with non-printable bytes
+    // falls back to hex. Past MAX bytes, truncate with the full length
+    // pinned at the end. The olive cat-bytes color keeps this visually
+    // distinct from STRING (emerald) even when the content reads the
+    // same.
+    const len = v.length
+    if (len === 0) {
+      return h`<span class="tv tv-bytes" title="EMPTY_UINT8ARRAY">(empty)</span>`
+    }
+    const MAX = 8
+    const slice = v.subarray(0, MAX)
+    const truncated = len > MAX
+    const allPrintable = slice.every(b => b >= 0x20 && b <= 0x7E)
+    let display
+    if (allPrintable) {
+      const str = String.fromCharCode(...slice)
+      display = truncated ? `"${str}…" ${len}b` : `"${str}"`
+    } else {
+      const hex = Array.from(slice, b => b.toString(16).padStart(2, '0')).join(' ')
+      display = truncated ? `${hex}… ${len}b` : hex
+    }
+    const titleText = len <= 4 ? 'WORD or UINT8ARRAY' : 'UINT8ARRAY'
+    return h`<span class="tv tv-bytes" title=${titleText}>${display}</span>`
   }
   if (isDuple(v)) {
     if (depth > 1) return h`<span class="tv tv-duple" title="DUPLE">Duple(…)</span>`
@@ -1015,7 +1040,7 @@ function estimateEntryWidth (k, v, isArray) {
   else if (typeof v === 'number') w += String(v).length
   else if (typeof v === 'string') w += Math.min(v.length, 60) + 2
   else if (v instanceof Date) w += 22
-  else if (v instanceof Uint8Array) w += 12 + String(v.length).length
+  else if (v instanceof Uint8Array) w += Math.min(v.length, 8) * 3 + 5
   return w
 }
 

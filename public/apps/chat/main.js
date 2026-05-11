@@ -13,16 +13,49 @@ function fmt (ts) {
   return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-function Msg ({ name, text, at, mine }) {
+// Stable hue derived from a publicKey hex — same key always renders in
+// the same color, everywhere, for everyone. The streamo answer to
+// "how do I tell who's talking?" is identity-as-color: your color is
+// derived from the same keypair that signs your messages. Avoids the
+// 30-60° band (greens/yellows that read poorly on light backgrounds)
+// by stretching into a 300° usable range centered on blues/purples/
+// reds/oranges.
+function hueForKey (keyHex) {
+  let h = 0
+  for (let i = 0; i < keyHex.length; i++) h = (h * 31 + keyHex.charCodeAt(i)) >>> 0
+  return (h % 300 + 30) % 360
+}
+
+// Group label for a date — "today" / "yesterday" / weekday for the
+// current week / locale-formatted for older messages. Used by the
+// date-separator inserts in the message list.
+function dateLabel (d) {
+  const now = new Date()
+  const startOfDay = (x) => { const c = new Date(x); c.setHours(0,0,0,0); return c.getTime() }
+  const today = startOfDay(now)
+  const that  = startOfDay(d)
+  const dayMs = 86400000
+  const diff  = (today - that) / dayMs
+  if (diff === 0) return 'today'
+  if (diff === 1) return 'yesterday'
+  if (diff > 1 && diff < 7) return d.toLocaleDateString(undefined, { weekday: 'long' })
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: now.getFullYear() === d.getFullYear() ? undefined : 'numeric' })
+}
+
+function Msg ({ name, text, at, mine, hue }) {
   // +at coerces both Date and number to ms — stable key across old (number)
   // and new (Date) message records as we transition.
   return h`
-    <div class=${['msg', mine ? 'mine' : 'theirs']} data-key=${+at}>
+    <div class=${['msg', mine ? 'mine' : 'theirs']} data-key=${+at} style=${`--peer-hue: ${hue}`}>
       ${!mine ? h`<div class="sender">${name}</div>` : null}
       <div class="text">${text}</div>
       <div class="time">${fmt(at)}</div>
     </div>
   `
+}
+
+function DateSep ({ label, dayKey }) {
+  return h`<div class="date-sep" data-key=${`date-${dayKey}`}>${label}</div>`
 }
 
 const loginEl  = document.getElementById('login')
@@ -78,6 +111,10 @@ joinBtn.onclick = async () => {
     loginEl.style.display = 'none'
     chatEl.style.display  = 'flex'
     document.getElementById('my-name').textContent = `(${username})`
+    // Light up my-swatch with my own hue — the same color my messages
+    // wear in the stream. Done via a CSS custom property on the chat
+    // root so the swatch's hsl() expression picks it up.
+    document.getElementById('chat').style.setProperty('--my-hue', hueForKey(myKey))
 
     // ── Reactive message list ──────────────────────────────────────────────
     //
@@ -108,12 +145,31 @@ joinBtn.onclick = async () => {
         for (const msg of repo.get('messages') ?? []) {
           const text = typeof msg === 'string' ? msg : msg?.text ?? String(msg)
           const at   = msg?.at ?? 0
-          all.push({ name, text, at, mine: keyHex === myKey })
+          all.push({ name, text, at, mine: keyHex === myKey, hue: hueForKey(keyHex) })
         }
       }
-      all.sort((a, b) => a.at - b.at)
-      return all.map(({ name, text, at, mine }) =>
-        h`<${Msg} name=${name} text=${text} at=${at} mine=${mine}/>`)
+      all.sort((a, b) => (+a.at) - (+b.at))
+      if (all.length === 0) {
+        return h`<div class="empty-state" data-key="empty">
+          <strong>this room is quiet.</strong><br>
+          send a message to start the conversation.
+        </div>`
+      }
+      // Walk in order, emitting a date separator whenever the day rolls
+      // over. dayKey is YYYY-MM-DD so the data-key stays stable for
+      // mount's recycling.
+      const nodes = []
+      let lastDay = null
+      for (const m of all) {
+        const d = new Date(+m.at)
+        const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+        if (dayKey !== lastDay) {
+          nodes.push(h`<${DateSep} label=${dateLabel(d)} dayKey=${dayKey}/>`)
+          lastDay = dayKey
+        }
+        nodes.push(h`<${Msg} name=${m.name} text=${m.text} at=${m.at} mine=${m.mine} hue=${m.hue}/>`)
+      }
+      return nodes
     }}`, msgsEl, recaller)
 
     // ── Send ────────────────────────────────────────────────────────────────

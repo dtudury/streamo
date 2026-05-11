@@ -7,7 +7,7 @@
   <link rel="icon" type="image/svg+xml" href="/streamo.svg">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
-    :root { font-family: system-ui, sans-serif; font-size: 15px; --bg: #f5f5f5; --surface: #fff; --accent: #0070f3; --border: #ddd }
+    :root { font-family: system-ui, sans-serif; font-size: 15px; --bg: #f5f5f5; --surface: #fff; --accent: #1d4ed8; --border: #ddd }
     body { background: var(--bg); height: 100dvh; display: flex; align-items: center; justify-content: center }
 
     /* Brand lockup: clickable mark + wordmark linking home, with a
@@ -32,13 +32,36 @@
     #chat { display: none; flex-direction: column; width: min(600px, 100vw); height: 100dvh; background: var(--surface) }
     #chat-header { padding: .75rem 1rem; border-bottom: 1px solid var(--border); font-weight: 600; font-size: .95rem; display: flex; gap: .5rem; align-items: center }
     #chat-header span { font-size: .75rem; font-weight: 400; color: #888 }
-    #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .5rem }
-    .msg { max-width: 75%; padding: .5rem .75rem; border-radius: 10px; line-height: 1.4; word-break: break-word }
-    .msg.mine { align-self: flex-end; background: var(--accent); color: #fff; border-bottom-right-radius: 3px }
-    .msg.theirs { align-self: flex-start; background: #f0f0f0; border-bottom-left-radius: 3px }
-    .msg .sender { font-size: .7rem; font-weight: 600; margin-bottom: .2rem; opacity: .7 }
+    /* My color swatch in the header — a small chip that matches the
+       accent strip on my own messages. Identity-as-color, deterministic
+       from publicKey. */
+    #my-swatch { display: inline-block; width: .65rem; height: .65rem; border-radius: 2px; background: hsl(var(--my-hue, 220), 55%, 45%); margin-left: .15rem }
+    #messages { flex: 1; overflow-y: auto; padding: 1rem; display: flex; flex-direction: column; gap: .35rem }
+
+    /* Message bubbles. Every sender has a stable hue derived from their
+       publicKey — same key always renders in the same color, deterministic.
+       Visual identity = cryptographic identity. Position (left/right)
+       carries the mine-vs-theirs cue; color carries the whose-specifically
+       cue. Background stays white so the page reads calm; the per-user
+       color appears as an accent strip on one edge and as the sender
+       label's color. */
+    .msg { max-width: 75%; padding: .45rem .7rem; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; line-height: 1.4; word-break: break-word }
+    .msg.mine { align-self: flex-end; border-bottom-right-radius: 3px; border-right: 3px solid hsl(var(--peer-hue, 220), 55%, 45%) }
+    .msg.theirs { align-self: flex-start; border-bottom-left-radius: 3px; border-left: 3px solid hsl(var(--peer-hue, 220), 55%, 45%) }
+    .msg .sender { font-size: .7rem; font-weight: 600; margin-bottom: .2rem; color: hsl(var(--peer-hue, 220), 55%, 35%) }
     .msg .text { font-size: .95rem }
     .msg .time { font-size: .65rem; opacity: .5; margin-top: .2rem; text-align: right }
+
+    /* Date separator between messages from different days. Quiet center
+       label, hairlines on either side. */
+    .date-sep { display: flex; align-items: center; gap: .6rem; margin: .5rem 0 .25rem; font-size: .7rem; color: #999; text-transform: uppercase; letter-spacing: .08em }
+    .date-sep::before, .date-sep::after { content: ''; flex: 1; height: 1px; background: var(--border) }
+
+    /* Empty state when the room has no messages from anyone (including you).
+       Soft, centered, just enough hint to encourage the first message. */
+    .empty-state { margin: auto; text-align: center; color: #888; font-size: .85rem; padding: 2rem; line-height: 1.6 }
+    .empty-state strong { color: #555 }
+
     #input-row { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--border) }
     #msg-input { flex: 1; border: 1px solid var(--border); border-radius: 20px; padding: .5rem 1rem; font-size: .95rem; outline: none }
     #msg-input:focus { border-color: var(--accent) }
@@ -64,6 +87,7 @@
     <a class="brand-lockup" href="/" title="streamo home"><img src="/streamo.svg" alt="">streamo</a>
     <span class="page-title">chat</span>
     <span id="my-name"></span>
+    <span id="my-swatch" title="your color — derived from your key"></span>
   </div>
   <div id="messages"></div>
   <div id="input-row">

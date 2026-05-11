@@ -395,12 +395,14 @@ mount(h`
   </h1>
   <p class="tagline">A minimal journaling surface. Each entry is a signed commit on your own streamo Repo — yours forever, append-only, replayable in the explorer.</p>
 
-  <h2>identity</h2>
-  <form class="login" onsubmit=${() => login}>
-    <input name="username" placeholder="username" autocomplete="username">
-    <input name="password" type="password" placeholder="password" autocomplete="current-password">
-    <button>sign in</button>
-  </form>
+  ${when(() => !loggedIn(), h`
+    <h2>identity</h2>
+    <form class="login" onsubmit=${() => login}>
+      <input name="username" placeholder="username" autocomplete="username">
+      <input name="password" type="password" placeholder="password" autocomplete="current-password">
+      <button>sign in</button>
+    </form>
+  `)}
 
   <h2>entries</h2>
   <ol class="entries">

@@ -543,6 +543,93 @@ A natural extension: if a Claude scratchpad includes a `StreamoComponent` for
 how its notes render, other people see those notes in Claude's own layout. The
 presentation travels with the content — no server controls the framing.
 
+### Caching relay server
+
+A streamo proxy that doesn't hold every repo in memory. The model is
+simple enough to be worth pinning before it ages out: per `(publicKey,
+name)`, hold raw bytes + a list of subscribers + an upstream connection.
+Bytes flow both directions through the same data structure — upstream
+appends propagate down to local subscribers, client writes propagate up
+to the upstream server. When total cached bytes exceed a budget, evict
+the least-recently-active repo (with no current subscribers). A new
+subscriber for an evicted repo triggers a fresh fetch from upstream,
+which may in turn evict something else. The proxy never decodes
+chunks — streamo's content-addressed signed design lets clients verify
+integrity themselves, so the proxy is dumb-pipe infrastructure.
+
+Asymmetric trust is the key property. We trust the upstream we picked
+not to send us garbage; we don't trust the clients connecting to us
+(anyone can). So reads pass through unverified, but client writes get
+verified before being forwarded upstream — protecting upstream from
+being DDoS-amplified through us. Verification needs the bytes the
+signature covers, so it works opportunistically: warm cache → verify
+locally, cold cache → forward unverified and let upstream be the
+authority. Graceful degradation, no thundering-herd of pointless
+re-fetches just to verify a write we're about to forward.
+
+Roughly 300-500 lines on top of `registrySync`'s existing transport.
+The first version uses static upstream config — one URL listed at
+startup. Multi-upstream selection ("knows who to ask for what") becomes
+interesting only past one upstream: for 2-5 in a gossip mesh, "ask all,
+take first" works; for many, consistent hashing on the repo identity.
+
+Known complexities, in roughly the order they'd bite:
+
+- **Re-fetch atomicity** — the LRU eviction candidate might be the
+  very repo we're currently mid-fetching. Need a "fetching, don't
+  evict" lock.
+- **Cold-start thundering herd** — process restart with 1000 clients
+  reconnecting at once means 1000 simultaneous upstream fetches.
+  Stagger or rate-limit.
+- **Subscriber resume across cache state changes** — a client at
+  byte 500 disconnects, comes back to find we're at byte 1500 or
+  have evicted entirely. Protocol needs both "here's 500..now" and
+  "your offset is gone, re-fetch."
+- **Repos bigger than budget** — a single repo that exceeds the
+  cache budget can't be cached at all. Options: refuse, stream-
+  through without caching, or move to chunk-level sparse storage
+  (the deeper version not described here).
+- **Optimistic vs buffered fanout on writes** — if a client's write
+  is propagated to other local subscribers before upstream acks, an
+  upstream rejection creates a fork. Buffer-then-fanout costs one
+  round trip, avoids the problem entirely.
+
+What we already get right by streamo's design: signed chunks mean a
+malicious proxy can't lie undetectably; append-only means cached bytes
+never go stale (no invalidation problem — most caching systems' hardest
+half); the protocol is "send me from offset X" and that's the whole
+surface.
+
+### Stream-commitment cryptography
+
+The opportunistic-verification fallback in the caching relay above
+exists because verifying a streamo signature requires the bytes the
+signature covers — which the proxy might have evicted. A natural way
+out: maintain a small (logarithmic-or-constant-size) **accumulator**
+over the byte stream, and have signatures sign the accumulator rather
+than a raw byte range. Then verifying a new signed write needs only
+the accumulator + the new chunks + the signature — no historical
+bytes, ever.
+
+This is well-trodden cryptographic territory — Merkle Mountain Ranges,
+certificate-transparency-style append-only log commitments, RFC 6962,
+and several published designs all hit this shape. The trade is one
+extra small commitment per signed range; signing becomes "hash new
+chunks into the running summary, sign the summary"; verification stays
+small constant work.
+
+Effect on the caching relay: write verification becomes fully stateless,
+no cache caveat. Effect on regular clients: a slightly different sig
+chunk format, with the accumulator state baked in. Effect on streamo's
+data model: additive, not breaking — existing streams could carry the
+new commitment alongside the existing signature, with a codec version
+bump.
+
+Its own project. Worth doing once the caching relay is real enough to
+motivate the cryptographic work — until then the opportunistic
+verification path is fine, since active repos (the common case) keep
+their bytes warm.
+
 ### StreamoComponent demos — shared components as content
 
 `StreamoComponent` makes most sense as a post-1.0 story, after chat signing

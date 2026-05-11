@@ -405,20 +405,24 @@ chooses between `serviceWorker.controller.postMessage` and `new
 WebSocket(...)` covers both cases. The streamo client API stays the
 same; the transport is the variable.
 
-A briefly-patient version of that check is probably the right
-default: give the SW maybe 100ms to register / wake up before
-falling back to direct WS. The wait is invisible when the SW is
-ready (it always wins the race); the wait is also acceptable when
-the SW is genuinely absent because the fallback path stays fast.
+A briefly-patient version of the check (give the SW ~100ms to
+register / wake up before falling back to direct WS) is plausible
+but a minor optimization, not load-bearing. The user has had
+unreliable results with the localhost-HTTP-SW exception in
+practice; on plain-HTTP origins the wait is pure latency with no
+upside, so skip it entirely. On HTTPS origins where SW genuinely
+might be coming up, a small wait may be worthwhile — easy to test
+when we get there.
 
 **Plain HTTP + localhost is a first-class path, not a degraded
-mode.** Service workers require HTTPS (with `localhost` as the
-explicit dev exception); during normal development against
-`http://localhost:8080` there *is* no SW, and that's fine — the
-direct WebSocket path is fast enough on a loopback connection that
-the SW would barely help. The boot-time wrapper above should fall
-through to direct WS without ceremony on plain-HTTP origins, with
-the SW path being an upgrade on HTTPS deployments rather than a
+mode.** Service workers require HTTPS in spec; localhost is
+*supposed* to be an exception, but in practice that exception has
+been spotty enough that we shouldn't lean on it. During development
+against `http://localhost:8080` we treat "no SW" as the normal
+case — the direct WebSocket path is fast enough on a loopback
+connection that the SW wouldn't help much anyway. The boot-time
+wrapper falls through to direct WS immediately on plain-HTTP
+origins. The SW path is an upgrade on real HTTPS deployments, not a
 prerequisite for the app to function. Supporting plain HTTP isn't a
 compatibility wart; it's the development workflow this project
 actually runs in.

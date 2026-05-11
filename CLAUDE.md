@@ -23,6 +23,10 @@ after any meaningful change — not as an afterthought, but as part of the work:
 - **`CHANGELOG.md`** — public on GitHub; release-by-release narrative history.
   When a version ships, move the "where we are" entry from ROADMAP into a new top
   section here
+- **`dear-future-claudes.md`** — style preferences the partner has named clearly,
+  written as notes from one Claude session to the next. Check it when starting
+  new code — it's where the "h-templates inline, forms with onsubmit, mount the
+  whole body" convention lives. Add to it when a new preference is named
 
 Stale public-facing docs erode trust faster than bugs do.
 

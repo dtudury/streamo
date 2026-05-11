@@ -5,92 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>streamo · hello</title>
   <link rel="icon" type="image/svg+xml" href="/streamo.svg">
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
-    :root { font-family: system-ui, -apple-system, sans-serif; font-size: 15px; color: #1c1917 }
-    body { max-width: 36rem; margin: 0 auto; padding: 2.5rem 1.25rem; line-height: 1.5 }
-
-    /* Brand lockup — same pattern as the other apps. */
-    .brand-lockup { display: inline-flex; align-items: center; gap: .4rem; color: inherit; text-decoration: none; font-weight: 600; font-size: 1.4rem }
-    .brand-lockup img { width: 1.6rem; height: 1.6rem }
-    .brand-lockup:hover { opacity: 0.85 }
-    .page-title { font-weight: 400; color: #888; letter-spacing: .04em; font-size: 0.9rem; margin-left: 0.5rem }
-    .page-title::before { content: '· '; opacity: 0.5 }
-    h1 { display: flex; align-items: baseline; margin-bottom: 0.4rem }
-
-    .tagline { color: #666; font-size: 0.92rem; margin-bottom: 0.4rem }
-    .tagline code { font-family: monospace; background: #f5f5f5; padding: 0 0.3rem; border-radius: 3px; font-size: 0.85em }
-    .note { color: #888; font-size: 0.78rem; margin-bottom: 2rem }
-    .note a { color: #1d4ed8; text-decoration: underline dotted }
-
-    h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: #888; margin: 1.75rem 0 0.5rem; font-weight: 500 }
-
-    /* Credentials block — shows the user that streamo identity *is* the
-       credentials, derived deterministically. */
-    .creds { display: flex; flex-direction: column; gap: 0.5rem }
-    .creds input { padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 6px; font-size: 1rem; font-family: monospace }
-    .creds input:focus { outline: none; border-color: #1d4ed8 }
-    .key {
-      font-family: monospace; font-size: 0.72rem; color: #4d7c0f;
-      background: rgba(132, 204, 22, 0.08);
-      border: 1px solid rgba(132, 204, 22, 0.18);
-      padding: 0.45rem 0.65rem; border-radius: 6px;
-      word-break: break-all;
-    }
-    .key-label { color: #888; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 0.15rem; display: block }
-
-    /* Add row. */
-    .add-row { display: flex; gap: 0.5rem; align-items: stretch }
-    .add-row input { flex: 1; padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 6px; font-size: 1rem; font-family: inherit }
-    .add-row input:focus { outline: none; border-color: #1d4ed8 }
-    .add-row input:disabled { background: #f9f9f9; color: #999 }
-    .add-row button { padding: 0.5rem 1.1rem; background: #1d4ed8; color: white; border: none; border-radius: 6px; font-size: 0.95rem; cursor: pointer; font-family: inherit }
-    .add-row button:hover:not(:disabled) { opacity: 0.88 }
-    .add-row button:disabled { background: #ccc; cursor: not-allowed }
-
-    /* Entries. */
-    .entry { padding: 0.6rem 0.85rem; border: 1px solid #eee; border-radius: 6px; margin-bottom: 0.4rem; background: white }
-    .entry-text { font-size: 0.95rem }
-    .entry-time { font-size: 0.7rem; color: #999; margin-top: 0.2rem; font-variant-numeric: tabular-nums }
-    .empty { font-size: 0.88rem; color: #999; padding: 1rem 0; font-style: italic }
-
-    .explorer-link { font-size: 0.85rem; color: #1d4ed8; text-decoration: none; border-bottom: 1px dotted; margin-top: 1.5rem; display: inline-block }
-    .explorer-link:hover { border-bottom-style: solid }
-  </style>
+  <script type="module" src="./main.js"></script>
 </head>
 <body>
-
-<h1>
-  <a class="brand-lockup" href="/" title="streamo home">
-    <img src="/streamo.svg" alt="">streamo
-  </a>
-  <span class="page-title">hello</span>
-</h1>
-
-<p class="tagline">The smallest possible streamo app — five moves in <code>main.js</code>, top-to-bottom. Enter credentials, write entries, watch them appear. Copy-paste and adapt.</p>
-<p class="note">Your credentials derive a deterministic keypair via PBKDF2; same credentials always produce the same identity. Made-up credentials get a made-up identity that's still yours, signed and content-addressed. Open <a href="./main.js">main.js</a> in another tab to read along.</p>
-
-<h2>identity</h2>
-<div class="creds">
-  <input id="username" placeholder="username" autocomplete="username">
-  <input id="password" type="password" placeholder="password" autocomplete="current-password">
-  <div>
-    <span class="key-label">public key (derived)</span>
-    <div id="key" class="key">— enter credentials above to derive —</div>
-  </div>
-</div>
-
-<h2>entries</h2>
-<div id="entries"><div class="empty">enter credentials above, then add an entry below.</div></div>
-
-<h2>add</h2>
-<div class="add-row">
-  <input id="entry-input" placeholder="what's on your mind?" disabled>
-  <button id="add-btn" disabled>add</button>
-</div>
-
-<a id="explorer-link" class="explorer-link" style="display: none">see this repo in the explorer →</a>
-
-<script type="module" src="./main.js"></script>
+  <div style="font-family: system-ui, sans-serif; color: #888; text-align: center; padding: 4rem 1rem;">loading…</div>
 </body>
 </html>

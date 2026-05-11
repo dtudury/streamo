@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamo · hello (vanilla)</title>
+  <link rel="icon" type="image/svg+xml" href="/streamo.svg">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0 }
+    :root { font-family: system-ui, -apple-system, sans-serif; font-size: 15px; color: #1c1917 }
+    body { max-width: 36rem; margin: 0 auto; padding: 2.5rem 1.25rem; line-height: 1.55 }
+
+    .brand-lockup { display: inline-flex; align-items: center; gap: .4rem; color: inherit; text-decoration: none; font-weight: 600; font-size: 1.4rem }
+    .brand-lockup img { width: 1.6rem; height: 1.6rem }
+    .brand-lockup:hover { opacity: 0.85 }
+    .page-title { font-weight: 400; color: #888; letter-spacing: .04em; font-size: 0.9rem; margin-left: 0.5rem }
+    .page-title::before { content: '· '; opacity: 0.5 }
+    h1 { display: flex; align-items: baseline; margin-bottom: 0.4rem }
+
+    .tagline { color: #666; font-size: 0.92rem; margin-bottom: 0.4rem }
+    .tagline code { font-family: monospace; background: #f5f5f5; padding: 0 0.3rem; border-radius: 3px; font-size: 0.85em }
+    .note { color: #888; font-size: 0.78rem; margin-bottom: 2rem }
+    .note a { color: #1d4ed8; text-decoration: underline dotted }
+
+    h2 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em; color: #888; margin: 1.75rem 0 0.65rem; font-weight: 500 }
+
+    .login, .add { display: flex; flex-direction: column; gap: 0.5rem }
+    .login input, .add input { padding: 0.5rem 0.75rem; border: 1px solid #ddd; border-radius: 6px; font-size: 1rem; font-family: monospace }
+    .add input { font-family: inherit }
+    .login input:focus, .add input:focus { outline: none; border-color: #1d4ed8 }
+    .login input:disabled, .add input:disabled { background: #f9f9f9 }
+    .login button, .add button { padding: 0.55rem 1.1rem; background: #1d4ed8; color: white; border: none; border-radius: 6px; font-size: 0.95rem; cursor: pointer; font-family: inherit; align-self: flex-start }
+    .login button:hover, .add button:hover { opacity: 0.88 }
+
+    .key { font-family: monospace; font-size: 0.72rem; color: #4d7c0f; background: rgba(132, 204, 22, 0.08); border: 1px solid rgba(132, 204, 22, 0.18); padding: 0.45rem 0.65rem; border-radius: 6px; word-break: break-all; margin-top: 0.5rem }
+
+    .entries { list-style: none; display: flex; flex-direction: column; gap: 0.4rem; padding: 0; margin: 0 }
+    .entry { padding: 0.6rem 0.85rem; border: 1px solid #eee; border-radius: 6px; background: white }
+    .entry-text { font-size: 0.95rem }
+    .entry-time { font-size: 0.7rem; color: #999; margin-top: 0.2rem; font-variant-numeric: tabular-nums }
+    .empty { font-size: 0.88rem; color: #999; font-style: italic; padding: 0.75rem 0 }
+
+    .hidden { display: none }
+    .explorer-link { font-size: 0.85rem; color: #1d4ed8; text-decoration: none; border-bottom: 1px dotted; margin-top: 1.5rem; display: inline-block }
+    .explorer-link:hover { border-bottom-style: solid }
+  </style>
+</head>
+<body>
+
+<h1>
+  <a class="brand-lockup" href="/" title="streamo home">
+    <img src="/streamo.svg" alt="">streamo
+  </a>
+  <span class="page-title">hello (vanilla)</span>
+</h1>
+<p class="tagline">The same hello-world streamo app as <code><a href="/apps/hello/">/apps/hello/</a></code>, but written without <code>h</code> — plain DOM API, the most vanilla way possible. Side-by-side these two are a working answer to <em>"is <code>h</code> doing anything I couldn't do with <code>createElement</code>?"</em></p>
+<p class="note">Same five moves, just expressed differently. Open <a href="./main.js">main.js</a> to read along.</p>
+
+<h2>identity</h2>
+<form id="login-form" class="login">
+  <input name="username" placeholder="username" autocomplete="username">
+  <input name="password" type="password" placeholder="password" autocomplete="current-password">
+  <button>sign in</button>
+  <div id="key" class="key hidden"></div>
+</form>
+
+<h2>entries</h2>
+<ol id="entries" class="entries">
+  <li class="empty">login above; entries will appear here.</li>
+</ol>
+
+<h2 id="add-heading" class="hidden">add</h2>
+<form id="add-form" class="add hidden">
+  <input name="text" placeholder="what's on your mind?">
+  <button>add</button>
+</form>
+
+<a id="explorer-link" class="explorer-link hidden">see this repo in the explorer →</a>
+
+<script type="module" src="./main.js"></script>
+</body>
+</html>

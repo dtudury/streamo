@@ -1,0 +1,95 @@
+# dear future Claudes
+
+A small place to leave notes for the next session of Claude working on
+streamo. Not rules; style preferences and tradeoffs the human partner
+has expressed clearly enough that we should honor them by default.
+
+If a note no longer matches what the human is asking for, drop it from
+this file with the same care you'd drop a stale comment.
+
+---
+
+## prefer h-templates inline over fragmented vnode bindings
+
+When David is reading the code, he reads HTML fluently and prefers
+seeing the page's structure in one place. For streamo apps that means:
+
+- Bring the whole page to life via one
+  `mount(h\`...\`, document.body, recaller)` call. The h-template IS
+  the page.
+- **Inline the markup directly in that call.** Don't break it into
+  named vnode fragments (`brandHeader`, `loginForm`, etc.) and
+  reassemble — it tempts the eye to organize by "component," but the
+  result reads worse because you chase definitions around. The whole
+  page in HTML order beats a bag-of-named-pieces almost every time.
+- **Inline the CSS too,** as a multi-line pretty `<style>` block
+  inside the template. Don't pull it out to a `.css` file or a
+  detached `const css = \`...\``; that scatters the page across
+  multiple definitions.
+- **Use form-level handlers** with `onsubmit=${() => handler}` and
+  reach for inputs via `e.target.elements.<name>` rather than
+  `getElementById`. The form *is* the input registry.
+- The `when(cond, vnode)` helper is welcome; named handlers and
+  named reactive signals (like `loggedIn()`) are fine. Just don't
+  fragment the markup itself.
+- `index.html` can be a minimal shim — `<head>` with the
+  `<script type="module">` tag (deferred by default), `<body>` with
+  a styled loading message. The mount call replaces the body content
+  at first render.
+
+The journal app at `public/apps/journal/main.js` is the worked
+example. If you see another app drift from this shape and the human
+hasn't asked otherwise, gently bring it back.
+
+## when NOT to use the h-heavy style
+
+If the human partner has said they don't want to read the code (they
+want a finished app, not a project to study), use `h` only when it
+genuinely helps. Plain DOM manipulation, separate `.html` shells with
+imperative `.js` files — all fine. The point of `h` is making the
+code legible for someone who's going to read it.
+
+`public/apps/hello-vanilla/` is a worked example of the alternative
+shape: the same hello-world streamo app written without `h` at all,
+the most vanilla DOM-API way possible. Useful as a side-by-side
+reference when the partner asks "is `h` doing anything I couldn't do
+with `createElement`?"
+
+## the `on*` attribute trap
+
+`onclick=${handler}` is the footgun. Mount calls `handler(el)` *once*
+and assigns the return value to `el.onclick`. The handler runs during
+mount, returns undefined, and you've effectively unbound the click.
+
+Always wrap: `onclick=${() => handler}`. The cell returns the handler
+function; mount assigns it to `el.onclick`; click events get to it.
+Same shape for `onsubmit`, `oninput`, etc.
+
+This is also in CLAUDE.md's known footguns.
+
+## components vs. fragments
+
+Function components (plain functions used as `<${Card}>` tags) are
+welcome when the same shape repeats across the page or across apps —
+the chat's `Msg` is a fair example. *Don't* introduce them just to
+break the page into pieces; that's the "fragmented vnode bindings"
+anti-pattern above.
+
+Custom-element components via `defineComponent` + `StreamoComponent`
+are different — they earn their place when you need a self-contained
+unit with its own Recaller and shadow DOM (the typical motivator is
+hot-reload via `componentKey`, or shipping a "stylable widget" that
+travels with its own CSS). For routine page structure, just inline.
+
+## reactivity-only changes don't need component boundaries
+
+If something needs to re-render reactively, a function-as-slot in the
+existing h-template (`${() => { dep(); return … }}`) does it cleanly.
+Wrapping that in a `defineComponent` adds machinery (shadow DOM, own
+Recaller, cross-recaller dep tracking) for no gain. Use the slot.
+
+---
+
+(More notes will accrue here as preferences emerge. Each one is
+something the human has named clearly; please don't add inferences
+or general best-practices.)

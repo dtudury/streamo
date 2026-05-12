@@ -30,16 +30,20 @@ import { hexToBytes } from '../../streamo/utils.js'
 
 const registry = new RepoRegistry()
 const port = +location.port || 80
-const connEl = document.getElementById('conn')
 
+// Connection status captured into locals; the mount call below
+// interpolates them into the conn div. Connection failure no longer
+// throws — the explorer shell still mounts, so the user sees the
+// error message in-page instead of a blank screen.
+let connText = 'connecting…'
+let connClass = ''
 try {
   await registrySync(registry, location.hostname, port)
-  connEl.textContent = `connected · ${location.hostname}:${port}`
-  connEl.classList.add('ok')
+  connText = `connected · ${location.hostname}:${port}`
+  connClass = 'ok'
 } catch (e) {
-  connEl.textContent = `connection failed: ${e.message}`
-  connEl.classList.add('err')
-  throw e
+  connText = `connection failed: ${e.message}`
+  connClass = 'err'
 }
 
 // ── App-level reactivity ──────────────────────────────────────────────────
@@ -1282,7 +1286,7 @@ function valueTree (repo, keyHex, address, depth = 3) {
 
 // Recursive chunk-graph tree — like valueTree, but for the storage tab.
 // Two key differences:
-//   1. Walks `directReferences` (the actual chunk graph) instead of
+//   1. Walks \\`directReferences\\` (the actual chunk graph) instead of
 //      `asRefs` (the user-meaningful tree). DUPLEs that the value tab
 //      hides as scaffolding are surfaced here as their own rows —
 //      seeing them IS the storage view's job.
@@ -1545,220 +1549,631 @@ function bytesChart (bytes, options = {}) {
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 
-const appEl = document.getElementById('app')
+// Page-level CSS, migrated from index.html as part of the "put it all
+// in h" pass. Declared as a const so it doesn't bloat the mount call's
+// literal text — same end result as inlining since it ships with main.js.
+// (Shared base tokens like --ink, --rule, etc. still come from
+//  proto.css, linked in index.html and applied document-wide.)
+const css = `
+    /* scrollbar-gutter reserves the scrollbar's width whether or not it's
+       drawn, so a sudden scroll-needed (e.g. when the value pane grows
+       under hover preview) doesn't shift everything left by ~15px. */
+    html { scrollbar-gutter: stable; }
+    body { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; }
 
-// Outer mount slot. Reads viewKindDep ONLY — re-runs on view.kind
-// or view.keyHex changes (registry ↔ at, or switching repos). It does
-// NOT re-run on address changes, chunk arrivals, tab clicks, or any
-// other bridge fire. That's the whole point of the decomposition:
-// keep the at-view's <section> (and the strip-container inside it)
-// alive across intra-repo navigation so click-to-navigate doesn't
-// rebuild the strip and reset its scrollLeft.
-//
-// Each view gets a data-keyed <section> so mount's matcher distinguishes
-// them — switching from registry to an at-view, or between repos, drops
-// the old section and fresh-mounts the new one. RegistryView and AtView
-// each do their own internal reactivity (inner slots reading dep() and
-// hoverDep()) for everything within a view.
-mount(h`${() => {
-  viewKindDep()
-  switch (view.kind) {
-    case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
-    case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}`}>${AtView({ keyHex: view.keyHex })}</section>`
-    default:         return h`<div class="empty">?</div>`
-  }
-}}`, appEl, recaller)
+    .header  { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.25rem; }
+    /* Brand lockup: mark + wordmark, single clickable unit linking home.
+       Page title ("explorer") sits beside it as a separate, lighter
+       element so the relationship reads as [home] · [you-are-here]. */
+    .brand-lockup {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-size: 1.6rem;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .brand-lockup img { width: 1.8rem; height: 1.8rem; }
+    .brand-lockup:hover { opacity: 0.8; }
+    .page-title {
+      font-size: 0.95rem;
+      color: var(--ink-dim);
+      letter-spacing: 0.04em;
+    }
+    .page-title::before { content: '· '; opacity: 0.5; }
+    .crumbs  { font-size: 0.85rem; color: var(--ink-dim); }
+    .back    { cursor: pointer; color: var(--ink-dim); font-size: 0.85rem; display: inline-block; margin-bottom: 1rem; }
+    .back:hover { color: var(--ink); }
 
-// ── Click delegation ──────────────────────────────────────────────────────
+    h2 { font-size: 1.05rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+    h2 .dim { font-weight: 400; font-size: 0.9rem; }
 
-let suppressClickUntil = 0
-appEl.addEventListener('click', e => {
-  // Suppress the click that fires at the end of a drag-to-pan, so dragging
-  // doesn't accidentally navigate to a chunk under the pointer when the
-  // user releases.
-  if (Date.now() < suppressClickUntil) return
-  const el = e.target.closest('[data-action]')
-  if (!el) return
-  switch (el.dataset.action) {
-    case 'open-repo':     return go({ kind: 'at', keyHex: el.dataset.key, address: 'HEAD' })
-    case 'open-at':       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
-    case 'back-registry': return go({ kind: 'registry' })
-    case 'back-repo':     return go({ kind: 'at', keyHex: el.dataset.keyhex, address: 'HEAD' })
-    case 'set-tab':       atTab = el.dataset.tab; return fire()
-    case 'select-commit': {
-      // Picking a commit is just navigation — go to /at/<sigAddress>.
-      // Close the dropdown imperatively so the new view renders with
-      // the selector collapsed (matches native <select> behavior).
-      el.closest('details.commit-selector')?.removeAttribute('open')
-      return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 12rem 14rem;
+      gap: 0.75rem;
+      align-items: baseline;
+      padding: 0.55rem 0.75rem;
+      border: 1.5px solid transparent;
+      border-radius: var(--radius);
+      cursor: pointer;
     }
-    case 'expand-tree': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      forceExpanded.add(k)
-      forceCollapsed.delete(k)
-      return fire()
-    }
-    case 'expand-storage': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      storageForceExpanded.add(k)
-      storageForceCollapsed.delete(k)
-      return fire()
-    }
-    case 'collapse-storage': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      storageForceCollapsed.add(k)
-      storageForceExpanded.delete(k)
-      return fire()
-    }
-    case 'expand-refs': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      refTreeForceExpanded.add(k)
-      refTreeForceCollapsed.delete(k)
-      return fire()
-    }
-    case 'collapse-refs': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      refTreeForceCollapsed.add(k)
-      refTreeForceExpanded.delete(k)
-      return fire()
-    }
-    case 'collapse-tree': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      forceCollapsed.add(k)
-      forceExpanded.delete(k)
-      return fire()
-    }
-  }
-})
+    .row:hover { border-color: var(--ink); background: rgba(254, 240, 138, 0.4); }
+    .row + .row { border-top-color: var(--rule); }
+    .row:hover + .row { border-top-color: transparent; }
 
-// ── Byte-strip drag-to-pan + auto-scroll-to-HEAD ─────────────────────────
+    /* signed-commit + unsigned-commit + commit + signature rows share the same
+       column template so the page doesn't visually jitter as you scan a mixed
+       list. cols: kind | message | date | addr. */
+    .row.signed-commit, .row.unsigned-commit,
+    .row.commit, .row.signature { grid-template-columns: 6rem 1fr 14rem 6rem; }
 
-// On first render of a strip, scroll to the right edge (HEAD = newest
-// content). On subsequent renders, only re-pin if the user is already at
-// or near the right edge — so a live stream "follows" without dragging
-// you back if you've scrolled into history.
-function syncByteStrips () {
-  for (const container of appEl.querySelectorAll('.byte-strip-container')) {
-    const visible = container.clientWidth || 1
-    const atRight = container.scrollLeft + visible >= container.scrollWidth - 8
-    const currentChunk = container.querySelector('.chunk.current')
-    const currentAddr = currentChunk?.getAttribute('data-addr') ?? null
-    const lastCurrent = container.dataset.lastCurrent ?? null
-    const currentChanged = currentAddr !== null && currentAddr !== lastCurrent
-    if (currentAddr !== null) container.dataset.lastCurrent = currentAddr
-    // Auto-pin to HEAD when the strip is freshly mounted (scrollLeft === 0)
-    // or while the user is following live activity at the right edge.
-    // Otherwise, when navigation lands on a chunk that's off-screen
-    // (commit selector, click on a chip's @addr link, keyboard nav),
-    // bring it into view. Hover already pre-scrolls during dropdown
-    // peeks; this catches the cases hover didn't trigger.
-    if (container.scrollLeft === 0 || atRight) {
-      container.scrollLeft = container.scrollWidth
-    } else if (currentChanged && currentChunk) {
-      currentChunk.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+    .row .mono { font-size: 0.85rem; }
+    .row .when { font-size: 0.78rem; color: var(--ink-dim); }
+    .row .msg  { font-size: 0.85rem; }
+    .row .kind {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--ink-dim);
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      padding: 0.05rem 0.5rem;
+      text-align: center;
+      align-self: center;
     }
-  }
-}
+    .row.commit .kind                 { color: var(--accent); border-color: var(--accent); }
+    .row.signature .kind              { color: var(--warn);   border-color: var(--warn); }
+    .row.signed-commit .kind          { color: #16a34a;       border-color: #16a34a; }
+    .row.signed-commit.unsigned .kind { color: var(--ink-dim); border-color: var(--ink-dim); }
 
-// Click-drag-to-pan inside the detail strip. Threshold of 4px before
-// treating a pointerdown as a drag — under that, fall through to the
-// regular click handler so chunk-clicks still navigate.
-let dragState = null
-appEl.addEventListener('pointerdown', e => {
-  if (e.button !== undefined && e.button !== 0) return
-  const container = e.target?.closest?.('.byte-strip-container')
-  if (!container) return
-  dragState = {
-    container,
-    pointerId: e.pointerId,
-    startX: e.clientX,
-    startScroll: container.scrollLeft,
-    dragging: false
-  }
-})
-appEl.addEventListener('pointermove', e => {
-  if (!dragState || e.pointerId !== dragState.pointerId) return
-  const dx = e.clientX - dragState.startX
-  if (!dragState.dragging) {
-    if (Math.abs(dx) < 4) return
-    dragState.dragging = true
-    dragState.container.classList.add('dragging')
-    try { dragState.container.setPointerCapture(e.pointerId) } catch {}
-  }
-  dragState.container.scrollLeft = dragState.startScroll - dx
-  e.preventDefault()
-})
-function endDrag () {
-  if (!dragState) return
-  if (dragState.dragging) {
-    dragState.container.classList.remove('dragging')
-    try { dragState.container.releasePointerCapture?.(dragState.pointerId) } catch {}
-    suppressClickUntil = Date.now() + 100
-  }
-  dragState = null
-}
-appEl.addEventListener('pointerup', endDrag)
-appEl.addEventListener('pointercancel', endDrag)
-
-// Cross-highlight: hovering any element with data-addr highlights the
-// matching chunk in the byte-map, populates the chunk inspector below
-// the strip with codec/addr/length, and (if the hovered chunk is a
-// signature) lights up its covered byte range as an overlay band on
-// the strip. If the hover came from somewhere other than the strip
-// itself, smooth-scroll the matching chunk into view in the strip.
-appEl.addEventListener('mouseover', e => {
-  const el = e.target.closest('[data-addr]')
-  if (!el) return
-  const addr = el.dataset.addr
-  const matches = appEl.querySelectorAll(`.byte-map .chunk[data-addr="${addr}"]`)
-  matches.forEach(c => c.classList.add('hovered'))
-  if (!el.closest('.byte-strip-container')) {
-    matches.forEach(c => {
-      if (c.closest('.byte-strip-container')) {
-        c.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
-      }
-    })
-  }
-  // Look up the chunk's data on the strip rect for sig-coverage overlay.
-  const stripRect = matches[0]?.closest('.byte-strip-container') ? matches[0]
-    : appEl.querySelector(`.byte-strip .chunk[data-addr="${addr}"]`)
-  if (stripRect) {
-    const fromX = stripRect.getAttribute('data-sig-from-x')
-    const toX   = stripRect.getAttribute('data-sig-to-x')
-    if (fromX != null && toX != null) {
-      const overlay = stripRect.closest('.byte-strip').querySelector('.sig-coverage')
-      if (overlay) {
-        overlay.setAttribute('x', fromX)
-        overlay.setAttribute('width', String(parseFloat(toX) - parseFloat(fromX)))
-        overlay.classList.add('active')
-      }
+    /* HEAD card — the most-recent signed commit, prominent and self-orienting. */
+    .row.signed-commit.head-card {
+      border: 1.5px solid #16a34a;
+      background: rgba(22, 163, 74, 0.05);
+      padding: 0.85rem;
     }
-  }
-  // Live preview: if the hovered chunk is on the byte strip, set
-  // hoveredAddress so the page content below renders for that chunk.
-  // Click to actually navigate. Only fire if the address changed —
-  // moving within the same chunk shouldn't re-render.
-  const onStrip = el.closest('.byte-strip-container')
-  const newHover = onStrip ? +addr : null
-  if (newHover !== hoveredAddress) {
-    hoveredAddress = newHover
-    hoverFire()
-  }
-})
-appEl.addEventListener('mouseout', e => {
-  const el = e.target.closest('[data-addr]')
-  if (!el) return
-  appEl.querySelectorAll('.byte-map .chunk.hovered').forEach(c => c.classList.remove('hovered'))
-  appEl.querySelectorAll('.sig-coverage.active').forEach(o => o.classList.remove('active'))
-  // Clear hoveredAddress unless the cursor is moving to ANOTHER chunk
-  // on the strip. The previous check ("still inside .byte-strip-container")
-  // treated the direction labels and any blank-space as "still hovering,"
-  // which left the page stuck on the previously hovered chunk's content.
-  // Requiring .chunk[data-addr] specifically means moving off a chunk
-  // anywhere — out of the strip OR to its non-chunk regions — reverts.
-  const goingToChunk = e.relatedTarget?.closest?.('.byte-strip-container .chunk[data-addr]')
-  if (!goingToChunk && hoveredAddress !== null) {
-    hoveredAddress = null
-    hoverFire()
-  }
-})
+    .row.signed-commit.head-card .msg { font-size: 1rem; font-weight: 500; }
+
+    /* Detached card — same layout as the head-card but neutral styling.
+       Shown as the selector summary when the current address isn't a sig
+       (you've drilled into raw memory). The dropdown body is still the
+       way back — pick a real commit and you re-attach. */
+    .row.signed-commit.detached-card {
+      border: 1.5px dashed var(--rule);
+      background: transparent;
+      padding: 0.85rem;
+      cursor: pointer;
+    }
+    .row.signed-commit.detached-card .kind {
+      color: var(--ink-dim);
+      border-color: var(--ink-dim);
+    }
+    .row.signed-commit.detached-card .msg { font-size: 0.95rem; }
+
+    /* Commit selector: a real dropdown widget. Summary = currently-selected
+       commit (HEAD by default), styled as the green head-card. Body =
+       full list of signed commits, with the selected one marked. */
+    details.commit-selector { margin: 0.5rem 0 1rem; }
+    details.commit-selector > summary {
+      cursor: pointer;
+      list-style: none;
+      padding: 0;
+    }
+    details.commit-selector > summary::-webkit-details-marker { display: none; }
+    details.commit-selector > summary::marker { display: none; }
+    details.commit-selector > summary::after {
+      content: '▾';
+      float: right;
+      margin: 0.5rem 0.85rem;
+      color: #16a34a;
+      font-size: 0.85rem;
+    }
+    details.commit-selector[open] > summary::after { content: '▴'; }
+    details.commit-selector .dropdown-body {
+      margin-top: 0.25rem;
+      border: 1px solid var(--rule);
+      border-radius: var(--radius);
+      padding: 0.25rem;
+    }
+    details.commit-selector .dropdown-body .row { padding: 0.45rem 0.6rem; }
+    details.commit-selector .dropdown-body .row.selected {
+      background: rgba(22, 163, 74, 0.07);
+    }
+    details.commit-selector .dropdown-body .row.selected .kind::after {
+      content: ' ●';
+      color: #16a34a;
+    }
+
+    /* Tucked-away secondary "storage chunks" list at the bottom of the
+       repo view — a click away when you want to see the bytes underneath. */
+    details.other-storage {
+      margin: 1.25rem 0 0.5rem;
+      border-top: 1px solid var(--rule);
+      padding-top: 0.5rem;
+    }
+    details.other-storage > summary {
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--ink-dim);
+      padding: 0.35rem 0.25rem;
+    }
+    details.other-storage[open] > summary { color: var(--ink); }
+
+    /* "What this is" banner — top of every value tab. Default neutral
+       border for storage codecs; green .verified for commits or sigs
+       backed by a valid signature; dim .unsigned for commits awaiting
+       a signature. */
+    .kind-banner {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.65rem 0.85rem; margin: 0.5rem 0 1rem;
+      border: 1.5px solid var(--rule); border-radius: var(--radius);
+    }
+    .kind-banner.verified {
+      border-color: #16a34a;
+      background: rgba(22, 163, 74, 0.06);
+    }
+    .kind-banner.unsigned { border-style: dashed; }
+    .kind-banner .kind-label {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em;
+      font-weight: 600; color: var(--ink-dim);
+    }
+    .kind-banner.verified .kind-label { color: #16a34a; }
+    .commit-card {
+      padding: 0.6rem 0.85rem; margin: 0.4rem 0;
+      border: 1px solid var(--rule); border-radius: var(--radius);
+    }
+    .commit-card .commit-msg { font-size: 0.95rem; margin-bottom: 0.25rem; }
+    .commit-card .commit-meta { font-size: 0.8rem; }
+
+    .verify-badge { font-weight: 700; padding-left: 0.35em; font-size: 0.95em; }
+    .verify-badge.valid   { color: #16a34a; }
+    .verify-badge.invalid { color: #dc2626; }
+    .verify-badge.pending { color: var(--ink-dim); font-weight: 400; }
+    .verify-badge.error   { color: #ca8a04; }
+
+    .empty { color: var(--ink-dim); padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+
+    /* key/value table for the at-view */
+    .kv { width: 100%; border-collapse: collapse; font-size: 0.85rem; margin: 0.75rem 0; }
+    .kv td { padding: 0.4rem 0.6rem; vertical-align: top; }
+    .kv tr + tr td { border-top: 1px dashed var(--rule); }
+    .kv td:first-child {
+      color: var(--ink-dim);
+      width: 8rem;
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+    }
+
+    /* clickable variant — whole row is the click target */
+    .kv.clickable tr { cursor: pointer; }
+    .kv.clickable tr:hover td { background: rgba(254, 240, 138, 0.4); }
+    .kv.clickable td:last-child { color: var(--accent); text-align: right; }
+
+    .addr-link {
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline dotted;
+    }
+    .addr-link:hover { background: var(--flash); text-decoration-style: solid; }
+
+    .paths { list-style: none; padding: 0; }
+    .paths li { padding: 0.2rem 0.5rem; font-size: 0.85rem; }
+    .paths li + li { border-top: 1px dashed var(--rule); }
+
+    h3 { font-size: 0.9rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
+    h3 .dim { font-weight: 400; font-size: 0.85rem; }
+
+    .explainer {
+      font-size: 0.85rem;
+      line-height: 1.55;
+      color: var(--ink-dim);
+      border-left: 2px solid var(--rule);
+      padding: 0.4rem 0 0.4rem 0.85rem;
+      margin: 0.6rem 0 0.9rem;
+    }
+    .explainer strong { color: var(--ink); }
+
+    .conn { font-size: 0.75rem; color: var(--ink-dim); margin-bottom: 1.5rem; }
+    .conn.ok  { color: #16a34a; }
+    .conn.err { color: #dc2626; }
+
+    .keyfull { font-size: 0.78rem; color: var(--ink-dim); word-break: break-all; }
+    .keyfull .mono { font-family: monospace; }
+    .repo-link {
+      font-family: monospace;
+      color: var(--accent);
+      cursor: pointer;
+      text-decoration: underline dotted;
+    }
+    .repo-link:hover { background: var(--flash); text-decoration-style: solid; }
+
+    /* Sticky at-view header: selector + strip + tabs travel with you as
+       you scroll long value trees or storage detail. Background-cover so
+       content scrolling underneath doesn't bleed through. */
+    .atview-header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: var(--bg, #fefdf8);
+      padding-top: 0.25rem;
+      border-bottom: 1px solid var(--rule);
+      margin-bottom: 0.75rem;
+    }
+
+    /* Byte stream — zoomed strip in a horizontally-scrollable container,
+       click-drag-to-pan inside for "look around" navigation. */
+    .byte-strip-container {
+      width: 100%;
+      overflow-x: auto;
+      background: #faf9f4;
+      border: 1.5px solid var(--rule);
+      border-radius: var(--radius);
+      margin: 0.4rem 0 1rem;
+      cursor: grab;
+    }
+    .byte-strip-container.dragging { cursor: grabbing; user-select: none; }
+    .byte-strip-container.dragging .chunk { cursor: grabbing; }
+    .byte-strip { display: block; }
+
+    /* Sig-coverage overlay: when hovering a sig anywhere on the page,
+       this rect is positioned over its [signedFrom, signedTo] byte range
+       on the strip. Subtle dashed band — doesn't fight the chunk colors. */
+    .byte-strip .sig-coverage {
+      fill: rgba(239, 68, 68, 0.12);
+      stroke: rgba(239, 68, 68, 0.6);
+      stroke-width: 1.5;
+      stroke-dasharray: 4 3;
+      opacity: 0;
+      transition: opacity 0.08s;
+    }
+    .byte-strip .sig-coverage.active { opacity: 1; }
+
+    /* Persistent context line for the at-view's current chunk: codec,
+       address, length, percentage. Quiet by default (it's permanent,
+       not the focus), lights up when something else on the page is
+       hovered to show that chunk instead. Reverts via data-default
+       on mouseout. */
+    .chunk-inspector {
+      font-family: monospace;
+      font-size: 0.8rem;
+      color: var(--ink-dim);
+      padding: 0.25rem 0.5rem;
+      margin: 0.25rem 0 0.75rem;
+      border-radius: var(--radius);
+      transition: color 0.08s, background 0.08s;
+    }
+    .chunk-inspector.active {
+      color: var(--ink);
+      background: var(--flash);
+    }
+
+    /* Per-codec reuse breakdown — quiet table under the byte strip
+       showing each codec type's chunk count, total bytes, and dedup
+       leverage. "—" in the leverage column marks chunks that aren't
+       reachable from any commit's data tree (commit + signature
+       chunks by structure — they're graph roots, not reuse candidates). */
+    .reuse-by-type {
+      width: auto;
+      border-collapse: collapse;
+      font-size: 0.78rem;
+      margin: 0.25rem 0 0.75rem;
+    }
+    .reuse-by-type th,
+    .reuse-by-type td {
+      padding: 0.15rem 0.6rem 0.15rem 0;
+      text-align: left;
+      font-weight: normal;
+      font-variant-numeric: tabular-nums;
+    }
+    .reuse-by-type th {
+      color: var(--ink-dim);
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .reuse-by-type tbody tr + tr td { border-top: 1px solid var(--rule); }
+    .reuse-by-type td.mono { font-family: monospace; }
+
+    /* Per-value economics footer — appears under every value-tab page,
+       showing this value's subtree size, use count, and dedup story.
+       Secondary information: dim by default, numbers in ink, leverage
+       in slightly bolder ink. Dashed top rule to separate from the
+       main value display without competing with content. */
+    .value-economics {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      line-height: 1.6;
+      margin: 1.5rem 0 0.5rem;
+      padding-top: 0.65rem;
+      border-top: 1px dashed var(--rule);
+      font-family: monospace;
+    }
+    .value-economics .num {
+      color: var(--ink);
+      font-weight: 500;
+    }
+    .value-economics .num.leverage {
+      font-weight: 600;
+    }
+
+    .byte-map {
+      display: block;
+    }
+    .byte-map .chunk {
+      cursor: pointer;
+      stroke: rgba(0, 0, 0, 0.15);
+      stroke-width: 0.4;
+      transition: stroke-width 0.08s, fill-opacity 0.08s;
+    }
+    .byte-map .chunk:hover { stroke: var(--ink); stroke-width: 1.5; }
+    .byte-map .chunk.current { stroke: var(--ink); stroke-width: 2; }
+    .byte-map .chunk.hovered { fill-opacity: 0.55; }
+
+    /* Streamo-typed value pills — every value gets a type-specific visual
+       identity instead of flattening through JSON.stringify. Colors echo
+       the byte-strip codec palette below so the visual language carries
+       across the page. */
+    .tv {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.05rem 0.4rem;
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      max-width: 100%;
+      vertical-align: baseline;
+    }
+    .tv-string { color: #047857; background: rgba(16, 185, 129, 0.10); font-family: monospace; }
+    .tv-string .tv-quote { color: #10b981; opacity: 0.7; font-weight: 600; }
+    .tv-num    { color: #475569; background: rgba(100, 116, 139, 0.10); font-family: monospace; }
+    .tv-date   { color: #475569; background: rgba(100, 116, 139, 0.10); }
+    .tv-date .tv-glyph { font-size: 0.75rem; }
+    .tv-date time { font-variant-numeric: tabular-nums; }
+    .tv-bool.tv-true   { color: #15803d; background: rgba(22, 163, 74, 0.10); font-family: monospace; }
+    .tv-bool.tv-false  { color: #b91c1c; background: rgba(220, 38, 38, 0.10); font-family: monospace; }
+    .tv-null, .tv-undefined { color: var(--ink-dim); background: transparent; font-style: italic; font-family: monospace; }
+    .tv-bytes  { color: #4d7c0f; background: rgba(132, 204, 22, 0.10); font-family: monospace; }
+    .tv-array, .tv-object { color: #1e40af; background: rgba(59, 130, 246, 0.10); }
+    .tv-duple  { color: #6b21a8; background: rgba(168, 85, 247, 0.10); }
+
+    /* Three-row byte chart: hex / char / decimal. One column per byte,
+       widths driven by the widest cell so dec values up to 255 align
+       cleanly. Olive on a very-faint olive wash keeps the cat-bytes
+       identity; rows have distinct visual weight so you can pick the
+       layer you're reading (chars for meaning, hex for canonical,
+       decimal for math). Offset column shows on rawChunkSection. */
+    .bytes-chart {
+      display: inline-block;
+      vertical-align: middle;
+      background: rgba(132, 204, 22, 0.06);
+      border: 1px solid rgba(132, 204, 22, 0.18);
+      padding: 0.25rem 0.4rem;
+      border-radius: var(--radius);
+      font-family: monospace;
+      line-height: 1.15;
+    }
+    .bytes-group {
+      border-collapse: collapse;
+      border-spacing: 0;
+    }
+    .bytes-group + .bytes-group { margin-top: 0.25rem; }
+    .bytes-group td, .bytes-group th {
+      padding: 0 0.25rem;
+      text-align: center;
+      font-variant-numeric: tabular-nums;
+      font-weight: normal;
+    }
+    .bytes-group .hex td  { font-size: 0.78rem; color: #4d7c0f; }
+    .bytes-group .char td.printable { font-size: 0.85rem; color: var(--ink); font-weight: 500; }
+    .bytes-group .char td.nonprint  { font-size: 0.85rem; color: var(--ink-dim); }
+    .bytes-group .dec td  { font-size: 0.65rem; color: var(--ink-dim); }
+    .bytes-group th {
+      color: var(--ink-dim);
+      font-size: 0.7rem;
+      padding-right: 0.6rem;
+      text-align: right;
+      font-weight: normal;
+    }
+    .bytes-group.with-offset .hex th { color: #4d7c0f; }
+    .bytes-chart-more {
+      font-size: 0.75rem;
+      margin-top: 0.3rem;
+      font-style: italic;
+    }
+
+    /* Recursive typed-value tree — used for rehydrated views. Composites
+       render in two modes: tv-tree-inline (Chrome-console-style, one
+       line, used when every child is a primitive and the line fits) and
+       tv-tree (multi-line, used otherwise). Both expose the same
+       click-to-collapse opening bracket. */
+    .tv-tree {
+      font-size: 0.85rem;
+      line-height: 1.4;
+      font-family: monospace;
+      margin: 0.3rem 0;
+    }
+    .tv-tree-row {
+      padding-left: 1.25rem;
+    }
+    .tv-tree .tv-bracket,
+    .tv-tree-inline .tv-bracket {
+      color: var(--ink-dim);
+      font-weight: 600;
+    }
+    .tv-tree .tv-bracket.clickable,
+    .tv-tree-inline .tv-bracket.clickable {
+      cursor: pointer;
+    }
+    .tv-tree .tv-bracket.clickable:hover,
+    .tv-tree-inline .tv-bracket.clickable:hover {
+      background: var(--flash);
+      color: var(--ink);
+    }
+    .tv-tree .tv-key,
+    .tv-tree-inline .tv-key {
+      color: var(--ink-dim);
+      margin-right: 0.25rem;
+    }
+    .tv-tree-inline {
+      font-size: 0.85rem;
+      font-family: monospace;
+    }
+    .tv-tree-inline .tv-sep { color: var(--ink-dim); }
+    .tv-drill {
+      cursor: pointer;
+      text-decoration: underline dotted var(--ink-dim);
+    }
+    .tv-drill:hover { background: var(--flash); text-decoration-style: solid; }
+
+    /* Storage tab's chunk-graph tree — same visual register as
+       tv-tree, but each row is a chunk (chip + @addr + value preview)
+       and indentation walks \`directReferences\`, surfacing the duples
+       that the value tree hides. */
+    .storage-tree {
+      font-size: 0.85rem;
+      margin: 0.4rem 0;
+    }
+    .storage-row {
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.15rem 0;
+      flex-wrap: wrap;
+    }
+    .storage-row .codec-chip { flex-shrink: 0; }
+    .storage-toggle {
+      cursor: pointer;
+      width: 1rem;
+      text-align: center;
+      color: var(--ink-dim);
+      font-weight: 600;
+      text-decoration: none;
+      user-select: none;
+      flex-shrink: 0;
+    }
+    .storage-toggle:hover { color: var(--ink); }
+    .storage-toggle.empty { cursor: default; opacity: 0.35; }
+    .storage-toggle.empty:hover { color: var(--ink-dim); }
+    .storage-preview { color: var(--ink-dim); }
+    .storage-childcount {
+      font-size: 0.75rem;
+      color: var(--ink-dim);
+      margin-left: auto;
+    }
+    .storage-children {
+      padding-left: 1.25rem;
+      border-left: 1px solid var(--rule);
+      margin-left: 0.55rem;
+    }
+
+    /* codec-tag — colored codec name in the refs/referrers tables. Same
+       palette as the byte-strip and the typed-value pills, so a chunk's
+       codec reads visually consistent everywhere it appears. */
+    .codec-tag { font-weight: 500; }
+    .codec-tag.codec-commit    { color: #c2410c; }
+    .codec-tag.codec-sig       { color: #b91c1c; }
+    .codec-tag.codec-composite { color: #1e40af; }
+    .codec-tag.codec-duple     { color: #6b21a8; }
+    .codec-tag.codec-string    { color: #047857; }
+    .codec-tag.codec-bytes     { color: #4d7c0f; }
+    .codec-tag.codec-num       { color: #475569; }
+    .codec-tag.codec-var       { color: #b45309; }
+    .codec-tag.codec-other     { color: var(--ink-dim); }
+
+    /* codec category palette — used by the SVG fills, the inspector chip,
+       and any chip-styled element that wants to read as a chunk type. */
+    .cat-commit    { fill: #f59e0b; background: #f59e0b; }
+    .cat-sig       { fill: #ef4444; background: #ef4444; }
+    .cat-composite { fill: #3b82f6; background: #3b82f6; }
+    .cat-duple     { fill: #a855f7; background: #a855f7; }
+    .cat-string    { fill: #10b981; background: #10b981; }
+    .cat-bytes     { fill: #84cc16; background: #84cc16; }
+    .cat-num       { fill: #64748b; background: #64748b; }
+    .cat-var       { fill: #fbbf24; background: #fbbf24; }
+    .cat-other     { fill: #cbd5e1; background: #cbd5e1; }
+
+    /* codec chip — inline tag colored by codec category. Foreground
+       colors are picked by relative luminance (Y = 0.2126R + 0.7152G +
+       0.0722B): high-luminance backgrounds (lime, amber, yellow, light
+       gray) use black text; mid-low luminance (red, blue, purple, slate)
+       use white. Saturated mid-tones like emerald lean to white by
+       convention even though the WCAG-correct call is marginal. */
+    .codec-chip {
+      display: inline-block;
+      padding: 0.15rem 0.45rem;
+      border-radius: var(--radius);
+      font-size: 0.7rem;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      line-height: 1;
+      vertical-align: middle;
+      color: #fff;
+    }
+    .codec-chip.cat-commit,
+    .codec-chip.cat-bytes,
+    .codec-chip.cat-var,
+    .codec-chip.cat-other { color: #000; }
+
+    /* Tab strip — hand-drawn underline aesthetic to match proto.css */
+    .tabs {
+      display: flex;
+      gap: 1.25rem;
+      border-bottom: 1.5px solid var(--rule);
+      margin: 1.25rem 0 1rem;
+    }
+    .tab {
+      padding: 0.45rem 0.1rem;
+      margin-bottom: -1.5px;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      font-size: 0.85rem;
+      color: var(--ink-dim);
+      letter-spacing: 0.04em;
+      text-transform: lowercase;
+    }
+    .tab:hover { color: var(--ink); }
+    .tab.active {
+      color: var(--ink);
+      border-bottom-color: var(--ink);
+      font-weight: 600;
+    }
+
+    pre.value {
+      font-family: monospace;
+      font-size: 0.8rem;
+      background: var(--rule);
+      border-radius: var(--radius);
+      padding: 1rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+`
+
+// Outer mount: page chrome (style, header, conn) wraps the view slot.
+// The view-shape signal (viewKindDep) gates re-renders to kind/keyHex
+// changes; the inner slots handle the rest. Mount owns its container,
+// so the loading shim in index.html is wiped on first render.
+mount(h`
+  <style>${css}</style>
+  <div class="header">
+    <a class="brand-lockup" href="../../" title="streamo home">
+      <img src="../../streamo.svg" alt="">streamo
+    </a>
+    <span class="page-title">explorer</span>
+  </div>
+  <div class=${['conn', connClass]}>${connText}</div>
+  ${() => {
+    viewKindDep()
+    switch (view.kind) {
+      case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
+      case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}`}>${AtView({ keyHex: view.keyHex })}</section>`
+      default:         return h`<div class="empty">?</div>`
+    }
+  }}
+`, document.body, recaller)

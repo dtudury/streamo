@@ -64,7 +64,7 @@ export class RepoRegistry {
     const { name = 'registry', recaller = new Recaller(name) } = options
     this.#name = name
     this.recaller = recaller
-    this.#factory = factory ?? (() => new Repo(this.recaller))
+    this.#factory = factory ?? (() => new Repo({ recaller: this.recaller }))
   }
 
   /**

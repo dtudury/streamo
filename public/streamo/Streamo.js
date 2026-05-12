@@ -91,9 +91,9 @@ export class Streamo extends CodecRegistry {
   /**
    * @param {Recaller} [recaller]
    */
-  constructor (recaller = new Recaller('Streamo')) {
+  constructor ({ recaller, name = 'Streamo' } = {}) {
     super()
-    this.#recaller = recaller
+    this.#recaller = recaller ?? new Recaller(name)
   }
 
   get recaller () { return this.#recaller }
@@ -301,11 +301,11 @@ export class Streamo extends CodecRegistry {
    * Snapshot this streamo up to (and including) `address`.
    * The returned Streamo shares no mutable state with the original.
    * @param {number} address
-   * @param {Recaller} [recaller]
+   * @param {{ recaller?: Recaller, name?: string }} [options]
    * @returns {Streamo}
    */
-  clone (address, recaller = this.#recaller) {
-    return this._applyClone(new Streamo(recaller), address)
+  clone (address, { recaller = this.#recaller, name } = {}) {
+    return this._applyClone(new Streamo({ recaller, name }), address)
   }
 
   // ── Signing ──────────────────────────────────────────────────────────────

@@ -8,7 +8,6 @@
  *
  * See design.md §8.
  */
-import { Recaller } from './utils/Recaller.js'
 import { Streamo, changedPaths } from './Streamo.js'
 
 /**
@@ -181,7 +180,7 @@ export class Repo extends Streamo {
   checkout () {
     const commit = this.lastCommit
     if (!commit) return new Streamo()
-    return this.clone(commit.dataAddress, new Recaller('checkout'))
+    return this.clone(commit.dataAddress, { name: 'checkout' })
   }
 
   /**

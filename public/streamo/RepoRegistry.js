@@ -44,7 +44,6 @@ export class RepoRegistry {
   #streams = new Map()
   #factory
   #name
-  #signal = {}
   #openCallbacks = new Set()
 
   /**
@@ -68,20 +67,15 @@ export class RepoRegistry {
   }
 
   /**
-   * Register the calling reactive cell on the bridge signal. Re-runs
-   * when any repo's chunks arrive or when a new repo opens. Arrow-
-   * bound so `const { dep } = registry` works.
+   * Register the calling reactive cell on `(registry, 'keys')` — the
+   * channel that fires on new-repo opens. Arrow-bound so destructuring
+   * works. Kept temporarily for subsystems (verify cache, tree state)
+   * that haven't moved to LiveSource yet; will retire once they do.
    */
-  dep = () => this.recaller.reportKeyAccess(this.#signal, 'data')
+  dep  = () => this.recaller.reportKeyAccess(this, 'keys')
 
-  /**
-   * Fire the bridge — forces slots that called `dep()` to re-run at
-   * next tick. Called automatically on chunk arrivals and new repo
-   * opens; also useful for app-state changes that aren't repo
-   * mutations but want the same re-render channel (a verify cache
-   * resolving, a tree expanding, etc.).
-   */
-  fire = () => this.recaller.reportKeyMutation(this.#signal, 'data')
+  /** Force a re-render of slots that called `dep()`. Same retirement. */
+  fire = () => this.recaller.reportKeyMutation(this, 'keys')
 
   /**
    * Return the Repo for `publicKeyHex`, creating it via the factory if
@@ -102,25 +96,20 @@ export class RepoRegistry {
     const stream = await this.#factory(publicKeyHex)
     this.#streams.set(publicKeyHex, stream)
     resolve(stream)
-    // Bridge: re-fire on every chunk arrival. Touching stream.byteLength
-    // registers the watcher on the repo's 'length' key. watch() runs
-    // its body immediately to register deps — and that immediate run
-    // calls this.fire(), so there's no need to fire again here.
-    //
-    // Skipped when stream.recaller === this.recaller — the default
-    // factory makes Repos share our recaller, so chunk arrivals already
-    // fire on it directly and the bridge watcher would only forward
-    // events to themselves.
+    // Fire (this, 'keys') so iteration-based slots — those that called
+    // `[...registry]` or `registry.get(keyHex)` — re-run now that a
+    // new repo is available.
+    this.recaller.reportKeyMutation(this, 'keys')
+    // Bridge: for repos whose factory didn't pass our Recaller through,
+    // forward their chunk-arrival events onto ours so iteration-based
+    // slots re-run. Shared-recaller repos fire on (repo, 'length')
+    // directly via Streamo's own reportKeyMutation — no forwarding
+    // needed.
     if (stream.recaller !== this.recaller) {
       stream.recaller.watch(`${this.#name}:${publicKeyHex}`, () => {
         stream.byteLength
-        this.fire()
+        this.recaller.reportKeyMutation(this, 'keys')
       })
-    } else {
-      // Shared recaller — chunk arrivals fire directly. We still want
-      // to fire once now so iteration-based slots re-run on new-repo
-      // opens (Symbol.iterator doesn't auto-report yet).
-      this.fire()
     }
     for (const cb of this.#openCallbacks) cb(publicKeyHex, stream)
     return stream
@@ -134,19 +123,30 @@ export class RepoRegistry {
 
   /**
    * Return an already-open Repo, or undefined if not opened yet.
+   * Reports access on `(registry, 'keys')` so the calling reactive
+   * cell re-runs when the set of open repos changes.
    * @param {string} publicKeyHex
    * @returns {Repo|undefined}
    */
   get (publicKeyHex) {
+    this.recaller.reportKeyAccess(this, 'keys')
     const entry = this.#streams.get(publicKeyHex)
     return entry instanceof Streamo ? entry : undefined
   }
 
-  /** Number of currently open (or opening) repos. */
-  get size () { return this.#streams.size }
+  /** Number of currently open (or opening) repos. Reports access. */
+  get size () {
+    this.recaller.reportKeyAccess(this, 'keys')
+    return this.#streams.size
+  }
 
-  /** Iterate over [publicKeyHex, Repo] pairs (only fully-opened). */
+  /**
+   * Iterate over [publicKeyHex, Repo] pairs (only fully-opened).
+   * Reports access — slots iterating the registry auto-subscribe to
+   * new-repo opens.
+   */
   [Symbol.iterator] () {
+    this.recaller.reportKeyAccess(this, 'keys')
     return (function * (map) {
       for (const [k, v] of map) {
         if (v instanceof Streamo) yield [k, v]

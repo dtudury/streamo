@@ -160,7 +160,11 @@ function scheduleSync () {
   requestAnimationFrame(() => { syncScheduled = false; syncStrips() })
 }
 recaller.watch('strip-sync', () => {
-  dep()
+  // Iterating registry registers on (registry, 'keys') — new-repo opens.
+  // Touching repo.byteLength registers on each (repo, 'length') — chunk
+  // arrivals. Together with the two state reads, the watcher wakes on
+  // everything that could change strip layout.
+  for (const [, repo] of registry) repo.byteLength
   state.get('keyHex')
   state.get('address')
   scheduleSync()
@@ -182,9 +186,8 @@ const AtView = makeAtView({
 
 function RegistryView () {
   return h`
-    <h2>repos <span class="dim">${() => { dep(); return `(${[...registry].length})` }}</span></h2>
+    <h2>repos <span class="dim">${() => `(${[...registry].length})`}</span></h2>
     ${() => {
-      dep()
       const rows = []
       for (const [keyHex, repo] of registry) {
         // No claims about state we can't verify — show the date when we

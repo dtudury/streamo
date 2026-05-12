@@ -118,23 +118,18 @@ joinBtn.onclick = async () => {
 
     // ── Reactive message list ──────────────────────────────────────────────
     //
-    // The registry shares our Recaller (passed in at construction
-    // above) so reading any repo's state inside a slot re-runs the
-    // slot on chunk arrival. dep() subscribes to that bridge signal.
+    // The registry shares our Recaller, so reading any repo's state
+    // inside a reactive cell auto-subscribes it to chunk arrivals.
 
-    const { dep } = registry
-
-    // Auto-scroll to the bottom whenever any chunk arrives. Subscribing
-    // via the same `dep` keeps it in lockstep with the mount slot — both
-    // re-run when the bridge fires, the slot updates the DOM, and this
-    // watcher schedules a post-layout scroll.
+    // Auto-scroll to the bottom whenever a message arrives. The watcher
+    // wakes on new-repo opens (iteration) and on each repo's chunk
+    // arrivals (the byteLength read).
     recaller.watch('chat-scroll', () => {
-      dep()
+      for (const [, repo] of registry) repo.byteLength
       requestAnimationFrame(() => { msgsEl.scrollTop = msgsEl.scrollHeight })
     })
 
     mount(h`${function messages () {
-      dep()
       const all = []
       for (const [keyHex, repo] of registry) {
         if (keyHex === rootKey) continue

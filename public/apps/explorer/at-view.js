@@ -52,12 +52,14 @@ export function makeAtView (deps) {
       </div>
 
       ${() => {
-        // HEADER slot — bridge + address + tab. Re-runs on chunk
-        // arrivals, navigation, tab clicks, async results. Does NOT
+        // HEADER slot — auto-subscribes via the reads inside:
+        // `registry.get` reports on (registry, 'keys') for new repos;
+        // `resolveContext` reads `repo.byteLength` which reports on
+        // (repo, 'length') for chunk arrivals; state.get('atTab') in
+        // the tab indicators registers on the tab key. Does NOT
         // re-run on hover — only the CONTENT slot reads state.hovered,
-        // so hovering the strip leaves the selector + strip itself +
-        // tabs untouched.
-        dep()
+        // so hovering the strip leaves the selector + strip + tabs
+        // untouched.
         const repo = registry.get(keyHex)
         if (!repo) return null
         const ctx = resolveContext(repo)
@@ -78,12 +80,10 @@ export function makeAtView (deps) {
       }}
 
       ${() => {
-        // CONTENT slot — bridge + hover + address + tab. Re-runs on
-        // hover (state.hovered) so the page content peeks at the
-        // hovered chunk, AND on bridge fires (chunk arrivals, async
-        // results). Renders the tab body for contentAddr — the
-        // hovered address if peeking, else the URL's address.
-        dep()
+        // CONTENT slot — auto-subscribes via the reads inside:
+        // registry.get + repo.byteLength via resolveContext + state.get
+        // for hovered/address/atTab. Renders the tab body for
+        // contentAddr — the hovered address if peeking, else the URL.
         const repo = registry.get(keyHex)
         if (!repo) return h`<div class="empty">opening…</div>`
         const ctx = resolveContext(repo)

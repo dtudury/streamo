@@ -28,7 +28,7 @@ const explorerLink = document.getElementById('explorer-link')
 // ── state ────────────────────────────────────────────────────────────
 
 const recaller = new Recaller('hello-vanilla')
-let myRepo, myKey, dep
+let myRepo, myKey
 
 // ── render: rebuild the entries list from scratch on each fire ───────
 //
@@ -38,7 +38,6 @@ let myRepo, myKey, dep
 // version.)
 
 function renderEntries () {
-  dep?.()
   const entries = myRepo?.get('entries') ?? []
   entriesEl.innerHTML = ''
   if (entries.length === 0) {
@@ -84,18 +83,18 @@ loginForm.addEventListener('submit', async e => {
   const { publicKey } = await signer.keysFor('hello')
   myKey = bytesToHex(publicKey)
 
-  // Move 2: registry + sync. The registry shares our Recaller and
-  // exposes dep() so the watcher below re-runs whenever any Repo's
-  // chunks change.
+  // Move 2: registry + sync. The registry shares our Recaller, so
+  // reading myRepo.get('entries') inside renderEntries auto-subscribes
+  // the watcher to chunk arrivals.
   const registry = new RepoRegistry(undefined, { recaller, name: 'hello-vanilla' })
-  dep = registry.dep
   await registrySync(registry, location.hostname, +location.port || 80)
 
   // Move 3: my repo, signed.
   myRepo = await registry.open(myKey)
   myRepo.attachSigner(signer, 'hello')
 
-  // Move 4: watch — re-runs the render function on every fire.
+  // Move 4: watch — re-runs the render function whenever the data it
+  // touched changes.
   recaller.watch('render-entries', renderEntries)
 
   // Reveal post-login UI.

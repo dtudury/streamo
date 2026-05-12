@@ -31,7 +31,7 @@ const setLoggedIn = () => {
   recaller.reportKeyMutation(loginSig, 'in')
 }
 
-let myRepo, myKey, dep
+let myRepo, myKey
 
 // ── handlers ─────────────────────────────────────────────────────────
 
@@ -52,11 +52,10 @@ async function login (e) {
   const { publicKey } = await signer.keysFor('hello')
   myKey = bytesToHex(publicKey)
 
-  // Move 2: registry + sync. WebSocket bridge to upstream. The
-  // registry takes our Recaller so reading any Repo's state in a slot
-  // re-runs the slot on chunk arrival — registry.dep() subscribes.
+  // Move 2: registry + sync. WebSocket bridge to upstream. The registry
+  // shares our Recaller, so reading myRepo.get(...) in a slot below
+  // auto-subscribes that slot to chunk arrivals.
   const registry = new RepoRegistry(undefined, { recaller, name: 'hello' })
-  dep = registry.dep
   await registrySync(registry, location.hostname, +location.port || 80)
 
   // Move 3: my repo, with signer attached. Every set() becomes a
@@ -292,7 +291,6 @@ mount(h`
       if (!loggedIn()) {
         return h`<li class="empty">login above; entries will appear here.</li>`
       }
-      dep?.()
       const entries = myRepo?.get('entries') ?? []
       if (entries.length === 0) {
         return h`<li class="empty">no entries yet — add one below.</li>`

@@ -34,7 +34,7 @@ const setLoggedIn = () => {
 }
 
 // Populated by `login` before setLoggedIn fires.
-let myRepo, myKey, dep
+let myRepo, myKey
 
 // Reactive edit signal. `editing()` returns either `null` (compose
 // mode) or `{ id, headline, body }` describing the entry currently
@@ -105,7 +105,6 @@ async function login (e) {
   myKey = bytesToHex(publicKey)
 
   const registry = new RepoRegistry(undefined, { recaller, name: 'journal' })
-  dep = registry.dep
   await registrySync(registry, location.hostname, +location.port || 80)
 
   myRepo = await registry.open(myKey)
@@ -408,7 +407,6 @@ mount(h`
       if (!loggedIn()) {
         return h`<li class="empty">login above; entries will appear here.</li>`
       }
-      dep?.()
       const entries = myRepo?.get('entries') ?? []
       if (entries.length === 0) {
         return h`<li class="empty">no entries yet — write the first one below.</li>`

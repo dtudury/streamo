@@ -4,16 +4,15 @@
 // attrs so hover anywhere on the page can light up "what bytes does this
 // sig sign" via an overlay band.
 //
-// Two deps cross from main.js: hoverDep (the explorer recaller's read
-// reporter for hoverSignal — so the inspector slot re-runs as the user
-// moves across the strip) and getHoveredAddress (current hovered chunk,
-// owned by interactions.js).
+// The inspector slot reads `state.get('hovered')` so it re-runs as the
+// user moves across the strip — and only that slot does, because no
+// one else reads `hovered`. The strip itself stays put.
 
 import { h } from '../../streamo/h.js'
 import { codecCategory } from './shapes.js'
 import { repoReuseStats } from './analytics.js'
 
-export function makeByteStreamSection ({ hoverDep, getHoveredAddress }) {
+export function makeByteStreamSection ({ state }) {
   // Byte stream as a color-coded SVG strip — every chunk is a rect, color
   // coded by codec category. Modestly zoomed so even 1-byte chunks have a
   // clickable width; horizontally scrollable, click-drag-to-pan inside the
@@ -147,15 +146,13 @@ export function makeByteStreamSection ({ hoverDep, getHoveredAddress }) {
         </svg>
       </div>
       ${() => {
-        // Inspector slot — reads hoverDep so it updates as the user moves
-        // across the strip, but doesn't re-render the strip itself. layout,
-        // total, currentAddress are closed over from byteStreamSection's
-        // call (which only runs on bridge fires; chunk content is fixed
-        // per render). isPeekActive lights up the .active background only
-        // when the inspector is showing something other than the URL's
-        // chunk.
-        hoverDep()
-        const hovered = getHoveredAddress()
+        // Inspector slot — re-runs as the user hovers (reading
+        // state.hovered registers it). layout, total, currentAddress
+        // are closed over from byteStreamSection's call (which only
+        // runs on bridge fires; chunk content is fixed per render).
+        // isPeekActive lights up the .active background only when the
+        // inspector is showing something other than the URL's chunk.
+        const hovered = state.get('hovered')
         const inspectorAddr = hovered != null && hovered < total
           ? hovered
           : currentAddress

@@ -1,22 +1,22 @@
-// Document-level event wiring for the explorer: click-drag-to-pan on
-// the byte strip, mouseover/mouseout cross-highlight + live-preview
-// state, and post-render byte-strip pin-to-HEAD.
+// Document-level event wiring for the explorer:
+//   - click-drag-to-pan on the byte strip,
+//   - mouseover/mouseout cross-highlight + live-preview state (writes
+//     state.hovered),
+//   - post-render byte-strip pin-to-HEAD (`syncStrips`).
 //
-// State (suppressClickUntil, dragState, hoveredAddress) is closure-
-// local; the few read sites in main.js go through the returned getters.
-// onHoverChange is called whenever hoveredAddress changes so the host's
-// reactive signal can fire and slots re-render.
+// suppressClickUntil and dragState are closure-local. Hover state is
+// owned by the shared `state` LiveSource — interactions writes it,
+// other modules read it.
 
-export function setupInteractions ({ appEl, onHoverChange }) {
+export function setupInteractions ({ appEl, state }) {
   let suppressClickUntil = 0
-  let hoveredAddress = null
   let dragState = null
 
   // On first render of a strip, scroll to the right edge (HEAD = newest
   // content). On subsequent renders, only re-pin if the user is already at
   // or near the right edge — so a live stream "follows" without dragging
   // you back if you've scrolled into history.
-  function syncByteStrips () {
+  function syncStrips () {
     for (const container of appEl.querySelectorAll('.byte-strip-container')) {
       const visible = container.clientWidth || 1
       const atRight = container.scrollLeft + visible >= container.scrollWidth - 8
@@ -112,38 +112,31 @@ export function setupInteractions ({ appEl, onHoverChange }) {
         }
       }
     }
-    // Live preview: if the hovered chunk is on the byte strip, set
-    // hoveredAddress so the page content below renders for that chunk.
-    // Click to actually navigate. Only fire if the address changed —
-    // moving within the same chunk shouldn't re-render.
+    // Live preview: if the hovered chunk is on the byte strip, write
+    // state.hovered so the content area peeks ahead. Click navigates
+    // for real. Only set if the address changed — moving within one
+    // chunk shouldn't fire.
     const onStrip = el.closest('.byte-strip-container')
-    const newHover = onStrip ? +addr : null
-    if (newHover !== hoveredAddress) {
-      hoveredAddress = newHover
-      onHoverChange()
-    }
+    const next = onStrip ? +addr : null
+    if (next !== state.get('hovered')) state.set('hovered', next)
   })
   appEl.addEventListener('mouseout', e => {
     const el = e.target.closest('[data-addr]')
     if (!el) return
     appEl.querySelectorAll('.byte-map .chunk.hovered').forEach(c => c.classList.remove('hovered'))
     appEl.querySelectorAll('.sig-coverage.active').forEach(o => o.classList.remove('active'))
-    // Clear hoveredAddress unless the cursor is moving to ANOTHER chunk
+    // Clear state.hovered unless the cursor is moving to ANOTHER chunk
     // on the strip. The previous check ("still inside .byte-strip-container")
     // treated the direction labels and any blank-space as "still hovering,"
     // which left the page stuck on the previously hovered chunk's content.
     // Requiring .chunk[data-addr] specifically means moving off a chunk
     // anywhere — out of the strip OR to its non-chunk regions — reverts.
     const goingToChunk = e.relatedTarget?.closest?.('.byte-strip-container .chunk[data-addr]')
-    if (!goingToChunk && hoveredAddress !== null) {
-      hoveredAddress = null
-      onHoverChange()
-    }
+    if (!goingToChunk && state.get('hovered') !== null) state.set('hovered', null)
   })
 
   return {
     isClickSuppressed: () => Date.now() < suppressClickUntil,
-    getHoveredAddress: () => hoveredAddress,
-    syncByteStrips
+    syncStrips
   }
 }

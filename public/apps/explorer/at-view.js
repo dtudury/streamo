@@ -21,8 +21,7 @@ import { changedPaths } from '../../streamo/Streamo.js'
 
 export function makeAtView (deps) {
   const {
-    getView, getAtTab, registry,
-    dep, hoverDep, getHoveredAddress,
+    state, registry, dep,
     commitSelectorSection, byteStreamSection,
     repoExtras, rawChunkSection, sigDetailBody,
     valueTree, storageTree, referenceTree,
@@ -31,35 +30,33 @@ export function makeAtView (deps) {
 
   return function AtView ({ keyHex }) {
     // AtView's body is built once per repo (the outer mount slot only
-    // re-runs on view.kind / view.keyHex changes — see viewKindSignal).
-    // Anything that depends on view.address must read it fresh inside a
-    // reactive cell via getView(), NOT capture it in closure here. Same
-    // for resolved chunk lookups: each slot calls resolveContext(repo)
-    // on every run.
+    // re-runs on viewKind / keyHex changes). Anything that depends on
+    // the current address must read state.get('address') inside a
+    // reactive cell, NOT capture it in closure here. Same for resolved
+    // chunk lookups: each slot calls resolveContext(repo) on every run.
     const resolveContext = (repo) => {
-      const view = getView()
-      let resolvedAddr = view.address
-      if (view.address === 'HEAD') {
-        resolvedAddr = resolveHead(repo)
-        if (resolvedAddr === undefined) return { state: 'no-head' }
+      let resolved = state.get('address')
+      if (resolved === 'HEAD') {
+        resolved = resolveHead(repo)
+        if (resolved === undefined) return { state: 'no-head' }
       }
-      if (resolvedAddr >= repo.byteLength) return { state: 'loading' }
-      return { state: 'ok', resolvedAddr }
+      if (resolved >= repo.byteLength) return { state: 'loading' }
+      return { state: 'ok', resolved }
     }
 
     return h`
       <a class="back" data-action="back-registry">← all repos</a>
       <div class="keyfull">
         <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
-        <span class="dim"> @ ${() => { dep(); return getView().address }}</span>
+        <span class="dim"> @ ${() => state.get('address')}</span>
       </div>
 
       ${() => {
-        // HEADER slot — bridge only. Re-runs on chunk arrivals, navigation,
-        // tab clicks, and async results. Does NOT re-run on hover (which
-        // fires hoverSignal exclusively), so hovering the strip leaves the
-        // selector + strip itself + tabs untouched. This is the whole
-        // reason the hover signal exists as a separate channel.
+        // HEADER slot — bridge + address + tab. Re-runs on chunk
+        // arrivals, navigation, tab clicks, async results. Does NOT
+        // re-run on hover — only the CONTENT slot reads state.hovered,
+        // so hovering the strip leaves the selector + strip itself +
+        // tabs untouched.
         dep()
         const repo = registry.get(keyHex)
         if (!repo) return null
@@ -67,27 +64,26 @@ export function makeAtView (deps) {
         if (ctx.state !== 'ok') return null
         const tabs = h`
           <nav class="tabs">
-            <a class=${() => { dep(); return ['tab', getAtTab() === 'value' ? 'active' : null] }}
+            <a class=${() => ['tab', state.get('atTab') === 'value'   ? 'active' : null]}
                data-action="set-tab" data-tab="value">value</a>
-            <a class=${() => { dep(); return ['tab', getAtTab() === 'storage' ? 'active' : null] }}
+            <a class=${() => ['tab', state.get('atTab') === 'storage' ? 'active' : null]}
                data-action="set-tab" data-tab="storage">storage</a>
-            <a class=${() => { dep(); return ['tab', getAtTab() === 'refs' ? 'active' : null] }}
+            <a class=${() => ['tab', state.get('atTab') === 'refs'    ? 'active' : null]}
                data-action="set-tab" data-tab="refs">refs</a>
           </nav>
         `
-        const selector = commitSelectorSection(repo, keyHex, ctx.resolvedAddr)
-        const bytes = byteStreamSection(repo, keyHex, ctx.resolvedAddr)
+        const selector = commitSelectorSection(repo, keyHex, ctx.resolved)
+        const bytes = byteStreamSection(repo, keyHex, ctx.resolved)
         return h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
       }}
 
       ${() => {
-        // CONTENT slot — bridge + hover. Re-runs on hover (so the page
-        // content peeks at the hovered chunk) AND on bridge fires (for
-        // chunk arrivals, tab clicks, async results). Renders the tab
-        // body for contentAddr — the hovered address if peeking, else the
-        // URL's address.
+        // CONTENT slot — bridge + hover + address + tab. Re-runs on
+        // hover (state.hovered) so the page content peeks at the
+        // hovered chunk, AND on bridge fires (chunk arrivals, async
+        // results). Renders the tab body for contentAddr — the
+        // hovered address if peeking, else the URL's address.
         dep()
-        hoverDep()
         const repo = registry.get(keyHex)
         if (!repo) return h`<div class="empty">opening…</div>`
         const ctx = resolveContext(repo)
@@ -99,12 +95,12 @@ export function makeAtView (deps) {
           `
         }
         if (ctx.state === 'loading') return h`<div class="empty">loading…</div>`
-        const resolvedAddr = ctx.resolvedAddr
+        const resolvedAddr = ctx.resolved
 
         // Live hover preview: contentAddr peeks at the hovered chunk;
         // header still shows resolvedAddr (the URL position). Click to
         // navigate.
-        const hovered = getHoveredAddress()
+        const hovered = state.get('hovered')
         const contentAddr = hovered != null && hovered < repo.byteLength
           ? hovered
           : resolvedAddr
@@ -136,7 +132,7 @@ export function makeAtView (deps) {
             : h`Used in <span class="num">${econ.uses}</span> commits → naive cost <span class="num">${econ.naiveCost}</span> bytes (<span class="num">${econ.subtreeBytes}</span> × <span class="num">${econ.uses}</span>), saved <span class="num">${econ.savings}</span>. <span class="num leverage">${econ.leverage.toFixed(2)}×</span> via reuse.`
         const economicsBlock = h`<div class="value-economics">${econHead}${econTail}</div>`
 
-        const atTab = getAtTab()
+        const atTab = state.get('atTab')
 
         // Storage tab: this chunk's makeup — the chunk-graph tree going
         // DOWN through directReferences (duples surfaced), then the raw

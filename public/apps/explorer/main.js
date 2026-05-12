@@ -1,25 +1,35 @@
-// streamo explorer — read-only registry / address browser.
+// streamo explorer — entry point. The map of the app:
 //
-// Two view kinds, navigated by URL hash:
-//   #/                                — registry list
-//   #/repo/<keyHex>                   — at HEAD, the most-recent sig
-//                                       (symbolic, like git's HEAD ref).
-//                                       Shorthand for /at/HEAD.
-//   #/repo/<keyHex>/at/HEAD           — same thing, explicit form.
-//   #/repo/<keyHex>/at/<address>      — pinned to a specific byte address.
+//   Two routes (selected by URL hash)
+//     #/                          →  RegistryView   home, list of repos
+//     #/repo/<keyHex>[/at/<a>]    →  AtView         a single repo, at an address
 //
-// When the resolved chunk is a SIGNATURE, the page is the polished
-// signed-commit view (selector dropdown at top, polished detail below,
-// storage chunks tucked into a <details>). Otherwise it's storage
-// drilling — value/storage tabs for that chunk, no selector.
+//   RegistryView      below, in this file
+//   AtView            at-view.js
+//   tree renderers    trees.js          valueTree / storageTree / referenceTree
+//   AtView sections   sections.js       commit selector / sig detail / extras / raw
+//   the byte strip    byte-stream.js    SVG strip + inspector + reuse-by-type
+//   verify badge      verify.js         sig cache + visual primitives
+//   value renderers   render.js         typedValue / bytesChart
+//   pure helpers      format.js, shapes.js, walking.js, analytics.js
+//   DOM event wiring  interactions.js   drag / hover / post-render strip pin
 //
-// Reactivity is bridged from each Repo's internal Recaller into the
-// app-level Recaller via bridgeRegistry — see design.md §6 for why
-// each Repo has its own Recaller and how the bridge connects them.
+//   App-level reactive state is a single LiveSource — `state`, below.
+//   Slots read with state.get(...) (auto-reports access on the recaller);
+//   mutations via state.set(...) fire only watchers that touched the
+//   changed key. Repo data changes ride the separate bridge channel
+//   (dep / bridgeFire) — see design.md §6 for the cross-recaller bridge.
+//
+//   URL forms in detail:
+//     #/                                — registry list
+//     #/repo/<keyHex>                   — at HEAD, shorthand for /at/HEAD
+//     #/repo/<keyHex>/at/HEAD           — same thing, explicit form
+//     #/repo/<keyHex>/at/<address>      — pinned to a specific byte address
 
 import { h } from '../../streamo/h.js'
 import { mount } from '../../streamo/mount.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
+import { liveObject } from '../../streamo/LiveSource.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
@@ -47,66 +57,54 @@ try {
   throw e
 }
 
-// ── App-level reactivity ──────────────────────────────────────────────────
+// ── App state ─────────────────────────────────────────────────────────────
 
 const recaller = new Recaller('explorer')
 const { dep, fire: bridgeFire } = bridgeRegistry(registry, recaller, 'explorer')
 
-// Wrap bridgeFire to also schedule the byte-strip pin-to-HEAD side effect
-// after the next render. Reactive mutation is synchronous (so the slot
-// re-runs at next tick); only the post-render DOM peek goes through rAF.
-let stripSyncScheduled = false
-function fire () {
-  bridgeFire()
-  if (stripSyncScheduled) return
-  stripSyncScheduled = true
-  requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
-}
+// One LiveSource for all UI state. Every slot's read self-reports on
+// the recaller; every set fires only the watchers that touched the
+// changed key. That's how the strip stays untouched on hover (only the
+// inspector slot reads `hovered`), and how a tab click doesn't disturb
+// the address-display in the header (only the tab indicator reads
+// `atTab`). The keys, in detail:
+//
+//   viewKind  'registry' | 'at'              route selector
+//   keyHex    string | null                  repo identity within an at-view
+//   address   'HEAD' | number | null         byte address within a repo
+//   atTab     'value' | 'storage' | 'refs'   which tab is showing
+//   hovered   null | number                  hovered chunk address (live preview)
+const state = liveObject({
+  viewKind: 'registry',
+  keyHex:   null,
+  address:  null,
+  atTab:    'value',
+  hovered:  null
+}, { recaller, name: 'ui' })
 
-// Signature-verification cache, bound to fire() so async-resolved
-// statuses trigger a re-render. See verify.js for the cache shape.
+// fire() exists for subsystems that don't (yet) expose their state as
+// a LiveSource — the verify cache and tree expand/collapse Sets. They
+// keep using fire() to nudge slots that read them via the bridge dep.
+function fire () { bridgeFire() }
+
+// Signature verification — async cache; fire() triggers a re-render
+// when a verify resolves. (See verify.js for the cache shape.)
 const verifyStatus = makeVerifier(fire)
 
-// Three tree renderers + their expand/collapse state + their action
-// dispatcher, all bound to fire() — see trees.js.
+// Three trees (value / storage / refs) + their per-chunk expand/collapse
+// Sets + the action dispatcher main.js's click delegator forwards to.
 const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(fire)
 
-// The smaller AtView sections (commit selector dropdown, sig detail
-// table, "other storage chunks" tuck-away, raw hex dump). Closed over
-// dep + verifyStatus for the per-commit badge slot.
+// Smaller AtView pieces: the commit-selector dropdown, the sig-detail
+// table, the storage-chunks tuck-away, the raw hex dump.
 const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } =
   makeSections({ dep, verifyStatus })
-
-// Hover-only signal — separate from the bridge. Hover events that
-// only set hoveredAddress fire hoverSignal exclusively; slots that
-// read hoverDep() re-run, slots that don't are left alone. This is
-// what keeps hovering the strip from re-rendering the strip itself.
-const hoverSignal = {}
-const hoverDep = () => recaller.reportKeyAccess(hoverSignal, 'data')
-const hoverFire = () => recaller.reportKeyMutation(hoverSignal, 'data')
-
-// View-shape signal — fires only when view.kind or view.keyHex
-// changes. The outer mount slot watches this (NOT bridge), so
-// intra-repo navigation (address changes within an at-view) does
-// NOT re-run the outer slot, does NOT recreate AtView's inner slots,
-// does NOT fresh-mount the byte-strip-container. Inner slots watch
-// bridge — they re-run on address change, chunk arrivals, tab clicks,
-// async results — and recursive-reconcile preserves the strip's DOM
-// (scrollLeft, focus, keyed children) across those re-runs.
-//
-// Together with hoverSignal, this is the full signal decomposition:
-//   viewKindSignal — kind/keyHex (registry ↔ at-view, repo switch)
-//   bridge         — chunks, address, tab, async (everything else)
-//   hoverSignal    — strip hover preview
-const viewKindSignal = {}
-const viewKindDep = () => recaller.reportKeyAccess(viewKindSignal, 'data')
-const viewKindFire = () => recaller.reportKeyMutation(viewKindSignal, 'data')
 
 // ── Hash routing ──────────────────────────────────────────────────────────
 
 function viewFromHash () {
   const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(HEAD|\d+))?\/?$/i)
-  if (!m) return { kind: 'registry' }
+  if (!m) return { kind: 'registry', keyHex: null, address: null }
   // Bare `/repo/<hex>` is shorthand for `/at/HEAD` — the symbolic pointer
   // to the most recent signed commit (like git's HEAD).
   const raw = m[2]
@@ -114,39 +112,77 @@ function viewFromHash () {
   return { kind: 'at', keyHex: m[1], address }
 }
 
-function hashFromView (v) {
-  if (v.kind !== 'at') return '#/'
+function hashFromView (kind, keyHex, address) {
+  if (kind !== 'at') return '#/'
   // Canonical form for HEAD is the bare URL — concise and analogous to
   // tools that imply HEAD when no ref is given.
-  if (v.address === 'HEAD') return `#/repo/${v.keyHex}`
-  return `#/repo/${v.keyHex}/at/${v.address}`
+  if (address === 'HEAD') return `#/repo/${keyHex}`
+  return `#/repo/${keyHex}/at/${address}`
 }
 
-let view = viewFromHash()
-function go (next) {
-  const kindChanged = next.kind !== view.kind || next.keyHex !== view.keyHex
-  view = next
-  const target = hashFromView(next)
-  if (location.hash !== target) location.hash = target
-  if (kindChanged) viewKindFire()
-  fire()
+function go ({ kind, keyHex = null, address = null }) {
+  state.set('viewKind', kind)
+  state.set('keyHex',   keyHex)
+  state.set('address',  address)
+  const hash = hashFromView(kind, keyHex, address)
+  if (location.hash !== hash) location.hash = hash
 }
+
+// Hydrate from the URL on load.
+{
+  const v = viewFromHash()
+  state.set('viewKind', v.kind)
+  state.set('keyHex',   v.keyHex)
+  state.set('address',  v.address)
+}
+
 window.addEventListener('hashchange', () => {
-  const next = viewFromHash()
-  if (next.kind === view.kind && next.keyHex === view.keyHex && next.address === view.address) return
-  const kindChanged = next.kind !== view.kind || next.keyHex !== view.keyHex
-  view = next
-  if (kindChanged) viewKindFire()
-  fire()
+  const v = viewFromHash()
+  if (v.kind    === state.get('viewKind') &&
+      v.keyHex  === state.get('keyHex')   &&
+      v.address === state.get('address')) return
+  state.set('viewKind', v.kind)
+  state.set('keyHex',   v.keyHex)
+  state.set('address',  v.address)
 })
 
-// At-view tab state — persists across at-view navigations so a user who
-// wants to keep a "storage" lens on doesn't have to re-click after every
-// drill-down. Reset to default on registry/repo views (set in go()).
-let atTab = 'value'
+// ── DOM wiring ────────────────────────────────────────────────────────────
 
-// ── Helpers ───────────────────────────────────────────────────────────────
+const appEl = document.getElementById('app')
 
+// Drag-to-pan on the byte strip + hover-preview state + post-render
+// strip housekeeping. Mutates state.hovered directly; main.js reads
+// it back via state.get('hovered') in any slot that wants the peek.
+const { isClickSuppressed, syncStrips } = setupInteractions({ appEl, state })
+
+// Schedule the post-render strip pin-to-HEAD on bridge fires (chunk
+// arrivals) or navigation (repo or address change). Debounced to one
+// rAF per frame. Hover changes do NOT trigger sync — the strip itself
+// doesn't re-render on hover, only the inspector below.
+let syncScheduled = false
+function scheduleSync () {
+  if (syncScheduled) return
+  syncScheduled = true
+  requestAnimationFrame(() => { syncScheduled = false; syncStrips() })
+}
+recaller.watch('strip-sync', () => {
+  dep()
+  state.get('keyHex')
+  state.get('address')
+  scheduleSync()
+})
+
+// The big SVG strip + per-chunk inspector + reuse-by-type table.
+const byteStreamSection = makeByteStreamSection({ state })
+
+// The at-view page — orchestrates header + content for one repo.
+const AtView = makeAtView({
+  state, registry, dep,
+  commitSelectorSection, byteStreamSection,
+  repoExtras, rawChunkSection, sigDetailBody,
+  valueTree, storageTree, referenceTree,
+  verifyStatus
+})
 
 // ── Views ─────────────────────────────────────────────────────────────────
 
@@ -163,8 +199,7 @@ function RegistryView () {
         // fires as more chunks land and the row settles to a date once
         // the commit chunk resolves at the end of the stream.
         const last = repo.lastCommit
-        const len = repo.byteLength
-        const when = last ? fmtDate(last.date) : `${len} b`
+        const when = last ? fmtDate(last.date) : `${repo.byteLength} b`
         rows.push(h`
           <div class="row" data-key=${keyHex} data-action="open-repo">
             <span class="mono">${truncKey(keyHex)}</span>
@@ -178,62 +213,21 @@ function RegistryView () {
   `
 }
 
-
-
-
-
-
 // ── Mount ─────────────────────────────────────────────────────────────────
 
-const appEl = document.getElementById('app')
-
-// Drag/hover/strip-sync wiring + the closure-local state they share.
-// AtView slots reach for getHoveredAddress() when peeking; the click
-// delegator reaches for isClickSuppressed() to avoid the end-of-drag
-// click; fire() invokes syncByteStrips after each reactive cycle.
-const { isClickSuppressed, getHoveredAddress, syncByteStrips } =
-  setupInteractions({ appEl, onHoverChange: hoverFire })
-
-// The big SVG byte-strip + per-chunk inspector + per-codec rollup
-// table. Reads hoverDep (from this module's recaller) so the inspector
-// re-renders on hover; reads getHoveredAddress (from interactions) for
-// the current peek.
-const byteStreamSection = makeByteStreamSection({ hoverDep, getHoveredAddress })
-
-// AtView — the big repo page. Closes over getters for the mutable
-// view + atTab module state (so its slots re-read on every reactive
-// run) plus the factory-instances above.
-const AtView = makeAtView({
-  getView: () => view,
-  getAtTab: () => atTab,
-  registry,
-  dep, hoverDep, getHoveredAddress,
-  commitSelectorSection, byteStreamSection,
-  repoExtras, rawChunkSection, sigDetailBody,
-  valueTree, storageTree, referenceTree,
-  verifyStatus
-})
-
-// Outer mount slot. Reads viewKindDep ONLY — re-runs on view.kind
-// or view.keyHex changes (registry ↔ at, or switching repos). It does
-// NOT re-run on address changes, chunk arrivals, tab clicks, or any
-// other bridge fire. That's the whole point of the decomposition:
-// keep the at-view's <section> (and the strip-container inside it)
-// alive across intra-repo navigation so click-to-navigate doesn't
-// rebuild the strip and reset its scrollLeft.
-//
-// Each view gets a data-keyed <section> so mount's matcher distinguishes
-// them — switching from registry to an at-view, or between repos, drops
-// the old section and fresh-mounts the new one. RegistryView and AtView
-// each do their own internal reactivity (inner slots reading dep() and
-// hoverDep()) for everything within a view.
+// Outer slot reads viewKind + keyHex so it re-runs only on route
+// transitions (registry ↔ at) and repo switches — NOT on intra-repo
+// navigation, chunk arrivals, tab clicks, or hover. Each view gets a
+// data-keyed <section> so mount's reconciler drops/rebuilds the right
+// thing on a switch. Inner reactivity (chunk arrivals, address, tab,
+// hover) lives inside RegistryView and AtView.
 mount(h`${() => {
-  viewKindDep()
-  switch (view.kind) {
-    case 'registry': return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
-    case 'at':       return h`<section class="view" data-key=${`view-at-${view.keyHex}`}>${AtView({ keyHex: view.keyHex })}</section>`
-    default:         return h`<div class="empty">?</div>`
+  const kind = state.get('viewKind')
+  if (kind === 'registry') {
+    return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
   }
+  const keyHex = state.get('keyHex')
+  return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
 }}`, appEl, recaller)
 
 // ── Click delegation ──────────────────────────────────────────────────────
@@ -246,11 +240,11 @@ appEl.addEventListener('click', e => {
   const el = e.target.closest('[data-action]')
   if (!el) return
   switch (el.dataset.action) {
-    case 'open-repo':     return go({ kind: 'at', keyHex: el.dataset.key, address: 'HEAD' })
+    case 'open-repo':     return go({ kind: 'at', keyHex: el.dataset.key,    address: 'HEAD' })
     case 'open-at':       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     case 'back-registry': return go({ kind: 'registry' })
     case 'back-repo':     return go({ kind: 'at', keyHex: el.dataset.keyhex, address: 'HEAD' })
-    case 'set-tab':       atTab = el.dataset.tab; return fire()
+    case 'set-tab':       return state.set('atTab', el.dataset.tab)
     case 'select-commit': {
       // Picking a commit is just navigation — go to /at/<sigAddress>.
       // Close the dropdown imperatively so the new view renders with
@@ -264,8 +258,6 @@ appEl.addEventListener('click', e => {
     case 'collapse-storage':
     case 'expand-refs':
     case 'collapse-refs':
-      handleTreeAction(el.dataset.action, `${el.dataset.keyhex}:${el.dataset.addr}`)
-      return
+      return handleTreeAction(el.dataset.action, `${el.dataset.keyhex}:${el.dataset.addr}`)
   }
 })
-

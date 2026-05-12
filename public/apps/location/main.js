@@ -1,84 +1,100 @@
 // location — a streamo-style reactive app with no Streamo at all.
 //
 // The point of this demo: h + mount + Recaller compose independently
-// of any data layer. Here the only reactive data source is the URL
-// itself, wrapped in a "live source" — a Proxy over window.location
-// paired with a Recaller. The proxy reports reads to the recaller;
-// hashchange and popstate events fire the recaller; setter helpers
-// perform mutations and fire too. Anywhere h's slot pulls from the
-// proxy, the slot re-runs when the URL changes.
+// of any data layer. The only reactive data source here is the URL
+// itself, wrapped as a LiveSource — `{recaller, get, set}` plus an
+// optional `proxy` for ergonomic reads. The interface lives at
+// `/streamo/LiveSource.js`; this app is its worked example for a
+// domain that needs more than the generic `liveObject` adapter
+// (browser event wiring, three different mutation paths).
 //
-// Generalize: liveSource(target) wraps any object the same way.
-// LiveData, ReactiveSource, RecallingSource, SignalSource — all
-// reasonable names for this pattern. The shape is:
+// LiveSource interface:
+//   recaller        — what mount() and h slots register on
+//   get(...path)    — reactive read; reports access on the recaller
+//   set(...path, v) — mutation; fires the recaller
+//   proxy           — optional sugar (`loc.proxy.hash`)
 //
-//   { recaller, proxy, …mutators }
-//
-// and h/mount only know about the recaller. The data shape is
-// interchangeable; this app proves it by being entirely useful
-// without Streamo's content-addressed machinery.
+// Streamo and Repo already implement this; here we implement it for
+// window.location.
 
 import { h }        from '../../streamo/h.js'
 import { mount }    from '../../streamo/mount.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 
-// ── liveSource ───────────────────────────────────────────────────────
+// ── liveLocation — a LiveSource over window.location ─────────────────
 //
-// Generic factory: wrap any object as a reactive source. The proxy
-// reports `reportKeyAccess` on every property read; the returned
-// recaller is what watchers register on. Callers are responsible
-// for firing `reportKeyMutation` when the underlying object changes
-// — for window.location that means wiring hashchange and popstate.
-
-function liveSource (target, name = 'source') {
-  const recaller = new Recaller(name)
-  const proxy = new Proxy(target, {
-    get (t, key) {
-      recaller.reportKeyAccess(t, key)
-      const v = t[key]
-      // bind methods so `proxy.method()` doesn't crash on `this` checks
-      return typeof v === 'function' ? v.bind(t) : v
-    }
-  })
-  return { recaller, proxy, target }
-}
-
-// Specific to window.location — wires the browser's change events to
-// the recaller so popstate / hashchange / pushState-via-mutator all
-// reactively update consumers.
+// get(key)         reads window.location[key]
+// set('hash', v)   sets the URL hash (fires hashchange automatically)
+// set('search', v) replaces the query-string via pushState
+// set('pathname', v) replaces the pathname via pushState
+// set('searchParams', key, v) sets/deletes one query param via pushState
+// set(href)        navigates to the URL via pushState (no path = href)
 
 function liveLocation () {
-  const src = liveSource(window.location, 'location')
+  const recaller = new Recaller('location')
+
   // Fire every URL-related key on any change. We don't know which
-  // specific key changed, so we fire all of them — cheap, since
-  // consumers only re-run if they actually read one of these.
+  // specific key changed, so we fire all — cheap, since consumers
+  // only re-run if they actually read one of these.
+  const URL_KEYS = ['hash', 'href', 'pathname', 'search', 'host', 'hostname', 'origin', 'protocol', 'port']
   const fireAll = () => {
-    for (const k of ['hash', 'href', 'pathname', 'search', 'host', 'hostname', 'origin', 'protocol', 'port']) {
-      src.recaller.reportKeyMutation(window.location, k)
-    }
+    for (const k of URL_KEYS) recaller.reportKeyMutation(window.location, k)
   }
   window.addEventListener('hashchange', fireAll)
   window.addEventListener('popstate', fireAll)
-  return {
-    ...src,
-    // Setter helpers. Browser-initiated changes fire events
-    // automatically; pushState does not, so we fire manually.
-    setHash (hash) {
-      // Assigning location.hash fires hashchange → fireAll runs.
-      window.location.hash = hash
-    },
-    setSearchParam (key, value) {
+
+  function get (...path) {
+    if (path.length === 0) {
+      recaller.reportKeyAccess(window.location, 'href')
+      return window.location.href
+    }
+    const key = path[0]
+    recaller.reportKeyAccess(window.location, key)
+    return window.location[key]
+  }
+
+  function set (...args) {
+    const value = args.pop()
+    const path = args
+    if (path.length === 0) {
+      // No path → navigate to the URL.
+      history.pushState(null, '', value)
+      fireAll()
+      return
+    }
+    const key = path[0]
+    if (key === 'hash') {
+      // Browser fires hashchange → fireAll runs automatically.
+      window.location.hash = value
+    } else if (key === 'searchParams') {
+      const paramKey = path[1]
       const url = new URL(window.location.href)
-      if (value === '' || value == null) url.searchParams.delete(key)
-      else url.searchParams.set(key, value)
+      if (value === '' || value == null) url.searchParams.delete(paramKey)
+      else url.searchParams.set(paramKey, value)
       history.pushState(null, '', url.toString())
       fireAll()
-    },
-    go (url) {
-      history.pushState(null, '', url)
+    } else if (key === 'search' || key === 'pathname') {
+      const url = new URL(window.location.href)
+      url[key] = value
+      history.pushState(null, '', url.toString())
       fireAll()
+    } else {
+      throw new Error(`liveLocation.set: cannot write '${key}' — pick one of hash, search, pathname, or searchParams`)
     }
   }
+
+  // Optional sugar: a Proxy over window.location for ergonomic reads.
+  // `loc.proxy.hash` is the equivalent of `loc.get('hash')` — same
+  // recaller-access reporting under the hood.
+  const proxy = new Proxy(window.location, {
+    get (t, key) {
+      recaller.reportKeyAccess(t, key)
+      const v = t[key]
+      return typeof v === 'function' ? v.bind(t) : v
+    }
+  })
+
+  return { recaller, get, set, proxy }
 }
 
 // ── app ──────────────────────────────────────────────────────────────
@@ -88,7 +104,7 @@ const loc = liveLocation()
 function setHashHandler (e) {
   e.preventDefault()
   const input = e.target.elements.hash
-  loc.setHash(input.value.trim())
+  loc.set('hash', input.value.trim())
   input.value = ''
 }
 
@@ -97,7 +113,7 @@ function setParamHandler (e) {
   const f = e.target
   const key = f.elements.key.value.trim()
   if (!key) return
-  loc.setSearchParam(key, f.elements.value.value.trim())
+  loc.set('searchParams', key, f.elements.value.value.trim())
   f.elements.key.value = ''
   f.elements.value.value = ''
 }
@@ -330,6 +346,6 @@ mount(h`
   </div>
   <p class="example">
     Or jump to an example URL:
-    <button class="link" onclick=${() => () => loc.go('?demo=on&color=blue#welcome')}>?demo=on&amp;color=blue#welcome</button>
+    <button class="link" onclick=${() => () => loc.set('?demo=on&color=blue#welcome')}>?demo=on&amp;color=blue#welcome</button>
   </p>
 `, document.body, loc.recaller)

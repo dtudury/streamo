@@ -336,7 +336,52 @@ directly as tags inside `h\`<${Card}/>\``. Custom-element components
 extend `StreamoComponent` (browser-only — extends `HTMLElement` at
 module load).
 
-## 13. The chat-room demo
+## 13. `LiveSource` — the reactive data source contract
+
+> File: `public/streamo/LiveSource.js`
+
+The minimum interface `h` / `mount` reaches for when they need
+reactive data:
+
+    {
+      recaller: Recaller,
+      get(...path): any,
+      set(...path, value): void
+    }
+
+`recaller` is the single bus `mount(_, _, recaller)` registers slot
+watchers on. `get` reads the value at the given path and reports
+access on the recaller so any slot that touched it re-runs when it
+changes. `set` mutates the value at the given path and fires the
+recaller for the affected key(s). Variadic path with value-last
+matches `Streamo`'s existing `get(...path)` and `set([address,]
+...path, value)` signatures — no special argument-order wart.
+
+**Already implementing the contract:** `Streamo` and `Repo`. Their
+existing methods *are* the interface; nothing else is needed to pass
+one into a mount call.
+
+**To wrap anything else:** `liveObject(target)` adapts a plain JS
+object — reads walk the path and report access, writes walk to the
+parent and fire mutation. Useful for app-local UI state where you
+want the same reactive ergonomics as Streamo without persistence,
+signing, or syncing.
+
+`public/apps/location/main.js` is a worked example of writing a
+LiveSource for a domain that needs more than the generic adapter:
+`liveLocation()` returns `{recaller, get, set, proxy}` over
+`window.location`, with hashchange and popstate wired to fire the
+recaller, and `set` routing 'hash' / 'search' / 'pathname' /
+'searchParams' to the right underlying mechanism (direct assignment
+vs `history.pushState`). The proxy is sugar; the documented surface
+is `get` and `set`.
+
+The contract is convention, not enforced — JS doesn't have
+interfaces. The value is that "if I read with this recaller, slots
+re-run" becomes a guarantee you can count on, instead of a thing
+you discover the hard way when a slot mysteriously stays stale.
+
+## 14. The chat-room demo
 
 > Files: `public/apps/chat/server.js`, `public/apps/chat/main.js`,
 > `public/streamo/chat-cli.js`

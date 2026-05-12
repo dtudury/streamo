@@ -68,6 +68,30 @@ Same shape for `onsubmit`, `oninput`, etc.
 
 This is also in CLAUDE.md's known footguns.
 
+## the LiveSource interface
+
+When something needs to be a reactive data source for h/mount, it
+implements:
+
+    {
+      recaller: Recaller,
+      get(...path): any,
+      set(...path, value): void
+    }
+
+`Streamo` and `Repo` already do this directly — their methods *are*
+the interface. For plain JS objects, use `liveObject(target)` from
+`public/streamo/LiveSource.js`. For domain-specific cases (the
+location app, say), write a custom factory that returns the same
+shape; `apps/location/main.js` is the worked example.
+
+Variadic path, value-last (`set('a', 'b', 'c', 42)`), matching
+Streamo's existing signature. A `proxy` field is optional sugar that
+some implementations expose — `loc.proxy.hash` ⇔ `loc.get('hash')`
+— but it's not part of the interface.
+
+design.md §13 has the formal description.
+
 ## `<style>` and `<script>` content is now raw text
 
 As of the 4.0.x bug fix, h's parser treats the content of `<style>`

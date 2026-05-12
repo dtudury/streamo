@@ -182,8 +182,8 @@ mount(h`
       font-weight: 500;
     }
 
-    /* Live URL display — every <dd> is a reactive cell reading
-       from the proxy; updates whenever the recaller fires. */
+    /* Live URL display — each definition is a reactive cell that
+       reads from the proxy; updates whenever the recaller fires. */
     .props {
       display: grid;
       grid-template-columns: max-content 1fr;

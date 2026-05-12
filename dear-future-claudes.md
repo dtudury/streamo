@@ -68,6 +68,19 @@ Same shape for `onsubmit`, `oninput`, etc.
 
 This is also in CLAUDE.md's known footguns.
 
+## `<style>` and `<script>` content is now raw text
+
+As of the 4.0.x bug fix, h's parser treats the content of `<style>`
+and `<script>` tags as opaque text — anything that *looks like* HTML
+inside (e.g. `/* a comment mentioning <dd> */`) is not parsed as HTML.
+Slot interpolation inside still works: `<style>${cssRules}</style>`
+is fine. Before this fix, an HTML-looking token inside a CSS comment
+would silently derail parsing and only the `<style>` element would
+render. If you're debugging a "only the style shows up" symptom in a
+future app, check whether something fishy is happening earlier in the
+template; the raw-text fix should rule out the `<dd>-in-a-comment`
+class of bug.
+
 ## components vs. fragments
 
 Function components (plain functions used as `<${Card}>` tags) are

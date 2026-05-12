@@ -118,4 +118,44 @@ describe(import.meta.url, ({ test }) => {
     const [el] = h`<div ${extra}></div>`
     assert.deepEqual(el.attrs[0], extra)
   })
+
+  test('<style> content is raw text — <dd> inside CSS comment is not parsed', ({ assert }) => {
+    const [style] = h`<style>
+      /* this comment mentions <dd> and <strong>, neither is HTML */
+      .a > .b { color: red }
+    </style>`
+    assert.ok(style instanceof HElement)
+    assert.equal(style.tag, 'style')
+    // The whole inner text should be one HText, not a tree of misparsed elements
+    assert.equal(style.children.length, 1)
+    assert.ok(style.children[0] instanceof HText)
+    assert.ok(style.children[0].value.includes('<dd>'))
+    assert.ok(style.children[0].value.includes('.a > .b'))
+  })
+
+  test('<style> content allows slot interpolation as text', ({ assert }) => {
+    const cssRules = '.x { color: blue }'
+    const [style] = h`<style>${cssRules}</style>`
+    assert.equal(style.tag, 'style')
+    assert.equal(style.children.length, 1)
+    assert.equal(style.children[0], cssRules)
+  })
+
+  test('<script> content is raw text — < and > inside are not parsed', ({ assert }) => {
+    const [script] = h`<script>
+      if (a < b && c > d) { console.log('hi') }
+    </script>`
+    assert.equal(script.tag, 'script')
+    assert.equal(script.children.length, 1)
+    assert.ok(script.children[0] instanceof HText)
+    assert.ok(script.children[0].value.includes('a < b'))
+  })
+
+  test('element parsing resumes correctly after a raw-text element', ({ assert }) => {
+    const children = h`<style>.x { color: red }</style><h1>hello</h1>`
+    assert.equal(children.length, 2)
+    assert.equal(children[0].tag, 'style')
+    assert.equal(children[1].tag, 'h1')
+    assert.equal(children[1].children[0].value, 'hello')
+  })
 })

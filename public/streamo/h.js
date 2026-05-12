@@ -14,6 +14,13 @@ const VOID = new Set([
   'link', 'meta', 'param', 'source', 'track', 'wbr'
 ])
 
+// Tags whose content is opaque text, not HTML. Browsers special-case
+// these — anything between <style>…</style> or <script>…</script> is
+// treated as the tag's raw text content, not nested elements. We
+// follow suit: a `<dd>` inside a CSS comment shouldn't trip the
+// parser into thinking the document has a `<dd>` element in it.
+const RAW_TEXT = new Set(['style', 'script'])
+
 // ── Virtual tree types ───────────────────────────────────────────────────
 
 export class HElement {
@@ -175,8 +182,56 @@ function parseElement (sc) {
   const selfClose = sc.readIf('/') || isVoid
   sc.assertChar(/>/)
   if (closing) return { _closing: tag }
+  if (!selfClose && typeof tag === 'string' && RAW_TEXT.has(tag.toLowerCase())) {
+    return new HElement(tag, attrs, parseRawText(sc, tag))
+  }
   const children = selfClose ? [] : parseChildren(sc, tag)
   return new HElement(tag, attrs, children)
+}
+
+// For RAW_TEXT tags (<style>, <script>): read content until we hit
+// the matching </tag>, treating everything in between as opaque text.
+// Slot interpolations are still honored — `<style>${cssRules}</style>`
+// works because the cssRules value is interpolated as text. The </tag>
+// itself is consumed here.
+function parseRawText (sc, tag) {
+  const children = []
+  let buf = ''
+  const lower = tag.toLowerCase()
+  const flushBuf = () => { if (buf) { children.push(new HText(buf)); buf = '' } }
+  while (!sc.done) {
+    if (sc.isSlot()) {
+      flushBuf()
+      children.push(sc.advance().slot)
+      continue
+    }
+    // Look ahead for "</tag" with the next char being whitespace,
+    // /, or > — that's the real closing tag, not the substring of
+    // some user text.
+    if (sc.peek() === '<' && sc.peek(1) === '/') {
+      let name = ''
+      let j = 2
+      while (true) {
+        const c = sc.peek(j)
+        if (c === undefined || c?.slot !== undefined || c.match(/[\s/>]/)) break
+        name += c
+        j++
+      }
+      if (name.toLowerCase() === lower) {
+        flushBuf()
+        // Consume `</tag` and any trailing whitespace + `>`.
+        for (let k = 0; k < j; k++) sc.advance()
+        sc.skipSpace()
+        sc.readIf('/')
+        sc.assertChar(/>/)
+        return children
+      }
+    }
+    buf += sc.peek()
+    sc.advance()
+  }
+  flushBuf()
+  return children
 }
 
 function parseChildren (sc, closingTag) {

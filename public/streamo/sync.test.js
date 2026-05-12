@@ -12,7 +12,7 @@ function waitFor (stream, predicate, timeout = 2000) {
   return new Promise((resolve, reject) => {
     const t = setTimeout(() => reject(new Error('timeout')), timeout)
     let done = false
-    stream.watch('waitFor', () => {
+    stream.recaller.watch('waitFor', () => {
       if (!done && predicate(stream)) {
         done = true
         clearTimeout(t)

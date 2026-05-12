@@ -281,24 +281,6 @@ export class Streamo extends CodecRegistry {
   }
 
   /**
-   * Call f immediately, tracking get() calls. Re-runs f whenever a
-   * subsequent set() touches a path that was accessed.
-   * @param {string} name
-   * @param {function} f
-   */
-  watch (name, f) {
-    this.#recaller.watch(name, f)
-  }
-
-  /**
-   * Stop watching a function that was previously passed to watch().
-   * @param {function} f
-   */
-  unwatch (f) {
-    this.#recaller.unwatch(f)
-  }
-
-  /**
    * Like set(), but only succeeds if the streamo's current byteLength equals
    * `expectedTip` — i.e., nothing has been written since the caller last read.
    *

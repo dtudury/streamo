@@ -55,7 +55,7 @@ describe(import.meta.url, ({ test }) => {
     let callCount = 0
     let lastValue
 
-    s.watch('test', () => {
+    s.recaller.watch('test', () => {
       lastValue = s.get('greeting')
       callCount++
     })

@@ -8,7 +8,7 @@ import { writeFile } from 'fs/promises'
  * @param {string} filePath
  */
 export function stateFileSync (stream, filePath) {
-  stream.watch('state-file-sync', () => {
+  stream.recaller.watch('state-file-sync', () => {
     const state = stream.get()
     if (state != null) {
       writeFile(filePath, JSON.stringify(state, null, 2) + '\n').catch(console.error)

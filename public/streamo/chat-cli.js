@@ -101,7 +101,7 @@ function printNewMessages (keyHex, repo) {
 function watchRepo (keyHex, repo) {
   if (seen.has(keyHex)) return
   seen.set(keyHex, 0)
-  repo.watch(`chat-cli:${keyHex}`, () => printNewMessages(keyHex, repo))
+  repo.recaller.watch(`chat-cli:${keyHex}`, () => printNewMessages(keyHex, repo))
 }
 
 // Watch all repos already in registry

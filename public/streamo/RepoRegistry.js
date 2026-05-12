@@ -49,15 +49,22 @@ export class RepoRegistry {
 
   /**
    * @param {(publicKeyHex: string) => Repo | Promise<Repo>} [factory]
+   *   If omitted, the default factory creates plain in-memory Repos
+   *   that share our Recaller — so reading repo state inside a slot
+   *   automatically subscribes the slot to chunk arrivals, no bridge
+   *   needed. Custom factories that want the same effect should pass
+   *   `registry.recaller` into their `new Repo(...)` (or new Streamo)
+   *   call; otherwise the registry bridges their per-repo recaller
+   *   onto its own.
    * @param {{ name?: string, recaller?: Recaller }} [options]
    *   `name` is used in watch names for debugging; `recaller` is the
-   *   shared Recaller for the bridge (defaults to a fresh one).
+   *   shared Recaller (defaults to a fresh one).
    */
-  constructor (factory = () => new Repo(), options = {}) {
+  constructor (factory, options = {}) {
     const { name = 'registry', recaller = new Recaller(name) } = options
-    this.#factory = factory
     this.#name = name
     this.recaller = recaller
+    this.#factory = factory ?? (() => new Repo(this.recaller))
   }
 
   /**
@@ -96,12 +103,25 @@ export class RepoRegistry {
     this.#streams.set(publicKeyHex, stream)
     resolve(stream)
     // Bridge: re-fire on every chunk arrival. Touching stream.byteLength
-    // registers the watcher on the repo's 'length' key.
-    stream.watch(`${this.#name}:${publicKeyHex}`, () => {
-      stream.byteLength
+    // registers the watcher on the repo's 'length' key. watch() runs
+    // its body immediately to register deps — and that immediate run
+    // calls this.fire(), so there's no need to fire again here.
+    //
+    // Skipped when stream.recaller === this.recaller — the default
+    // factory makes Repos share our recaller, so chunk arrivals already
+    // fire on it directly and the bridge watcher would only forward
+    // events to themselves.
+    if (stream.recaller !== this.recaller) {
+      stream.recaller.watch(`${this.#name}:${publicKeyHex}`, () => {
+        stream.byteLength
+        this.fire()
+      })
+    } else {
+      // Shared recaller — chunk arrivals fire directly. We still want
+      // to fire once now so iteration-based slots re-run on new-repo
+      // opens (Symbol.iterator doesn't auto-report yet).
       this.fire()
-    })
-    this.fire()
+    }
     for (const cb of this.#openCallbacks) cb(publicKeyHex, stream)
     return stream
   }

@@ -206,7 +206,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream') {
   let committingFromDisk = false
 
   // Repo → disk: fires when a new commit lands (from peer, archive, or local commit)
-  repo.watch('fileSync:repo→disk', () => {
+  repo.recaller.watch('fileSync:repo→disk', () => {
     if (committingFromDisk) return
     const commit = repo.lastCommit
     if (!commit) return

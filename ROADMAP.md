@@ -84,17 +84,13 @@ goal of this thread is to make it ergonomic to read end-to-end —
 
 Specific items so far:
 
-- **`codecs.js` should take `r` per-call**, not capture it in closure.
-  Right now codec helpers (`inlineOrAddressPart`, `decodeParts`,
-  `getPartAddress`, etc.) reference an `r` object that's bound at
-  registry-construction time. To make `asRefs` mutation-impossible we
-  introduced a `#runReadOnly` scope on `CodecRegistry` that flips
-  `r.readOnly`; while contained and clean, it's a one-off pattern in
-  the codebase. The structurally-pretty version is: codecs take `r` as
-  a function arg per call, so the read path can pass an `r` literally
-  without `append` and the write path can pass one with append. Bigger
-  refactor — every codec's encode/decode signature changes — but
-  worthwhile when this thread is a priority.
+- ~~**`codecs.js` should take `r` per-call**, not capture it in closure.~~
+  *(landed — every codec's encode/decode and every helper takes `r`
+  as a leading arg. `#runReadOnly` / `#readOnlyDepth` on
+  `CodecRegistry` dissolved; asRefs's mutation-impossibility is now
+  a property of which `r` flavor the entry point dispatches with —
+  `#readOnlyR` has no `append`, so getPartAddress yields rather than
+  mutates.)*
 - ~~**Explainer comments at the top of each module** describing the
   module's role, the public surface, and the one or two non-obvious
   invariants someone reimplementing should preserve.~~ *(landed —
@@ -104,8 +100,7 @@ Specific items so far:
   so a reader can build a mental model in one sitting.~~ *(landed —
   see design.md at the project root)*
 
-These don't all need to land together; treat as a checklist. Two of
-three done; the codecs `r`-per-call refactor is still on the list.
+All three items done; this thread's at a natural pause.
 
 ### presence indicators
 

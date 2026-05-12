@@ -30,8 +30,7 @@ import { Recaller } from '../../streamo/utils/Recaller.js'
 // set('searchParams', key, v) sets/deletes one query param via pushState
 // set(href)        navigates to the URL via pushState (no path = href)
 
-function liveLocation () {
-  const recaller = new Recaller('location')
+function liveLocation ({ recaller = new Recaller('location') } = {}) {
 
   // Fire every URL-related key on any change. We don't know which
   // specific key changed, so we fire all — cheap, since consumers

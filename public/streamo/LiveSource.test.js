@@ -1,5 +1,6 @@
 import { describe } from './utils/testing.js'
-import { liveObject } from './LiveSource.js'
+import { liveObject, isLiveSource } from './LiveSource.js'
+import { Recaller } from './utils/Recaller.js'
 
 describe(import.meta.url, ({ test }) => {
   test('liveObject reads at top-level path', ({ assert }) => {
@@ -59,5 +60,44 @@ describe(import.meta.url, ({ test }) => {
     const s = liveObject({ a: 1 })
     assert.equal(s.get('nope'), undefined)
     assert.equal(s.get('a', 'b', 'c'), undefined)
+  })
+
+  test('liveObject accepts an external recaller via options', ({ assert }) => {
+    const shared = new Recaller('shared')
+    const a = liveObject({ x: 1 }, { recaller: shared })
+    const b = liveObject({ y: 2 }, { recaller: shared })
+    assert.equal(a.recaller, shared)
+    assert.equal(b.recaller, shared)
+  })
+
+  test('liveObjects sharing a recaller trigger each other’s watchers', async ({ assert }) => {
+    const shared = new Recaller('shared')
+    const a = liveObject({ x: 1 }, { recaller: shared })
+    const b = liveObject({ y: 2 }, { recaller: shared })
+    const seen = []
+    shared.watch('cross', () => {
+      seen.push([a.get('x'), b.get('y')])
+    })
+    assert.deepEqual(seen[0], [1, 2], 'initial run sees both')
+    b.set('y', 20)
+    await new Promise(r => setTimeout(r, 0))
+    assert.deepEqual(seen[seen.length - 1], [1, 20], 'b.set fired the watcher, both values read')
+    a.set('x', 10)
+    await new Promise(r => setTimeout(r, 0))
+    assert.deepEqual(seen[seen.length - 1], [10, 20], 'a.set fires the same watcher')
+  })
+
+  test('isLiveSource structural check', ({ assert }) => {
+    const s = liveObject({})
+    assert.ok(isLiveSource(s))
+    assert.ok(!isLiveSource(null))
+    assert.ok(!isLiveSource({}))
+    assert.ok(!isLiveSource({ recaller: 'nope', get: () => {}, set: () => {} }))
+    assert.ok(!isLiveSource({ recaller: new Recaller('r'), get: () => {} }))  // missing set
+  })
+
+  test('liveObject still accepts legacy string-name as second arg', ({ assert }) => {
+    const s = liveObject({}, 'legacy-name')
+    assert.ok(s.recaller instanceof Recaller)
   })
 })

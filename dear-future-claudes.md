@@ -92,6 +92,23 @@ some implementations expose — `loc.proxy.hash` ⇔ `loc.get('hash')`
 
 design.md §13 has the formal description.
 
+**Share recallers across LiveSources whenever you can.** Multiple
+recallers compose badly (cross-recaller subscriptions don't form
+automatically — see the design-thread-paused-then-resumed note
+elsewhere). `liveObject` accepts a `{recaller}` option for exactly
+this — pass an existing recaller (often a Repo's) and multiple
+liveObjects all signal on the same bus, so a single mount() call
+sees everything. The "isolation" of separate recallers is almost
+never the isolation you actually want.
+
+`liveLocation()` also accepts `{recaller}` if you ever need it to
+compose with other sources.
+
+There's an `isLiveSource(x)` predicate exported alongside `liveObject`
+— structural check (does it have `recaller`, `get`, `set`), not
+nominal. Useful when writing helpers that take any LiveSource as
+input.
+
 ## `<style>` and `<script>` content is now raw text
 
 As of the 4.0.x bug fix, h's parser treats the content of `<style>`

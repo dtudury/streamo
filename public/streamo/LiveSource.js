@@ -44,18 +44,32 @@ import { Recaller } from './utils/Recaller.js'
  * and report access / mutation on the recaller. The target is
  * mutated in place; `target` is exposed for direct inspection.
  *
+ * Pass `{recaller}` to share a recaller across multiple LiveSources
+ * (and with the mount() call) — this is usually what app code wants,
+ * because cross-recaller subscriptions don't form automatically. If
+ * no recaller is passed, a fresh one is created.
+ *
  * @param {object} target  Plain object to wrap.
- * @param {string} [name='object']  Recaller name (for debug logs).
+ * @param {object|string} [options]  Options object, or a string treated
+ *   as `{name: ...}` for legacy convenience.
+ * @param {string} [options.name='object']  Recaller name (for debug logs).
+ * @param {Recaller} [options.recaller]  Recaller to share. If omitted,
+ *   a fresh `new Recaller(name)` is created.
  * @returns {{recaller: Recaller, get: Function, set: Function, target: object}}
  *
  * @example
+ *   // Fresh recaller per source:
  *   const state = liveObject({ count: 0 })
- *   state.get('count')       // 0 (subscribes the current watcher)
- *   state.set('count', 1)    // fires watchers reading 'count'
- *   state.set('a', 'b', 42)  // creates {a: {b: 42}} as needed
+ *
+ *   // Shared recaller across sources + the mount call:
+ *   const recaller = new Recaller('app')
+ *   const login = liveObject({ in: false }, { recaller, name: 'login' })
+ *   const edit  = liveObject({},           { recaller, name: 'edit'  })
+ *   mount(h\`…\`, document.body, recaller)
  */
-export function liveObject (target, name = 'object') {
-  const recaller = new Recaller(name)
+export function liveObject (target, options = {}) {
+  if (typeof options === 'string') options = { name: options }
+  const { name = 'object', recaller = new Recaller(name) } = options
 
   function get (...path) {
     if (path.length === 0) {
@@ -103,4 +117,19 @@ export function liveObject (target, name = 'object') {
   }
 
   return { recaller, get, set, target }
+}
+
+/**
+ * Runtime check: does this value satisfy the LiveSource contract?
+ * Structural, not nominal — `Streamo`, `Repo`, `liveObject` return
+ * values, and any custom factory that exposes the shape all pass.
+ *
+ * @param {any} x
+ * @returns {boolean}
+ */
+export function isLiveSource (x) {
+  return x != null &&
+    x.recaller instanceof Recaller &&
+    typeof x.get === 'function' &&
+    typeof x.set === 'function'
 }

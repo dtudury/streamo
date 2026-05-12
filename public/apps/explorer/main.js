@@ -14,12 +14,12 @@
 //   pure helpers      format.js, shapes.js, walking.js, analytics.js
 //   DOM event wiring  interactions.js   drag / hover / post-render strip pin
 //
-//   App-level reactive state is a single LiveSource — `state`, below.
-//   Slots read with state.get(...) (auto-reports access on the recaller);
-//   mutations via state.set(...) fire only watchers that touched the
-//   changed key. Repo data changes ride the separate bridge channel
-//   (registry.dep / registry.fire) — the registry's own Recaller IS
-//   the app recaller, so reading repo state in a slot just works.
+//   All reactive state — UI (route/tab/hover) AND repo data AND
+//   subsystem caches (verify, tree expansion) — rides ONE Recaller.
+//   Slots subscribe via the reads they already do: state.get(...) for
+//   UI, repo.byteLength / repo.get(...) for repos (the registry's
+//   default factory shares our Recaller), cache.get(key) inside the
+//   verify and trees subsystems. No explicit dep/fire ceremony.
 //
 //   URL forms in detail:
 //     #/                                — registry list
@@ -45,7 +45,6 @@ import { makeAtView } from './at-view.js'
 
 const recaller = new Recaller('explorer')
 const registry = new RepoRegistry(undefined, { recaller, name: 'explorer' })
-const { fire } = registry
 const port = +location.port || 80
 const connEl = document.getElementById('conn')
 
@@ -87,8 +86,9 @@ const state = liveObject({
 const verifyStatus = makeVerifier(recaller)
 
 // Three trees (value / storage / refs) + their per-chunk expand/collapse
-// Sets + the action dispatcher main.js's click delegator forwards to.
-const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(fire)
+// state (a LiveSource keyed by `${tree}:${keyHex}:${addr}`) + the action
+// dispatcher main.js's click delegator forwards to.
+const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(recaller)
 
 // Smaller AtView pieces: the commit-selector dropdown, the sig-detail
 // table, the storage-chunks tuck-away, the raw hex dump.

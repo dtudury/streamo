@@ -1,39 +1,41 @@
 // The three recursive tree renderers — the user-meaningful value tree
 // (asRefs), the chunk-graph DOWN tree (directReferences), and the
 // chunk-graph UP tree (referrer index). All three share an expansion
-// model (depth-based default, override per-node via two Sets), but
-// keep separate state so "expand this chunk" doesn't cross-pollute
-// between tabs.
+// model (depth-based default, override per-node via a LiveSource),
+// but namespaced so "expand this chunk" in the value tab doesn't
+// affect the same chunk in the storage tab.
 //
-// State (the six Sets) and the matching expand/collapse action handlers
-// live together inside makeTrees(onChange), so nothing leaks: trees own
-// their toggles, main.js's click delegator just hands the action name
-// through handleTreeAction.
+// State + the matching expand/collapse action handlers live together
+// inside makeTrees(recaller). Tree functions read state.get(...) on a
+// key like `${tree}:${keyHex}:${address}` and auto-subscribe to that
+// specific key. main.js's click delegator hands action+key to
+// handleTreeAction which does state.set(...) — finer than the old
+// "fire wakes every tree slot" semantics.
 
 import { h } from '../../streamo/h.js'
 import { codecCategory, isInlinablePrimitive, estimateEntryWidth } from './shapes.js'
 import { typedValue } from './render.js'
 import { buildDirectReferrerIndex } from './walking.js'
+import { liveObject } from '../../streamo/LiveSource.js'
 
-export function makeTrees (onChange) {
-  // Per-tree expand/collapse state. Sets are keyed by
-  // `${keyHex}:${address}` so the same chunk in different repos doesn't
-  // share toggles. Three pairs, one per tree, since "expand this chunk"
-  // means different things in each (decoded value vs. chunk DOWN-refs
-  // vs. chunk UP-refs).
-  const forceExpanded         = new Set()  // valueTree:   user clicked chip
-  const forceCollapsed        = new Set()  // valueTree:   user clicked bracket
-  const storageForceExpanded  = new Set()  // storageTree: user clicked ▸
-  const storageForceCollapsed = new Set()  // storageTree: user clicked ▾
-  const refTreeForceExpanded  = new Set()  // referenceTree: user clicked ▸
-  const refTreeForceCollapsed = new Set()  // referenceTree: user clicked ▾
+export function makeTrees (recaller) {
+  // One LiveSource for all three trees' expand/collapse state. Keys
+  // are `${tree}:${keyHex}:${address}` where tree ∈ {value, storage,
+  // refs}; values are 'expand' | 'collapse' | undefined (undefined =
+  // use the default depth-based decision).
+  const force = liveObject({}, { recaller, name: 'trees' })
+
+  // Convenience: a slot's `force.get(k)` registers it on key k; the
+  // depth-based default kicks in when the key is undefined.
+  const isExpanded = (tree, keyHex, address, depth) => {
+    const v = force.get(`${tree}:${keyHex}:${address}`)
+    return v === 'expand' || (v !== 'collapse' && depth > 0)
+  }
 
   // Recursive typed-value tree — like typedValue, but expands composites
   // inline up to `depth` levels deep. Beyond depth, composites render as
-  // un-expanded chips. Click a chip to expand IN PLACE (forceExpanded);
-  // click an expanded composite's opening bracket to collapse it back to
-  // a chip (forceCollapsed). Force-expand and force-collapse override
-  // the default depth-based decision.
+  // un-expanded chips. Click a chip to expand IN PLACE; click an expanded
+  // composite's opening bracket to collapse back to a chip.
   //
   // Default depth=3 covers `{ name, messages: [{text, at}, ...] }` —
   // outer object expanded, messages array expanded, message objects
@@ -49,11 +51,7 @@ export function makeTrees (onChange) {
     if (typeof value !== 'object' || value === null || value instanceof Date || value instanceof Uint8Array) {
       return typedValue(value)
     }
-    const k = `${keyHex}:${address}`
-    const userExpanded  = forceExpanded.has(k)
-    const userCollapsed = forceCollapsed.has(k)
-    const expand = userExpanded || (!userCollapsed && depth > 0)
-    if (!expand) {
+    if (!isExpanded('value', keyHex, address, depth)) {
       return h`<a class="tv-drill" data-action="expand-tree"
                    data-keyhex=${keyHex} data-addr=${address}
                    title="click to expand · drill via storage tab if you need a full at-view"
@@ -117,9 +115,6 @@ export function makeTrees (onChange) {
   //   2. Every node shows codec chip + clickable @addr + value preview.
   //      The chip and the preview share the codec palette, so a STRING
   //      reads emerald all the way across.
-  // Shares the depth/expansion model with valueTree but keeps its own
-  // expanded/collapsed sets, since "expand this chunk" means different
-  // things in the two tabs (decoded value vs. chunk references).
   function storageTree (repo, keyHex, address, depth = 3) {
     let codecType = '?'
     let preview = h`<span class="dim">…</span>`
@@ -133,10 +128,7 @@ export function makeTrees (onChange) {
       return h`<div class="storage-row"><span class="dim">(decode error @${address}: ${e.message})</span></div>`
     }
     const cat = codecCategory(codecType)
-    const k = `${keyHex}:${address}`
-    const userExpanded  = storageForceExpanded.has(k)
-    const userCollapsed = storageForceCollapsed.has(k)
-    const expand = userExpanded || (!userCollapsed && depth > 0)
+    const expand = isExpanded('storage', keyHex, address, depth)
     const isLeaf = refs.length === 0
     const toggle = isLeaf
       ? h`<span class="storage-toggle empty">·</span>`
@@ -182,12 +174,6 @@ export function makeTrees (onChange) {
   // typically commits and signatures. The tree is rooted at the URL's
   // chunk and grows toward those roots: "who uses this? and who uses
   // THAT? and who uses that?" all the way up.
-  //
-  // Visually identical to storageTree (same row class, same toggle,
-  // same chip + @addr + preview). Different state (refTreeForce*) so
-  // expand/collapse decisions don't cross-pollute. Different child
-  // label ("N referrers" vs. storage's "N refs") — small thing, but
-  // the direction is ambiguous otherwise.
   function referenceTree (repo, keyHex, address, depth = 4, index = null) {
     index = index ?? buildDirectReferrerIndex(repo)
     let codecType = '?'
@@ -201,10 +187,7 @@ export function makeTrees (onChange) {
     }
     const referrers = index.get(address) ?? []
     const cat = codecCategory(codecType)
-    const k = `${keyHex}:${address}`
-    const userExpanded  = refTreeForceExpanded.has(k)
-    const userCollapsed = refTreeForceCollapsed.has(k)
-    const expand = userExpanded || (!userCollapsed && depth > 0)
+    const expand = isExpanded('refs', keyHex, address, depth)
     const isLeaf = referrers.length === 0
     const toggle = isLeaf
       ? h`<span class="storage-toggle empty">·</span>`
@@ -240,22 +223,19 @@ export function makeTrees (onChange) {
     `
   }
 
-  // Dispatcher for the six tree expand/collapse actions. main.js's click
-  // delegator hands action + key over; we mutate the right Set pair and
-  // call onChange to trigger a re-render. Returns true if the action was
-  // a tree-action (handled), false otherwise — so the caller can either
-  // explicit-case it or fall through.
+  // Dispatcher for the six tree expand/collapse actions. Action shape:
+  // `${verb}-${kind}` where verb ∈ {expand, collapse} and kind ∈
+  // {tree, storage, refs} ('tree' historically meant value-tree).
+  // Returns true if handled, false otherwise.
   function handleTreeAction (action, k) {
-    switch (action) {
-      case 'expand-tree':      forceExpanded.add(k);         forceCollapsed.delete(k);          break
-      case 'collapse-tree':    forceCollapsed.add(k);        forceExpanded.delete(k);           break
-      case 'expand-storage':   storageForceExpanded.add(k);  storageForceCollapsed.delete(k);   break
-      case 'collapse-storage': storageForceCollapsed.add(k); storageForceExpanded.delete(k);    break
-      case 'expand-refs':      refTreeForceExpanded.add(k);  refTreeForceCollapsed.delete(k);   break
-      case 'collapse-refs':    refTreeForceCollapsed.add(k); refTreeForceExpanded.delete(k);    break
-      default: return false
-    }
-    onChange()
+    const dash = action.indexOf('-')
+    if (dash < 0) return false
+    const verb = action.slice(0, dash)
+    const kind = action.slice(dash + 1)
+    if (verb !== 'expand' && verb !== 'collapse') return false
+    const tree = kind === 'tree' ? 'value' : kind
+    if (tree !== 'value' && tree !== 'storage' && tree !== 'refs') return false
+    force.set(`${tree}:${k}`, verb)
     return true
   }
 

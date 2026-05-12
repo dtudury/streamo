@@ -3,34 +3,35 @@ import { Repo } from './Repo.js'
 import { Recaller } from './utils/Recaller.js'
 
 /**
- * Manages a collection of Repos keyed by hex-encoded public key, with
- * built-in reactive bridging into a shared Recaller.
+ * Manages a collection of Repos keyed by hex-encoded public key. The
+ * registry owns a shared Recaller (passed in or freshly created); the
+ * default factory creates Repos that *share* this Recaller, so reading
+ * any repo's state inside a reactive cell auto-subscribes the cell to
+ * chunk arrivals — no bridge needed, no explicit dep/fire calls.
  *
- * Each Repo has its own internal Recaller (for fine-grained dep tracking
- * on its own keys). If an app's mount() slots use a *different* Recaller,
- * reading `repo.byteLength` inside a slot registers a dep on the repo's
- * recaller — not the app's — and the slot never re-runs when chunks
- * arrive. RepoRegistry bridges that gap automatically: pass your app's
- * Recaller via `{ recaller }`, and every repo opened (now or later)
- * forwards its byteLength changes onto a single signal on that shared
- * Recaller. Inside a slot, call `registry.dep()` to subscribe.
+ * Iteration, `get(keyHex)`, and `size` all report access on
+ * `(registry, 'keys')`, so slots iterating the registry auto-subscribe
+ * to new-repo opens. `open()` fires the same key when a repo lands.
  *
- * Accepts an optional factory function that is called whenever a new
- * repository is opened. The factory receives the publicKeyHex and
- * returns a (possibly async) Repo with whatever persistence or sync
- * wired up. If no factory is provided, plain in-memory Repos are
- * created.
+ * Custom factories that don't pass the registry's Recaller through
+ * (e.g. `async key => { const r = new Repo(); await archiveSync(r); }`)
+ * still get a fallback bridge — RepoRegistry watches their per-repo
+ * Recaller and forwards chunk arrivals onto our 'keys' key. Coarser
+ * than the shared-Recaller path (every iteration-touching slot wakes
+ * on every chunk arrival from any non-shared repo), but it works.
  *
  * Examples:
  *
- *   // plain in-memory, own Recaller (used by a mount call):
+ *   // plain in-memory, sharing the app's Recaller:
  *   const recaller = new Recaller('app')
  *   const registry = new RepoRegistry(undefined, { recaller, name: 'app' })
- *   mount(h`${() => { registry.dep(); return …  }}`, document.body, recaller)
+ *   mount(h`${() => {
+ *     for (const [k, r] of registry) ...   // auto-subscribes
+ *   }}`, document.body, recaller)
  *
- *   // archive-backed:
- *   new RepoRegistry(async key => {
- *     const repo = new Repo()
+ *   // archive-backed — to keep reactivity, pass registry.recaller in:
+ *   const registry = new RepoRegistry(async key => {
+ *     const repo = new Repo(registry.recaller)
  *     await archiveSync(repo, dataDir, key)
  *     return repo
  *   }, { recaller })
@@ -39,7 +40,7 @@ import { Recaller } from './utils/Recaller.js'
  *   new RepoRegistry()
  */
 export class RepoRegistry {
-  /** Shared Recaller — register reactive cells with `registry.dep()`. */
+  /** The Recaller this registry's reactive events fire on. */
   recaller
   #streams = new Map()
   #factory
@@ -65,17 +66,6 @@ export class RepoRegistry {
     this.recaller = recaller
     this.#factory = factory ?? (() => new Repo(this.recaller))
   }
-
-  /**
-   * Register the calling reactive cell on `(registry, 'keys')` — the
-   * channel that fires on new-repo opens. Arrow-bound so destructuring
-   * works. Kept temporarily for subsystems (verify cache, tree state)
-   * that haven't moved to LiveSource yet; will retire once they do.
-   */
-  dep  = () => this.recaller.reportKeyAccess(this, 'keys')
-
-  /** Force a re-render of slots that called `dep()`. Same retirement. */
-  fire = () => this.recaller.reportKeyMutation(this, 'keys')
 
   /**
    * Return the Repo for `publicKeyHex`, creating it via the factory if

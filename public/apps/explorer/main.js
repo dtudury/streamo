@@ -25,6 +25,8 @@ import { registrySync } from '../../streamo/registrySync.js'
 import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { changedPaths } from '../../streamo/Streamo.js'
 import { hexToBytes } from '../../streamo/utils.js'
+import { truncKey, truncHex, fmtDate, safeJSON } from './format.js'
+import { isCommitShape, isDuple, codecCategory, isInlinablePrimitive, estimateEntryWidth } from './shapes.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
@@ -136,24 +138,6 @@ let atTab = 'value'
 let hoveredAddress = null
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-
-const truncKey = k => k.slice(0, 12) + '…'
-const truncHex = (b, n = 16) => Array.from(b.subarray(0, n)).map(x => x.toString(16).padStart(2, '0')).join('') + (b.length > n ? '…' : '')
-const fmtDate  = d => d ? d.toLocaleString() : ''
-
-function isCommitShape (v) {
-  return v && typeof v === 'object' && !Array.isArray(v) &&
-    typeof v.message === 'string' && v.date instanceof Date &&
-    typeof v.dataAddress === 'number'
-}
-
-function safeJSON (value) {
-  return JSON.stringify(value, (_, v) => {
-    if (v instanceof Uint8Array) return `Uint8Array(${v.length})`
-    if (v instanceof Date) return v.toISOString()
-    return v
-  }, 2)
-}
 
 // Walk every chunk newest-first, yielding one entry per commit (with
 // its covering signature attached) and one 'other' entry per non-commit
@@ -787,23 +771,6 @@ function rawChunkSection (repo, address) {
   `
 }
 
-// Map a codec type to a visual category. Many distinct codecs map to a
-// shared category so the byte-stream stripe stays readable: commits (the
-// narrative anchors), signatures (attestations), composite values, the
-// Duple tree-scaffolding, strings, bytes, numbers, etc.
-function codecCategory (type) {
-  switch (type) {
-    case 'SIGNATURE': return 'sig'
-    case 'OBJECT': case 'EMPTY_OBJECT': case 'ARRAY': case 'EMPTY_ARRAY': return 'composite'
-    case 'DUPLE': return 'duple'
-    case 'STRING': case 'EMPTY_STRING': return 'string'
-    case 'WORD': case 'UINT8ARRAY': case 'EMPTY_UINT8ARRAY': return 'bytes'
-    case 'DATE': case 'FLOAT64': case 'UINT7': return 'num'
-    case 'VARIABLE': return 'var'
-    default: return 'other'
-  }
-}
-
 // Dedup leverage: for each chunk, count how many distinct commits'
 // data trees include it (BFS from each commit's dataAddress through
 // asRefs). A chunk that shows up in 10 commits "earned" 9 free reuses;
@@ -1120,13 +1087,6 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   `
 }
 
-// Detect a Duple instance — codecs.js doesn't export the class so we have to
-// duck-type. A Duple is an object whose only own property is `v`, a length-2
-// array. (Used so we can render Duples as `[a, b]` rather than `{…} (1)`.)
-function isDuple (v) {
-  return v && typeof v === 'object' && Array.isArray(v.v) && v.v.length === 2 && Object.keys(v).length === 1
-}
-
 // Streamo-typed value renderer — every value gets a visual identity
 // matching its underlying codec, instead of being flattened through
 // JSON.stringify. Primitives render with type-specific styling
@@ -1186,29 +1146,6 @@ function typedValue (v, depth = 0) {
 // expanded, and primitives like text/at render inline.
 const forceExpanded  = new Set()  // `${keyHex}:${address}` → user clicked chip
 const forceCollapsed = new Set()  // `${keyHex}:${address}` → user clicked bracket
-
-// Cheap width estimator for inline rendering — we only inline when
-// every entry is a primitive, so we can predict rendered width without
-// touching the DOM. Conservative: real chips have padding/quotes that
-// add ~2-3 chars beyond the bare value.
-function isInlinablePrimitive (v) {
-  if (v === null || v === undefined) return true
-  const t = typeof v
-  if (t === 'number' || t === 'boolean' || t === 'string') return true
-  if (v instanceof Date) return true
-  // Uint8Array now renders as a multi-row bytes chart — not inlinable.
-  return false
-}
-function estimateEntryWidth (k, v, isArray) {
-  let w = isArray ? 0 : (String(k).length + 2)
-  if (v === null) w += 4
-  else if (v === undefined) w += 9
-  else if (typeof v === 'boolean') w += v ? 6 : 7
-  else if (typeof v === 'number') w += String(v).length
-  else if (typeof v === 'string') w += Math.min(v.length, 60) + 2
-  else if (v instanceof Date) w += 22
-  return w
-}
 
 function valueTree (repo, keyHex, address, depth = 3) {
   let value, refs

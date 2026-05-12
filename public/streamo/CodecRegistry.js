@@ -3,8 +3,11 @@
  *
  * Resolves bytes ↔ JS values via a registered codec table; chunks identify
  * their codec by their last byte (the footer). Public read APIs (asRefs,
- * directReferences, decode) are mutation-impossible by construction; the
- * write companion _asRefsForWrite is internal.
+ * directReferences, decode) are mutation-impossible by construction —
+ * not by a flag the caller could flip, but by which `r` (registry
+ * interface) the entry point dispatches with. `#readOnlyR` has no
+ * `append`, so the codec helpers that materialize inline parts as
+ * chunks (getPartAddress) return undefined rather than mutate.
  *
  * See design.md §3–4.
  */
@@ -24,46 +27,47 @@ import { makeCodecs } from './codecs.js'
  * So UNDEFINED, NULL, FALSE, TRUE, and every UINT7 value are addressable
  * without touching the store.
  *
- * Codecs are built by makeCodecs() in codecs.js and wired in here.
+ * Codecs are built by makeCodecs() in codecs.js and wired in here. Each
+ * codec's encode/decode takes `r` as a leading argument; this class
+ * builds two `r` flavors and dispatches the right one per entry point.
  */
 export class CodecRegistry extends Addressifier {
   /** @type {Array} footer → codec */
   footerToCodec = []
 
   #codecs
-  // Read-only scope depth — only mutated by #runReadOnly below, never
-  // touched directly. The codec interface exposes it as r.readOnly (boolean).
-  #readOnlyDepth = 0
+  #readWriteR
+  #readOnlyR
 
   constructor () {
     super()
+    this.#codecs = makeCodecs()
+    // Two r flavors share the same backing registry. #readOnlyR has no
+    // `append`, which is the only difference — helpers that would
+    // materialize inline parts as chunks check `if (!r.append) return
+    // undefined` and yield instead of mutating. The `decode` on each
+    // closes over its own r so recursion through composite values stays
+    // in the same policy mode.
     const self = this
-    this.#codecs = makeCodecs({
+    this.#readWriteR = {
       encode: (v, asRefs) => self.encode(v, asRefs),
-      decode: (code, asRefs) => self.decode(code, asRefs),
+      decode: (code, asRefs) => self.#decodeWith(self.#readWriteR, code, asRefs),
       append: code => self.#appendSubcode(code),
       resolve: addr => self.resolve(addr),
       addressOf: code => self.addressOf(code),
       get byteLength () { return self.byteLength },
-      get readOnly () { return self.#readOnlyDepth > 0 },
       footerToCodec: this.footerToCodec
-    })
+    }
+    this.#readOnlyR = {
+      encode: (v, asRefs) => self.encode(v, asRefs),
+      decode: (code, asRefs) => self.#decodeWith(self.#readOnlyR, code, asRefs),
+      // append intentionally absent — getPartAddress falls back to undefined
+      resolve: addr => self.resolve(addr),
+      addressOf: code => self.addressOf(code),
+      get byteLength () { return self.byteLength },
+      footerToCodec: this.footerToCodec
+    }
     this.#registerAll()
-  }
-
-  /**
-   * Run `fn` in a read-only scope. Codec helpers see `r.readOnly === true`
-   * for the duration and avoid mutation paths (specifically getPartAddress
-   * in codecs.js returns undefined instead of materializing inline
-   * children). Used by asRefs.
-   *
-   * The depth counter handles the case where `fn` itself re-enters this
-   * method — outer scopes stay read-only until they all unwind.
-   */
-  #runReadOnly (fn) {
-    this.#readOnlyDepth++
-    try { return fn() }
-    finally { this.#readOnlyDepth-- }
   }
 
   // Re-expose byteLength so subclasses can override it
@@ -87,12 +91,16 @@ export class CodecRegistry extends Addressifier {
    * @returns {any}
    */
   decode (codeOrAddress, asRefs = false) {
+    return this.#decodeWith(this.#readWriteR, codeOrAddress, asRefs)
+  }
+
+  #decodeWith (r, codeOrAddress, asRefs) {
     const code = typeof codeOrAddress === 'number'
       ? this.resolve(codeOrAddress)
       : codeOrAddress
     if (!(code instanceof Uint8Array)) throw new Error('expected Uint8Array')
     const codec = this.footerToCodec[code.at(-1)]
-    return codec.decode(code, asRefs)
+    return codec.decode(r, code, asRefs)
   }
 
   /**
@@ -110,7 +118,7 @@ export class CodecRegistry extends Addressifier {
     if (asRefs && typeof value === 'number') return this.resolve(value)
     for (const name in this.#codecs) {
       const codec = this.#codecs[name]
-      const code = codec.encode?.(value, asRefs)
+      const code = codec.encode?.(this.#readWriteR, value, asRefs)
       if (code) return code
     }
     throw new Error(`no codec for value: ${value}`)
@@ -123,7 +131,7 @@ export class CodecRegistry extends Addressifier {
    * @returns {Uint8Array}
    */
   encodeVariable (value) {
-    return this.#codecs.VARIABLE._encode(this.encode(value))
+    return this.#codecs.VARIABLE._encode(this.#readWriteR, this.encode(value))
   }
 
   /**
@@ -144,12 +152,11 @@ export class CodecRegistry extends Addressifier {
     if (type === 'VARIABLE' ||
         type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
         type === 'ARRAY'  || type === 'EMPTY_ARRAY') {
-      // Decode in a read-only scope so codecs cannot materialize inline
-      // children. Inline addresses come back as `undefined`; callers
-      // handle that (e.g. by rendering the child without a clickable
-      // link). Mutation is unreachable from here regardless of caller —
-      // by control flow, not by caller discipline.
-      return this.#runReadOnly(() => this.decode(address, true))
+      // Decode through #readOnlyR — codec helpers see no `append` and
+      // return undefined for inline parts instead of materializing
+      // them as chunks. Mutation is unreachable here by control flow,
+      // not by caller discipline.
+      return this.#decodeWith(this.#readOnlyR, address, true)
     }
     return address
   }
@@ -188,7 +195,7 @@ export class CodecRegistry extends Addressifier {
       const opts = codec.partReaders[i]
       const reader = opts[option % opts.length]
       option = Math.floor(option / opts.length)
-      const part = reader(code.subarray(0, end))
+      const part = reader(this.#readOnlyR, code.subarray(0, end))
       end -= part.width
       if (part.address !== undefined) refs.unshift(part.address)
     }
@@ -263,6 +270,7 @@ export class CodecRegistry extends Addressifier {
   }
 
   #registerAll () {
+    const r = this.#readOnlyR  // width-only; never mutates
     for (const name in this.#codecs) {
       const codec = this.#codecs[name]
       codec.type = name
@@ -276,7 +284,7 @@ export class CodecRegistry extends Addressifier {
           let total = 1
           for (let i = c.partReaders.length - 1; i >= 0; i--) {
             const opts = c.partReaders[i]
-            const part = opts[option % opts.length](code.subarray(0, -total))
+            const part = opts[option % opts.length](r, code.subarray(0, -total))
             total += part.width
             option = Math.floor(option / opts.length)
           }

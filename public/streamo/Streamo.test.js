@@ -229,9 +229,10 @@ describe(import.meta.url, ({ test }) => {
   test('asRefs cannot mutate the streamo (math-impossible by construction)', async ({ assert }) => {
     // Earlier versions of asRefs would silently call r.append for inline
     // multi-byte children that didn't have their own chunk address yet —
-    // a write triggered by a read. CodecRegistry now flips a #readOnly
-    // counter around the decode call inside asRefs; getPartAddress checks
-    // it and returns undefined instead of appending. Mutation is removed
+    // a write triggered by a read. CodecRegistry now dispatches asRefs
+    // through a separate `#readOnlyR` interface that has no `append`;
+    // getPartAddress in codecs.js checks `if (!r.append) return
+    // undefined` and yields rather than mutating. Mutation is removed
     // from the call graph by construction, not by caller discipline.
 
     const author = new Streamo()

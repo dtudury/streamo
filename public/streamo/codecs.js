@@ -7,6 +7,15 @@
  * node Duple used to scale OBJECT/ARRAY storage. Every codec is a
  * { encode, decode, partReaders } object.
  *
+ * The `r` (registry interface) is passed to every codec method and
+ * helper as a leading argument — never captured in closure. That lets
+ * the same codec object serve both write contexts (where r.append
+ * materializes inline parts as addressable chunks) and read-only
+ * contexts (where r.append is undefined, and helpers return undefined
+ * rather than mutate). CodecRegistry constructs both flavors of r and
+ * dispatches the right one per entry point; mutation-impossibility is
+ * a property of which r you pass, not a flag you flip.
+ *
  * See design.md §3.
  */
 import { numberToVar, varToNumber, range } from './utils.js'
@@ -52,174 +61,178 @@ class Duple {
   }
 }
 
+// ── Part reader factories ──────────────────────────────────────────────────
+// A partReader factory is `(r, code) => { type, width, address?, getCode?,
+// getDecoded }`. Readers close over their `r` so getCode/getDecoded recurse
+// through the same registry context.
+
+const inlineReader = [(r, code) => {
+  const codec = r.footerToCodec[code.at(-1)]
+  const width = codec.getWidth(code)
+  return {
+    type: `inline(${width})`,
+    width,
+    getCode: () => code.slice(-width),
+    getDecoded: asRefs => r.decode(code.slice(-width), asRefs)
+  }
+}]
+
+const addressReaders = range(4).map(i => (r, code) => {
+  const width = i + 1
+  const address = varToNumber(code.slice(-width))
+  return {
+    type: `addr(${width})`,
+    width,
+    address,
+    getCode: () => r.resolve(address),
+    getDecoded: asRefs => r.decode(r.resolve(address), asRefs)
+  }
+})
+
+// 5 options: option 0 = inline, 1-4 = 1..4-byte address.
+const inlineOrAddress = [...inlineReader, ...addressReaders]
+
+const wordReaders = range(4).map(i => (r, code) => {
+  const width = i + 1
+  return { type: `word(${width})`, width, getDecoded: () => code.slice(-width) }
+})
+
+const literalReaders = range(5).map(width => (r, code) => ({
+  type: `literal(${width})`,
+  width,
+  getDecoded: () => code.slice(-width)
+}))
+
+const signatureReader = [(r, code) => ({
+  type: 'sig(64)',
+  width: 64,
+  getDecoded: () => code.slice(-64)
+})]
+
+const uint7Readers = range(128).map(n => () => ({
+  type: `uint7(${n})`,
+  width: 0,
+  getDecoded: () => new Uint8Array([n])
+}))
+
+// ── Shared helpers ─────────────────────────────────────────────────────────
+
 /**
- * Build all codecs for a CodecRegistry.
+ * Ensure `code` is stored and return [partBytes, optionIndex].
+ * Option 0: inline (just the raw bytes).
+ * Options 1-4: 1-4-byte little-endian address.
+ *
+ * Read-only contexts pass an `r` without `append`; in that case this
+ * function never gets called from a decode path (it's encode-only).
+ */
+function inlineOrAddressPart (r, code) {
+  const existingAddr = r.addressOf(code)
+  const nextAddr = Math.max(0, r.byteLength + code.length - 1)
+  if (existingAddr === undefined && code.length <= numberToVar(nextAddr).length) {
+    return [code, 0]
+  }
+  const addr = existingAddr ?? r.append(code)
+  const addrBytes = numberToVar(addr)
+  return [addrBytes, addrBytes.length] // option = 1..4
+}
+
+function encodeMultipart (r, values, codec, asRefs) {
+  if (values.length !== codec.partReaders.length) throw new Error('part count mismatch')
+  const parts = []
+  let base = 1
+  let footer = codec.baseFooter
+  for (let i = values.length - 1; i >= 0; i--) {
+    const [part, option] = inlineOrAddressPart(r, r.encode(values[i], asRefs))
+    footer += base * option
+    base *= codec.partReaders[i].length
+    parts.unshift(part)
+  }
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0) + 1)
+  let pos = 0
+  for (const p of parts) { out.set(p, pos); pos += p.length }
+  out[pos] = footer
+  return out
+}
+
+function decodeParts (r, code) {
+  const footer = code.at(-1)
+  const codec = r.footerToCodec[footer]
+  if (!codec?.partReaders?.length) return []
+  const parts = []
+  let option = footer - codec.baseFooter
+  let end = -1
+  for (let i = codec.partReaders.length - 1; i >= 0; i--) {
+    const opts = codec.partReaders[i]
+    const reader = opts[option % opts.length]
+    option = Math.floor(option / opts.length)
+    const part = reader(r, code.subarray(0, end))
+    end -= part.width
+    parts.unshift(part)
+  }
+  return parts
+}
+
+// Stable address of a single-part value (needed for DUPLE decode with asRefs).
+//
+// For inline multi-byte parts that aren't independently stored, the only
+// way to "give back an address" is to materialize them as a separate chunk —
+// i.e. mutate. That's appropriate in write contexts (Streamo.set). In a
+// read-only context the caller passes an `r` without `append`, and we
+// return undefined so the caller (asRefs's caller, e.g. the explorer)
+// sees an undefined child address and renders it as inline.
+function getPartAddress (r, part) {
+  if (part.address !== undefined) return part.address
+  const code = part.getCode()
+  if (code.length === 1) return -(code[0] + 1) // negative address for single-byte primitives
+  const existing = r.addressOf(code)
+  if (existing !== undefined) return existing
+  if (!r.append) return undefined
+  return r.append(code)
+}
+
+/**
+ * Build all codecs. Returned codecs are instance-agnostic — every
+ * encode/decode takes `r` as its first argument, so the same codec
+ * objects can serve a read-write or read-only registry context
+ * depending on which `r` is passed in.
  *
  * Each codec is an object with:
- *   type         — string name
+ *   type         — string name (set by the registry after registration)
  *   baseFooter   — set by the registry after registration
  *   partReaders  — optional array of option-arrays (see below)
  *   getWidth     — optional override; defaults to sum of part widths + 1
- *   encode(v)    — returns Uint8Array or falsy
- *   decode(code, asRefs) — returns the JS value
+ *   encode(r, v, asRefs)         — returns Uint8Array or falsy
+ *   decode(r, code, asRefs)      — returns the JS value
  *
- * The registry is passed as `r` so codecs can call r.encode / r.decode /
- * r.append / r.resolve for sub-values.
- *
- * @param {object} r  registry interface: { encode, decode, append, resolve, addressOf, footerToCodec }
- * @returns {Array} codec definitions in registration order
+ * @returns {Object} map of codec name → codec definition
  */
-export function makeCodecs (r) {
-  // ── Part reader factories ────────────────────────────────────────────────
-  // A partReader is a function (code: Uint8Array) → { type, width, address?, getCode?, getDecoded }
-
-  const inlineReader = [code => {
-    const codec = r.footerToCodec[code.at(-1)]
-    const width = codec.getWidth(code)
-    return {
-      type: `inline(${width})`,
-      width,
-      getCode: () => code.slice(-width),
-      getDecoded: asRefs => r.decode(code.slice(-width), asRefs)
-    }
-  }]
-
-  const addressReaders = range(4).map(i => code => {
-    const width = i + 1
-    const address = varToNumber(code.slice(-width))
-    return {
-      type: `addr(${width})`,
-      width,
-      address,
-      getCode: () => r.resolve(address),
-      getDecoded: asRefs => r.decode(r.resolve(address), asRefs)
-    }
-  })
-
-  const inlineOrAddress = [...inlineReader, ...addressReaders] // 5 options: option 0 = inline, 1-4 = 1..4-byte address
-
-  const wordReaders = range(4).map(i => code => {
-    const width = i + 1
-    return { type: `word(${width})`, width, getDecoded: () => code.slice(-width) }
-  })
-
-  const literalReaders = range(5).map(width => code => ({
-    type: `literal(${width})`,
-    width,
-    getDecoded: () => code.slice(-width)
-  }))
-
-  const signatureReader = [code => ({
-    type: 'sig(64)',
-    width: 64,
-    getDecoded: () => code.slice(-64)
-  })]
-
-  const uint7Readers = range(128).map(n => () => ({
-    type: `uint7(${n})`,
-    width: 0,
-    getDecoded: () => new Uint8Array([n])
-  }))
-
-  // ── Shared helper ────────────────────────────────────────────────────────
-
-  /**
-   * Ensure `code` is stored and return [partBytes, optionIndex].
-   * Option 0: inline (just the raw bytes).
-   * Options 1-4: 1-4-byte little-endian address.
-   */
-  function inlineOrAddressPart (code) {
-    const existingAddr = r.addressOf(code)
-    const nextAddr = Math.max(0, r.byteLength + code.length - 1)
-    if (existingAddr === undefined && code.length <= numberToVar(nextAddr).length) {
-      return [code, 0]
-    }
-    const addr = existingAddr ?? r.append(code)
-    const addrBytes = numberToVar(addr)
-    return [addrBytes, addrBytes.length] // option = 1..4
-  }
-
-  function encodeMultipart (values, codec, asRefs) {
-    if (values.length !== codec.partReaders.length) throw new Error('part count mismatch')
-    const parts = []
-    let base = 1
-    let footer = codec.baseFooter
-    for (let i = values.length - 1; i >= 0; i--) {
-      const [part, option] = inlineOrAddressPart(r.encode(values[i], asRefs))
-      footer += base * option
-      base *= codec.partReaders[i].length
-      parts.unshift(part)
-    }
-    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0) + 1)
-    let pos = 0
-    for (const p of parts) { out.set(p, pos); pos += p.length }
-    out[pos] = footer
-    return out
-  }
-
-  function decodeParts (code) {
-    const footer = code.at(-1)
-    const codec = r.footerToCodec[footer]
-    if (!codec?.partReaders?.length) return []
-    const parts = []
-    let option = footer - codec.baseFooter
-    let end = -1
-    for (let i = codec.partReaders.length - 1; i >= 0; i--) {
-      const opts = codec.partReaders[i]
-      const reader = opts[option % opts.length]
-      option = Math.floor(option / opts.length)
-      const part = reader(code.subarray(0, end))
-      end -= part.width
-      parts.unshift(part)
-    }
-    return parts
-  }
-
-  // Stable address of a single-part value (needed for DUPLE decode with asRefs).
-  //
-  // For inline multi-byte parts that aren't independently stored, the only
-  // way to "give back an address" is to materialize them as a separate chunk —
-  // i.e. mutate. That's appropriate in write contexts (Streamo.set) but a
-  // bug from a read context. When the registry is in read-only mode (set by
-  // CodecRegistry.asRefs around its decode), we return undefined instead of
-  // appending. The caller (asRefs's caller, e.g. the explorer) sees an
-  // undefined child address and renders it as inline.
-  function getPartAddress (part) {
-    if (part.address !== undefined) return part.address
-    const code = part.getCode()
-    if (code.length === 1) return -(code[0] + 1) // negative address for single-byte primitives
-    const existing = r.addressOf(code)
-    if (existing !== undefined) return existing
-    if (r.readOnly) return undefined
-    return r.append(code)
-  }
-
+export function makeCodecs () {
   // ── Codec definitions ────────────────────────────────────────────────────
 
   const UNDEFINED = {
-    encode: v => v === undefined && new Uint8Array([UNDEFINED.baseFooter]),
+    encode: (r, v) => v === undefined && new Uint8Array([UNDEFINED.baseFooter]),
     decode: () => undefined
   }
 
   const NULL = {
-    encode: v => v === null && new Uint8Array([NULL.baseFooter]),
+    encode: (r, v) => v === null && new Uint8Array([NULL.baseFooter]),
     decode: () => null
   }
 
   const FALSE = {
-    encode: v => v === false && new Uint8Array([FALSE.baseFooter]),
+    encode: (r, v) => v === false && new Uint8Array([FALSE.baseFooter]),
     decode: () => false
   }
 
   const TRUE = {
-    encode: v => v === true && new Uint8Array([TRUE.baseFooter]),
+    encode: (r, v) => v === true && new Uint8Array([TRUE.baseFooter]),
     decode: () => true
   }
 
   /** ≤4-byte Uint8Array stored literally */
   const WORD = {
     partReaders: [literalReaders],
-    encode (v) {
+    encode (r, v) {
       if (v instanceof Uint8Array && v.length >= 1 && v.length <= 4) {
         const out = new Uint8Array(v.length + 1)
         out.set(v)
@@ -227,21 +240,21 @@ export function makeCodecs (r) {
         return out
       }
     },
-    decode (code) { return decodeParts(code)[0].getDecoded() }
+    decode (r, code) { return decodeParts(r, code)[0].getDecoded() }
   }
 
   /** Arbitrary-length Uint8Array (>4 bytes), stored via Duple tree of WORDs */
   const UINT8ARRAY = {
     partReaders: [inlineOrAddress],
-    encode (v) {
+    encode (r, v) {
       if (v instanceof Uint8Array && v.length > 4) {
         const words = []
         for (let i = 0; i < v.length; i += 4) words.push(v.slice(i, Math.min(i + 4, v.length)))
-        return encodeMultipart([new Duple(words)], UINT8ARRAY)
+        return encodeMultipart(r, [new Duple(words)], UINT8ARRAY)
       }
     },
-    decode (code) {
-      const parts = decodeParts(code)
+    decode (r, code) {
+      const parts = decodeParts(r, code)
       const duple = parts[0].getDecoded(false)
       const words = duple.flat()
       const total = words.reduce((n, w) => n + w.length, 0)
@@ -253,61 +266,61 @@ export function makeCodecs (r) {
   }
 
   const EMPTY_STRING = {
-    encode: v => v === '' && new Uint8Array([EMPTY_STRING.baseFooter]),
+    encode: (r, v) => v === '' && new Uint8Array([EMPTY_STRING.baseFooter]),
     decode: () => ''
   }
 
   const STRING = {
     partReaders: [inlineOrAddress],
-    encode (v) {
+    encode (r, v) {
       if (typeof v === 'string' && v !== '') {
         const bytes = new TextEncoder().encode(v)
-        return encodeMultipart([bytes], STRING)
+        return encodeMultipart(r, [bytes], STRING)
       }
     },
-    decode (code) {
-      return new TextDecoder().decode(decodeParts(code)[0].getDecoded(false))
+    decode (r, code) {
+      return new TextDecoder().decode(decodeParts(r, code)[0].getDecoded(false))
     }
   }
 
   /** Non-negative integer 0..127 */
   const UINT7 = {
     partReaders: [uint7Readers],
-    encode (v) {
+    encode (r, v) {
       if (Number.isInteger(v) && v >= 0 && v < 128) return new Uint8Array([UINT7.baseFooter + v])
     },
-    decode (code) { return decodeParts(code)[0].getDecoded()[0] }
+    decode (r, code) { return decodeParts(r, code)[0].getDecoded()[0] }
   }
 
   const FLOAT64 = {
     partReaders: [inlineOrAddress],
-    encode (v) {
+    encode (r, v) {
       if (typeof v === 'number') {
-        return encodeMultipart([new Uint8Array(new Float64Array([v]).buffer)], FLOAT64)
+        return encodeMultipart(r, [new Uint8Array(new Float64Array([v]).buffer)], FLOAT64)
       }
     },
-    decode (code) {
-      const bytes = decodeParts(code)[0].getDecoded(false)
+    decode (r, code) {
+      const bytes = decodeParts(r, code)[0].getDecoded(false)
       return new Float64Array(bytes.buffer, bytes.byteOffset, 1)[0]
     }
   }
 
   const DATE = {
     partReaders: [inlineOrAddress],
-    encode (v) {
+    encode (r, v) {
       if (v instanceof Date) {
-        return encodeMultipart([new Uint8Array(new Float64Array([v.getTime()]).buffer)], DATE)
+        return encodeMultipart(r, [new Uint8Array(new Float64Array([v.getTime()]).buffer)], DATE)
       }
     },
-    decode (code) {
-      const bytes = decodeParts(code)[0].getDecoded(false)
+    decode (r, code) {
+      const bytes = decodeParts(r, code)[0].getDecoded(false)
       return new Date(new Float64Array(bytes.buffer, bytes.byteOffset, 1)[0])
     }
   }
 
   const SIGNATURE = {
     partReaders: [wordReaders, signatureReader],
-    encode (v) {
+    encode (r, v) {
       if (v instanceof Signature) {
         const addrBytes = numberToVar(v.address)
         const out = new Uint8Array(addrBytes.length + 64 + 1)
@@ -317,8 +330,8 @@ export function makeCodecs (r) {
         return out
       }
     },
-    decode (code) {
-      const parts = decodeParts(code)
+    decode (r, code) {
+      const parts = decodeParts(r, code)
       return new Signature(varToNumber(parts[0].getDecoded()), parts[1].getDecoded())
     }
   }
@@ -326,11 +339,11 @@ export function makeCodecs (r) {
   /** Internal balanced binary tree node. Never exposed to callers. */
   const DUPLE = {
     partReaders: [inlineOrAddress, inlineOrAddress],
-    encode (v, asRefs) {
-      if (v instanceof Duple) return encodeMultipart(v.v, DUPLE, asRefs)
+    encode (r, v, asRefs) {
+      if (v instanceof Duple) return encodeMultipart(r, v.v, DUPLE, asRefs)
     },
-    decode (code, asRefs) {
-      const parts = decodeParts(code)
+    decode (r, code, asRefs) {
+      const parts = decodeParts(r, code)
       const leftCode = parts[0].getCode()
       const rightCode = parts[1].getCode()
       const leftIsDuple = r.footerToCodec[leftCode.at(-1)]?.type === 'DUPLE'
@@ -340,16 +353,16 @@ export function makeCodecs (r) {
         const nameIsRef = asRefs === 'all' || (Array.isArray(asRefs) && asRefs[1])
         const valueIsRef = asRefs === 'all' || asRefs === true || (Array.isArray(asRefs) && asRefs[0])
         return new Duple([
-          nameIsRef ? getPartAddress(parts[0]) : parts[0].getDecoded(false),
-          valueIsRef ? getPartAddress(parts[1]) : parts[1].getDecoded(false)
+          nameIsRef ? getPartAddress(r, parts[0]) : parts[0].getDecoded(false),
+          valueIsRef ? getPartAddress(r, parts[1]) : parts[1].getDecoded(false)
         ])
       }
       // Non-leaf: at least one child is itself a Duple subtree.
       // With 'all', recurse into sub-duples and take the address of any leaf.
       if (asRefs === 'all') {
         return new Duple([
-          leftIsDuple ? parts[0].getDecoded('all') : getPartAddress(parts[0]),
-          rightIsDuple ? parts[1].getDecoded('all') : getPartAddress(parts[1])
+          leftIsDuple ? parts[0].getDecoded('all') : getPartAddress(r, parts[0]),
+          rightIsDuple ? parts[1].getDecoded('all') : getPartAddress(r, parts[1])
         ])
       }
       return new Duple([parts[0].getDecoded(asRefs), parts[1].getDecoded(asRefs)])
@@ -357,24 +370,24 @@ export function makeCodecs (r) {
   }
 
   const EMPTY_ARRAY = {
-    encode: v => Array.isArray(v) && v.length === 0 && new Uint8Array([EMPTY_ARRAY.baseFooter]),
+    encode: (r, v) => Array.isArray(v) && v.length === 0 && new Uint8Array([EMPTY_ARRAY.baseFooter]),
     decode: () => []
   }
 
   const ARRAY = {
     partReaders: [inlineOrAddress],
-    encode (v, asRefs) {
+    encode (r, v, asRefs) {
       if (!Array.isArray(v) || v.length === 0) return
       if (v.length > 1 && Object.keys(v).length === v.length) {
-        return encodeMultipart([new Duple(v)], ARRAY, asRefs)
+        return encodeMultipart(r, [new Duple(v)], ARRAY, asRefs)
       }
       // sparse or single-element array: encode as object with length key
       const obj = Object.assign({}, v, { length: v.length })
-      return encodeMultipart([obj], ARRAY, asRefs)
+      return encodeMultipart(r, [obj], ARRAY, asRefs)
     },
-    decode (code, asRefs) {
+    decode (r, code, asRefs) {
       // 'all' mode: return an address for every element rather than decoded values
-      const inner = decodeParts(code)[0].getDecoded(asRefs === true ? 'all' : asRefs)
+      const inner = decodeParts(r, code)[0].getDecoded(asRefs === true ? 'all' : asRefs)
       if (inner instanceof Duple) return inner.flat()
       return Object.assign([], inner)
     }
@@ -386,7 +399,7 @@ export function makeCodecs (r) {
     // class instances should be encodable too — keeping them symmetric.) Type
     // information is lost on round-trip in both cases; the decoded value is a
     // plain {}.
-    encode (v) {
+    encode (r, v) {
       if (!v || typeof v !== 'object' || Array.isArray(v)) return
       if (v instanceof Uint8Array || v instanceof Date) return
       if (Object.keys(v).length === 0) return new Uint8Array([EMPTY_OBJECT.baseFooter])
@@ -396,14 +409,14 @@ export function makeCodecs (r) {
 
   const OBJECT = {
     partReaders: [inlineOrAddress],
-    encode (v, asRefs) {
+    encode (r, v, asRefs) {
       if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).length === 0) return
       const duples = Object.entries(v).map(([k, val]) => new Duple([k, val]))
       const tree = duples.length === 1 ? duples[0] : new Duple(duples)
-      return encodeMultipart([tree], OBJECT, asRefs)
+      return encodeMultipart(r, [tree], OBJECT, asRefs)
     },
-    decode (code, asRefs) {
-      const tree = decodeParts(code)[0].getDecoded(asRefs)
+    decode (r, code, asRefs) {
+      const tree = decodeParts(r, code)[0].getDecoded(asRefs)
       return Object.fromEntries(tree.flatDuples().map(d => [d.v[0], d.v[1]]))
     }
   }
@@ -416,15 +429,15 @@ export function makeCodecs (r) {
   const VARIABLE = {
     partReaders: [inlineOrAddress],
     encode: () => undefined, // not directly encodable; use _encode
-    _encode (encodedValue) {
-      const [part, option] = inlineOrAddressPart(encodedValue)
+    _encode (r, encodedValue) {
+      const [part, option] = inlineOrAddressPart(r, encodedValue)
       const out = new Uint8Array(part.length + 1)
       out.set(part)
       out[part.length] = VARIABLE.baseFooter + option
       return out
     },
-    decode (code, asRefs) {
-      return decodeParts(code)[0].getDecoded(asRefs)
+    decode (r, code, asRefs) {
+      return decodeParts(r, code)[0].getDecoded(asRefs)
     }
   }
 
@@ -432,7 +445,7 @@ export function makeCodecs (r) {
   // it doesn't shift the footer values of existing codecs — chunks created
   // before this codec was added still decode correctly.
   const EMPTY_UINT8ARRAY = {
-    encode: v => v instanceof Uint8Array && v.length === 0 && new Uint8Array([EMPTY_UINT8ARRAY.baseFooter]),
+    encode: (r, v) => v instanceof Uint8Array && v.length === 0 && new Uint8Array([EMPTY_UINT8ARRAY.baseFooter]),
     decode: () => new Uint8Array(0)
   }
 

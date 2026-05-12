@@ -5,6 +5,134 @@ for what's next.
 
 ---
 
+## 5.0.0 — one Recaller, many subsystems
+
+Single thrust. The reactive substrate finally lives by one principle:
+a `Recaller` is a *shared coordination point*, and every reactive
+subsystem registers on it via its own `(target, key)` namespace.
+Repo data, app UI state, async caches, custom-element components,
+and the URL itself are all `(target, key)` consumers on the same
+recaller. The old "wire up cross-recaller bridges everywhere"
+mental tax disappears. Five breaking changes (see *Migrating*
+below) and a substantial internal cleanup behind them.
+
+**One Recaller, by default.**
+
+- *`RepoRegistry` owns the bridge.* Pass your app's recaller via
+  `new RepoRegistry(undefined, { recaller })` and the default
+  factory creates Repos that *share* that recaller. Reading any
+  repo's state inside a slot now auto-subscribes the slot to chunk
+  arrivals — no `dep()` ceremony, no separate bridge module.
+  Iteration, `get(keyHex)`, and `size` self-report on
+  `(registry, 'keys')`, so slots iterating the registry auto-
+  subscribe to new-repo opens too.
+- *`bridgeRegistry` retired.* The module is gone; its job is built
+  into `RepoRegistry`. Custom factories that want reactivity
+  should pass `registry.recaller` into their `new Repo(...)`.
+
+**The LiveSource agenda landed.**
+
+- *App-level state is a `liveObject`.* The explorer's UI state
+  collapsed from three ad-hoc signals + two mutable lets into one
+  `liveObject({ atTab, hovered }, { recaller })`. Hello + journal
+  got the same treatment for `loginSig` / `editSig`. The signal +
+  `reportKeyAccess`/`reportKeyMutation` boilerplate dissolves.
+- *Async caches are `liveObject`s.* The explorer's signature
+  verify cache is a `liveObject` keyed by `${keyHex}:${sigAddress}`
+  — async resolution fires the specific key; only badge slots
+  that touched that signature re-run. Same shape for the
+  expand/collapse state of the three trees, keyed by
+  `${tree}:${keyHex}:${address}`.
+- *The URL is a `liveLocation`.* The new `liveLocation` factory
+  (lifted out of the `apps/location/` demo into the kit) wraps
+  `window.location` as a LiveSource. The explorer's route lives
+  there now instead of in a shadow copy of viewKind/keyHex/address.
+- *`dep` / `fire` retired.* Slots subscribe via the reads they
+  already do. The explorer's `main.js` no longer has either; the
+  RepoRegistry methods of the same name are gone too.
+
+**LiveSource-shaped constructors all match.**
+
+Same shape across the kit:
+
+    liveObject(target, { recaller, name })
+    new RepoRegistry(factory, { recaller, name })
+    liveLocation({ recaller, name })
+    new Streamo({ recaller, name })       ← was new Streamo(recaller)
+
+`Streamo.clone(addr, recaller)` becomes `clone(addr, { recaller,
+name })` for the same reason.
+
+**`StreamoComponent` can opt into a shared Recaller.**
+
+    defineComponent(name, fn, { recaller })
+
+Closes the last cross-recaller footgun. Components that pass the
+app's recaller compose with app-level signals instead of being
+isolated. Default unchanged — no `{ recaller }` means each instance
+mints its own as before.
+
+**Codec internals: `r` per-call, not in closure.**
+
+Every codec's `encode` / `decode` and every helper in `codecs.js`
+takes the registry interface `r` as a leading argument; nothing is
+captured. `asRefs`'s mutation-impossibility is now a property of
+*which `r` the entry point dispatches with* — `#readOnlyR` has no
+`append`, so codec helpers that would materialize inline parts as
+chunks (`getPartAddress`) return undefined rather than mutate. The
+old `#readOnlyDepth` counter and `#runReadOnly` scope dissolved.
+The ROADMAP "reference-quality clarity" thread closes — every item
+in it has landed.
+
+**Explorer: same app, twelve focused files.**
+
+The 1764-line `apps/explorer/main.js` decomposed into a 257-line
+orchestrator + eleven sibling modules (format, shapes, walking,
+verify, render, analytics, trees, sections, interactions, byte-
+stream, at-view). `main.js` reads top-to-bottom as a map of the
+app — imports, factories, routing, mount, click delegation.
+External behavior identical; internal cognitive footprint -85%.
+
+### Migrating
+
+**`bridgeRegistry` is gone.** Replace
+
+    const { dep, fire } = bridgeRegistry(registry, recaller)
+
+with
+
+    const registry = new RepoRegistry(undefined, { recaller, name })
+
+and drop the `dep()` calls from slots that read repo state — they
+auto-subscribe via the shared recaller now. If a subsystem genuinely
+needed a re-render trigger that wasn't repo-bound (verify cache,
+tree toggle state), make that subsystem a `liveObject` rather than
+threading a `fire` callback through it.
+
+**`new Streamo(recaller)` → `new Streamo({ recaller, name })`.** Same
+for `new Repo(recaller)`. The positional form was the only LiveSource-
+shaped constructor that didn't take options; now they all match.
+
+**`Streamo.clone(addr, recaller)` → `clone(addr, { recaller, name })`.**
+
+**`Streamo.watch / Streamo.unwatch` removed.** Callers use
+`streamo.recaller.watch(...)` / `streamo.recaller.unwatch(...)`
+directly — honest about what's actually reactive (the recaller is
+what holds the subscription; the streamo is just one thing it
+watches).
+
+**Custom codecs that built on `makeCodecs(r)`.** `makeCodecs()`
+takes no args. Codec method signatures gained `r` as a leading arg:
+
+    encode(v, asRefs)          →  encode(r, v, asRefs)
+    decode(code, asRefs)       →  decode(r, code, asRefs)
+
+Helpers (`inlineOrAddressPart`, `encodeMultipart`, `decodeParts`,
+`getPartAddress`) shifted the same way. If you've only used the
+public `CodecRegistry` API (no custom codecs), this is transparent.
+
+---
+
 ## 4.0.6 — transparency + finish
 
 Two thrusts. The explorer surfaces streamo's own mechanics — reuse,

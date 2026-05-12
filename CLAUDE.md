@@ -72,14 +72,17 @@ lands without tests passing, you have failed the contract.
   mount and `el.onclick` becomes `undefined`. Use **event delegation** with
   `data-action` attributes on a single listener attached to the app container
   (see `public/apps/explorer/main.js`).
-- **Cross-Recaller bridging.** Each Repo has its own `Recaller`; mount()
-  takes a single one. For the registry case this is now built in: pass
-  your app's recaller via `new RepoRegistry(undefined, { recaller })` and
-  every opened repo's byteLength changes auto-bridge into it. Slots call
-  `registry.dep()` to subscribe; `registry.fire()` triggers a re-render
-  for non-repo state. The pitfall still exists for `defineComponent`
-  custom elements — each has its own Recaller and reads on app-level
-  signals don't cross over.
+- **One Recaller per app.** A Recaller is meant to be the shared
+  coordination point: data sources fire on it, views watch on it,
+  the `(target, key)` NestedSet keeps unrelated subsystems from
+  colliding. The streamo idiom: `new RepoRegistry(undefined, {
+  recaller })` makes the default factory create Repos that *share*
+  the recaller, so reading any repo's state inside a slot self-
+  subscribes the slot. App UI state, async caches (verify), and
+  toggle state (trees) each become their own `liveObject(target,
+  { recaller })` — different targets, same recaller, no collisions.
+  The pitfall still exists for `defineComponent` custom elements —
+  each has its own Recaller by construction.
 
 ## architecture notes
 

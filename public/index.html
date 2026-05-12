@@ -343,7 +343,6 @@
     import { Recaller } from './streamo/utils/Recaller.js'
     import { RepoRegistry } from './streamo/RepoRegistry.js'
     import { registrySync } from './streamo/registrySync.js'
-    import { bridgeRegistry } from './streamo/bridgeRegistry.js'
     import { h } from './streamo/h.js'
     import { mount } from './streamo/mount.js'
 
@@ -368,12 +367,11 @@
     // appear without refresh.
     if (info) {
       try {
-        const registry = new RepoRegistry()
+        const recaller = new Recaller('home')
+        const registry = new RepoRegistry(undefined, { recaller, name: 'home' })
         await registrySync(registry, location.hostname, +location.port || 80, {
           filter: key => key === info.primaryKeyHex
         })
-        const recaller = new Recaller('home')
-        const { dep } = bridgeRegistry(registry, recaller, 'home')
         const entriesEl = document.getElementById('journal-entries')
         const moreEl = document.getElementById('journal-more')
         moreEl.href = `/apps/explorer/#/repo/${info.primaryKeyHex}`
@@ -384,7 +382,6 @@
         // Replace the "loading…" placeholder with our reactive cell.
         entriesEl.innerHTML = ''
         mount(h`${() => {
-          dep()
           const repo = registry.get(info.primaryKeyHex)
           if (!repo) return h`<p class="dim" style="font-size: 0.85rem;">connecting…</p>`
           const entries = repo.get('entries') ?? []

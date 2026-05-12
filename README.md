@@ -130,13 +130,15 @@ const registry = new RepoRegistry(async key => {
 const repo = await registry.open(publicKeyHex)
 ```
 
-### RepoRegistry + your app's Recaller — reactive bridge built in
+### RepoRegistry + your app's Recaller — one Recaller for everything
 
-Each `Repo` owns its own `Recaller` (so it can do fine-grained tracking on
-its own internal keys). Your app uses a separate `Recaller` for its
-`mount()` slots — without bridging, reading `repo.byteLength` inside a
-slot wouldn't trigger re-renders when chunks arrive at the repo. Pass
-your `Recaller` to `RepoRegistry` and the bridge is built in:
+A `Recaller` is meant to be the shared coordination point: data sources
+fire on it, views watch on it, the `(target, key)` namespace keeps
+unrelated subsystems from colliding. Pass your app's `Recaller` to
+`RepoRegistry` and the default factory creates Repos that share it —
+reading any repo's state inside a reactive cell auto-subscribes the
+cell. Iteration, `get(keyHex)`, and `size` all self-report too, so
+slots that walk the registry auto-subscribe to new-repo opens.
 
 ```js
 import { Recaller, RepoRegistry, h, mount } from '@dtudury/streamo'
@@ -145,13 +147,19 @@ const recaller = new Recaller('app')
 const registry = new RepoRegistry(undefined, { recaller, name: 'app' })
 
 mount(h`${() => {
-  registry.dep()
-  for (const [k, r] of registry) ...   // freely read any repo's state
+  for (const [k, r] of registry) ...   // auto-subscribes to chunks + new repos
 }}`, appEl, recaller)
+```
 
-// Non-repo state changes (route, async results, app caches) — call
-// registry.fire() to force a re-render of any slot that subscribed.
-window.addEventListener('hashchange', registry.fire)
+For app-level state that isn't a repo (route, hover, tab selection),
+use `liveObject` on the same `Recaller`:
+
+```js
+import { liveObject } from '@dtudury/streamo'
+
+const state = liveObject({ atTab: 'value', hovered: null }, { recaller })
+mount(h`${() => state.get('atTab')}`, el, recaller)  // auto-subscribes
+state.set('atTab', 'storage')                          // fires the watcher
 ```
 
 ### registrySync — peer sync over WebSocket

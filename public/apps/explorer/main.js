@@ -32,6 +32,7 @@ import {
 } from './walking.js'
 import { makeVerifier, kindBanner, verifyLabel, verifyBadge } from './verify.js'
 import { typedValue, bytesChart } from './render.js'
+import { makeTrees } from './trees.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
@@ -68,6 +69,10 @@ function fire () {
 // Signature-verification cache, bound to fire() so async-resolved
 // statuses trigger a re-render. See verify.js for the cache shape.
 const verifyStatus = makeVerifier(fire)
+
+// Three tree renderers + their expand/collapse state + their action
+// dispatcher, all bound to fire() — see trees.js.
+const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(fire)
 
 // Hover-only signal — separate from the bridge. Hover events that
 // only set hoveredAddress fire hoverSignal exclusively; slots that
@@ -964,227 +969,6 @@ function byteStreamSection (repo, keyHex, currentAddress) {
   `
 }
 
-// Recursive typed-value tree — like typedValue, but expands composites
-// inline up to `depth` levels deep. Beyond depth, composites render as
-// un-expanded chips. Click a chip to expand IN PLACE (forceExpanded);
-// click an expanded composite's opening bracket to collapse it back to
-// a chip (forceCollapsed). Force-expand and force-collapse override
-// the default depth-based decision.
-//
-// Default depth=3 covers `{ name, messages: [{text, at}, ...] }` —
-// outer object expanded, messages array expanded, message objects
-// expanded, and primitives like text/at render inline.
-const forceExpanded  = new Set()  // `${keyHex}:${address}` → user clicked chip
-const forceCollapsed = new Set()  // `${keyHex}:${address}` → user clicked bracket
-
-function valueTree (repo, keyHex, address, depth = 3) {
-  let value, refs
-  try {
-    value = repo.decode(address)
-    refs = repo.asRefs(address)
-  } catch {
-    return h`<span class="dim">(decode error @${address})</span>`
-  }
-  if (typeof value !== 'object' || value === null || value instanceof Date || value instanceof Uint8Array) {
-    return typedValue(value)
-  }
-  const k = `${keyHex}:${address}`
-  const userExpanded  = forceExpanded.has(k)
-  const userCollapsed = forceCollapsed.has(k)
-  const expand = userExpanded || (!userCollapsed && depth > 0)
-  if (!expand) {
-    return h`<a class="tv-drill" data-action="expand-tree"
-                 data-keyhex=${keyHex} data-addr=${address}
-                 title="click to expand · drill via storage tab if you need a full at-view"
-              >${typedValue(value)}</a>`
-  }
-  const isArray = Array.isArray(value)
-  const entries = isArray
-    ? value.map((v, i) => [String(i), v, refs?.[i]])
-    : Object.entries(value).map(([k, v]) => [k, v, refs?.[k]])
-  if (entries.length === 0) {
-    return h`<span class="tv ${isArray ? 'tv-array' : 'tv-object'}">${isArray ? '[ ]' : '{ }'}</span>`
-  }
-
-  // Inline rendering — Chrome-console-style. When every child is a
-  // primitive AND the projected line width fits, lay the composite out
-  // as `{k: v, k: v}` or `[v, v]` instead of one row per entry. Saves
-  // a lot of vertical space on small leaf records (e.g. `{name, role,
-  // active}`); falls back to multi-line for composites that wouldn't
-  // fit on one line.
-  const allPrimitive = entries.every(([_, v]) => isInlinablePrimitive(v))
-  if (allPrimitive) {
-    let width = 2
-    for (const [k, v] of entries) width += estimateEntryWidth(k, v, isArray) + 2
-    if (width <= 70) {
-      return h`<span class=${['tv-tree-inline', isArray ? 'tv-tree-array' : 'tv-tree-object']}>
-        <span class="tv-bracket clickable" data-action="collapse-tree"
-              data-keyhex=${keyHex} data-addr=${address}
-              title="click to collapse"
-          >${isArray ? '[' : '{'}</span>
-        ${entries.map(([k, v], i) => h`${i > 0 ? h`<span class="tv-sep">, </span>` : null}${!isArray ? h`<span class="tv-key">${k}:</span> ` : null}${typedValue(v)}`)}
-        <span class="tv-bracket">${isArray ? ']' : '}'}</span>
-      </span>`
-    }
-  }
-
-  return h`
-    <div class="tv-tree ${isArray ? 'tv-tree-array' : 'tv-tree-object'}">
-      <span class="tv-bracket clickable" data-action="collapse-tree"
-            data-keyhex=${keyHex} data-addr=${address}
-            title="click to collapse"
-        >${isArray ? '[' : '{'}</span>
-      ${entries.map(([k, v, addr]) => h`
-        <div class="tv-tree-row">
-          <span class="tv-key">${k}:</span>
-          ${addr !== undefined
-            ? valueTree(repo, keyHex, addr, depth - 1)
-            : typedValue(v)}
-        </div>
-      `)}
-      <span class="tv-bracket">${isArray ? ']' : '}'}</span>
-    </div>
-  `
-}
-
-// Recursive chunk-graph tree — like valueTree, but for the storage tab.
-// Two key differences:
-//   1. Walks `directReferences` (the actual chunk graph) instead of
-//      `asRefs` (the user-meaningful tree). DUPLEs that the value tab
-//      hides as scaffolding are surfaced here as their own rows —
-//      seeing them IS the storage view's job.
-//   2. Every node shows codec chip + clickable @addr + value preview.
-//      The chip and the preview share the codec palette, so a STRING
-//      reads emerald all the way across.
-// Shares the depth/expansion model with valueTree but keeps its own
-// expanded/collapsed sets, since "expand this chunk" means different
-// things in the two tabs (decoded value vs. chunk references).
-const storageForceExpanded  = new Set()
-const storageForceCollapsed = new Set()
-
-function storageTree (repo, keyHex, address, depth = 3) {
-  let codecType = '?'
-  let preview = h`<span class="dim">…</span>`
-  let refs = []
-  try {
-    const code = repo.resolve(address)
-    codecType = repo.footerToCodec[code.at(-1)]?.type || '?'
-    preview = typedValue(repo.decode(address))
-    refs = repo.directReferences(address)
-  } catch (e) {
-    return h`<div class="storage-row"><span class="dim">(decode error @${address}: ${e.message})</span></div>`
-  }
-  const cat = codecCategory(codecType)
-  const k = `${keyHex}:${address}`
-  const userExpanded  = storageForceExpanded.has(k)
-  const userCollapsed = storageForceCollapsed.has(k)
-  const expand = userExpanded || (!userCollapsed && depth > 0)
-  const isLeaf = refs.length === 0
-  const toggle = isLeaf
-    ? h`<span class="storage-toggle empty">·</span>`
-    : expand
-      ? h`<a class="storage-toggle" data-action="collapse-storage"
-              data-keyhex=${keyHex} data-addr=${address}
-              title="click to collapse">▾</a>`
-      : h`<a class="storage-toggle" data-action="expand-storage"
-              data-keyhex=${keyHex} data-addr=${address}
-              title="click to expand">▸</a>`
-  // DUPLE preview is suppressed in the chunk graph: a duple's whole
-  // content is its two children, which already render as their own
-  // rows directly below. typedValue's "Duple(left, right)" inline
-  // form was duplicating those two children one line above where
-  // they live. The purple DUPLE chip carries the identity; the tree
-  // structure carries the content.
-  const showPreview = codecType !== 'DUPLE'
-  const header = h`
-    <div class="storage-row">
-      ${toggle}
-      <span class=${['codec-chip', `cat-${cat}`]}>${codecType}</span>
-      <a class="addr-link" data-action="open-at"
-         data-keyhex=${keyHex} data-addr=${address}>@${address}</a>
-      ${showPreview ? h`<span class="storage-preview">${preview}</span>` : null}
-      ${!isLeaf && !expand
-        ? h`<span class="dim storage-childcount">${refs.length} ref${refs.length === 1 ? '' : 's'}</span>`
-        : null}
-    </div>
-  `
-  if (!expand || isLeaf) return header
-  return h`
-    ${header}
-    <div class="storage-children">
-      ${refs.map(childAddr => storageTree(repo, keyHex, childAddr, depth - 1))}
-    </div>
-  `
-}
-
-// Recursive reference tree — twin of storageTree but walks UP through
-// the chunk graph instead of DOWN. Where storageTree's leaves are
-// chunks that don't reference anything (a single-byte WORD), this
-// tree's leaves are chunks that NOTHING references — graph roots,
-// typically commits and signatures. The tree is rooted at the URL's
-// chunk and grows toward those roots: "who uses this? and who uses
-// THAT? and who uses that?" all the way up.
-//
-// Visually identical to storageTree (same row class, same toggle,
-// same chip + @addr + preview). Different state (refTreeForce*) so
-// expand/collapse decisions don't cross-pollute. Different child
-// label ("N referrers" vs. storage's "N refs") — small thing, but
-// the direction is ambiguous otherwise.
-const refTreeForceExpanded  = new Set()
-const refTreeForceCollapsed = new Set()
-
-function referenceTree (repo, keyHex, address, depth = 4, index = null) {
-  index = index ?? buildDirectReferrerIndex(repo)
-  let codecType = '?'
-  let preview = h`<span class="dim">…</span>`
-  try {
-    const code = repo.resolve(address)
-    codecType = repo.footerToCodec[code.at(-1)]?.type || '?'
-    preview = typedValue(repo.decode(address))
-  } catch (e) {
-    return h`<div class="storage-row"><span class="dim">(decode error @${address}: ${e.message})</span></div>`
-  }
-  const referrers = index.get(address) ?? []
-  const cat = codecCategory(codecType)
-  const k = `${keyHex}:${address}`
-  const userExpanded  = refTreeForceExpanded.has(k)
-  const userCollapsed = refTreeForceCollapsed.has(k)
-  const expand = userExpanded || (!userCollapsed && depth > 0)
-  const isLeaf = referrers.length === 0
-  const toggle = isLeaf
-    ? h`<span class="storage-toggle empty">·</span>`
-    : expand
-      ? h`<a class="storage-toggle" data-action="collapse-refs"
-              data-keyhex=${keyHex} data-addr=${address}
-              title="click to collapse">▾</a>`
-      : h`<a class="storage-toggle" data-action="expand-refs"
-              data-keyhex=${keyHex} data-addr=${address}
-              title="click to expand">▸</a>`
-  // Same DUPLE suppression as storageTree — see comment there.
-  const showPreview = codecType !== 'DUPLE'
-  const header = h`
-    <div class="storage-row">
-      ${toggle}
-      <span class=${['codec-chip', `cat-${cat}`]}>${codecType}</span>
-      <a class="addr-link" data-action="open-at"
-         data-keyhex=${keyHex} data-addr=${address}>@${address}</a>
-      ${showPreview ? h`<span class="storage-preview">${preview}</span>` : null}
-      ${isLeaf
-        ? h`<span class="dim storage-childcount">graph root</span>`
-        : !expand
-          ? h`<span class="dim storage-childcount">${referrers.length} referrer${referrers.length === 1 ? '' : 's'}</span>`
-          : null}
-    </div>
-  `
-  if (!expand || isLeaf) return header
-  return h`
-    ${header}
-    <div class="storage-children">
-      ${referrers.map(r => referenceTree(repo, keyHex, r.address, depth - 1, index))}
-    </div>
-  `
-}
-
 // ── Mount ─────────────────────────────────────────────────────────────────
 
 const appEl = document.getElementById('app')
@@ -1234,42 +1018,14 @@ appEl.addEventListener('click', e => {
       el.closest('details.commit-selector')?.removeAttribute('open')
       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     }
-    case 'expand-tree': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      forceExpanded.add(k)
-      forceCollapsed.delete(k)
-      return fire()
-    }
-    case 'expand-storage': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      storageForceExpanded.add(k)
-      storageForceCollapsed.delete(k)
-      return fire()
-    }
-    case 'collapse-storage': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      storageForceCollapsed.add(k)
-      storageForceExpanded.delete(k)
-      return fire()
-    }
-    case 'expand-refs': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      refTreeForceExpanded.add(k)
-      refTreeForceCollapsed.delete(k)
-      return fire()
-    }
-    case 'collapse-refs': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      refTreeForceCollapsed.add(k)
-      refTreeForceExpanded.delete(k)
-      return fire()
-    }
-    case 'collapse-tree': {
-      const k = `${el.dataset.keyhex}:${el.dataset.addr}`
-      forceCollapsed.add(k)
-      forceExpanded.delete(k)
-      return fire()
-    }
+    case 'expand-tree':
+    case 'collapse-tree':
+    case 'expand-storage':
+    case 'collapse-storage':
+    case 'expand-refs':
+    case 'collapse-refs':
+      handleTreeAction(el.dataset.action, `${el.dataset.keyhex}:${el.dataset.addr}`)
+      return
   }
 })
 

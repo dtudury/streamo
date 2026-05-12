@@ -17,17 +17,23 @@ import { liveObject } from '../../streamo/LiveSource.js'
 
 // One verify per signature per page load (~sub-ms each for secp256k1).
 // The cache target is the LiveSource's plain object; keys are
-// `${keyHex}:${addr}` → 'pending' | 'valid' | 'invalid' | { error }.
+// `${keyHex}:${addr}` → 'valid' | 'invalid' | { error } (set once async
+// resolves). An `inFlight` Set holds keys whose verify is kicked off
+// but not yet resolved — outside the LiveSource so the kick-off
+// doesn't fire the key in the same flush as the slot's first read
+// (which would queue a wasted "pending → pending" re-run).
 export function makeVerifier (recaller) {
   const cache = liveObject({}, { recaller, name: 'verify' })
+  const inFlight = new Set()
   return function verifyStatus (repo, keyHex, sig, sigAddress) {
     const cacheKey = `${keyHex}:${sigAddress}`
     const existing = cache.get(cacheKey)
     if (existing !== undefined) return existing
-    cache.set(cacheKey, 'pending')
+    if (inFlight.has(cacheKey)) return 'pending'
+    inFlight.add(cacheKey)
     repo.verify(sig, hexToBytes(keyHex))
-      .then(valid => cache.set(cacheKey, valid ? 'valid' : 'invalid'))
-      .catch(e     => cache.set(cacheKey, { error: e.message }))
+      .then(valid => { inFlight.delete(cacheKey); cache.set(cacheKey, valid ? 'valid' : 'invalid') })
+      .catch(e     => { inFlight.delete(cacheKey); cache.set(cacheKey, { error: e.message }) })
     return 'pending'
   }
 }

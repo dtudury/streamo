@@ -37,14 +37,29 @@ export class StreamoComponent extends HTMLElement {
   #recaller
   #root
 
+  /**
+   * Static override point. When set on a subclass (most easily via
+   * `defineComponent(name, fn, { recaller })`), every instance of
+   * that class shares the given Recaller — so its reactive cells
+   * compose with the host app's mount() call, reading app-level
+   * signals (login state, route, liveObjects on the app recaller)
+   * without the cross-recaller gap. Default is undefined; in that
+   * case each instance mints its own Recaller as before.
+   */
+  static sharedRecaller = undefined
+
   connectedCallback () {
-    this.#recaller = new Recaller(this.localName)
+    this.#recaller = this.constructor.sharedRecaller ?? new Recaller(this.localName)
     this.#root = this.attachShadow({ mode: 'open' })
     mount(this.render(this.#buildProps()), this.#root, this.#recaller)
   }
 
   disconnectedCallback () {
     if (this.#root) {
+      // cleanupNode unwatches only the cells registered for *this*
+      // subtree via mount's per-node WeakMap, so dismount on a
+      // shared Recaller is safe — it doesn't touch other components
+      // or the main mount.
       dismount(this.#root, this.#recaller)
       this.#root = null
     }
@@ -78,13 +93,21 @@ export function componentKey (prefix, address) {
  * Register a render function as a custom element. Safe to call multiple times
  * with the same name — subsequent calls are no-ops.
  *
+ * Pass `{ recaller }` to make every instance share that Recaller with
+ * the host app — so reactive cells inside the component re-run on
+ * mutations from outside (login, route, app-level liveObjects).
+ * Without it, each instance gets its own fresh Recaller (the
+ * cross-recaller gap noted in CLAUDE.md / dear-future-claudes.md).
+ *
  * @param {string}   name      valid custom element name (must contain a hyphen)
  * @param {Function} renderFn  (props) => virtual nodes
+ * @param {{ recaller?: import('./utils/Recaller.js').Recaller }} [options]
  * @returns {string} the name, for use directly as a tag
  */
-export function defineComponent (name, renderFn) {
+export function defineComponent (name, renderFn, { recaller } = {}) {
   if (!customElements.get(name)) {
     customElements.define(name, class extends StreamoComponent {
+      static sharedRecaller = recaller
       render (props) { return renderFn(props) }
     })
   }

@@ -81,8 +81,9 @@ lands without tests passing, you have failed the contract.
   subscribes the slot. App UI state, async caches (verify), and
   toggle state (trees) each become their own `liveObject(target,
   { recaller })` — different targets, same recaller, no collisions.
-  The pitfall still exists for `defineComponent` custom elements —
-  each has its own Recaller by construction.
+  `defineComponent(name, fn, { recaller })` does the same for custom-
+  element components: pass the app's Recaller and the component's
+  cells compose with app state instead of isolating.
 
 ## architecture notes
 

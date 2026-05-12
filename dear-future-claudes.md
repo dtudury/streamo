@@ -136,23 +136,22 @@ unit with its own Recaller and shadow DOM (the typical motivator is
 hot-reload via `componentKey`, or shipping a "stylable widget" that
 travels with its own CSS). For routine page structure, just inline.
 
-**Cross-recaller gotcha.** Each `StreamoComponent` instance gets its
-*own* Recaller. Reactive cells inside the component register their
-watchers against that local recaller. If those cells read signals
-that live on the *outer* (app) recaller — like a module-level
-`loggedIn()` or any read on a shared `liveObject` — the cross-
-recaller subscription doesn't form: the outer recaller fires, but
-the component's watcher never hears it. The component just doesn't
-re-render. The journal app hit this when its entries list lived in
-a `defineComponent` and read `loggedIn()`; entries stayed frozen on
-the logged-out branch even after login flipped. Fix was to pull the
-list back to a function-as-slot in the main mount, where it shares
-the app's single recaller. The Repo↔registry case used to have the
-same shape — solved by `new RepoRegistry(undefined, { recaller })`,
-which makes the default factory share the Recaller through every
-opened Repo. For `StreamoComponent`, keep it for cases that are
-genuinely self-contained — don't reach into app-level signals from
-inside one.
+**Cross-recaller gotcha — now opt-in fixable.** Each
+`StreamoComponent` instance defaults to its OWN Recaller, which is
+fine for genuinely self-contained widgets but breaks when reactive
+cells inside the component need to react to app-level signals
+(login state, route, app liveObjects). The journal app hit this
+when its entries list lived in a `defineComponent` and read
+`loggedIn()`; entries stayed frozen even after login flipped.
+
+The fix is to pass the app's Recaller via `defineComponent(name,
+renderFn, { recaller })`. Every instance of that tag then shares
+the given Recaller, so cells inside compose with the rest of the
+app's mount. Without `{ recaller }`, behavior is unchanged (own
+Recaller per instance). The Repo↔registry case used to have the
+same shape — solved the same way: `new RepoRegistry(undefined, {
+recaller })`. The (target, key) NestedSet keeps unrelated
+subsystems from colliding even on a shared Recaller.
 
 ## reactivity-only changes don't need component boundaries
 

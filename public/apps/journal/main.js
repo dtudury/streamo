@@ -10,7 +10,6 @@ import { Signer }                       from '../../streamo/Signer.js'
 import { Recaller }                     from '../../streamo/utils/Recaller.js'
 import { RepoRegistry }                 from '../../streamo/RepoRegistry.js'
 import { registrySync }                 from '../../streamo/registrySync.js'
-import { bridgeRegistry }               from '../../streamo/bridgeRegistry.js'
 import { bytesToHex }                   from '../../streamo/utils.js'
 
 // `when(cond, vnode)` — render `vnode` when cond() is truthy, nothing
@@ -105,13 +104,12 @@ async function login (e) {
   const { publicKey } = await signer.keysFor('journal')
   myKey = bytesToHex(publicKey)
 
-  const registry = new RepoRegistry()
+  const registry = new RepoRegistry(undefined, { recaller, name: 'journal' })
+  dep = registry.dep
   await registrySync(registry, location.hostname, +location.port || 80)
 
   myRepo = await registry.open(myKey)
   myRepo.attachSigner(signer, 'journal')
-
-  dep = bridgeRegistry(registry, recaller, 'journal').dep
 
   setLoggedIn()
 }

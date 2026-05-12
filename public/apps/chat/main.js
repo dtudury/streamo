@@ -4,7 +4,6 @@ import { Recaller } from '../../streamo/utils/Recaller.js'
 import { Signer } from '../../streamo/Signer.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
-import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { bytesToHex } from '../../streamo/utils.js'
 
 const { primaryKeyHex: rootKey } = await fetch('/api/info').then(r => r.json())
@@ -77,7 +76,8 @@ joinBtn.onclick = async () => {
     const signer  = new Signer(username, password, 1)
     const { publicKey } = await signer.keysFor('chat')
     const myKey   = bytesToHex(publicKey)
-    const registry = new RepoRegistry()
+    const recaller = new Recaller('chat')
+    const registry = new RepoRegistry(undefined, { recaller, name: 'chat' })
 
     // Track who we've already announced ourselves back to, so we don't
     // ping-pong forever. Without this set, every peer-back ricochets into
@@ -118,14 +118,11 @@ joinBtn.onclick = async () => {
 
     // ── Reactive message list ──────────────────────────────────────────────
     //
-    // Each repo has its own internal Recaller, so repo.get() inside a mount
-    // slot doesn't automatically re-trigger mount's recaller. bridgeRegistry
-    // wires every repo (existing and future) into a single signal on the
-    // chat recaller; dep() inside the slot subscribes to it. See design.md
-    // §6 for the cross-recaller pattern.
+    // The registry shares our Recaller (passed in at construction
+    // above) so reading any repo's state inside a slot re-runs the
+    // slot on chunk arrival. dep() subscribes to that bridge signal.
 
-    const recaller = new Recaller('chat')
-    const { dep } = bridgeRegistry(registry, recaller, 'chat')
+    const { dep } = registry
 
     // Auto-scroll to the bottom whenever any chunk arrives. Subscribing
     // via the same `dep` keeps it in lockstep with the mount slot — both

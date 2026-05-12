@@ -72,12 +72,14 @@ lands without tests passing, you have failed the contract.
   mount and `el.onclick` becomes `undefined`. Use **event delegation** with
   `data-action` attributes on a single listener attached to the app container
   (see `public/apps/explorer/main.js`).
-- **Cross-Recaller bridging.** Each Repo has its own `Recaller`; mount() takes
-  a single one. To re-render on repo changes, set up `repo.watch(name, () => {
-  repo.byteLength; fire() })` and have UI slots `dep()` against an
-  app-level signal. Coalesce `fire()` via `requestAnimationFrame` if many
-  repos are streaming chunks concurrently — otherwise Recaller's flush loop
-  hits its iteration limit during initial sync.
+- **Cross-Recaller bridging.** Each Repo has its own `Recaller`; mount()
+  takes a single one. For the registry case this is now built in: pass
+  your app's recaller via `new RepoRegistry(undefined, { recaller })` and
+  every opened repo's byteLength changes auto-bridge into it. Slots call
+  `registry.dep()` to subscribe; `registry.fire()` triggers a re-render
+  for non-repo state. The pitfall still exists for `defineComponent`
+  custom elements — each has its own Recaller and reads on app-level
+  signals don't cross over.
 
 ## architecture notes
 

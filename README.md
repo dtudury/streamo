@@ -130,27 +130,28 @@ const registry = new RepoRegistry(async key => {
 const repo = await registry.open(publicKeyHex)
 ```
 
-### bridgeRegistry — connect a multi-repo registry to your app's Recaller
+### RepoRegistry + your app's Recaller — reactive bridge built in
 
-Each `Repo` owns its own `Recaller` (so it can do fine-grained tracking on its
-own internal keys), and your app uses a separate `Recaller` for its `mount()`
-slots. Reading `repo.byteLength` inside a slot registers a dep on the *repo's*
-recaller, not the app's, so without an explicit bridge the slot would never
-re-run when chunks arrive. `bridgeRegistry` is that bridge:
+Each `Repo` owns its own `Recaller` (so it can do fine-grained tracking on
+its own internal keys). Your app uses a separate `Recaller` for its
+`mount()` slots — without bridging, reading `repo.byteLength` inside a
+slot wouldn't trigger re-renders when chunks arrive at the repo. Pass
+your `Recaller` to `RepoRegistry` and the bridge is built in:
 
 ```js
-import { Recaller, bridgeRegistry, h, mount } from '@dtudury/streamo'
+import { Recaller, RepoRegistry, h, mount } from '@dtudury/streamo'
 
 const recaller = new Recaller('app')
-const { dep, fire } = bridgeRegistry(registry, recaller)
+const registry = new RepoRegistry(undefined, { recaller, name: 'app' })
 
 mount(h`${() => {
-  dep()
+  registry.dep()
   for (const [k, r] of registry) ...   // freely read any repo's state
 }}`, appEl, recaller)
 
-// Non-repo state changes (route, async results) — call fire() to force a re-render.
-window.addEventListener('hashchange', fire)
+// Non-repo state changes (route, async results, app caches) — call
+// registry.fire() to force a re-render of any slot that subscribed.
+window.addEventListener('hashchange', registry.fire)
 ```
 
 ### registrySync — peer sync over WebSocket

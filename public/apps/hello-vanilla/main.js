@@ -14,7 +14,6 @@ import { Signer }         from '../../streamo/Signer.js'
 import { Recaller }       from '../../streamo/utils/Recaller.js'
 import { RepoRegistry }   from '../../streamo/RepoRegistry.js'
 import { registrySync }   from '../../streamo/registrySync.js'
-import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { bytesToHex }     from '../../streamo/utils.js'
 
 // ── DOM refs ─────────────────────────────────────────────────────────
@@ -85,17 +84,18 @@ loginForm.addEventListener('submit', async e => {
   const { publicKey } = await signer.keysFor('hello')
   myKey = bytesToHex(publicKey)
 
-  // Move 2: registry + sync.
-  const registry = new RepoRegistry()
+  // Move 2: registry + sync. The registry shares our Recaller and
+  // exposes dep() so the watcher below re-runs whenever any Repo's
+  // chunks change.
+  const registry = new RepoRegistry(undefined, { recaller, name: 'hello-vanilla' })
+  dep = registry.dep
   await registrySync(registry, location.hostname, +location.port || 80)
 
   // Move 3: my repo, signed.
   myRepo = await registry.open(myKey)
   myRepo.attachSigner(signer, 'hello')
 
-  // Move 4: reactivity bridge. The watcher below re-runs the
-  // render function whenever any Repo's chunks change.
-  dep = bridgeRegistry(registry, recaller, 'hello-vanilla').dep
+  // Move 4: watch — re-runs the render function on every fire.
   recaller.watch('render-entries', renderEntries)
 
   // Reveal post-login UI.

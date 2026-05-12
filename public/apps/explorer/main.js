@@ -18,7 +18,8 @@
 //   Slots read with state.get(...) (auto-reports access on the recaller);
 //   mutations via state.set(...) fire only watchers that touched the
 //   changed key. Repo data changes ride the separate bridge channel
-//   (dep / bridgeFire) — see design.md §6 for the cross-recaller bridge.
+//   (registry.dep / registry.fire) — the registry's own Recaller IS
+//   the app recaller, so reading repo state in a slot just works.
 //
 //   URL forms in detail:
 //     #/                                — registry list
@@ -32,7 +33,6 @@ import { Recaller } from '../../streamo/utils/Recaller.js'
 import { liveObject } from '../../streamo/LiveSource.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
-import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { truncKey, fmtDate } from './format.js'
 import { makeVerifier } from './verify.js'
 import { makeTrees } from './trees.js'
@@ -43,7 +43,9 @@ import { makeAtView } from './at-view.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
-const registry = new RepoRegistry()
+const recaller = new Recaller('explorer')
+const registry = new RepoRegistry(undefined, { recaller, name: 'explorer' })
+const { dep, fire } = registry
 const port = +location.port || 80
 const connEl = document.getElementById('conn')
 
@@ -58,9 +60,6 @@ try {
 }
 
 // ── App state ─────────────────────────────────────────────────────────────
-
-const recaller = new Recaller('explorer')
-const { dep, fire: bridgeFire } = bridgeRegistry(registry, recaller, 'explorer')
 
 // One LiveSource for all UI state. Every slot's read self-reports on
 // the recaller; every set fires only the watchers that touched the
@@ -81,11 +80,6 @@ const state = liveObject({
   atTab:    'value',
   hovered:  null
 }, { recaller, name: 'ui' })
-
-// fire() exists for subsystems that don't (yet) expose their state as
-// a LiveSource — the verify cache and tree expand/collapse Sets. They
-// keep using fire() to nudge slots that read them via the bridge dep.
-function fire () { bridgeFire() }
 
 // Signature verification — async cache; fire() triggers a re-render
 // when a verify resolves. (See verify.js for the cache shape.)

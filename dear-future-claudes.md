@@ -140,17 +140,18 @@ travels with its own CSS). For routine page structure, just inline.
 *own* Recaller. Reactive cells inside the component register their
 watchers against that local recaller. If those cells read signals
 that live on the *outer* (app) recaller — like a module-level
-`loggedIn()` or a `bridgeRegistry`'s `dep()` — the cross-recaller
+`loggedIn()` or a `registry.dep()` — the cross-recaller
 subscription doesn't form: the outer recaller fires, but the
 component's watcher never hears it. The component just doesn't
 re-render. The journal app hit this when its entries list lived in
 a `defineComponent` and read `loggedIn()`; entries stayed frozen on
 the logged-out branch even after login flipped. Fix was to pull the
 list back to a function-as-slot in the main mount, where it shares
-the journal's single recaller. Until we build a real bridge from one
-recaller into another (the `bridgeRegistry` pattern is the model),
-keep `defineComponent` for cases that are genuinely self-contained
-— don't reach into app-level signals from inside one.
+the journal's single recaller. The Repo↔registry case used to have
+the same shape — solved by `new RepoRegistry(undefined, { recaller })`,
+which makes the registry's bridge ride the app's Recaller directly.
+For `StreamoComponent`, keep it for cases that are genuinely self-
+contained — don't reach into app-level signals from inside one.
 
 ## reactivity-only changes don't need component boundaries
 

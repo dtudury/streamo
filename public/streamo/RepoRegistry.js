@@ -1,50 +1,88 @@
 import { Streamo } from './Streamo.js'
 import { Repo } from './Repo.js'
+import { Recaller } from './utils/Recaller.js'
 
 /**
- * Manages a collection of Repos keyed by hex-encoded public key.
+ * Manages a collection of Repos keyed by hex-encoded public key, with
+ * built-in reactive bridging into a shared Recaller.
  *
- * Accepts an optional factory function that is called whenever a new repository
- * is opened. The factory receives the publicKeyHex and should return a
- * (optionally async) Repo with whatever persistence or sync wired up.
+ * Each Repo has its own internal Recaller (for fine-grained dep tracking
+ * on its own keys). If an app's mount() slots use a *different* Recaller,
+ * reading `repo.byteLength` inside a slot registers a dep on the repo's
+ * recaller — not the app's — and the slot never re-runs when chunks
+ * arrive. RepoRegistry bridges that gap automatically: pass your app's
+ * Recaller via `{ recaller }`, and every repo opened (now or later)
+ * forwards its byteLength changes onto a single signal on that shared
+ * Recaller. Inside a slot, call `registry.dep()` to subscribe.
  *
- * If no factory is provided, plain in-memory Repos are created.
+ * Accepts an optional factory function that is called whenever a new
+ * repository is opened. The factory receives the publicKeyHex and
+ * returns a (possibly async) Repo with whatever persistence or sync
+ * wired up. If no factory is provided, plain in-memory Repos are
+ * created.
  *
  * Examples:
  *
- *   // plain in-memory
- *   new RepoRegistry()
+ *   // plain in-memory, own Recaller (used by a mount call):
+ *   const recaller = new Recaller('app')
+ *   const registry = new RepoRegistry(undefined, { recaller, name: 'app' })
+ *   mount(h`${() => { registry.dep(); return …  }}`, document.body, recaller)
  *
- *   // archive-backed
+ *   // archive-backed:
  *   new RepoRegistry(async key => {
  *     const repo = new Repo()
  *     await archiveSync(repo, dataDir, key)
  *     return repo
- *   })
+ *   }, { recaller })
  *
- *   // S3-backed
- *   new RepoRegistry(async key => {
- *     const repo = new Repo()
- *     await s3Sync(repo, key, s3Config)
- *     return repo
- *   })
+ *   // standalone (no app recaller passed — registry creates one):
+ *   new RepoRegistry()
  */
 export class RepoRegistry {
+  /** Shared Recaller — register reactive cells with `registry.dep()`. */
+  recaller
   #streams = new Map()
   #factory
+  #name
+  #signal = {}
   #openCallbacks = new Set()
 
-  /** @param {(publicKeyHex: string) => Repo | Promise<Repo>} [factory] */
-  constructor (factory = () => new Repo()) {
+  /**
+   * @param {(publicKeyHex: string) => Repo | Promise<Repo>} [factory]
+   * @param {{ name?: string, recaller?: Recaller }} [options]
+   *   `name` is used in watch names for debugging; `recaller` is the
+   *   shared Recaller for the bridge (defaults to a fresh one).
+   */
+  constructor (factory = () => new Repo(), options = {}) {
+    const { name = 'registry', recaller = new Recaller(name) } = options
     this.#factory = factory
+    this.#name = name
+    this.recaller = recaller
   }
+
+  /**
+   * Register the calling reactive cell on the bridge signal. Re-runs
+   * when any repo's chunks arrive or when a new repo opens. Arrow-
+   * bound so `const { dep } = registry` works.
+   */
+  dep = () => this.recaller.reportKeyAccess(this.#signal, 'data')
+
+  /**
+   * Fire the bridge — forces slots that called `dep()` to re-run at
+   * next tick. Called automatically on chunk arrivals and new repo
+   * opens; also useful for app-state changes that aren't repo
+   * mutations but want the same re-render channel (a verify cache
+   * resolving, a tree expanding, etc.).
+   */
+  fire = () => this.recaller.reportKeyMutation(this.#signal, 'data')
 
   /**
    * Return the Repo for `publicKeyHex`, creating it via the factory if
    * this is the first call for that key.
    *
-   * The repository is registered immediately (before the factory resolves) so
-   * concurrent open() calls always return the same instance.
+   * The repository is registered immediately (before the factory resolves)
+   * so concurrent open() calls always return the same instance. Once the
+   * factory resolves, the repo's recaller is bridged into ours.
    *
    * @param {string} publicKeyHex
    * @returns {Promise<Repo>}
@@ -57,6 +95,13 @@ export class RepoRegistry {
     const stream = await this.#factory(publicKeyHex)
     this.#streams.set(publicKeyHex, stream)
     resolve(stream)
+    // Bridge: re-fire on every chunk arrival. Touching stream.byteLength
+    // registers the watcher on the repo's 'length' key.
+    stream.watch(`${this.#name}:${publicKeyHex}`, () => {
+      stream.byteLength
+      this.fire()
+    })
+    this.fire()
     for (const cb of this.#openCallbacks) cb(publicKeyHex, stream)
     return stream
   }

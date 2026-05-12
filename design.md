@@ -220,9 +220,9 @@ a generator that walks back through parents.
 so commits made via this repo's `set` get a non-empty message visible
 in the explorer.
 
-## 9. `RepoRegistry` and `bridgeRegistry`
+## 9. `RepoRegistry` — reactive collection of Repos
 
-> Files: `public/streamo/RepoRegistry.js`, `public/streamo/bridgeRegistry.js`
+> Files: `public/streamo/RepoRegistry.js`
 
 A keyed collection of `Repo`s, keyed by hex public key. The factory
 function passed to the constructor decides what each repo gets wired
@@ -233,20 +233,21 @@ or just plain in-memory `new Repo()`.
 `registrySync` to broadcast catalog updates and by clients to watch
 new participants as they appear.
 
-**Cross-recaller bridging.** Each `Repo` owns its own `Recaller` — that
-gives it fine-grained dependency tracking on its own internal keys
-without one repo's mutations invalidating watchers on another. An app
-that displays many repos uses a separate app-level `Recaller` for its
-`mount()` slots. A slot reading `repo.byteLength` registers a dep on
-the *repo's* recaller, not the app's, so without an explicit bridge the
-slot would never re-run when chunks arrived.
+**Cross-recaller bridging, built in.** Each `Repo` owns its own
+`Recaller` — that gives it fine-grained dependency tracking on its
+own internal keys without one repo's mutations invalidating watchers
+on another. An app that displays many repos has its own app-level
+`Recaller` for its `mount()` slots. A slot reading `repo.byteLength`
+registers a dep on the *repo's* recaller, not the app's, so without
+an explicit bridge the slot would never re-run when chunks arrived.
 
-`bridgeRegistry(registry, appRecaller, name?)` sets that bridge up:
-it watches every repo (existing and future) on its own recaller for
-chunk arrivals (the `'length'` key) and forwards them as a single signal
-mutation on the app recaller. Returns `{ dep, fire }` — `dep()` for
-slots, `fire()` for non-repo state changes (route, async results) that
-should also trigger a re-render.
+Pass your app's Recaller into the registry — `new RepoRegistry(factory,
+{ recaller, name })` — and every opened repo's chunk-arrival events
+bridge into that shared recaller automatically. The registry exposes
+`dep()` (arrow-bound, destructure-safe — call inside any slot that
+should re-run on chunk arrivals or new-repo opens) and `fire()` (force
+a re-render for non-repo state changes — route, async results, an
+app-level cache resolving).
 
 **Forward synchronously.** The bridge mutates the app recaller
 *synchronously* — the recaller's own `nextTick` flush already coalesces

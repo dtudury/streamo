@@ -21,7 +21,7 @@ import { changedPaths } from '../../streamo/Streamo.js'
 
 export function makeAtView (deps) {
   const {
-    state, registry, dep,
+    state, registry,
     commitSelectorSection, byteStreamSection,
     repoExtras, rawChunkSection, sigDetailBody,
     valueTree, storageTree, referenceTree,
@@ -218,7 +218,6 @@ export function makeAtView (deps) {
             covering ? 'signed commit' : 'commit (unsigned)',
             covering
               ? () => {
-                  dep()
                   const status = verifyStatus(repo, keyHex, covering.decoded, covering.sigAddress)
                   return h`${verifyBadge(status)} <span class="dim">${verifyLabel(status)}</span>`
                 }
@@ -313,7 +312,6 @@ export function makeAtView (deps) {
           const banner = kindBanner(
             'signature chunk',
             () => {
-              dep()
               const status = verifyStatus(repo, keyHex, decoded, contentAddr)
               return h`${verifyBadge(status)} <span class="dim">${verifyLabel(status)}</span>`
             },

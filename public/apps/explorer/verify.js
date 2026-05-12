@@ -1,31 +1,33 @@
 // Signature-verification helpers and visual primitives.
 //
-// `makeVerifier(onChange)` builds a closure-cached `verifyStatus(repo,
-// keyHex, sig, sigAddress)` — synchronous return ('pending' on first
-// touch) with async hydration ('valid' / 'invalid' / {error}) that calls
-// `onChange` so reactive watchers re-run and the badge flips.
+// `makeVerifier(recaller)` builds a closure-cached `verifyStatus(repo,
+// keyHex, sig, sigAddress)` over a LiveSource — synchronous return
+// ('pending' on first touch), async hydration via `cache.set` that
+// fires the cache key. Slots that called `verifyStatus(...)` (and
+// therefore `cache.get(cacheKey)`) auto-subscribe to their own
+// cacheKey and re-run when the async resolves; no separate fire
+// mechanism, no `dep()` call needed at the call site.
 //
 // `kindBanner`, `verifyLabel`, `verifyBadge` are pure h-emitting renders
 // over a status value — no Repo, no async, no state.
 
 import { h } from '../../streamo/h.js'
 import { hexToBytes } from '../../streamo/utils.js'
+import { liveObject } from '../../streamo/LiveSource.js'
 
-// repo.verify(sig, publicKey) is async. Slots render synchronously, so we
-// cache results keyed by (keyHex, sigChunkAddress) and kick off the async
-// verify on first encounter. When it resolves, onChange() fires so the
-// reactive slot re-runs and the badge flips from "verifying…" to ✓ / ✗.
-//
 // One verify per signature per page load (~sub-ms each for secp256k1).
-export function makeVerifier (onChange) {
-  const cache = new Map()  // `${keyHex}:${addr}` → 'pending' | 'valid' | 'invalid' | { error }
+// The cache target is the LiveSource's plain object; keys are
+// `${keyHex}:${addr}` → 'pending' | 'valid' | 'invalid' | { error }.
+export function makeVerifier (recaller) {
+  const cache = liveObject({}, { recaller, name: 'verify' })
   return function verifyStatus (repo, keyHex, sig, sigAddress) {
     const cacheKey = `${keyHex}:${sigAddress}`
-    if (cache.has(cacheKey)) return cache.get(cacheKey)
+    const existing = cache.get(cacheKey)
+    if (existing !== undefined) return existing
     cache.set(cacheKey, 'pending')
     repo.verify(sig, hexToBytes(keyHex))
-      .then(valid => { cache.set(cacheKey, valid ? 'valid' : 'invalid'); onChange() })
-      .catch(e => { cache.set(cacheKey, { error: e.message }); onChange() })
+      .then(valid => cache.set(cacheKey, valid ? 'valid' : 'invalid'))
+      .catch(e     => cache.set(cacheKey, { error: e.message }))
     return 'pending'
   }
 }

@@ -3,9 +3,9 @@
 // table for when you've landed on a signature directly, and the raw
 // hex-dump section. All emit h; none own state.
 //
-// `dep` (the explorer recaller's read reporter) and `verifyStatus` (the
-// verify cache from verify.js, bound to fire) cross from main.js. Both
-// are used only by commitSelectorSection's per-commit verify badge.
+// `verifyStatus` crosses from main.js for the commit-selector verify
+// badge; reading from it inside the badge slot auto-subscribes the slot
+// via the verify cache's LiveSource.
 
 import { h } from '../../streamo/h.js'
 import { truncHex, fmtDate } from './format.js'
@@ -13,7 +13,7 @@ import { commitsNewestFirst, commitsCoveredBySignature } from './walking.js'
 import { typedValue, bytesChart } from './render.js'
 import { verifyBadge } from './verify.js'
 
-export function makeSections ({ dep, verifyStatus }) {
+export function makeSections ({ verifyStatus }) {
   // Sig-detail view — when you're at a sig chunk directly (e.g., from
   // drilling through storage). Sigs are auxiliary in the new model — the
   // user-level unit is the commit — so this page shows the sig's content
@@ -74,7 +74,6 @@ export function makeSections ({ dep, verifyStatus }) {
         c.covering ? null : 'unsigned']
       const action = asSummary ? null : 'select-commit'
       const badge = () => {
-        dep()
         if (!c.covering) return h`<span class="verify-badge pending" title="not yet signed">…</span>`
         return verifyBadge(verifyStatus(repo, keyHex, c.covering.decoded || repo.decode(c.covering.sigAddress), c.covering.sigAddress))
       }

@@ -45,7 +45,7 @@ import { makeAtView } from './at-view.js'
 
 const recaller = new Recaller('explorer')
 const registry = new RepoRegistry(undefined, { recaller, name: 'explorer' })
-const { dep, fire } = registry
+const { fire } = registry
 const port = +location.port || 80
 const connEl = document.getElementById('conn')
 
@@ -81,9 +81,10 @@ const state = liveObject({
   hovered:  null
 }, { recaller, name: 'ui' })
 
-// Signature verification — async cache; fire() triggers a re-render
-// when a verify resolves. (See verify.js for the cache shape.)
-const verifyStatus = makeVerifier(fire)
+// Signature verification — async cache, LiveSource-backed. Slots that
+// call verifyStatus(...) auto-subscribe to their own cacheKey via the
+// liveObject inside; nothing to wire here. (See verify.js.)
+const verifyStatus = makeVerifier(recaller)
 
 // Three trees (value / storage / refs) + their per-chunk expand/collapse
 // Sets + the action dispatcher main.js's click delegator forwards to.
@@ -92,7 +93,7 @@ const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(fi
 // Smaller AtView pieces: the commit-selector dropdown, the sig-detail
 // table, the storage-chunks tuck-away, the raw hex dump.
 const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } =
-  makeSections({ dep, verifyStatus })
+  makeSections({ verifyStatus })
 
 // ── Hash routing ──────────────────────────────────────────────────────────
 
@@ -175,7 +176,7 @@ const byteStreamSection = makeByteStreamSection({ state })
 
 // The at-view page — orchestrates header + content for one repo.
 const AtView = makeAtView({
-  state, registry, dep,
+  state, registry,
   commitSelectorSection, byteStreamSection,
   repoExtras, rawChunkSection, sigDetailBody,
   valueTree, storageTree, referenceTree,

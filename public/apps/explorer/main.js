@@ -24,13 +24,13 @@ import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bridgeRegistry } from '../../streamo/bridgeRegistry.js'
 import { changedPaths } from '../../streamo/Streamo.js'
-import { hexToBytes } from '../../streamo/utils.js'
 import { truncKey, truncHex, fmtDate, safeJSON } from './format.js'
 import { isCommitShape, isDuple, codecCategory, isInlinablePrimitive, estimateEntryWidth } from './shapes.js'
 import {
   commitsNewestFirst, findCoveringSig, commitsCoveredBySignature,
   valueAndChildren, resolveHead, safeGet, buildDirectReferrerIndex
 } from './walking.js'
+import { makeVerifier, kindBanner, verifyLabel, verifyBadge } from './verify.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
@@ -63,6 +63,10 @@ function fire () {
   stripSyncScheduled = true
   requestAnimationFrame(() => { stripSyncScheduled = false; syncByteStrips() })
 }
+
+// Signature-verification cache, bound to fire() so async-resolved
+// statuses trigger a re-render. See verify.js for the cache shape.
+const verifyStatus = makeVerifier(fire)
 
 // Hover-only signal — separate from the bridge. Hover events that
 // only set hoveredAddress fire hoverSignal exclusively; slots that
@@ -1225,56 +1229,6 @@ function referenceTree (repo, keyHex, address, depth = 4, index = null) {
       ${referrers.map(r => referenceTree(repo, keyHex, r.address, depth - 1, index))}
     </div>
   `
-}
-
-// ── Signature verification cache ──────────────────────────────────────────
-//
-// repo.verify(sig, publicKey) is async. Slots render synchronously, so we
-// cache results keyed by (keyHex, sigChunkAddress) and kick off the async
-// verify on first encounter. When it resolves, fire() so the slot re-runs
-// and the badge flips from "verifying…" to ✓ / ✗.
-//
-// One verify per signature per page load (~sub-ms each for secp256k1).
-
-const verifyCache = new Map()  // `${keyHex}:${addr}` → 'pending' | 'valid' | 'invalid' | { error }
-
-function verifyStatus (repo, keyHex, sig, sigAddress) {
-  const cacheKey = `${keyHex}:${sigAddress}`
-  if (verifyCache.has(cacheKey)) return verifyCache.get(cacheKey)
-  verifyCache.set(cacheKey, 'pending')
-  repo.verify(sig, hexToBytes(keyHex))
-    .then(valid => { verifyCache.set(cacheKey, valid ? 'valid' : 'invalid'); fire() })
-    .catch(e => { verifyCache.set(cacheKey, { error: e.message }); fire() })
-  return 'pending'
-}
-
-// Consistent "what this is" banner at the top of every value-tab branch.
-// label is the short codec/role name (e.g. "signed commit", "object",
-// "duple"); content is whatever else goes in the banner (verify badge +
-// label, field count, etc.); variant tints the surface — 'verified' for
-// commits/sigs with a covering signature, 'unsigned' for commits awaiting
-// one, undefined for everything else.
-function kindBanner (label, content, variant) {
-  return h`
-    <div class=${['kind-banner', variant || null]}>
-      <span class="kind-label">${label}</span>
-      ${content || null}
-    </div>
-  `
-}
-
-function verifyLabel (status) {
-  if (status === 'valid')   return 'verified — bytes match this repo’s public key'
-  if (status === 'invalid') return 'NOT VERIFIED — bytes do not match the repo key'
-  if (status === 'pending') return 'verifying…'
-  return `error: ${status?.error ?? 'unknown'}`
-}
-
-function verifyBadge (status) {
-  if (status === 'valid')   return h`<span class="verify-badge valid"   title="signature verified against repo's public key">✓</span>`
-  if (status === 'invalid') return h`<span class="verify-badge invalid" title="signature does NOT match repo's public key">✗</span>`
-  if (status === 'pending') return h`<span class="verify-badge pending" title="verifying…">…</span>`
-  return h`<span class="verify-badge error" title=${status?.error || 'verification error'}>⚠</span>`
 }
 
 // Hex dump of a chunk's raw bytes. Truncates at maxLen so a giant value

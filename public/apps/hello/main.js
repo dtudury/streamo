@@ -12,6 +12,7 @@ import { Signer }         from '../../streamo/Signer.js'
 import { Recaller }       from '../../streamo/utils/Recaller.js'
 import { RepoRegistry }   from '../../streamo/RepoRegistry.js'
 import { registrySync }   from '../../streamo/registrySync.js'
+import { liveObject }     from '../../streamo/LiveSource.js'
 import { bytesToHex }     from '../../streamo/utils.js'
 
 // `when(cond, vnode)` — render `vnode` when cond() is truthy.
@@ -21,15 +22,10 @@ const when = (cond, vnode) => () => cond() ? vnode : null
 
 const recaller = new Recaller('hello')
 
-const loginSig = {}
-const loggedIn = () => {
-  recaller.reportKeyAccess(loginSig, 'in')
-  return loginSig.in === true
-}
-const setLoggedIn = () => {
-  loginSig.in = true
-  recaller.reportKeyMutation(loginSig, 'in')
-}
+// One LiveSource for app state. Slots reading state.get(...) auto-
+// subscribe; state.set(...) fires only watchers that touched the key.
+const state = liveObject({ loggedIn: false }, { recaller, name: 'hello' })
+const loggedIn = () => state.get('loggedIn')
 
 let myRepo, myKey
 
@@ -64,7 +60,7 @@ async function login (e) {
   myRepo.attachSigner(signer, 'hello')
 
   // Flip the login signal — every slot that reads loggedIn() re-runs.
-  setLoggedIn()
+  state.set('loggedIn', true)
 }
 
 // Move 5: write. repo.set replaces the whole value; streamo is

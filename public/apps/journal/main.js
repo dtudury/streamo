@@ -8,6 +8,7 @@ import { h }                            from '../../streamo/h.js'
 import { mount }                        from '../../streamo/mount.js'
 import { Signer }                       from '../../streamo/Signer.js'
 import { Recaller }                     from '../../streamo/utils/Recaller.js'
+import { liveObject }                   from '../../streamo/LiveSource.js'
 import { RepoRegistry }                 from '../../streamo/RepoRegistry.js'
 import { registrySync }                 from '../../streamo/registrySync.js'
 import { bytesToHex }                   from '../../streamo/utils.js'
@@ -21,34 +22,21 @@ const when = (cond, vnode) => () => cond() ? vnode : null
 
 const recaller = new Recaller('journal')
 
-// Reactive login signal. Reading `loggedIn()` inside a slot subscribes
-// to it; `setLoggedIn()` flips it true and fires the slot's watchers.
-const loginSig = {}
-const loggedIn = () => {
-  recaller.reportKeyAccess(loginSig, 'in')
-  return loginSig.in === true
-}
-const setLoggedIn = () => {
-  loginSig.in = true
-  recaller.reportKeyMutation(loginSig, 'in')
-}
+// One LiveSource for app state. Slots reading state.get(...) auto-
+// subscribe; state.set(...) fires only watchers that touched the key.
+//   loggedIn  false → true after auth
+//   editing   null | { id, headline, body } — the entry being revised;
+//             when set, the form's value=${} cells pre-populate, the
+//             button reads "save changes", and a cancel button appears
+const state = liveObject({ loggedIn: false, editing: null }, { recaller, name: 'journal' })
+const loggedIn = () => state.get('loggedIn')
+const editing  = () => state.get('editing')
 
-// Populated by `login` before setLoggedIn fires.
+// Populated by `login` before state.set('loggedIn', true) fires.
 let myRepo, myKey
 
-// Reactive edit signal. `editing()` returns either `null` (compose
-// mode) or `{ id, headline, body }` describing the entry currently
-// being revised. The form's value=${} cells re-run when this fires,
-// pre-populating the inputs; the form button text and the "cancel"
-// button also key off the same signal.
-const editSig = {}
-const editing = () => {
-  recaller.reportKeyAccess(editSig, 'data')
-  return editSig.data ?? null
-}
 function startEdit (entry) {
-  editSig.data = { id: entry.id, headline: entry.headline, body: entry.body }
-  recaller.reportKeyMutation(editSig, 'data')
+  state.set('editing', { id: entry.id, headline: entry.headline, body: entry.body })
   // Focus the headline once the form's cells have re-run and the
   // input's value has been updated. rAF gets us past the recaller's
   // microtask flush.
@@ -58,10 +46,7 @@ function startEdit (entry) {
     el?.select()
   })
 }
-function cancelEdit () {
-  editSig.data = null
-  recaller.reportKeyMutation(editSig, 'data')
-}
+function cancelEdit () { state.set('editing', null) }
 
 // Group entries by `id` so multiple versions of the same entry collapse
 // to one displayed item (the latest version wins). Entries written
@@ -110,7 +95,7 @@ async function login (e) {
   myRepo = await registry.open(myKey)
   myRepo.attachSigner(signer, 'journal')
 
-  setLoggedIn()
+  state.set('loggedIn', true)
 }
 
 function publish (e) {

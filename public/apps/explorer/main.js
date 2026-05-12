@@ -14,12 +14,14 @@
 //   pure helpers      format.js, shapes.js, walking.js, analytics.js
 //   DOM event wiring  interactions.js   drag / hover / post-render strip pin
 //
-//   All reactive state — UI (route/tab/hover) AND repo data AND
-//   subsystem caches (verify, tree expansion) — rides ONE Recaller.
-//   Slots subscribe via the reads they already do: state.get(...) for
-//   UI, repo.byteLength / repo.get(...) for repos (the registry's
-//   default factory shares our Recaller), cache.get(key) inside the
-//   verify and trees subsystems. No explicit dep/fire ceremony.
+//   All reactive state — URL route AND UI (tab/hover) AND repo data
+//   AND subsystem caches (verify, tree expansion) — rides ONE Recaller.
+//   Slots subscribe via the reads they already do:
+//     view()                — URL route (kind/keyHex/address)
+//     state.get(...)        — non-URL UI state (tab, hover)
+//     repo.byteLength etc.  — repo data (default factory shares the recaller)
+//     cache.get(...)        — verify + trees subsystem caches
+//   No explicit dep/fire ceremony.
 //
 //   URL forms in detail:
 //     #/                                — registry list
@@ -31,6 +33,7 @@ import { h } from '../../streamo/h.js'
 import { mount } from '../../streamo/mount.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { liveObject } from '../../streamo/LiveSource.js'
+import { liveLocation } from '../../streamo/liveLocation.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { truncKey, fmtDate } from './format.js'
@@ -60,24 +63,14 @@ try {
 
 // ── App state ─────────────────────────────────────────────────────────────
 
-// One LiveSource for all UI state. Every slot's read self-reports on
-// the recaller; every set fires only the watchers that touched the
-// changed key. That's how the strip stays untouched on hover (only the
-// inspector slot reads `hovered`), and how a tab click doesn't disturb
-// the address-display in the header (only the tab indicator reads
-// `atTab`). The keys, in detail:
-//
-//   viewKind  'registry' | 'at'              route selector
-//   keyHex    string | null                  repo identity within an at-view
-//   address   'HEAD' | number | null         byte address within a repo
+// One LiveSource for the UI state that isn't URL-derived. Route
+// state (viewKind/keyHex/address) lives in the URL via `loc` below,
+// not here.
 //   atTab     'value' | 'storage' | 'refs'   which tab is showing
 //   hovered   null | number                  hovered chunk address (live preview)
 const state = liveObject({
-  viewKind: 'registry',
-  keyHex:   null,
-  address:  null,
-  atTab:    'value',
-  hovered:  null
+  atTab:   'value',
+  hovered: null
 }, { recaller, name: 'ui' })
 
 // Signature verification — async cache, LiveSource-backed. Slots that
@@ -95,10 +88,19 @@ const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(re
 const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } =
   makeSections({ verifyStatus })
 
-// ── Hash routing ──────────────────────────────────────────────────────────
+// ── Routing ───────────────────────────────────────────────────────────────
+//
+// The URL hash IS the route state. liveLocation wraps window.location
+// as a LiveSource on our recaller — slots reading `view()` parse the
+// hash inside their reactive cell, so they re-run on hashchange /
+// popstate without any explicit listener. `go({...})` is just
+// `loc.set('hash', ...)`; the browser fires hashchange, liveLocation
+// fires the recaller, slots re-render.
 
-function viewFromHash () {
-  const m = (location.hash || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(HEAD|\d+))?\/?$/i)
+const loc = liveLocation({ recaller, name: 'location' })
+
+function view () {
+  const m = (loc.get('hash') || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(HEAD|\d+))?\/?$/i)
   if (!m) return { kind: 'registry', keyHex: null, address: null }
   // Bare `/repo/<hex>` is shorthand for `/at/HEAD` — the symbolic pointer
   // to the most recent signed commit (like git's HEAD).
@@ -107,7 +109,7 @@ function viewFromHash () {
   return { kind: 'at', keyHex: m[1], address }
 }
 
-function hashFromView (kind, keyHex, address) {
+function hashFromView ({ kind, keyHex, address }) {
   if (kind !== 'at') return '#/'
   // Canonical form for HEAD is the bare URL — concise and analogous to
   // tools that imply HEAD when no ref is given.
@@ -115,31 +117,7 @@ function hashFromView (kind, keyHex, address) {
   return `#/repo/${keyHex}/at/${address}`
 }
 
-function go ({ kind, keyHex = null, address = null }) {
-  state.set('viewKind', kind)
-  state.set('keyHex',   keyHex)
-  state.set('address',  address)
-  const hash = hashFromView(kind, keyHex, address)
-  if (location.hash !== hash) location.hash = hash
-}
-
-// Hydrate from the URL on load.
-{
-  const v = viewFromHash()
-  state.set('viewKind', v.kind)
-  state.set('keyHex',   v.keyHex)
-  state.set('address',  v.address)
-}
-
-window.addEventListener('hashchange', () => {
-  const v = viewFromHash()
-  if (v.kind    === state.get('viewKind') &&
-      v.keyHex  === state.get('keyHex')   &&
-      v.address === state.get('address')) return
-  state.set('viewKind', v.kind)
-  state.set('keyHex',   v.keyHex)
-  state.set('address',  v.address)
-})
+function go (v) { loc.set('hash', hashFromView(v)) }
 
 // ── DOM wiring ────────────────────────────────────────────────────────────
 
@@ -163,11 +141,10 @@ function scheduleSync () {
 recaller.watch('strip-sync', () => {
   // Iterating registry registers on (registry, 'keys') — new-repo opens.
   // Touching repo.byteLength registers on each (repo, 'length') — chunk
-  // arrivals. Together with the two state reads, the watcher wakes on
-  // everything that could change strip layout.
+  // arrivals. Reading view() registers on the URL — navigation. Together
+  // the watcher wakes on everything that could change strip layout.
   for (const [, repo] of registry) repo.byteLength
-  state.get('keyHex')
-  state.get('address')
+  view()
   scheduleSync()
 })
 
@@ -176,7 +153,7 @@ const byteStreamSection = makeByteStreamSection({ state })
 
 // The at-view page — orchestrates header + content for one repo.
 const AtView = makeAtView({
-  state, registry,
+  state, view, registry,
   commitSelectorSection, byteStreamSection,
   repoExtras, rawChunkSection, sigDetailBody,
   valueTree, storageTree, referenceTree,
@@ -213,18 +190,17 @@ function RegistryView () {
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 
-// Outer slot reads viewKind + keyHex so it re-runs only on route
-// transitions (registry ↔ at) and repo switches — NOT on intra-repo
-// navigation, chunk arrivals, tab clicks, or hover. Each view gets a
-// data-keyed <section> so mount's reconciler drops/rebuilds the right
-// thing on a switch. Inner reactivity (chunk arrivals, address, tab,
-// hover) lives inside RegistryView and AtView.
+// Outer slot reads view().kind + view().keyHex via the URL — re-runs
+// only on route transitions (registry ↔ at) and repo switches, NOT on
+// intra-repo navigation since the kind+keyHex pair stays the same.
+// Each view gets a data-keyed <section> so mount's reconciler drops/
+// rebuilds the right thing on a switch. Inner reactivity (chunk
+// arrivals, address, tab, hover) lives inside RegistryView and AtView.
 mount(h`${() => {
-  const kind = state.get('viewKind')
+  const { kind, keyHex } = view()
   if (kind === 'registry') {
     return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
   }
-  const keyHex = state.get('keyHex')
   return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
 }}`, appEl, recaller)
 

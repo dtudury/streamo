@@ -21,7 +21,7 @@ import { changedPaths } from '../../streamo/Streamo.js'
 
 export function makeAtView (deps) {
   const {
-    state, registry,
+    state, view, registry,
     commitSelectorSection, byteStreamSection,
     repoExtras, rawChunkSection, sigDetailBody,
     valueTree, storageTree, referenceTree,
@@ -30,12 +30,12 @@ export function makeAtView (deps) {
 
   return function AtView ({ keyHex }) {
     // AtView's body is built once per repo (the outer mount slot only
-    // re-runs on viewKind / keyHex changes). Anything that depends on
-    // the current address must read state.get('address') inside a
-    // reactive cell, NOT capture it in closure here. Same for resolved
+    // re-runs on view().kind / view().keyHex changes). Anything that
+    // depends on the current address must read view().address inside
+    // a reactive cell, NOT capture it in closure here. Same for resolved
     // chunk lookups: each slot calls resolveContext(repo) on every run.
     const resolveContext = (repo) => {
-      let resolved = state.get('address')
+      let resolved = view().address
       if (resolved === 'HEAD') {
         resolved = resolveHead(repo)
         if (resolved === undefined) return { state: 'no-head' }
@@ -48,7 +48,7 @@ export function makeAtView (deps) {
       <a class="back" data-action="back-registry">← all repos</a>
       <div class="keyfull">
         <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
-        <span class="dim"> @ ${() => state.get('address')}</span>
+        <span class="dim"> @ ${() => view().address}</span>
       </div>
 
       ${() => {

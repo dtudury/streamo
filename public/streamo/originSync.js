@@ -12,11 +12,16 @@ import { hexToBytes } from './utils.js'
  * @param {string} publicKeyHex  hex-encoded public key identifying this stream
  * @param {string} host
  * @param {number} port
+ * @param {Object} [options]
+ * @param {'ws'|'wss'} [options.protocol='ws']
+ *   WebSocket protocol. Use `'wss'` when the relay is behind a TLS terminator
+ *   (Caddy / nginx / fly.io) and you're connecting cross-host. Local dev
+ *   stays `'ws'`.
  * @returns {Promise<WebSocket>}  resolves when the connection is open and sync has started
  */
-export function originSync (stream, publicKeyHex, host, port) {
+export function originSync (stream, publicKeyHex, host, port, { protocol = 'ws' } = {}) {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://${host}:${port}`)
+    const ws = new WebSocket(`${protocol}://${host}:${port}`)
 
     ws.on('open', () => {
       // Handshake: identify which stream we want to sync

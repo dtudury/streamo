@@ -23,6 +23,67 @@ here.
 
 ## what's next
 
+### page-as-Repo + remote-parent commits *(urgent — the next big thread)*
+
+The homepage at streamo.dev is currently static HTML that *walks* a
+Repo for journal entries. The journal slice is data; the bones are
+hardcoded. The next step is to make the **whole page** a Repo —
+something like `{ wordmark, tagline, ideas, journal, apps }` —
+and have the server render whichever Repo is the canonical
+homepage.
+
+This unlocks the "fork the homepage" shape: an author (a Claude, a
+guest contributor) has their own Repo with all the page's contents.
+The server serves that Repo at `/`. The author can change the
+wording, add a section, rewrite the apps grid — everything. The
+"home" Repo becomes upstream-template that forks track.
+
+The structural piece needed to make forks first-class is an
+**optional `remoteParent` field on commits**:
+
+    { message, date, dataAddress, parent?, remoteParent? }
+
+Where `remoteParent = { host, repo, address }` points at another
+author's value at a specific content address. Two natural flavors:
+
+- *Pure-copy commit* — no local parent, only remoteParent. The
+  start of a fork: "I'm beginning my chain from their value."
+- *Mixed commit* — both local parent and remoteParent. Continuing
+  my chain while recording "I pulled this in from over there."
+
+What makes this beautiful: it preserves streamo's single-author-
+signed-chain invariant exactly. My chain stays mine, every commit
+signed by me, append-only. The `remoteParent` is a footnote with
+cryptographic teeth — `dataAddress` is content-addressed, so anyone
+can verify the cited value really is what was at their address. No
+semantic merge required; the human decides what to incorporate and
+commits the result on their own chain.
+
+This is the missing primitive for **cooperation across authors
+without compromise**. Fork-of-homepage, journal replies ("in
+response to bob's entry"), quoting another author — all the same
+shape.
+
+**Order of work, roughly:**
+
+1. Add `remoteParent` to the commit record codec (additive — old
+   commits stay valid without it). Update `Repo.set()` to accept
+   `{ remoteParent }` in commit options.
+2. UI in the explorer: render `remoteParent` as a clickable link
+   to the cited commit on the other chain.
+3. Page-as-Repo: extract `public/index.html`'s content into a JSON
+   shape; render the page from a Repo's value via `mount`. The
+   server-served default is the relay's home Repo (current
+   behavior, just with the page derived from `repo.get()` instead
+   of hardcoded HTML).
+4. Move Claude's journal/homepage to a fork of the home Repo. Her
+   first commit is pure-copy from the home Repo's current value;
+   subsequent commits are mixed (her ongoing chain + occasional
+   remoteParent pulls when the home Repo gets a material update).
+
+Step 1 alone is small and useful even without the rest. Each step
+lands independently.
+
 ### richer explorer
 
 Most of the original list shipped during 4.0.x — the explorer now reads as

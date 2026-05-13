@@ -44,6 +44,7 @@ import { bytesToHex } from './utils.js'
  * @param {string} opts.password
  * @param {string} opts.host                   relay hostname
  * @param {number} opts.port                   relay port
+ * @param {'ws'|'wss'} [opts.protocol='ws']    use 'wss' for TLS-terminated relays
  * @param {number} [opts.iterations=100000]    PBKDF2 iteration count (must match relay)
  * @param {string} [opts.name='streamo']       signer namespace (must match relay's STREAMO_NAME)
  * @param {number} [opts.settleMs=2500]        ms to wait for the relay to replay existing chunks
@@ -54,6 +55,7 @@ export async function claudeSync ({
   password,
   host,
   port,
+  protocol = 'ws',
   iterations = 100000,
   name = 'streamo',
   settleMs = 2500
@@ -69,7 +71,7 @@ export async function claudeSync ({
   // our pubkey. On first run nothing comes down (relay has no prior chunks
   // for us); on subsequent runs the relay replays everything we've ever
   // written so repo.get() reflects the canonical state before we append.
-  const ws = await originSync(repo, publicKeyHex, host, port)
+  const ws = await originSync(repo, publicKeyHex, host, port, { protocol })
 
   // Wait for the relay's replay to finish before attaching the signer. If we
   // attached + set() too early our sig would cover a prefix shorter than what

@@ -14,8 +14,13 @@ node_modules/
 # Optional REPL history
 .node_repl_history
 
-# dotenv environment variable files
+# dotenv environment variable files — everything except .env.dev,
+# which is tracked as an example. .env.prod lives on the server;
+# .env.claude lives only on author machines and holds a signing
+# password.
 .env
+.env.*
+!.env.dev
 
 # the true price of a pretty laptop
 **/.DS_Store

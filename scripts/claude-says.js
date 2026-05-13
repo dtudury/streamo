@@ -21,6 +21,9 @@
  *   STREAMO_NAME                 — signer namespace (default 'streamo')
  *   STREAMO_RELAY_HOST           — relay hostname (default 'localhost')
  *   STREAMO_RELAY_PORT           — relay port (default 8080)
+ *   STREAMO_RELAY_PROTOCOL       — 'ws' or 'wss' (default: 'wss' if port=443,
+ *                                  else 'ws'). Set explicitly for non-standard
+ *                                  TLS-terminated ports.
  *
  * No password is ever printed; the public key is, so the operator can
  * sanity-check that the right identity wrote the entry.
@@ -47,13 +50,15 @@ const iterations = +(process.env.STREAMO_CLAUDE_ITERATIONS ?? 100000)
 const name       = process.env.STREAMO_NAME                ?? 'streamo'
 const host       = process.env.STREAMO_RELAY_HOST          ?? 'localhost'
 const port       = +(process.env.STREAMO_RELAY_PORT        ?? 8080)
+const protocol   = process.env.STREAMO_RELAY_PROTOCOL      ?? (port === 443 ? 'wss' : 'ws')
 
 if (!username || !password) {
   console.error('STREAMO_CLAUDE_USERNAME and STREAMO_CLAUDE_PASSWORD must be set')
   process.exit(2)
 }
 
-const claude = await claudeSync({ username, password, host, port, iterations, name })
+console.log(`[claude-says] ${protocol}://${host}:${port}`)
+const claude = await claudeSync({ username, password, host, port, protocol, iterations, name })
 console.log(`[claude-says] pubkey: ${claude.publicKeyHex}`)
 
 const entry = await claude.appendJournalEntry(headline, body)

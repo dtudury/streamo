@@ -5,6 +5,36 @@ for what's next.
 
 ---
 
+## 5.0.1 — explorer polish
+
+Explorer-internal cleanup; no public API changes. If you're using
+streamo as a library and not running the explorer app, this is a
+no-op for you.
+
+**The explorer's index.html is now a loading shim.** The whole page
+— header, conn pill, view sections — lives inside one `mount(...)`
+call against `document.body`. index.html shrinks to a small body
+with "connecting to streamo…" and the script tag; mount() replaces
+it on first paint. Side effect: the connection-status pill is
+reactive (a `connection` key on the explorer's state liveObject)
+instead of imperatively-managed.
+
+**CSS lives in its own file.** `apps/explorer/explorer.css`
+replaces the 600-line `<style>` block in index.html. Same pattern
+as `proto.css`; index.html drops from ~22KB to ~500 bytes.
+
+**Routing memoized.** `view()` (the URL-to-route parser) caches by
+hash; multiple consumers in the same render share one regex run.
+Also dropped a redundant `kind` field — presence of `keyHex` IS
+the route discriminant.
+
+**Reuse-by-type table tucks into a `<details>`.** The
+chunks/bytes/leverage breakdown under the byte strip is secondary
+information; collapsed by default now, expand-on-click. Less
+visual noise on narrower screens.
+
+---
+
 ## 5.0.0 — one Recaller, many subsystems
 
 Single thrust. The reactive substrate finally lives by one principle:

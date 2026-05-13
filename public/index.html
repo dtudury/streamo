@@ -363,14 +363,26 @@
 
     // Subscribe to the home repo and render its journal entries. The
     // homepage IS made of streamo: each entry is a signed commit on
-    // the home repo, walked here at render time. Live — new entries
-    // appear without refresh.
+    // some journalist's repo, walked here at render time. Live — new
+    // entries appear without refresh.
+    //
+    // The home repo carries a `journalists` array (hex pubkeys); we
+    // subscribe to each via registrySync's `follow` callback, then
+    // merge their entries by date. The home repo's own author is
+    // always listed in `journalists`.
     if (info) {
       try {
         const recaller = new Recaller('home')
         const registry = new RepoRegistry(undefined, { recaller, name: 'home' })
         await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
-          filter: key => key === info.primaryKeyHex
+          filter: key => key === info.primaryKeyHex,
+          // When the home repo's value updates, pull out its journalists
+          // and subscribe to each. `subscribe` is idempotent, so calling
+          // it on every settle is safe and self-healing if the list grows.
+          follow: (keyHex, repo, subscribe) => {
+            if (keyHex !== info.primaryKeyHex) return
+            for (const k of repo.get('journalists') ?? []) subscribe(k)
+          }
         })
         const entriesEl = document.getElementById('journal-entries')
         const moreEl = document.getElementById('journal-more')
@@ -379,27 +391,41 @@
           const date = d instanceof Date ? d : new Date(d)
           return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         }
+        const authorChip = k => h`<a href="/apps/explorer/#/repo/${k}" style="color: var(--ink-dim); text-decoration: underline dotted;">${k.slice(0, 8)}…</a>`
         // Replace the "loading…" placeholder with our reactive cell.
         entriesEl.innerHTML = ''
         mount(h`${() => {
-          const repo = registry.get(info.primaryKeyHex)
-          if (!repo) return h`<p class="dim" style="font-size: 0.85rem;">connecting…</p>`
-          const entries = repo.get('entries') ?? []
-          if (entries.length === 0) {
-            return h`<p class="dim" style="font-size: 0.85rem;">no entries yet — the deployer hasn't written anything to this repo.</p>`
+          const homeRepo = registry.get(info.primaryKeyHex)
+          if (!homeRepo) return h`<p class="dim" style="font-size: 0.85rem;">connecting…</p>`
+          const journalists = homeRepo.get('journalists') ?? [info.primaryKeyHex]
+          // Pull entries from every journalist's repo, tagging each with
+          // its author so we can show provenance after the merge.
+          const merged = []
+          for (const author of journalists) {
+            const repo = registry.get(author)
+            if (!repo) continue
+            for (const e of repo.get('entries') ?? []) merged.push({ ...e, author })
           }
-          // Newest-first; show up to 5.
-          const latest = entries.slice(-5).reverse()
-          if (entries.length > latest.length) {
+          if (merged.length === 0) {
+            return h`<p class="dim" style="font-size: 0.85rem;">no entries yet.</p>`
+          }
+          // Sort by `at`, newest first; show up to 5.
+          merged.sort((a, b) => {
+            const ta = +new Date(a.at ?? 0)
+            const tb = +new Date(b.at ?? 0)
+            return tb - ta
+          })
+          const latest = merged.slice(0, 5)
+          if (merged.length > latest.length) {
             moreEl.style.display = 'inline-block'
-            moreEl.textContent = `see all ${entries.length} entries in the explorer →`
+            moreEl.textContent = `see all ${merged.length} entries in the explorer →`
           } else {
             moreEl.style.display = 'inline-block'
             moreEl.textContent = `view in the explorer →`
           }
           return latest.map(e => h`
             <div class="journal-entry">
-              <div class="journal-meta dim">${e.at != null ? fmtDate(e.at) : ''}</div>
+              <div class="journal-meta dim">${e.at != null ? fmtDate(e.at) : ''} · ${authorChip(e.author)}</div>
               <div class="journal-headline">${e.headline ?? '(no headline)'}</div>
               <div class="journal-body">${e.body ?? ''}</div>
             </div>

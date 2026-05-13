@@ -13,6 +13,13 @@ const port       = +(process.env.STREAMO_WEB            ?? 8080)
 const dataDir    = process.env.STREAMO_DATA_DIR         ?? '.streamo'
 const keyIter    = +(process.env.STREAMO_KEY_ITERATIONS ?? 100000)
 
+// Optional additional journalist pubkeys (comma-separated hex). The relay's
+// own pubkey is always included automatically — these are the OTHER peers
+// whose repos the homepage walks for journal entries. Configured per relay
+// in .env.prod; for streamo.dev this is just Claude's pubkey for now.
+const extraJournalists = (process.env.STREAMO_JOURNALISTS ?? process.env.STREAMO_CLAUDE_PUBKEY ?? '')
+  .split(',').map(s => s.trim()).filter(Boolean)
+
 const server = await StreamoServer.create({ name, username, password, dataDir, keyIterations: keyIter })
 
 console.log(`[chat] room key: ${server.publicKeyHex}`)
@@ -28,6 +35,16 @@ console.log(`[chat] serving on http://localhost:${port}/apps/chat/`)
   const seed = { ...current }
   let needsCommit = false
   if (!seed.members) { seed.members = []; needsCommit = true }
+  // Journalists: peers whose repos the homepage walks for journal entries.
+  // The relay's own pubkey is always included; STREAMO_JOURNALISTS adds
+  // others (Claude, future contributors). Idempotent — we only append.
+  if (!Array.isArray(seed.journalists)) { seed.journalists = []; needsCommit = true }
+  const wantJournalists = [server.publicKeyHex, ...extraJournalists]
+  const missingJournalists = wantJournalists.filter(k => !seed.journalists.includes(k))
+  if (missingJournalists.length) {
+    seed.journalists = [...seed.journalists, ...missingJournalists]
+    needsCommit = true
+  }
   if (!Array.isArray(seed.entries) || seed.entries.length === 0) {
     seed.entries = [{
       headline: 'running streamo',

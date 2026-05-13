@@ -17,7 +17,7 @@
 //   All reactive state — URL route AND UI (tab/hover) AND repo data
 //   AND subsystem caches (verify, tree expansion) — rides ONE Recaller.
 //   Slots subscribe via the reads they already do:
-//     getKeyHex(), getAddress() — URL route accessors
+//     view()                     — URL route (memoized parse)
 //     state.get(...)        — non-URL UI state (tab, hover)
 //     repo.byteLength etc.  — repo data (default factory shares the recaller)
 //     cache.get(...)        — verify + trees subsystem caches
@@ -89,39 +89,50 @@ const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } =
 // ── Routing ───────────────────────────────────────────────────────────────
 //
 // The URL hash IS the route state. liveLocation wraps window.location
-// as a LiveSource on our recaller — getKeyHex / getAddress parse what
-// each consumer needs from `loc.get('hash')` inside the calling slot,
-// so the slot re-runs on hashchange / popstate without any explicit
-// listener. The mount template uses these accessors in `when(...)`
-// clauses for routing; AtView reads getAddress for the current pin.
+// as a LiveSource on our recaller — `view()` parses what consumers
+// need from `loc.get('hash')` inside the calling slot, so the slot
+// re-runs on hashchange / popstate without any explicit listener.
+// The parse is memoized by hash: many consumers reading view() in
+// the same render share one regex run.
+//
+// view() returns { keyHex, address }:
+//   keyHex   string | null              — repo identity (null = registry list)
+//   address  'HEAD' | number | null     — byte address ('HEAD' when not pinned)
+// Presence of keyHex IS the route discriminant; no separate `kind` field.
 //
 // URL forms:
-//   #/                                — registry list (getKeyHex === null)
+//   #/                                — registry list
 //   #/repo/<keyHex>                   — at HEAD, shorthand for /at/HEAD
 //   #/repo/<keyHex>/at/HEAD           — same thing, explicit form
 //   #/repo/<keyHex>/at/<address>      — pinned to a specific byte address
 
 const loc = liveLocation({ recaller, name: 'location' })
 
-const getKeyHex = () => {
-  const m = (loc.get('hash') || '').match(/^#\/repo\/([0-9a-f]+)/i)
-  return m?.[1] ?? null
+let cachedHash, cachedView
+function view () {
+  const hash = loc.get('hash') || ''
+  if (hash !== cachedHash) {
+    cachedHash = hash
+    const m = hash.match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(HEAD|\d+))?\/?$/i)
+    const raw = m?.[2]
+    cachedView = m
+      ? { keyHex: m[1], address: raw == null || raw.toUpperCase() === 'HEAD' ? 'HEAD' : +raw }
+      : { keyHex: null, address: null }
+  }
+  return cachedView
 }
 
-const getAddress = () => {
-  const m = (loc.get('hash') || '').match(/\/at\/(HEAD|\d+)/i)
-  if (!m) return 'HEAD'
-  return m[1].toUpperCase() === 'HEAD' ? 'HEAD' : +m[1]
+function hashFromView ({ keyHex, address }) {
+  if (!keyHex) return '#/'
+  if (address == null || address === 'HEAD') return `#/repo/${keyHex}`
+  return `#/repo/${keyHex}/at/${address}`
 }
 
-function go ({ keyHex, address }) {
-  if (!keyHex) return loc.set('hash', '#/')
-  if (address == null || address === 'HEAD') return loc.set('hash', `#/repo/${keyHex}`)
-  loc.set('hash', `#/repo/${keyHex}/at/${address}`)
-}
+function go (v) { loc.set('hash', hashFromView(v)) }
 
-// `when(cond, vnode)` — render `vnode` when cond() is truthy.
-const when = (cond, vnode) => () => cond() ? vnode : null
+// at-view-focused accessor — view's address slice, computed via the
+// same memoized parse.
+const getAddress = () => view().address
 
 // ── DOM wiring ────────────────────────────────────────────────────────────
 
@@ -196,13 +207,13 @@ function RegistryView () {
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 
-// The whole page in one mount call. The header + conn pill are static
-// chrome at the top; the two `when(...)` clauses below are the routes —
-// one for the registry list (no repo in the URL), one for an at-view
-// (a repo in the URL). Each rendered section's data-key matches
-// mount's reconciler so the right thing drops/rebuilds on a route
-// transition. Inner reactivity (chunk arrivals, address, tab, hover)
-// lives inside RegistryView and AtView.
+// The whole page in one mount call. Header + conn pill are static
+// chrome at the top; the route slot reads view().keyHex and returns
+// the right view section. Each section's data-key is a static-per-
+// render string (interpolated in the h template at slot-run time) so
+// mount's reconciler keys correctly — same keyHex → DOM reused,
+// different keyHex → fresh-mount. Inner reactivity (chunk arrivals,
+// address, tab, hover) lives inside RegistryView and AtView.
 mount(h`
   <div class="header">
     <a class="brand-lockup" href="/" title="streamo home">
@@ -211,8 +222,11 @@ mount(h`
     <span class="page-title">explorer</span>
   </div>
   <div class=${() => ['conn', state.get('connection').status || null]}>${() => state.get('connection').text}</div>
-  ${when(() => !getKeyHex(), h`<section class="view" data-key="view-registry">${RegistryView()}</section>`)}
-  ${when(getKeyHex, h`<section class="view" data-key=${() => `view-at-${getKeyHex()}`}>${() => AtView({ keyHex: getKeyHex() })}</section>`)}
+  ${() => {
+    const { keyHex } = view()
+    if (!keyHex) return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
+    return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
+  }}
 `, document.body, recaller)
 
 // ── Click delegation ──────────────────────────────────────────────────────

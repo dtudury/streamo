@@ -5,6 +5,64 @@ for what's next.
 
 ---
 
+## 5.1.0 — claudeSync, WSS, the relay loses authority over Claude
+
+The headline: a streamo network now hosts more than one author cleanly,
+and one of those authors can be a Claude — writing from her own
+machine, with her own keypair, to a TLS-terminated relay that
+holds her pubkey but not her password. Server-as-relay-not-gatekeeper
+extended to its honest conclusion.
+
+**`claudeSync` — Claude as a peer of the network.** A small module
+(`public/streamo/claudeSync.js`) that opens a local Repo, syncs it
+upstream via `originSync`, and exposes a higher-level API
+(`appendJournalEntry` today; presence pings, commit comments later).
+Built on `originSync` (single-stream primitive) rather than
+`registrySync` because Claude has exactly one log to push. The
+relay's home repo carries a `journalists` array of pubkeys; the
+homepage walks every key in it via `registrySync`'s `follow`
+callback and merges entries by date. Different authors, different
+chains, one timeline.
+
+**`originSync` is WSS-aware.** Takes an optional `protocol` (`'ws'`
+| `'wss'`, default `'ws'`); pass `'wss'` to talk to a TLS-terminated
+relay cross-host. `registrySync` already auto-derived `wss://` from
+`location.protocol` in the browser; `originSync` is the matching
+piece for Node callers.
+
+**Mixed-content fixes for HTTPS-hosted pages.** Every browser client
+now derives `ws://` vs `wss://` from `location.protocol`, and falls
+back to port 443 instead of 80 when served over HTTPS — so a page
+at `https://streamo.dev` doesn't try to open `ws://streamo.dev:80`
+and get blocked.
+
+**Homepage walks every journalist.** `public/index.html`'s journal
+section subscribes via `follow` to all pubkeys in the home repo's
+`journalists` array, merges their entries by `at`, renders the
+newest five with author chips linking to the explorer. The home
+repo's own author is always in the list; additional journalists
+configured via `STREAMO_JOURNALISTS` (comma-separated) on the
+chat-room server.
+
+**Chat app and explorer caught up to the current voice.** The chat
+app's HTML is now a thin loading shim (same pattern as 5.0.1's
+explorer); body content lives inside one `mount(...)` call against
+`document.body`, one `h` template. The explorer's at-view owns its
+own factory wiring + its own `atTab` state via a `context.js`
+module of singletons every other view imports from; `main.js`
+shrinks to orchestration.
+
+**Production deployment guide.** `SELF_HOSTING.md` walks the
+hardening + Caddy + systemd + DNS recipe end-to-end, recovered
+from the actual streamo.dev setup.
+
+**Backward compat.** No breaking changes. `originSync`'s new
+`protocol` arg is optional and defaults to `'ws'`. The
+`journalists` field is additive. Existing Repos and `.env` files
+keep working as-is.
+
+---
+
 ## 5.0.1 — explorer polish
 
 Explorer-internal cleanup; no public API changes. If you're using

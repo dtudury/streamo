@@ -212,6 +212,12 @@
       text-decoration: underline dotted;
     }
     .journal-more:hover { color: var(--ink); text-decoration-style: solid; }
+    .journal-author {
+      color: inherit;
+      text-decoration: underline dotted;
+      font-family: monospace;
+    }
+    .journal-author:hover { color: var(--ink); text-decoration-style: solid; }
 
     .footer {
       display: flex;
@@ -391,7 +397,7 @@
           const date = d instanceof Date ? d : new Date(d)
           return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
         }
-        const authorChip = k => h`<a href="/apps/explorer/#/repo/${k}" style="color: var(--ink-dim); text-decoration: underline dotted;">${k.slice(0, 8)}…</a>`
+        const authorChip = k => h`<a class="journal-author" href="/apps/explorer/#/repo/${k}">${k.slice(0, 8)}…</a>`
         // Replace the "loading…" placeholder with our reactive cell.
         entriesEl.innerHTML = ''
         mount(h`${() => {

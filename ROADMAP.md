@@ -7,14 +7,18 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 4.0.6, published to npm as `@dtudury/streamo`. The explorer
-is the centerpiece app — it reads as a real instrument now: a draggable
-byte strip, persistent chunk inspector, three tabs (value / storage / refs)
-covering decoded content, the chunk graph going down, and the chunk graph
-going up. Recursive reconcile + three-signal decomposition keep the UI
-stable across navigation. Brand identity landed (the yin-yang mark with
-proper visual lockup). The chat and explorer apps both sync live through
-the all-in-one server (`npm run dev`). 102 tests passing; published-ready.
+Streamo is at 5.1.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. The
+network now hosts more than one author cleanly: the relay's home
+repo carries a `journalists` array of pubkeys, and the homepage
+merges entries from all of them. The first additional journalist
+is a Claude — writing from her own laptop, over `wss://`, with her
+own keypair. The relay holds her pubkey but not her password. The
+explorer (the centerpiece app since 4.0.x) reads as a real
+instrument: draggable byte strip, persistent chunk inspector,
+value / storage / refs tabs, chunk graph in both directions. The
+all-in-one server (`npm run dev` / `npm run prod`) hosts the
+homepage, chat, and explorer on one port. 120 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.

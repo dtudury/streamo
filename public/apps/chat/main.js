@@ -111,7 +111,7 @@ async function login (e) {
     // ping-pong forever. Without this set, every peer-back ricochets into
     // another peer-back and so on.
     const announcedTo = new Set()
-    session = await registrySync(registry, location.hostname, +location.port || 80, {
+    session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
       filter: k => k === rootKey,
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)

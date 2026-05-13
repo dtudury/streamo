@@ -90,7 +90,7 @@ async function login (e) {
   myKey = bytesToHex(publicKey)
 
   const registry = new RepoRegistry(undefined, { recaller, name: 'journal' })
-  await registrySync(registry, location.hostname, +location.port || 80)
+  await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
 
   myRepo = await registry.open(myKey)
   myRepo.attachSigner(signer, 'journal')

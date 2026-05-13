@@ -87,7 +87,7 @@ loginForm.addEventListener('submit', async e => {
   // reading myRepo.get('entries') inside renderEntries auto-subscribes
   // the watcher to chunk arrivals.
   const registry = new RepoRegistry(undefined, { recaller, name: 'hello-vanilla' })
-  await registrySync(registry, location.hostname, +location.port || 80)
+  await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
 
   // Move 3: my repo, signed.
   myRepo = await registry.open(myKey)

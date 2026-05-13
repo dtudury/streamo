@@ -343,7 +343,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  */
 export function registrySync (registry, host, port, options = {}) {
   return new Promise((resolve, reject) => {
-    const ws = adaptWebSocket(new WS(`ws://${host}:${port}`))
+    // In a browser served over https://, plain ws:// is blocked as mixed
+    // content. Derive the protocol from location when available; Node has no
+    // location and falls through to ws://.
+    const protocol = globalThis.location?.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = adaptWebSocket(new WS(`${protocol}://${host}:${port}`))
 
     ws.on('open', () => {
       ws.send('registry')

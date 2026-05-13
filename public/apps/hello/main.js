@@ -52,7 +52,7 @@ async function login (e) {
   // shares our Recaller, so reading myRepo.get(...) in a slot below
   // auto-subscribes that slot to chunk arrivals.
   const registry = new RepoRegistry(undefined, { recaller, name: 'hello' })
-  await registrySync(registry, location.hostname, +location.port || 80)
+  await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
 
   // Move 3: my repo, with signer attached. Every set() becomes a
   // signed commit automatically.

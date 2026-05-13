@@ -25,7 +25,7 @@ import { AtView, handleAtViewAction } from './at-view.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
-const port = +location.port || 80
+const port = +location.port || (location.protocol === 'https:' ? 443 : 80)
 
 // Connection status — fires `connection` so the conn-pill slot in the
 // mount template re-renders. Not awaited: the page paints immediately

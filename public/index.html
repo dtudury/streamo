@@ -369,7 +369,7 @@
       try {
         const recaller = new Recaller('home')
         const registry = new RepoRegistry(undefined, { recaller, name: 'home' })
-        await registrySync(registry, location.hostname, +location.port || 80, {
+        await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
           filter: key => key === info.primaryKeyHex
         })
         const entriesEl = document.getElementById('journal-entries')

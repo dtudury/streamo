@@ -54,13 +54,12 @@ const session = await registrySync(registry, host, port, {
 // Wait until the server's existing chunks have arrived and verified, then
 // pause briefly for any stragglers before appending our own commit.
 const myRepo = await registry.open(myKey)
-await new Promise(resolve => {
-  const id = setInterval(() => {
-    if (myRepo.get('entries') !== undefined) { clearInterval(id); resolve() }
-  }, 50)
-  setTimeout(() => { clearInterval(id); resolve() }, 5000) // hard cap
-})
-await new Promise(resolve => setTimeout(resolve, 500)) // settle stragglers
+// Hold off on signer + set until the server's existing chunks have streamed
+// in and verified. Polling get('entries') is unsafe — mid-sync the repo may
+// have a HEAD pointer whose referenced chunks haven't arrived yet, and
+// decode throws. A flat sleep is fine on localhost where the home repo is
+// only a few KB.
+await new Promise(resolve => setTimeout(resolve, 3000))
 
 myRepo.attachSigner(signer, name)
 

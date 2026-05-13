@@ -1,14 +1,16 @@
 // Document-level event wiring for the explorer:
 //   - click-drag-to-pan on the byte strip,
-//   - mouseover/mouseout cross-highlight + live-preview state (writes
-//     state.hovered),
+//   - mouseover/mouseout cross-highlight + live-preview hover (writes
+//     `hovered`, a single-value LiveSource imported from context),
 //   - post-render byte-strip pin-to-HEAD (`syncStrips`).
 //
-// suppressClickUntil and dragState are closure-local. Hover state is
-// owned by the shared `state` LiveSource — interactions writes it,
-// other modules read it.
+// suppressClickUntil and dragState are closure-local. Hover state lives
+// in context as a liveValue; interactions writes, byte-stream and
+// at-view read.
 
-export function setupInteractions ({ appEl, state }) {
+import { hovered } from './context.js'
+
+export function setupInteractions ({ appEl }) {
   let suppressClickUntil = 0
   let dragState = null
 
@@ -113,26 +115,26 @@ export function setupInteractions ({ appEl, state }) {
       }
     }
     // Live preview: if the hovered chunk is on the byte strip, write
-    // state.hovered so the content area peeks ahead. Click navigates
-    // for real. Only set if the address changed — moving within one
-    // chunk shouldn't fire.
+    // the `hovered` liveValue so the content area peeks ahead. Click
+    // navigates for real. Only set if the address changed — moving
+    // within one chunk shouldn't fire.
     const onStrip = el.closest('.byte-strip-container')
     const next = onStrip ? +addr : null
-    if (next !== state.get('hovered')) state.set('hovered', next)
+    if (next !== hovered.get()) hovered.set(next)
   })
   appEl.addEventListener('mouseout', e => {
     const el = e.target.closest('[data-addr]')
     if (!el) return
     appEl.querySelectorAll('.byte-map .chunk.hovered').forEach(c => c.classList.remove('hovered'))
     appEl.querySelectorAll('.sig-coverage.active').forEach(o => o.classList.remove('active'))
-    // Clear state.hovered unless the cursor is moving to ANOTHER chunk
-    // on the strip. The previous check ("still inside .byte-strip-container")
+    // Clear `hovered` unless the cursor is moving to ANOTHER chunk on
+    // the strip. The previous check ("still inside .byte-strip-container")
     // treated the direction labels and any blank-space as "still hovering,"
     // which left the page stuck on the previously hovered chunk's content.
     // Requiring .chunk[data-addr] specifically means moving off a chunk
     // anywhere — out of the strip OR to its non-chunk regions — reverts.
     const goingToChunk = e.relatedTarget?.closest?.('.byte-strip-container .chunk[data-addr]')
-    if (!goingToChunk && state.get('hovered') !== null) state.set('hovered', null)
+    if (!goingToChunk && hovered.get() !== null) hovered.set(null)
   })
 
   return {

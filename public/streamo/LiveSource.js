@@ -120,6 +120,43 @@ export function liveObject (target, options = {}) {
 }
 
 /**
+ * A single-value LiveSource. Same shape as `liveObject` (recaller +
+ * get + set + target), but for values that aren't object-shaped:
+ * a number, a string, null, etc. `get()` takes no path; `set(value)`
+ * replaces the whole value.
+ *
+ *   const hover = liveValue(null, { recaller })
+ *   hover.get()      // null
+ *   hover.set(42)    // fires
+ *   hover.get()      // 42
+ *
+ * Use this when a piece of reactive state is a single primitive (or a
+ * whole-object-at-once swap). For finer-grained updates inside an
+ * object, use `liveObject` with path-shaped get/set.
+ *
+ * @param {any} initial         starting value
+ * @param {object|string} [options]
+ * @param {string} [options.name='value']
+ * @param {Recaller} [options.recaller]
+ */
+export function liveValue (initial, options = {}) {
+  if (typeof options === 'string') options = { name: options }
+  const { name = 'value', recaller = new Recaller(name) } = options
+  // Wrap in a ref so we can replace the value while keeping a stable
+  // target identity for the recaller's (target, key) bookkeeping.
+  const ref = { current: initial }
+  function get () {
+    recaller.reportKeyAccess(ref, 'value')
+    return ref.current
+  }
+  function set (value) {
+    ref.current = value
+    recaller.reportKeyMutation(ref, 'value')
+  }
+  return { recaller, get, set, target: ref }
+}
+
+/**
  * Runtime check: does this value satisfy the LiveSource contract?
  * Structural, not nominal — `Streamo`, `Repo`, `liveObject` return
  * values, and any custom factory that exposes the shape all pass.

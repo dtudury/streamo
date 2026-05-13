@@ -18,10 +18,11 @@ import { typedValue } from './render.js'
 import { kindBanner, verifyBadge, verifyLabel } from './verify.js'
 import { repoReuseStats, valueEconomics } from './analytics.js'
 import { changedPaths } from '../../streamo/Streamo.js'
+import { state, hovered } from './context.js'
 
 export function makeAtView (deps) {
   const {
-    state, getAddress, registry,
+    getAddress, registry,
     commitSelectorSection, byteStreamSection,
     repoExtras, rawChunkSection, sigDetailBody,
     valueTree, storageTree, referenceTree,
@@ -57,7 +58,7 @@ export function makeAtView (deps) {
         // `resolveContext` reads `repo.byteLength` which reports on
         // (repo, 'length') for chunk arrivals; state.get('atTab') in
         // the tab indicators registers on the tab key. Does NOT
-        // re-run on hover — only the CONTENT slot reads state.hovered,
+        // re-run on hover — only the CONTENT slot reads `hovered`,
         // so hovering the strip leaves the selector + strip + tabs
         // untouched.
         const repo = registry.get(keyHex)
@@ -100,9 +101,9 @@ export function makeAtView (deps) {
         // Live hover preview: contentAddr peeks at the hovered chunk;
         // header still shows resolvedAddr (the URL position). Click to
         // navigate.
-        const hovered = state.get('hovered')
-        const contentAddr = hovered != null && hovered < repo.byteLength
-          ? hovered
+        const peek = hovered.get()
+        const contentAddr = peek != null && peek < repo.byteLength
+          ? peek
           : resolvedAddr
 
         let info

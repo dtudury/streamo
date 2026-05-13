@@ -1,5 +1,5 @@
 import { describe } from './utils/testing.js'
-import { liveObject, isLiveSource } from './LiveSource.js'
+import { liveObject, liveValue, isLiveSource } from './LiveSource.js'
 import { Recaller } from './utils/Recaller.js'
 
 describe(import.meta.url, ({ test }) => {
@@ -99,5 +99,26 @@ describe(import.meta.url, ({ test }) => {
   test('liveObject still accepts legacy string-name as second arg', ({ assert }) => {
     const s = liveObject({}, 'legacy-name')
     assert.ok(s.recaller instanceof Recaller)
+  })
+
+  test('liveValue holds a single value with no path', ({ assert }) => {
+    const v = liveValue(null)
+    assert.equal(v.get(), null)
+    v.set(42)
+    assert.equal(v.get(), 42)
+    v.set('hello')
+    assert.equal(v.get(), 'hello')
+    assert.ok(isLiveSource(v))
+  })
+
+  test('liveValue fires its recaller on set', async ({ assert }) => {
+    const r = new Recaller('test')
+    const v = liveValue(0, { recaller: r })
+    const seen = []
+    r.watch('w', () => { seen.push(v.get()) })
+    assert.deepEqual(seen, [0], 'initial run sees initial')
+    v.set(7)
+    await new Promise(r => setTimeout(r, 0))
+    assert.deepEqual(seen, [0, 7], 'set fires the watcher')
   })
 })

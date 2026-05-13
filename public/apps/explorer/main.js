@@ -122,12 +122,11 @@ function go (v) { loc.set('hash', hashFromView(v)) }
 // mount() owns the whole body — the header, conn pill, and view all
 // live inside one template below. index.html is a minimal shim with
 // a "connecting…" loading message that mount() replaces on first paint.
-const appEl = document.body
 
 // Drag-to-pan on the byte strip + hover-preview state + post-render
 // strip housekeeping. Mutates state.hovered directly; main.js reads
 // it back via state.get('hovered') in any slot that wants the peek.
-const { isClickSuppressed, syncStrips } = setupInteractions({ appEl, state })
+const { isClickSuppressed, syncStrips } = setupInteractions({ appEl: document.body, state })
 
 // Schedule the post-render strip pin-to-HEAD on bridge fires (chunk
 // arrivals) or navigation (repo or address change). Debounced to one
@@ -214,11 +213,11 @@ mount(h`
     }
     return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
   }}
-`, appEl, recaller)
+`, document.body, recaller)
 
 // ── Click delegation ──────────────────────────────────────────────────────
 
-appEl.addEventListener('click', e => {
+document.body.addEventListener('click', e => {
   // Suppress the click that fires at the end of a drag-to-pan, so dragging
   // doesn't accidentally navigate to a chunk under the pointer when the
   // user releases.

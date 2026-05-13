@@ -17,7 +17,7 @@
 //   All reactive state — URL route AND UI (tab/hover) AND repo data
 //   AND subsystem caches (verify, tree expansion) — rides ONE Recaller.
 //   Slots subscribe via the reads they already do:
-//     view()                — URL route (kind/keyHex/address)
+//     getKeyHex(), getAddress() — URL route accessors
 //     state.get(...)        — non-URL UI state (tab, hover)
 //     repo.byteLength etc.  — repo data (default factory shares the recaller)
 //     cache.get(...)        — verify + trees subsystem caches
@@ -89,33 +89,39 @@ const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } =
 // ── Routing ───────────────────────────────────────────────────────────────
 //
 // The URL hash IS the route state. liveLocation wraps window.location
-// as a LiveSource on our recaller — slots reading `view()` parse the
-// hash inside their reactive cell, so they re-run on hashchange /
-// popstate without any explicit listener. `go({...})` is just
-// `loc.set('hash', ...)`; the browser fires hashchange, liveLocation
-// fires the recaller, slots re-render.
+// as a LiveSource on our recaller — getKeyHex / getAddress parse what
+// each consumer needs from `loc.get('hash')` inside the calling slot,
+// so the slot re-runs on hashchange / popstate without any explicit
+// listener. The mount template uses these accessors in `when(...)`
+// clauses for routing; AtView reads getAddress for the current pin.
+//
+// URL forms:
+//   #/                                — registry list (getKeyHex === null)
+//   #/repo/<keyHex>                   — at HEAD, shorthand for /at/HEAD
+//   #/repo/<keyHex>/at/HEAD           — same thing, explicit form
+//   #/repo/<keyHex>/at/<address>      — pinned to a specific byte address
 
 const loc = liveLocation({ recaller, name: 'location' })
 
-function view () {
-  const m = (loc.get('hash') || '#/').match(/^#\/repo\/([0-9a-f]+)(?:\/at\/(HEAD|\d+))?\/?$/i)
-  if (!m) return { kind: 'registry', keyHex: null, address: null }
-  // Bare `/repo/<hex>` is shorthand for `/at/HEAD` — the symbolic pointer
-  // to the most recent signed commit (like git's HEAD).
-  const raw = m[2]
-  const address = raw == null || raw.toUpperCase() === 'HEAD' ? 'HEAD' : +raw
-  return { kind: 'at', keyHex: m[1], address }
+const getKeyHex = () => {
+  const m = (loc.get('hash') || '').match(/^#\/repo\/([0-9a-f]+)/i)
+  return m?.[1] ?? null
 }
 
-function hashFromView ({ kind, keyHex, address }) {
-  if (kind !== 'at') return '#/'
-  // Canonical form for HEAD is the bare URL — concise and analogous to
-  // tools that imply HEAD when no ref is given.
-  if (address === 'HEAD') return `#/repo/${keyHex}`
-  return `#/repo/${keyHex}/at/${address}`
+const getAddress = () => {
+  const m = (loc.get('hash') || '').match(/\/at\/(HEAD|\d+)/i)
+  if (!m) return 'HEAD'
+  return m[1].toUpperCase() === 'HEAD' ? 'HEAD' : +m[1]
 }
 
-function go (v) { loc.set('hash', hashFromView(v)) }
+function go ({ keyHex, address }) {
+  if (!keyHex) return loc.set('hash', '#/')
+  if (address == null || address === 'HEAD') return loc.set('hash', `#/repo/${keyHex}`)
+  loc.set('hash', `#/repo/${keyHex}/at/${address}`)
+}
+
+// `when(cond, vnode)` — render `vnode` when cond() is truthy.
+const when = (cond, vnode) => () => cond() ? vnode : null
 
 // ── DOM wiring ────────────────────────────────────────────────────────────
 
@@ -141,10 +147,10 @@ function scheduleSync () {
 recaller.watch('strip-sync', () => {
   // Iterating registry registers on (registry, 'keys') — new-repo opens.
   // Touching repo.byteLength registers on each (repo, 'length') — chunk
-  // arrivals. Reading view() registers on the URL — navigation. Together
+  // arrivals. Reading loc.hash subscribes us to navigation. Together
   // the watcher wakes on everything that could change strip layout.
   for (const [, repo] of registry) repo.byteLength
-  view()
+  loc.get('hash')
   scheduleSync()
 })
 
@@ -153,7 +159,7 @@ const byteStreamSection = makeByteStreamSection({ state })
 
 // The at-view page — orchestrates header + content for one repo.
 const AtView = makeAtView({
-  state, view, registry,
+  state, getAddress, registry,
   commitSelectorSection, byteStreamSection,
   repoExtras, rawChunkSection, sigDetailBody,
   valueTree, storageTree, referenceTree,
@@ -191,12 +197,12 @@ function RegistryView () {
 // ── Mount ─────────────────────────────────────────────────────────────────
 
 // The whole page in one mount call. The header + conn pill are static
-// chrome at the top; below them, the view slot reads view().kind +
-// view().keyHex via the URL and re-runs only on route transitions or
-// repo switches. Each view gets a data-keyed <section> so mount's
-// reconciler drops/rebuilds the right thing on a switch. Inner
-// reactivity (chunk arrivals, address, tab, hover) lives inside
-// RegistryView and AtView.
+// chrome at the top; the two `when(...)` clauses below are the routes —
+// one for the registry list (no repo in the URL), one for an at-view
+// (a repo in the URL). Each rendered section's data-key matches
+// mount's reconciler so the right thing drops/rebuilds on a route
+// transition. Inner reactivity (chunk arrivals, address, tab, hover)
+// lives inside RegistryView and AtView.
 mount(h`
   <div class="header">
     <a class="brand-lockup" href="/" title="streamo home">
@@ -204,15 +210,9 @@ mount(h`
     </a>
     <span class="page-title">explorer</span>
   </div>
-  <div class=${() => ['conn', state.get('connection').status || null]}
-       data-key="conn">${() => state.get('connection').text}</div>
-  ${() => {
-    const { kind, keyHex } = view()
-    if (kind === 'registry') {
-      return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
-    }
-    return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
-  }}
+  <div class=${() => ['conn', state.get('connection').status || null]}>${() => state.get('connection').text}</div>
+  ${when(() => !getKeyHex(), h`<section class="view" data-key="view-registry">${RegistryView()}</section>`)}
+  ${when(getKeyHex, h`<section class="view" data-key=${() => `view-at-${getKeyHex()}`}>${() => AtView({ keyHex: getKeyHex() })}</section>`)}
 `, document.body, recaller)
 
 // ── Click delegation ──────────────────────────────────────────────────────
@@ -225,17 +225,17 @@ document.body.addEventListener('click', e => {
   const el = e.target.closest('[data-action]')
   if (!el) return
   switch (el.dataset.action) {
-    case 'open-repo':     return go({ kind: 'at', keyHex: el.dataset.key,    address: 'HEAD' })
-    case 'open-at':       return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
-    case 'back-registry': return go({ kind: 'registry' })
-    case 'back-repo':     return go({ kind: 'at', keyHex: el.dataset.keyhex, address: 'HEAD' })
+    case 'open-repo':     return go({ keyHex: el.dataset.key,    address: 'HEAD' })
+    case 'open-at':       return go({ keyHex: el.dataset.keyhex, address: +el.dataset.addr })
+    case 'back-registry': return go({})
+    case 'back-repo':     return go({ keyHex: el.dataset.keyhex, address: 'HEAD' })
     case 'set-tab':       return state.set('atTab', el.dataset.tab)
     case 'select-commit': {
       // Picking a commit is just navigation — go to /at/<sigAddress>.
       // Close the dropdown imperatively so the new view renders with
       // the selector collapsed (matches native <select> behavior).
       el.closest('details.commit-selector')?.removeAttribute('open')
-      return go({ kind: 'at', keyHex: el.dataset.keyhex, address: +el.dataset.addr })
+      return go({ keyHex: el.dataset.keyhex, address: +el.dataset.addr })
     }
     case 'expand-tree':
     case 'collapse-tree':

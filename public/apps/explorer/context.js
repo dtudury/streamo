@@ -22,13 +22,12 @@ import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 export const recaller = new Recaller('explorer')
 export const registry = new RepoRegistry(undefined, { recaller, name: 'explorer' })
 
-// Cross-view UI state.
-//   connection  { status, text }              — registrySync writes; conn pill reads
-//   atTab       'value' | 'storage' | 'refs'  — at-view's active tab (will likely
-//                                               move into at-view's own state)
+// Cross-view UI state. Currently just the connection pill —
+// registrySync writes it, the conn pill in main.js's mount template
+// reads it. Anything view-specific belongs in that view's own
+// liveObject (e.g. at-view's atTab) rather than here.
 export const state = liveObject({
-  connection: { status: '', text: 'connecting…' },
-  atTab:      'value'
+  connection: { status: '', text: 'connecting…' }
 }, { recaller, name: 'app' })
 
 // Live-preview hover state — single value. interactions.js writes it

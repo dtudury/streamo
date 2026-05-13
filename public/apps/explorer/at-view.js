@@ -9,27 +9,40 @@
 // array / primitive). Each branch composes pre-built pieces from
 // other modules — by the time you're reading this, AtView is mostly
 // glue.
+//
+// at-view owns its own state (atTab) and its own sub-factory wiring
+// (verify cache, tree state, sections, byte-stream). main.js doesn't
+// know any of those exist; it just imports `AtView` and
+// `handleAtViewAction` and renders/dispatches.
 
 import { h } from '../../streamo/h.js'
+import { liveObject } from '../../streamo/LiveSource.js'
+import { changedPaths } from '../../streamo/Streamo.js'
+import { recaller, registry, getAddress, hovered } from './context.js'
 import { truncKey, truncHex, safeJSON } from './format.js'
 import { isCommitShape } from './shapes.js'
 import { valueAndChildren, resolveHead, findCoveringSig, safeGet } from './walking.js'
 import { typedValue } from './render.js'
-import { kindBanner, verifyBadge, verifyLabel } from './verify.js'
+import { makeVerifier, kindBanner, verifyBadge, verifyLabel } from './verify.js'
 import { repoReuseStats, valueEconomics } from './analytics.js'
-import { changedPaths } from '../../streamo/Streamo.js'
-import { state, hovered } from './context.js'
+import { makeTrees } from './trees.js'
+import { makeSections } from './sections.js'
+import { makeByteStreamSection } from './byte-stream.js'
 
-export function makeAtView (deps) {
-  const {
-    getAddress, registry,
-    commitSelectorSection, byteStreamSection,
-    repoExtras, rawChunkSection, sigDetailBody,
-    valueTree, storageTree, referenceTree,
-    verifyStatus
-  } = deps
+// At-view-local state. atTab is genuinely at-view-specific — keeping
+// it here instead of in context.state keeps cross-view state focused
+// on cross-view things (currently just the connection pill).
+const atState = liveObject({ atTab: 'value' }, { recaller, name: 'at-view' })
 
-  return function AtView ({ keyHex }) {
+// Sub-factories wired here at module-init using the shared recaller
+// from context. Main.js used to do this dance with 14 deps threaded
+// through; now main.js just imports `AtView` and the actions handler.
+const verifyStatus = makeVerifier(recaller)
+const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(recaller)
+const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } = makeSections({ verifyStatus })
+const byteStreamSection = makeByteStreamSection()
+
+export function AtView ({ keyHex }) {
     // AtView's body is built once per repo (the outer mount slot only
     // re-runs on getKeyHex() changes). Anything that depends on the
     // current address must read getAddress() inside a reactive cell,
@@ -56,7 +69,7 @@ export function makeAtView (deps) {
         // HEADER slot — auto-subscribes via the reads inside:
         // `registry.get` reports on (registry, 'keys') for new repos;
         // `resolveContext` reads `repo.byteLength` which reports on
-        // (repo, 'length') for chunk arrivals; state.get('atTab') in
+        // (repo, 'length') for chunk arrivals; atState.get('atTab') in
         // the tab indicators registers on the tab key. Does NOT
         // re-run on hover — only the CONTENT slot reads `hovered`,
         // so hovering the strip leaves the selector + strip + tabs
@@ -67,11 +80,11 @@ export function makeAtView (deps) {
         if (ctx.state !== 'ok') return null
         const tabs = h`
           <nav class="tabs">
-            <a class=${() => ['tab', state.get('atTab') === 'value'   ? 'active' : null]}
+            <a class=${() => ['tab', atState.get('atTab') === 'value'   ? 'active' : null]}
                data-action="set-tab" data-tab="value">value</a>
-            <a class=${() => ['tab', state.get('atTab') === 'storage' ? 'active' : null]}
+            <a class=${() => ['tab', atState.get('atTab') === 'storage' ? 'active' : null]}
                data-action="set-tab" data-tab="storage">storage</a>
-            <a class=${() => ['tab', state.get('atTab') === 'refs'    ? 'active' : null]}
+            <a class=${() => ['tab', atState.get('atTab') === 'refs'    ? 'active' : null]}
                data-action="set-tab" data-tab="refs">refs</a>
           </nav>
         `
@@ -133,7 +146,7 @@ export function makeAtView (deps) {
             : h`Used in <span class="num">${econ.uses}</span> commits → naive cost <span class="num">${econ.naiveCost}</span> bytes (<span class="num">${econ.subtreeBytes}</span> × <span class="num">${econ.uses}</span>), saved <span class="num">${econ.savings}</span>. <span class="num leverage">${econ.leverage.toFixed(2)}×</span> via reuse.`
         const economicsBlock = h`<div class="value-economics">${econHead}${econTail}</div>`
 
-        const atTab = state.get('atTab')
+        const atTab = atState.get('atTab')
 
         // Storage tab: this chunk's makeup — the chunk-graph tree going
         // DOWN through directReferences (duples surfaced), then the raw
@@ -355,5 +368,15 @@ export function makeAtView (deps) {
         `
       }}
     `
+}
+
+// Click delegator: handles set-tab + the six tree expand/collapse
+// actions. Called from main.js's click delegator for at-view-specific
+// actions. Returns true if handled.
+export function handleAtViewAction (action, el) {
+  if (action === 'set-tab') {
+    atState.set('atTab', el.dataset.tab)
+    return true
   }
+  return handleTreeAction(action, `${el.dataset.keyhex}:${el.dataset.addr}`)
 }

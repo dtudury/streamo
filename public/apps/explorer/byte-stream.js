@@ -186,24 +186,27 @@ export function makeByteStreamSection ({ state }) {
         return h`<div class=${['chunk-inspector', isPeekActive ? 'active' : null]}
                       data-key=${`inspector-${keyHex}`}>${inspectorContent}</div>`
       }}
-      <table class="reuse-by-type">
-        <thead><tr><th>type</th><th>chunks</th><th>bytes</th><th>via reuse</th></tr></thead>
-        <tbody>
-          ${typeRows.map(e => {
-            const cat = e.type === 'OBJECT' ? 'composite' : codecCategory(e.type)
-            const isRoot = e.naive === 0
-            const leverage = isRoot ? null : e.naive / e.bytes
-            return h`
-              <tr data-key=${e.type}>
-                <td><span class=${['codec-chip', `cat-${cat}`]}>${e.type}</span></td>
-                <td class="mono">${e.chunks}</td>
-                <td class="mono">${e.bytes}</td>
-                <td class="mono">${isRoot ? h`<span class="dim">—</span>` : `${leverage.toFixed(2)}×`}</td>
-              </tr>
-            `
-          })}
-        </tbody>
-      </table>
+      <details class="reuse-breakdown">
+        <summary>by-codec breakdown <span class="dim">— chunks, bytes, dedup leverage per codec type</span></summary>
+        <table class="reuse-by-type">
+          <thead><tr><th>type</th><th>chunks</th><th>bytes</th><th>via reuse</th></tr></thead>
+          <tbody>
+            ${typeRows.map(e => {
+              const cat = e.type === 'OBJECT' ? 'composite' : codecCategory(e.type)
+              const isRoot = e.naive === 0
+              const leverage = isRoot ? null : e.naive / e.bytes
+              return h`
+                <tr data-key=${e.type}>
+                  <td><span class=${['codec-chip', `cat-${cat}`]}>${e.type}</span></td>
+                  <td class="mono">${e.chunks}</td>
+                  <td class="mono">${e.bytes}</td>
+                  <td class="mono">${isRoot ? h`<span class="dim">—</span>` : `${leverage.toFixed(2)}×`}</td>
+                </tr>
+              `
+            })}
+          </tbody>
+        </table>
+      </details>
     `
   }
 }

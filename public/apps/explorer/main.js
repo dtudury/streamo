@@ -49,29 +49,27 @@ import { makeAtView } from './at-view.js'
 const recaller = new Recaller('explorer')
 const registry = new RepoRegistry(undefined, { recaller, name: 'explorer' })
 const port = +location.port || 80
-const connEl = document.getElementById('conn')
-
-try {
-  await registrySync(registry, location.hostname, port)
-  connEl.textContent = `connected · ${location.hostname}:${port}`
-  connEl.classList.add('ok')
-} catch (e) {
-  connEl.textContent = `connection failed: ${e.message}`
-  connEl.classList.add('err')
-  throw e
-}
 
 // ── App state ─────────────────────────────────────────────────────────────
 
 // One LiveSource for the UI state that isn't URL-derived. Route
 // state (viewKind/keyHex/address) lives in the URL via `loc` below,
 // not here.
-//   atTab     'value' | 'storage' | 'refs'   which tab is showing
-//   hovered   null | number                  hovered chunk address (live preview)
+//   atTab        'value' | 'storage' | 'refs'  which tab is showing
+//   hovered      null | number                 hovered chunk address (live preview)
+//   connection   { status, text }              connection-pill state, updated below
 const state = liveObject({
-  atTab:   'value',
-  hovered: null
+  atTab:      'value',
+  hovered:    null,
+  connection: { status: '', text: 'connecting…' }
 }, { recaller, name: 'ui' })
+
+// Connection status — fires `connection` so the conn-pill slot in the
+// mount template re-renders. Not awaited: the page paints immediately
+// with the "connecting…" state; the .then / .catch flips it later.
+registrySync(registry, location.hostname, port)
+  .then(() => state.set('connection', { status: 'ok',  text: `connected · ${location.hostname}:${port}` }))
+  .catch(e => state.set('connection', { status: 'err', text: `connection failed: ${e.message}` }))
 
 // Signature verification — async cache, LiveSource-backed. Slots that
 // call verifyStatus(...) auto-subscribe to their own cacheKey via the
@@ -121,7 +119,10 @@ function go (v) { loc.set('hash', hashFromView(v)) }
 
 // ── DOM wiring ────────────────────────────────────────────────────────────
 
-const appEl = document.getElementById('app')
+// mount() owns the whole body — the header, conn pill, and view all
+// live inside one template below. index.html is a minimal shim with
+// a "connecting…" loading message that mount() replaces on first paint.
+const appEl = document.body
 
 // Drag-to-pan on the byte strip + hover-preview state + post-render
 // strip housekeeping. Mutates state.hovered directly; main.js reads
@@ -190,19 +191,30 @@ function RegistryView () {
 
 // ── Mount ─────────────────────────────────────────────────────────────────
 
-// Outer slot reads view().kind + view().keyHex via the URL — re-runs
-// only on route transitions (registry ↔ at) and repo switches, NOT on
-// intra-repo navigation since the kind+keyHex pair stays the same.
-// Each view gets a data-keyed <section> so mount's reconciler drops/
-// rebuilds the right thing on a switch. Inner reactivity (chunk
-// arrivals, address, tab, hover) lives inside RegistryView and AtView.
-mount(h`${() => {
-  const { kind, keyHex } = view()
-  if (kind === 'registry') {
-    return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
-  }
-  return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
-}}`, appEl, recaller)
+// The whole page in one mount call. The header + conn pill are static
+// chrome at the top; below them, the view slot reads view().kind +
+// view().keyHex via the URL and re-runs only on route transitions or
+// repo switches. Each view gets a data-keyed <section> so mount's
+// reconciler drops/rebuilds the right thing on a switch. Inner
+// reactivity (chunk arrivals, address, tab, hover) lives inside
+// RegistryView and AtView.
+mount(h`
+  <div class="header">
+    <a class="brand-lockup" href="/" title="streamo home">
+      <img src="/streamo.svg" alt="">streamo
+    </a>
+    <span class="page-title">explorer</span>
+  </div>
+  <div class=${() => ['conn', state.get('connection').status || null]}
+       data-key="conn">${() => state.get('connection').text}</div>
+  ${() => {
+    const { kind, keyHex } = view()
+    if (kind === 'registry') {
+      return h`<section class="view" data-key="view-registry">${RegistryView()}</section>`
+    }
+    return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`
+  }}
+`, appEl, recaller)
 
 // ── Click delegation ──────────────────────────────────────────────────────
 

@@ -35,19 +35,24 @@ export function makeByteStreamSection () {
         length: code.length,
         codecType: codec?.type || '?'
       }
-      // For sigs: precompute the byte range covered, so hover anywhere on
-      // the page can light up that range as an overlay band on the strip.
-      if (chunk.codecType === 'SIGNATURE') {
-        try {
-          const sig = repo.decode(addr)
-          chunk.signedFrom = sig.address
-          chunk.signedTo = addr - code.length
-        } catch {}
-      }
       chunks.unshift(chunk)
       addr -= code.length
     }
     if (!chunks.length) return null
+
+    // For sigs: precompute the byte range covered, so hover anywhere on
+    // the page can light up that range as an overlay band on the strip.
+    // Under the hash-chain model the covered range is implicit in the
+    // chunk graph: it's everything from the byte after the previous sig
+    // up to the byte before this sig.
+    let lastSigEnd = -1
+    for (const c of chunks) {
+      if (c.codecType === 'SIGNATURE') {
+        c.signedFrom = lastSigEnd + 1
+        c.signedTo = c.address - c.length
+        lastSigEnd = c.address
+      }
+    }
 
     // Mark commit addresses by walking history once — cheap, lets commits
     // appear as their own visual category instead of getting lumped in with

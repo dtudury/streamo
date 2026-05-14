@@ -2,8 +2,29 @@ import { describe } from './utils/testing.js'
 import { RepoRegistry as StreamRegistry } from './RepoRegistry.js'
 import { outletSync } from './outletSync.js'
 import { originSync } from './originSync.js'
+import { Signer } from './Signer.js'
+import { bytesToHex } from './utils.js'
 
-const KEY = 'aabbccddeeff0011'
+// Under the hash-chain model, makeVerifiedWritableStream stages every chunk
+// until a covering SIG verifies — so these end-to-end sync tests need a real
+// keypair whose hex matches the repo's KEY, and a signer attached so the
+// writer's set() auto-emits a signature that the receiver can verify.
+const SIGNER = new Signer('alice', 'hunter2', 1)
+const NAME = 'sync-test'
+let KEY
+async function ensureKey () {
+  if (KEY) return KEY
+  const { publicKey } = await SIGNER.keysFor(NAME)
+  KEY = bytesToHex(publicKey)
+  return KEY
+}
+
+async function openSigned (registry) {
+  const key = await ensureKey()
+  const repo = await registry.open(key)
+  repo.attachSigner(SIGNER, NAME)
+  return repo
+}
 
 // Wait until predicate(stream) returns true.
 // Accesses stream.byteLength explicitly so the watcher re-runs on every append,
@@ -25,7 +46,7 @@ function waitFor (stream, predicate, timeout = 2000) {
 describe(import.meta.url, ({ test }) => {
   test('outlet syncs existing stream data to a new origin', async ({ assert }) => {
     const serverRegistry = new StreamRegistry()
-    const serverStream = await serverRegistry.open(KEY)
+    const serverStream = await openSigned(serverRegistry)
     serverStream.set({ hello: 'world' })
 
     const wss = outletSync(serverRegistry, 0)
@@ -33,7 +54,7 @@ describe(import.meta.url, ({ test }) => {
     const { port } = wss.address()
 
     const clientRegistry = new StreamRegistry()
-    const clientStream = await clientRegistry.open(KEY)
+    const clientStream = await clientRegistry.open(await ensureKey())
     const ws = await originSync(clientStream, KEY, 'localhost', port)
 
     await waitFor(clientStream, s => s.get('hello') === 'world')
@@ -51,7 +72,7 @@ describe(import.meta.url, ({ test }) => {
     const { port } = wss.address()
 
     const clientRegistry = new StreamRegistry()
-    const clientStream = await clientRegistry.open(KEY)
+    const clientStream = await openSigned(clientRegistry)
     clientStream.set({ from: 'client' })
 
     const ws = await originSync(clientStream, KEY, 'localhost', port)
@@ -66,6 +87,9 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('two origins converge on the same byte stream', async ({ assert }) => {
+    // Two devices sharing the same identity (same Signer / keypair) — under
+    // single-author-signed-chain, both writers must own the private key to
+    // contribute. This models "alice on her phone and her laptop."
     const serverRegistry = new StreamRegistry()
     const wss = outletSync(serverRegistry, 0)
     await new Promise(resolve => wss.on('listening', resolve))
@@ -73,19 +97,18 @@ describe(import.meta.url, ({ test }) => {
 
     const r1 = new StreamRegistry()
     const r2 = new StreamRegistry()
-    const s1 = await r1.open(KEY)
-    const s2 = await r2.open(KEY)
+    const s1 = await openSigned(r1)
+    const s2 = await openSigned(r2)
 
     s1.set({ x: 1 })
     s2.set({ x: 2 })
 
-    // NOTE: these are bare Streamos, not Repos — no commit records, no parent
-    // pointers.  The two streams have conflicting chunks at the same byte
-    // offsets; both arrive at the server and each other via dedup-append.
-    // byteLength convergence is all we can assert here: the merged stream
-    // contains all unique chunks from both writers but the second writer's
-    // value address is no longer valid in the merged layout.  This is a known
-    // limitation; see ROADMAP "multi-device write conflict detection".
+    // Conflicting commits at the same byte offsets; both arrive at the server
+    // and each other via dedup-append.  byteLength convergence is all we can
+    // assert here (the merged stream contains all unique chunks from both
+    // writers but the second writer's value address is no longer valid in the
+    // merged layout — known limitation; see ROADMAP "multi-device write
+    // conflict detection").
     const ws1 = await originSync(s1, KEY, 'localhost', port)
     const ws2 = await originSync(s2, KEY, 'localhost', port)
 
@@ -105,7 +128,7 @@ describe(import.meta.url, ({ test }) => {
   test('relay forwards data between server and client without writing its own commits', async ({ assert }) => {
     // Server
     const serverRegistry = new StreamRegistry()
-    const serverStream = await serverRegistry.open(KEY)
+    const serverStream = await openSigned(serverRegistry)
     serverStream.set({ hello: 'from-server' })
     const serverWss = outletSync(serverRegistry, 0)
     await new Promise(resolve => serverWss.on('listening', resolve))
@@ -115,15 +138,16 @@ describe(import.meta.url, ({ test }) => {
     // The relay never calls set() or commit() — it only accumulates and re-serves
     // the byte stream it receives.
     const relayRegistry = new StreamRegistry()
-    const relayStream = await relayRegistry.open(KEY)
+    const relayStream = await relayRegistry.open(await ensureKey())
     await originSync(relayStream, KEY, 'localhost', serverPort)
     const relayWss = outletSync(relayRegistry, 0)
     await new Promise(resolve => relayWss.on('listening', resolve))
     const relayPort = relayWss.address().port
 
-    // Client connects to relay only — no direct server connection
+    // Client connects to relay only — no direct server connection. Client owns
+    // the keypair so it can write back through the relay.
     const clientRegistry = new StreamRegistry()
-    const clientStream = await clientRegistry.open(KEY)
+    const clientStream = await openSigned(clientRegistry)
     const clientWs = await originSync(clientStream, KEY, 'localhost', relayPort)
 
     // Server data reaches client via relay

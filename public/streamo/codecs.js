@@ -92,22 +92,11 @@ const addressReaders = range(4).map(i => (r, code) => {
 // 5 options: option 0 = inline, 1-4 = 1..4-byte address.
 const inlineOrAddress = [...inlineReader, ...addressReaders]
 
-const wordReaders = range(4).map(i => (r, code) => {
-  const width = i + 1
-  return { type: `word(${width})`, width, getDecoded: () => code.slice(-width) }
-})
-
 const literalReaders = range(5).map(width => (r, code) => ({
   type: `literal(${width})`,
   width,
   getDecoded: () => code.slice(-width)
 }))
-
-const signatureReader = [(r, code) => ({
-  type: 'sig(64)',
-  width: 64,
-  getDecoded: () => code.slice(-64)
-})]
 
 const uint7Readers = range(128).map(n => () => ({
   type: `uint7(${n})`,
@@ -318,21 +307,26 @@ export function makeCodecs () {
     }
   }
 
+  // Fixed-format 97-byte chunk: [accumulator(32) | signature(64) | footer(1)].
+  //
+  // No partReaders → single footer slot, fixed width. The fixed footer +
+  // fixed length lets a verifier read the latest accumulator with a single
+  // slice of the last 97 bytes of HEAD — no chunk-graph walk required.
+  // `directReferences` returns [] for SIGNATURE (no chunk references; the
+  // accumulator + sig bytes are data, not pointers).
   const SIGNATURE = {
-    partReaders: [wordReaders, signatureReader],
+    getWidth: () => 97,
     encode (r, v) {
       if (v instanceof Signature) {
-        const addrBytes = numberToVar(v.address)
-        const out = new Uint8Array(addrBytes.length + 64 + 1)
-        out.set(addrBytes)
-        out.set(v.compactRawBytes, addrBytes.length)
-        out[addrBytes.length + 64] = SIGNATURE.baseFooter + addrBytes.length - 1
+        const out = new Uint8Array(97)
+        out.set(v.accumulator, 0)
+        out.set(v.compactRawBytes, 32)
+        out[96] = SIGNATURE.baseFooter
         return out
       }
     },
     decode (r, code) {
-      const parts = decodeParts(r, code)
-      return new Signature(varToNumber(parts[0].getDecoded()), parts[1].getDecoded())
+      return new Signature(code.slice(0, 32), code.slice(32, 96))
     }
   }
 

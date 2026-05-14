@@ -6,6 +6,24 @@
 import { truncHex } from './format.js'
 import { isCommitShape } from './shapes.js'
 
+// Given a signature chunk at `sigAddr` (last byte) with length `sigLen`,
+// return the address of the first byte this sig covers — walking back
+// through non-sig chunks until we hit another signature (in which case
+// signedFrom is one past that sig's last byte) or run off the start
+// (signedFrom is 0).  Under the hash-chain model a signature attests to
+// every chunk appended since the previous signature, so this range is
+// implicit in the chunk graph rather than carried in the sig record.
+export function computeSignedFrom (repo, sigAddr, sigLen) {
+  let walk = sigAddr - sigLen
+  while (walk >= 0) {
+    const code = repo.resolve(walk)
+    if (!code || !code.length) break
+    if (repo.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') return walk + 1
+    walk -= code.length
+  }
+  return 0
+}
+
 // Walk every chunk newest-first, yielding one entry per commit (with
 // its covering signature attached) and one 'other' entry per non-commit
 // non-sig chunk. A signature is part of *how* a commit is verified, not
@@ -30,7 +48,7 @@ export function * commitsNewestFirst (repo) {
       if (sig) {
         covering = {
           sigAddress: addr,
-          signedFrom: sig.address,
+          signedFrom: computeSignedFrom(repo, addr, code.length),
           signedTo: addr - code.length,
           sigHex: truncHex(sig.compactRawBytes, 12)
         }
@@ -71,8 +89,12 @@ export function findCoveringSig (repo, commitAddr) {
     if (repo.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') {
       let sig
       try { sig = repo.decode(scan) } catch { sig = null }
-      if (sig && sig.address <= commitAddr && (scan - code.length) >= commitAddr) {
-        return { sigAddress: scan, signedFrom: sig.address, signedTo: scan - code.length, decoded: sig }
+      if (sig) {
+        const signedFrom = computeSignedFrom(repo, scan, code.length)
+        const signedTo = scan - code.length
+        if (signedFrom <= commitAddr && signedTo >= commitAddr) {
+          return { sigAddress: scan, signedFrom, signedTo, decoded: sig }
+        }
       }
     }
     scan -= code.length

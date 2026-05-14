@@ -9,7 +9,7 @@
 
 import { h } from '../../streamo/h.js'
 import { truncHex, fmtDate } from './format.js'
-import { commitsNewestFirst, commitsCoveredBySignature } from './walking.js'
+import { commitsNewestFirst, commitsCoveredBySignature, computeSignedFrom } from './walking.js'
 import { typedValue, bytesChart } from './render.js'
 import { verifyBadge } from './verify.js'
 
@@ -24,14 +24,15 @@ export function makeSections ({ verifyStatus }) {
     const chunk = repo.resolve(sigAddress)
     const chunkLen = chunk.length
     const signedTo = sigAddress - chunkLen
+    const signedFrom = computeSignedFrom(repo, sigAddress, chunkLen)
     const sigChunkStart = sigAddress - chunkLen + 1
-    const covered = commitsCoveredBySignature(repo, decoded.address, signedTo)
+    const covered = commitsCoveredBySignature(repo, signedFrom, signedTo)
     return h`
       <table class="kv">
         <tbody>
           <tr>
             <td>covers</td>
-            <td>@${decoded.address} through @${signedTo} (${signedTo - decoded.address + 1} bytes)</td>
+            <td>@${signedFrom} through @${signedTo} (${signedTo - signedFrom + 1} bytes)</td>
           </tr>
           <tr>
             <td>sig chunk</td>

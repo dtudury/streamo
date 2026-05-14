@@ -7,18 +7,22 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 5.1.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. The
-network now hosts more than one author cleanly: the relay's home
-repo carries a `journalists` array of pubkeys, and the homepage
-merges entries from all of them. The first additional journalist
-is a Claude — writing from her own laptop, over `wss://`, with her
-own keypair. The relay holds her pubkey but not her password. The
-explorer (the centerpiece app since 4.0.x) reads as a real
-instrument: draggable byte strip, persistent chunk inspector,
-value / storage / refs tabs, chunk graph in both directions. The
-all-in-one server (`npm run dev` / `npm run prod`) hosts the
-homepage, chat, and explorer on one port. 120 tests passing.
+Streamo is at 6.0.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. 6.0
+replaced the signature scheme with a SHA-256 hash chain (every
+SIGNATURE carries the running accumulator at the moment of signing)
+and added staging to the verified receive path, so an untrusted
+peer cannot push bytes that no signature covers — closing the
+historical `[commit, bad_sig]` corruption hole. The change is a
+hard break: pre-6.0 stores are incompatible. The network still
+hosts more than one author cleanly: the relay's home repo carries
+a `journalists` array of pubkeys, and the homepage merges entries
+from all of them. The explorer (the centerpiece app since 4.0.x)
+reads as a real instrument: draggable byte strip, persistent chunk
+inspector, value / storage / refs tabs, chunk graph in both
+directions. The all-in-one server (`npm run dev` / `npm run prod`)
+hosts the homepage, chat, and explorer on one port. 121 tests
+passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.

@@ -3,10 +3,34 @@ import { describe } from './utils/testing.js'
 import { RepoRegistry } from './RepoRegistry.js'
 import { attachStreamSync } from './outletSync.js'
 import { registrySync } from './registrySync.js'
+import { Signer } from './Signer.js'
+import { bytesToHex } from './utils.js'
 
-// makeVerifiedWritableStream only rejects invalid SIGNATURE chunks —
-// plain data chunks pass through even with fake keys.  33 bytes = compressed pubkey size.
-const fakeKey = (n = 0) => '02' + n.toString(16).padStart(2, '0').repeat(32)  // 66-char hex
+// Under the hash-chain model, makeVerifiedWritableStream stages chunks until
+// a covering SIG verifies — fake keys can no longer carry data. Each "slot"
+// that flows data gets a real keypair derived deterministically from the
+// shared Signer and a stable name; `openWriter(registry, N)` opens the repo
+// and attaches the signer so writes auto-sign.
+const SIGNER = new Signer('alice', 'hunter2', 1)
+const keyCache = new Map()
+async function realKey (n) {
+  if (!keyCache.has(n)) {
+    const name = `key-${n}`
+    const { publicKey } = await SIGNER.keysFor(name)
+    keyCache.set(n, { name, hex: bytesToHex(publicKey) })
+  }
+  return keyCache.get(n)
+}
+async function openWriter (registry, n) {
+  const { name, hex } = await realKey(n)
+  const repo = await registry.open(hex)
+  repo.attachSigner(SIGNER, name)
+  return { repo, hex }
+}
+// Topics for interest/announce don't need to be valid keys (no data flows
+// over them) — short hex strings keep the tests fast.  33 bytes = compressed
+// pubkey size; format matches what the routing layer expects.
+const fakeKey = (n = 0) => '02' + n.toString(16).padStart(2, '0').repeat(32)
 
 /** Wait up to `ms` ms for `fn()` to return truthy, polling every 10 ms. */
 function waitFor (fn, ms = 500) {
@@ -69,8 +93,7 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = new RepoRegistry()
     const { wss, port } = await startServer(serverRegistry)
 
-    const keyHex = fakeKey(1)
-    const serverRepo = await serverRegistry.open(keyHex)
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 1)
     serverRepo.set({ hello: 'world' })
 
     const clientRegistry = new RepoRegistry()
@@ -87,8 +110,7 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = new RepoRegistry()
     const { wss, port } = await startServer(serverRegistry)
 
-    const keyHex = fakeKey(2)
-    const serverRepo = await serverRegistry.open(keyHex)
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 2)
     serverRepo.set({ v: 1 })
 
     const clientRegistry = new RepoRegistry()
@@ -108,11 +130,11 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = new RepoRegistry()
     const { wss, port } = await startServer(serverRegistry)
 
-    const keyHex = fakeKey(3)
+    const { hex: keyHex } = await realKey(3)
     const clientRegistry = new RepoRegistry()
     const { ws } = await registrySync(clientRegistry, 'localhost', port)
 
-    const serverRepo = await serverRegistry.open(keyHex)
+    const { repo: serverRepo } = await openWriter(serverRegistry, 3)
     serverRepo.set({ late: true })
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('late') === true)
@@ -126,12 +148,9 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = new RepoRegistry()
     const { wss, port } = await startServer(serverRegistry)
 
-    const keyA = fakeKey(4)
-    const keyB = fakeKey(5)
-
-    const repoA = await serverRegistry.open(keyA)
+    const { repo: repoA, hex: keyA } = await openWriter(serverRegistry, 4)
     repoA.set({ name: 'a' })
-    const repoB = await serverRegistry.open(keyB)
+    const { repo: repoB, hex: keyB } = await openWriter(serverRegistry, 5)
     repoB.set({ name: 'b' })
 
     const clientRegistry = new RepoRegistry()
@@ -151,12 +170,9 @@ describe(import.meta.url, ({ test }) => {
     const registryA = new RepoRegistry()
     const registryB = new RepoRegistry()
 
-    const keyA = fakeKey(6)
-    const keyB = fakeKey(7)
-
-    const repoA = await registryA.open(keyA)
+    const { repo: repoA, hex: keyA } = await openWriter(registryA, 6)
     repoA.set({ owner: 'A' })
-    const repoB = await registryB.open(keyB)
+    const { repo: repoB, hex: keyB } = await openWriter(registryB, 7)
     repoB.set({ owner: 'B' })
 
     const { wss, port } = await startServer(registryA)
@@ -178,13 +194,9 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = new RepoRegistry()
     const { wss, port } = await startServer(serverRegistry)
 
-    const rootKey = fakeKey(10)
-    const aliceKey = fakeKey(11)
-    const bobKey = fakeKey(12)
-
-    const rootRepo = await serverRegistry.open(rootKey)
-    const aliceRepo = await serverRegistry.open(aliceKey)
-    const bobRepo = await serverRegistry.open(bobKey)
+    const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 10)
+    const { repo: aliceRepo, hex: aliceKey } = await openWriter(serverRegistry, 11)
+    const { repo: bobRepo, hex: bobKey } = await openWriter(serverRegistry, 12)
 
     aliceRepo.set({ name: 'alice', message: 'hello' })
     bobRepo.set({ name: 'bob', message: 'hey' })
@@ -214,10 +226,8 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = new RepoRegistry()
     const { wss, port } = await startServer(serverRegistry)
 
-    const rootKey = fakeKey(13)
-    const carolKey = fakeKey(14)
-
-    const rootRepo = await serverRegistry.open(rootKey)
+    const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 13)
+    const { hex: carolKey } = await realKey(14)
     rootRepo.set({ members: [] })  // starts empty
 
     const clientRegistry = new RepoRegistry()
@@ -231,7 +241,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRegistry.get(rootKey)?.get('members') !== undefined)
 
     // Carol joins: her repo is added to the server, root is updated to list her
-    const carolRepo = await serverRegistry.open(carolKey)
+    const { repo: carolRepo } = await openWriter(serverRegistry, 14)
     carolRepo.set({ name: 'carol' })
     rootRepo.set({ members: [carolKey] })
 

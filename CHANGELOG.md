@@ -5,6 +5,66 @@ for what's next.
 
 ---
 
+## 6.0.0 — hash chain #1: only the author writes to her repo
+
+**Breaking change.** The signature scheme is replaced with a SHA-256
+hash chain over chunks. All pre-6.0 stores are incompatible — old
+archives must be deleted (or their authors must re-sign their data
+into the new format). The wire layout of the SIGNATURE chunk and the
+`Signature` value-class shape both changed; bumping the major version
+is the honest signal.
+
+**Why.** The pre-6.0 receive path had a structural hole: in a
+`[commit_chunk, bad_sig]` sequence the commit landed in the store
+*before* the sig failed verification. An untrusted peer with no
+signing key could nudge data into a relay's dataDir whose author
+never authorized it. We caught this in production after journalled
+chunks ended up in an author's chain that her keypair had never
+signed.
+
+**What changed:**
+
+- **Running accumulator.** Every Streamo carries a 32-byte chain
+  value, folded as `acc' = sha256(acc || sha256(chunk))` starting
+  from a 32-byte zero seed and re-seeded to the most recent SIG's
+  accumulator after each SIGNATURE lands. The accumulator
+  cryptographically commits to every chunk ever appended in order —
+  no MMR, no inclusion proofs, just a single hash that says "this is
+  the chain so far."
+- **SIGNATURE is now a fixed 97-byte chunk**: `[accumulator(32) |
+  signature(64) | footer(1)]`. No length prefix, no `partReaders`,
+  no `wordReaders`. A relay reading just the last 97 bytes of a
+  store knows the current accumulator without parsing anything else.
+- **`sign()` signs the accumulator**, not a byte range. `verify()`
+  is pure crypto — it does ECDSA verify and nothing else, since the
+  accumulator is carried inside the signature record.
+- **`makeVerifiedWritableStream` stages.** Incoming non-sig chunks
+  are folded into a tentative accumulator but *not* appended. When
+  a SIGNATURE arrives, both checks fire (chain match + crypto
+  verify); if either fails the staged batch is discarded. The store
+  is never polluted with unsigned bytes. This closes
+  `[commit, bad_sig]` entirely.
+- **Stateless relay verification.** A relay that wants to verify
+  the next append needs only the most-recent 32-byte accumulator,
+  not the prior byte stream. The "cold relay accepts the next
+  commit from a logged-in author" path becomes a 32-byte read
+  rather than a full-Repo replay.
+
+**Caveats and follow-ups.** Two-writers-same-keypair (an author
+writing from two machines in parallel) still produces forked chains
+— this release does *not* fix that, and it's a separate footgun
+called out in `MEMORY.md`. The local `.streamo` dataDir is wiped on
+upgrade; deployed relays need their dataDir wiped too before clients
+can talk to them again.
+
+**Test architecture.** `sync.test.js` and `registrySync.test.js`
+previously relied on the "plain data chunks pass through even with
+fake keys" loophole — that loophole is now closed by design, so the
+tests use real signers derived from a shared `Signer` whose pubkeys
+match the repo IDs. 121 tests, ~2.3s.
+
+---
+
 ## 5.1.0 — claudeSync, WSS, the relay loses authority over Claude
 
 The headline: a streamo network now hosts more than one author cleanly,

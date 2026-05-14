@@ -22,7 +22,7 @@ describe(import.meta.url, ({ test }) => {
       [1, 2, 3],
       [],
       ['a', 'b'],
-      new Signature(0, new Uint8Array(64))
+      new Signature(new Uint8Array(32), new Uint8Array(64))
     ]
     for (const value of values) {
       const code = s.encodeVariable(value)
@@ -269,30 +269,76 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(peer.byteLength, before, 'asRefs walk must not change byteLength on the peer')
   })
 
-  test('sign covers the FULL pre-signature byte range — no off-by-one', async ({ assert }) => {
-    // Earlier versions sliced (signedLength, before - 1), dropping the footer
-    // byte of the last pre-sig chunk from coverage. Both sign and verify used
-    // the same broken slice so signatures still validated, but a flipped
-    // footer byte at that index wouldn't be caught.
-    //
-    // This test proves coverage spans [signedLength, before): we independently
-    // sign the full byte range (using the same Signer, which uses RFC 6979
-    // deterministic ECDSA via noble-secp256k1) and compare bytes. If sign
-    // covered fewer bytes, the signatures would differ.
+  test('sign commits to the full chain — every appended chunk covered', async ({ assert }) => {
+    // Under the chain-hash scheme each non-sig chunk folds into a running
+    // accumulator as `acc' = sha256(acc || sha256(chunk))`, and the SIG
+    // chunk carries that accumulator + a signature over it. This test
+    // independently reconstructs the accumulator chunk-by-chunk and
+    // proves the SIG signs exactly that 32-byte commitment.
     const s = new Streamo()
     const signer = new Signer('alice', 'hunter2', 1)
     s.set({ msg: 'hello, world' })
-    const before = s.byteLength
+    const beforeSig = s.byteLength
     const sig = await s.sign(signer, 'test')
 
-    const fullRangeBytes = s.slice(0, before)
-    const expectedSig = await signer.sign('test', fullRangeBytes)
-    assert.deepEqual([...sig.compactRawBytes], [...expectedSig],
-      'streamo signature must equal a fresh sig over [0, before) — covering every pre-sig byte')
+    // Walk every chunk we just wrote and fold the accumulator manually.
+    const cryptoSubtle = (await import('crypto')).webcrypto.subtle
+    const sha = async b => new Uint8Array(await cryptoSubtle.digest('SHA-256', b))
+    const chunks = []
+    let addr = beforeSig - 1
+    while (addr >= 0) { const c = s.resolve(addr); chunks.unshift(c); addr -= c.length }
+    let expectedAcc = new Uint8Array(32)
+    for (const c of chunks) {
+      const combined = new Uint8Array(64)
+      combined.set(expectedAcc, 0); combined.set(await sha(c), 32)
+      expectedAcc = await sha(combined)
+    }
+    assert.deepEqual([...sig.accumulator], [...expectedAcc],
+      'sig.accumulator must equal independently-folded chain over every pre-sig chunk')
 
-    // And verify must round-trip cleanly under the new slice.
+    // Verify must accept the sig.
     const { publicKey } = await signer.keysFor('test')
     assert.ok(await s.verify(sig, publicKey), 'verify must accept sign\'s output')
+  })
+
+  test('makeVerifiedWritableStream rejects bytes not covered by a valid SIG', async ({ assert }) => {
+    // The historical attack: a peer sends [commit_chunk, bad_sig]. The
+    // commit lands in the store before the sig fails verification. With
+    // staging, the commit never lands — verified write is all-or-nothing.
+    const author = new Streamo()
+    const signer = new Signer('alice', 'hunter2', 1)
+    author.set({ a: 1 })
+    await author.sign(signer, 'attack-test')
+    const { publicKey } = await signer.keysFor('attack-test')
+
+    // Get the chunks the author wrote
+    const chunks = []
+    let addr = author.byteLength - 1
+    while (addr >= 0) { const c = author.resolve(addr); chunks.unshift(c); addr -= c.length }
+
+    // Corrupt the SIG's signature bytes (offset 32..96 inside the 97-byte chunk)
+    const sigChunk = chunks[chunks.length - 1]
+    const badSig = new Uint8Array(sigChunk)
+    badSig[40] ^= 0xff // flip a byte inside the signature region
+
+    const peer = new Streamo()
+    const writer = peer.makeVerifiedWritableStream(publicKey).getWriter()
+    let caught = null
+    try {
+      for (const code of chunks.slice(0, -1)) {
+        const frame = new Uint8Array(4 + code.length)
+        new DataView(frame.buffer).setUint32(0, code.length, true)
+        frame.set(code, 4)
+        await writer.write(frame)
+      }
+      const badFrame = new Uint8Array(4 + badSig.length)
+      new DataView(badFrame.buffer).setUint32(0, badSig.length, true)
+      badFrame.set(badSig, 4)
+      await writer.write(badFrame)
+    } catch (e) { caught = e }
+    assert.ok(caught, 'verified stream must reject a bad sig')
+    assert.equal(peer.byteLength, 0,
+      'no bytes may land in the peer store when the covering sig fails verification')
   })
 
   test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {

@@ -105,8 +105,12 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *     knowledge of its key — the bootstrap primitive for web clients.
  *
  *   { "type": "catalog", "keys": ["hex1", "hex2", ...] }
- *     Announce the full set of repositories this side currently has open.
- *     Sent once on connect and again whenever a new repo is opened.
+ *     Announce the set of repositories this side endorses as public.  When
+ *     the peer was configured with `home`, the catalog is filtered to the
+ *     home repo plus its `members` array — private repos the relay stores
+ *     are NOT enumerated, and must be requested by key.  Without `home`
+ *     (clients, non-home servers), all locally-open repos are announced.
+ *     Re-sent reactively when the membership set changes.
  *
  *   { "type": "subscribe", "key": "hex1" }
  *     Request to sync a repository bidirectionally.  The sender will stream
@@ -150,7 +154,22 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   }
 
   function sendCatalog () {
-    const keys = [...registry].map(([k]) => k)
+    let keys
+    if (home) {
+      // Home-set peers (servers offering a public face) announce only their
+      // home repo + the members they've endorsed. Everything else they store
+      // is private — sync-on-demand by key, never enumerated.
+      const homeRepo = registry.get(home)
+      if (homeRepo) {
+        const members = homeRepo.get('members')
+        keys = [home, ...(Array.isArray(members) ? members : [])]
+      } else {
+        keys = [home]
+      }
+    } else {
+      // Legacy: clients and non-home servers announce everything they have.
+      keys = [...registry].map(([k]) => k)
+    }
     sendJson({ type: 'catalog', keys })
   }
 
@@ -220,13 +239,19 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     await syncKey(keyHex)
   }
 
-  // When our registry gains a new repo, update the peer's catalog view
-  const onNewRepo = () => sendCatalog()
-  registry.onOpen(onNewRepo)
-
-  // Identity first (server-side only), then inventory.
+  // Identity first (server-side only).
   if (home) sendJson({ type: 'hello', home })
-  sendCatalog()
+
+  // Catalog wiring. Home-set peers re-send when home's `members` changes
+  // (recaller-tracked); others re-send when any local repo is opened.
+  const onNewRepo = () => sendCatalog()
+  const homeRepoForWatch = home ? registry.get(home) : null
+  if (homeRepoForWatch) {
+    homeRepoForWatch.recaller.watch(`catalog:${label}`, sendCatalog)
+  } else {
+    registry.onOpen(onNewRepo)
+    sendCatalog()
+  }
 
   // Keep-alive heartbeat — both sides ping; receivers ignore unknown types.
   const keepalive = setInterval(() => {
@@ -290,7 +315,8 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
 
   function cleanup () {
     clearInterval(keepalive)
-    registry.offOpen(onNewRepo)
+    if (homeRepoForWatch) homeRepoForWatch.recaller.unwatch(sendCatalog)
+    else registry.offOpen(onNewRepo)
     for (const reader of readers.values()) reader.cancel().catch(() => {})
     for (const [keyHex, fn] of followFns) {
       registry.get(keyHex)?.recaller.unwatch(fn)

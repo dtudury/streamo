@@ -112,7 +112,6 @@ async function login (e) {
     // another peer-back and so on.
     const announcedTo = new Set()
     session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
-      filter: k => k === rootKey,
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       },

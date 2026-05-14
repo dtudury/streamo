@@ -46,13 +46,17 @@ function waitFor (fn, ms = 500) {
   })
 }
 
-/** Start a WebSocketServer on a random port backed by a registry. */
-function startServer (registry) {
+/** Start a WebSocketServer on a random port backed by a registry.
+ *  Pass `homeKey` to make the server announce a home repo on the handshake,
+ *  causing connecting clients to auto-subscribe to it (the production shape).
+ *  Omit `homeKey` for raw peer-to-peer tests where neither side has a public face. */
+function startServer (registry, homeKey = null) {
   return new Promise((resolve, reject) => {
     const wss = new WebSocketServer({ port: 0 })
     wss.on('listening', () => {
       const { port } = wss.address()
-      attachStreamSync(wss, registry, 'test-outlet')
+      const peerOptions = homeKey ? { home: homeKey } : {}
+      attachStreamSync(wss, registry, 'test-outlet', peerOptions)
       resolve({ wss, port })
     })
     wss.on('error', reject)
@@ -91,13 +95,12 @@ describe(import.meta.url, ({ test }) => {
 
   test('two registries sync an existing repo via registrySync', async ({ assert }) => {
     const serverRegistry = new RepoRegistry()
-    const { wss, port } = await startServer(serverRegistry)
-
     const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 1)
     serverRepo.set({ hello: 'world' })
 
+    const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port, { filter: k => k === keyHex })
+    const { ws } = await registrySync(clientRegistry, 'localhost', port)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('hello') === 'world')
     assert.equal(clientRegistry.get(keyHex).get('hello'), 'world')
@@ -108,13 +111,12 @@ describe(import.meta.url, ({ test }) => {
 
   test('changes on server after connect are synced to client', async ({ assert }) => {
     const serverRegistry = new RepoRegistry()
-    const { wss, port } = await startServer(serverRegistry)
-
     const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 2)
     serverRepo.set({ v: 1 })
 
+    const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port, { filter: k => k === keyHex })
+    const { ws } = await registrySync(clientRegistry, 'localhost', port)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('v') === 1)
 
@@ -126,47 +128,71 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
-  test('newly opened server repos are announced and synced', async ({ assert }) => {
+  test('repos added to home.members after connect get synced', async ({ assert }) => {
+    // The new shape: discovery cascades through home.value.members via `follow`.
+    // When the home repo gains a new member after the client is connected, the
+    // follow callback re-fires and the client subscribes to the newcomer.
     const serverRegistry = new RepoRegistry()
-    const { wss, port } = await startServer(serverRegistry)
+    const { repo: homeRepo, hex: homeKey } = await openWriter(serverRegistry, 3)
+    homeRepo.set({ members: [] })
 
-    const { hex: keyHex } = await realKey(3)
+    const { wss, port } = await startServer(serverRegistry, homeKey)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port)
+    const { ws } = await registrySync(clientRegistry, 'localhost', port, {
+      follow: (k, repo, subscribe) => {
+        for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
+      }
+    })
+    await waitFor(() => clientRegistry.get(homeKey)?.get('members')?.length === 0)
 
-    const { repo: serverRepo } = await openWriter(serverRegistry, 3)
-    serverRepo.set({ late: true })
+    // Newcomer joins: open their repo on the server and add to home.members.
+    const { repo: newRepo, hex: newKey } = await openWriter(serverRegistry, 31)
+    newRepo.set({ late: true })
+    homeRepo.set({ members: [newKey] })
 
-    await waitFor(() => clientRegistry.get(keyHex)?.get('late') === true)
-    assert.equal(clientRegistry.get(keyHex).get('late'), true)
+    await waitFor(() => clientRegistry.get(newKey)?.get('late') === true)
+    assert.equal(clientRegistry.get(newKey).get('late'), true)
 
     ws.close()
     await new Promise(r => wss.close(r))
   })
 
-  test('filter prevents unwanted repos from syncing', async ({ assert }) => {
+  test('private repos (not in home.members) do not sync without explicit subscribe', async ({ assert }) => {
+    // The security claim of obsecurity: a relay can hold private repos that
+    // are NOT announced. Connecting clients receive only home + home.members;
+    // private keys can still be fetched, but only when explicitly subscribed.
     const serverRegistry = new RepoRegistry()
-    const { wss, port } = await startServer(serverRegistry)
+    const { repo: homeRepo, hex: homeKey } = await openWriter(serverRegistry, 4)
+    homeRepo.set({ members: [] })
 
-    const { repo: repoA, hex: keyA } = await openWriter(serverRegistry, 4)
-    repoA.set({ name: 'a' })
-    const { repo: repoB, hex: keyB } = await openWriter(serverRegistry, 5)
-    repoB.set({ name: 'b' })
+    const { repo: privateRepo, hex: privateKey } = await openWriter(serverRegistry, 5)
+    privateRepo.set({ name: 'secret' })
 
+    const { wss, port } = await startServer(serverRegistry, homeKey)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port, { filter: k => k === keyA })
+    const session = await registrySync(clientRegistry, 'localhost', port)
 
-    await waitFor(() => clientRegistry.get(keyA)?.get('name') === 'a')
-    assert.equal(clientRegistry.get(keyA).get('name'), 'a')
+    // Home syncs (auto-subscribed via hello).
+    await waitFor(() => clientRegistry.get(homeKey)?.get('members') !== undefined)
 
+    // Private repo did NOT sync — it isn't in members and we didn't ask for it.
     await new Promise(r => setTimeout(r, 100))
-    assert.equal(clientRegistry.get(keyB), undefined, 'keyB was filtered out')
+    assert.equal(clientRegistry.get(privateKey), undefined, 'private repo was not announced')
 
-    ws.close()
+    // But explicit subscribe pulls it down — privacy through obscurity, not
+    // authorization. Anyone who knows the key can still sync it.
+    session.subscribe(privateKey)
+    await waitFor(() => clientRegistry.get(privateKey)?.get('name') === 'secret')
+    assert.equal(clientRegistry.get(privateKey).get('name'), 'secret')
+
+    session.ws.close()
     await new Promise(r => wss.close(r))
   })
 
-  test('two peers with different repos each sync both after connecting', async ({ assert }) => {
+  test('two peers each push their own repo via explicit subscribe', async ({ assert }) => {
+    // Without a catalog mechanism, peers don't auto-broadcast their own repos —
+    // each side explicitly subscribes for keys it wants to push or pull. This
+    // is the p2p shape: no relay-blessed public face, just mutual consent.
     const registryA = new RepoRegistry()
     const registryB = new RepoRegistry()
 
@@ -176,7 +202,12 @@ describe(import.meta.url, ({ test }) => {
     repoB.set({ owner: 'B' })
 
     const { wss, port } = await startServer(registryA)
-    const { ws } = await registrySync(registryB, 'localhost', port)
+    const session = await registrySync(registryB, 'localhost', port)
+
+    // B asks to sync both keys; subscribe is bidirectional, so each key flows
+    // in whichever direction has data to share.
+    session.subscribe(keyA)
+    session.subscribe(keyB)
 
     await waitFor(() => registryA.get(keyB)?.get('owner') === 'B')
     await waitFor(() => registryB.get(keyA)?.get('owner') === 'A')
@@ -184,16 +215,15 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(registryA.get(keyB).get('owner'), 'B')
     assert.equal(registryB.get(keyA).get('owner'), 'A')
 
-    ws.close()
+    session.ws.close()
     await new Promise(r => wss.close(r))
   })
 
-  test('follow: auto-subscribes to repos referenced in a synced repo\'s value', async ({ assert }) => {
-    // Simulates a chat app: rootRepo lists participant keys; client follows the
-    // root and should automatically discover and sync all participant repos.
+  test('follow: auto-subscribes to repos referenced in the home repo\'s value', async ({ assert }) => {
+    // Simulates a chat app: rootRepo lists participant keys; client connects,
+    // auto-subscribes to root (via hello), follow callback walks members,
+    // each participant is subscribed in turn.
     const serverRegistry = new RepoRegistry()
-    const { wss, port } = await startServer(serverRegistry)
-
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 10)
     const { repo: aliceRepo, hex: aliceKey } = await openWriter(serverRegistry, 11)
     const { repo: bobRepo, hex: bobKey } = await openWriter(serverRegistry, 12)
@@ -202,16 +232,15 @@ describe(import.meta.url, ({ test }) => {
     bobRepo.set({ name: 'bob', message: 'hey' })
     rootRepo.set({ members: [aliceKey, bobKey] })
 
+    const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = new RepoRegistry()
     const { ws } = await registrySync(clientRegistry, 'localhost', port, {
-      filter: k => k === rootKey,  // only explicitly subscribe to root
       follow: (keyHex, repo, subscribe) => {
-        // extract participant keys from the chat repo
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
     })
 
-    // Root syncs via filter; participants sync via follow
+    // Root auto-subscribes via hello; participants cascade via follow.
     await waitFor(() => clientRegistry.get(aliceKey)?.get('name') === 'alice')
     await waitFor(() => clientRegistry.get(bobKey)?.get('name') === 'bob')
 
@@ -222,17 +251,15 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
-  test('follow: re-runs when a repo changes and discovers newly added refs', async ({ assert }) => {
+  test('follow: re-runs when home changes and discovers newly added refs', async ({ assert }) => {
     const serverRegistry = new RepoRegistry()
-    const { wss, port } = await startServer(serverRegistry)
-
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 13)
     const { hex: carolKey } = await realKey(14)
     rootRepo.set({ members: [] })  // starts empty
 
+    const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = new RepoRegistry()
     const { ws } = await registrySync(clientRegistry, 'localhost', port, {
-      filter: k => k === rootKey,
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -240,7 +267,7 @@ describe(import.meta.url, ({ test }) => {
 
     await waitFor(() => clientRegistry.get(rootKey)?.get('members') !== undefined)
 
-    // Carol joins: her repo is added to the server, root is updated to list her
+    // Carol joins: her repo is added to the server, root is updated to list her.
     const { repo: carolRepo } = await openWriter(serverRegistry, 14)
     carolRepo.set({ name: 'carol' })
     rootRepo.set({ members: [carolKey] })

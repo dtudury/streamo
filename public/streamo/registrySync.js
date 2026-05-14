@@ -1,11 +1,13 @@
 /**
  * @file registrySync — bidirectional multi-repo WebSocket sync.
  *
- * After a "registry" handshake, both sides exchange JSON catalog/
- * subscribe/interest/announce/ping messages and binary
- * [33-byte-key-prefix][chunk] frames. Discovery happens via filter,
- * follow (content-driven), or onAnnounce. 20-second keep-alive ping
- * for PaaS hosts that idle-close.
+ * After a "registry" handshake, the server sends a `hello { home }`
+ * pointer and the client auto-subscribes; then both sides exchange
+ * `subscribe`/`interest`/`announce`/`ping` JSON messages and binary
+ * [33-byte-key-prefix][chunk] frames. Discovery cascades content-driven
+ * via the `follow` callback (typically walking `home.value.members`).
+ * Private repos sync only when explicitly subscribed — they are never
+ * enumerated. 20-second keep-alive ping for PaaS hosts that idle-close.
  *
  * See design.md §10.
  */
@@ -50,13 +52,6 @@ const KEEPALIVE_INTERVAL_MS = 20000
 /**
  * @typedef {Object} RegistrySyncOptions
  *
- * @property {(keyHex: string) => boolean} [filter]
- *   Called for each key announced in the peer's catalog.  Return true to
- *   subscribe (and start syncing) that repository.  Defaults to subscribing
- *   to everything.  Keys discovered via `follow` are always subscribed regardless
- *   of this filter — the assumption is that if your own data references a repo
- *   you want it.
- *
  * @property {(keyHex: string, repo: import('./Repo.js').Repo, subscribe: (keyHex: string) => void) => void} [follow]
  *   Called reactively whenever a synced repository's value changes.  Use this
  *   to extract repository keys embedded in the data and call `subscribe(key)`
@@ -80,15 +75,17 @@ const KEEPALIVE_INTERVAL_MS = 20000
  * @property {string} [home]
  *   Server-side only.  The hex public key of the repository this peer offers
  *   as its public face — its "home."  When set, the peer sends a `hello`
- *   message announcing this key immediately after the handshake, so clients
- *   can bootstrap discovery without a prior key.  Browsers connecting to a
- *   relay learn its home from this; from there, the home's `members` array
- *   is the curated set of publicly endorsed repos.
+ *   message announcing this key immediately after the handshake.  The remote
+ *   side will auto-subscribe to this key; from there, the home's `members`
+ *   array (walked by the `follow` callback) is the curated set of publicly
+ *   endorsed repos that get synced in turn.  Private repos the relay stores
+ *   are not enumerated — they sync on demand by key.
  *
  * @property {(msg: { home?: string }) => void} [onHello]
- *   Called once when the remote peer's `hello` message arrives.  The message
- *   may carry a `home` key (the peer's public face) and is extensible to
- *   future fields like protocol version.
+ *   Called once when the remote peer's `hello` message arrives, AFTER the
+ *   auto-subscribe to `home` has been kicked off.  The message may carry a
+ *   `home` key (the peer's public face) and is extensible to future fields
+ *   like protocol version.
  */
 
 /**
@@ -101,16 +98,10 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *   { "type": "hello", "home": "hex" }
  *     Server-side identity announcement, sent once immediately after the
  *     handshake when the peer was configured with `home`.  The receiver
- *     learns the relay's public-face repository without needing prior
- *     knowledge of its key — the bootstrap primitive for web clients.
- *
- *   { "type": "catalog", "keys": ["hex1", "hex2", ...] }
- *     Announce the set of repositories this side endorses as public.  When
- *     the peer was configured with `home`, the catalog is filtered to the
- *     home repo plus its `members` array — private repos the relay stores
- *     are NOT enumerated, and must be requested by key.  Without `home`
- *     (clients, non-home servers), all locally-open repos are announced.
- *     Re-sent reactively when the membership set changes.
+ *     learns the relay's public-face repository AND auto-subscribes to it,
+ *     so discovery cascades from there: home arrives, the `follow` callback
+ *     walks its `members`, those subscribe in turn.  Private repos are not
+ *     enumerated anywhere — they sync only when explicitly requested by key.
  *
  *   { "type": "subscribe", "key": "hex1" }
  *     Request to sync a repository bidirectionally.  The sender will stream
@@ -142,7 +133,7 @@ const KEEPALIVE_INTERVAL_MS = 20000
  * @param {string} [label]  prefix for log messages
  */
 export function handleRegistryPeer (ws, registry, options = {}, label = 'registry', routing = null) {
-  const { filter = () => true, follow = null, onAnnounce = null, onHello = null, home = null } = options
+  const { follow = null, onAnnounce = null, onHello = null, home = null } = options
 
   const readers = new Map()        // keyHex → ReadableStreamDefaultReader (we → peer)
   const writers = new Map()        // keyHex → WritableStreamDefaultWriter (peer → us)
@@ -151,26 +142,6 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
 
   function sendJson (msg) {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
-  }
-
-  function sendCatalog () {
-    let keys
-    if (home) {
-      // Home-set peers (servers offering a public face) announce only their
-      // home repo + the members they've endorsed. Everything else they store
-      // is private — sync-on-demand by key, never enumerated.
-      const homeRepo = registry.get(home)
-      if (homeRepo) {
-        const members = homeRepo.get('members')
-        keys = [home, ...(Array.isArray(members) ? members : [])]
-      } else {
-        keys = [home]
-      }
-    } else {
-      // Legacy: clients and non-home servers announce everything they have.
-      keys = [...registry].map(([k]) => k)
-    }
-    sendJson({ type: 'catalog', keys })
   }
 
   function handleWriteError (keyHex, e) {
@@ -239,19 +210,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     await syncKey(keyHex)
   }
 
-  // Identity first (server-side only).
+  // Identity announcement. The remote side auto-subscribes to `home` when
+  // this arrives — that's the bootstrap pointer, and from there the `follow`
+  // callback walks the home's members. No catalog enumeration anywhere.
   if (home) sendJson({ type: 'hello', home })
-
-  // Catalog wiring. Home-set peers re-send when home's `members` changes
-  // (recaller-tracked); others re-send when any local repo is opened.
-  const onNewRepo = () => sendCatalog()
-  const homeRepoForWatch = home ? registry.get(home) : null
-  if (homeRepoForWatch) {
-    homeRepoForWatch.recaller.watch(`catalog:${label}`, sendCatalog)
-  } else {
-    registry.onOpen(onNewRepo)
-    sendCatalog()
-  }
 
   // Keep-alive heartbeat — both sides ping; receivers ignore unknown types.
   const keepalive = setInterval(() => {
@@ -270,11 +232,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       try {
         const msg = JSON.parse(new TextDecoder().decode(buf))
         if (msg.type === 'hello') {
+          // Auto-subscribe to the remote's home. From here, the `follow`
+          // callback will cascade through home.value.members.
+          if (msg.home) await subscribeToKey(msg.home)
           onHello?.(msg)
-        } else if (msg.type === 'catalog') {
-          for (const key of msg.keys) {
-            if (filter(key)) await subscribeToKey(key)
-          }
         } else if (msg.type === 'subscribe') {
           await syncKey(msg.key)
         } else if (msg.type === 'interest') {
@@ -315,8 +276,6 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
 
   function cleanup () {
     clearInterval(keepalive)
-    if (homeRepoForWatch) homeRepoForWatch.recaller.unwatch(sendCatalog)
-    else registry.offOpen(onNewRepo)
     for (const reader of readers.values()) reader.cancel().catch(() => {})
     for (const [keyHex, fn] of followFns) {
       registry.get(keyHex)?.recaller.unwatch(fn)
@@ -337,7 +296,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     interest (key) { sendJson({ type: 'interest', key }) },
     /** Announce `key` as related to `topic` — routed to all peers interested in that topic. */
     announce (key, topic) { sendJson({ type: 'announce', key, topic }) },
-    /** Subscribe to a specific repo key, bypassing the catalog filter. */
+    /** Subscribe to a specific repo key explicitly. */
     subscribe (key) { return subscribeToKey(key) }
   }
 }
@@ -358,11 +317,12 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
 /**
  * Connect a local RepoRegistry to a remote one and sync repositories.
  *
- * Sends `"registry"` as the WebSocket handshake, then negotiates which
- * repositories to sync via catalog/subscribe messages.  Returns a session
- * object with `interest` and `announce` for the ephemeral messaging layer.
+ * Sends `"registry"` as the WebSocket handshake.  The server responds with
+ * a `hello` message carrying its `home` key; we auto-subscribe to that, and
+ * the `follow` callback walks members from there.  Returns a session object
+ * with `interest`/`announce`/`subscribe` for ephemeral and explicit work.
  *
- * ### Basic usage — sync everything
+ * ### Basic usage — sync the relay's public face
  *
  *   const { ws } = await registrySync(myRegistry, 'localhost', 8080)
  *
@@ -374,14 +334,18 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *   session.interest(rootKey)          // start receiving announcements for rootKey
  *   session.announce(myKey, rootKey)   // tell interested peers about myKey
  *
- * ### Catalog filter and content-driven discovery
+ * ### Content-driven discovery via `follow`
  *
  *   const session = await registrySync(myRegistry, 'localhost', 8080, {
- *     filter: key => key === rootChatKey,
  *     follow: (keyHex, repo, subscribe) => {
  *       for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
  *     }
  *   })
+ *
+ * ### Subscribing to a specific key not reachable from the relay's home
+ *
+ *   const session = await registrySync(myRegistry, 'localhost', 8080)
+ *   session.subscribe(privateKeySharedOutOfBand)
  *
  * @param {import('./RepoRegistry.js').RepoRegistry} registry
  * @param {string} host

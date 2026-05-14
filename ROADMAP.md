@@ -31,7 +31,62 @@ here.
 
 ## what's next
 
-### page-as-Repo + remote-parent commits *(urgent — the next big thread)*
+### Operation Obsecurity *(in flight — finish step D)*
+
+A four-step reshape of the registry sync protocol so the relay no longer
+leaks the list of every repo it stores. The name is a portmanteau of
+"security" and "obscurity": private repos remain syncable by anyone who
+knows their key, but the catalog mechanism that enumerated them all is
+gone.
+
+**The new protocol:** after the `"registry"` handshake, the server sends
+`{ type: 'hello', home: '<hex>' }`. The client auto-subscribes to that
+home repo; the `follow` callback walks `home.value.members` and
+subscribes to each member in turn. That cascade IS the public face.
+Repos not in `members` and not explicitly subscribed never appear on the
+wire to anyone — they're held privately by the relay until requested by
+key out-of-band.
+
+**Landed:**
+- **A** — handshake announces `hello { home }` *(7860da8)*
+- **B** — catalog filters to home + members, reactive on member changes
+  *(13b0897)*
+- **C** — drop the catalog message entirely; auto-subscribe-on-hello;
+  consumers (chat / chat-cli) shed the now-vacuous `filter` option
+  *(f740caa)*
+
+**Step D — explorer UI matches the new model** *(next session)*
+
+The explorer's registry view currently rendered whatever the catalog
+shipped — which under the new protocol is *just the home repo*. The
+view needs to reshape around the new mental model:
+
+1. **Home prominently** — a top-of-page card showing the relay's home
+   repo (the one delivered by `hello`), since that's the curated entry
+   point.
+2. **Members cascade beneath** — list of repos in `home.value.members`,
+   each as a clickable card with a quick summary (name from value,
+   message count, latest commit, etc.).
+3. **"Paste a key" input** — a text field for arbitrary hex keys, with
+   a button that calls `session.subscribe(key)` and renders the result.
+   This is the door for everything off the public list — private repos
+   you know about, repos on other relays you want to peek at.
+
+The "show every repo this relay has cached" view goes away — that was
+always the security leak. The new shape teaches the user the new
+mental model directly: *here's what the relay endorses, and here's the
+door for everything else.*
+
+Step D doesn't change any protocol code. It's purely UI work in
+`public/apps/explorer/`. Probably 30–60 minutes in a fresh session.
+
+Once D lands, we ship A+B+C+D as a single release (probably 7.0.0 since
+the protocol break is real) with a CHANGELOG entry describing
+Obsecurity. The page-as-Repo thread below picks up from there.
+
+---
+
+### page-as-Repo + remote-parent commits *(the next big thread after Obsecurity)*
 
 The homepage at streamo.dev is currently static HTML that *walks* a
 Repo for journal entries. The journal slice is data; the bones are

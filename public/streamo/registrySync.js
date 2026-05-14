@@ -76,6 +76,19 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *   `key` is the announced repository's hex public key; `topic` is the hex key
  *   of the repository it was announced under.  Only fires for topics you have
  *   previously declared interest in via `session.interest(topicKey)`.
+ *
+ * @property {string} [home]
+ *   Server-side only.  The hex public key of the repository this peer offers
+ *   as its public face — its "home."  When set, the peer sends a `hello`
+ *   message announcing this key immediately after the handshake, so clients
+ *   can bootstrap discovery without a prior key.  Browsers connecting to a
+ *   relay learn its home from this; from there, the home's `members` array
+ *   is the curated set of publicly endorsed repos.
+ *
+ * @property {(msg: { home?: string }) => void} [onHello]
+ *   Called once when the remote peer's `hello` message arrives.  The message
+ *   may carry a `home` key (the peer's public face) and is extensible to
+ *   future fields like protocol version.
  */
 
 /**
@@ -84,6 +97,12 @@ const KEEPALIVE_INTERVAL_MS = 20000
  * ## Protocol (after the "registry" text handshake)
  *
  * ### Control messages — JSON text frames
+ *
+ *   { "type": "hello", "home": "hex" }
+ *     Server-side identity announcement, sent once immediately after the
+ *     handshake when the peer was configured with `home`.  The receiver
+ *     learns the relay's public-face repository without needing prior
+ *     knowledge of its key — the bootstrap primitive for web clients.
  *
  *   { "type": "catalog", "keys": ["hex1", "hex2", ...] }
  *     Announce the full set of repositories this side currently has open.
@@ -119,7 +138,7 @@ const KEEPALIVE_INTERVAL_MS = 20000
  * @param {string} [label]  prefix for log messages
  */
 export function handleRegistryPeer (ws, registry, options = {}, label = 'registry', routing = null) {
-  const { filter = () => true, follow = null, onAnnounce = null } = options
+  const { filter = () => true, follow = null, onAnnounce = null, onHello = null, home = null } = options
 
   const readers = new Map()        // keyHex → ReadableStreamDefaultReader (we → peer)
   const writers = new Map()        // keyHex → WritableStreamDefaultWriter (peer → us)
@@ -205,7 +224,8 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   const onNewRepo = () => sendCatalog()
   registry.onOpen(onNewRepo)
 
-  // Announce what we already have
+  // Identity first (server-side only), then inventory.
+  if (home) sendJson({ type: 'hello', home })
   sendCatalog()
 
   // Keep-alive heartbeat — both sides ping; receivers ignore unknown types.
@@ -224,7 +244,9 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       // JSON control message ('{' = 0x7B; secp256k1 keys start with 0x02 or 0x03)
       try {
         const msg = JSON.parse(new TextDecoder().decode(buf))
-        if (msg.type === 'catalog') {
+        if (msg.type === 'hello') {
+          onHello?.(msg)
+        } else if (msg.type === 'catalog') {
           for (const key of msg.keys) {
             if (filter(key)) await subscribeToKey(key)
           }

@@ -108,7 +108,10 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
 
   const server = createServer(app)
 
-  attachStreamSync(new WebSocketServer({ server }), registry, 'web', peerOptions)
+  // The relay announces its public face — `primaryKeyHex` is the "home" repo
+  // any browser/client connecting here can bootstrap from. See registrySync.js
+  // protocol docs for the `hello` message shape.
+  attachStreamSync(new WebSocketServer({ server }), registry, 'web', { ...peerOptions, home: primaryKeyHex })
 
   await new Promise((resolve, reject) => {
     server.listen(port, err => err ? reject(err) : resolve())

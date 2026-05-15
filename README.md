@@ -10,6 +10,34 @@ Streamo is a peer-to-peer sync library built around a simple promise: **no serve
 
 > **New here?** → [**FIRST_STEPS.md**](./FIRST_STEPS.md) walks you from clone to your own signed fork of the homepage in ~10 minutes.
 
+## why streamo?
+
+You've probably noticed: every "simple app" you ship now requires a database, an auth provider, a hosting bill, a CDN, and an error-tracking subscription before it can do anything. The middleware tax keeps climbing. The substrate keeps getting more proprietary. The personal web — where "view source" was an education and *fork* was a verb people used — has been replaced by a tightly-coupled stack you rent.
+
+Streamo is the substrate trying to grow back the other thing. It's small (the core fits in ~2k lines and reads in a sitting), local-first (your data lives on your devices, content-addressed), and structurally portable (your identity is derived from credentials; your data signs itself). It assumes **one author per stream** — which sidesteps most CRDT complexity — and treats the server as a relay, not a gatekeeper.
+
+**Things you don't have to build when you use streamo:**
+
+| Without it | With streamo |
+|---|---|
+| Signup, login, sessions, password reset, OAuth | Username + password → deterministic keypair (PBKDF2-SHA256). No accounts table. |
+| API server + database + ORM | Signed append-only log. Bytes are content-addressed; dedup is structural. |
+| WebSocket coordination, reconnect, last-write-wins | Built in. Relays just store and broadcast; clients verify on receipt. |
+| File storage, CDN, access control | The log handles bytes. Any relay can serve them. Public key IS the address. |
+| Backups + migrations | The log IS the backup, replayable on any relay or local archive. |
+| Multi-device sync ceremony | Same credentials produce the same keypair everywhere. New device replays. |
+| A backend, in many cases | A streamo "server" is dumb pipe (~50MB of RAM, one Node process). Run yours on the cheapest box you have. |
+
+**Streamo fits if you…**
+
+- want to ship a multi-user app without renting six SaaS subscriptions
+- want a personal site you actually own — edit in place, fork freely, survive any hosting outage
+- are building anything where "the data is mine" matters — health, finance, journals, family photos, civic infrastructure
+- are integrating AI agents and want a substrate where a model is just another signed peer, not a special-cased API consumer (streamo doesn't distinguish humans from AIs — both author signed commits)
+- miss when the web felt like a place you could build in instead of a platform you submit to
+
+The protocol fits in [`design.md`](./design.md). The reference implementation could be re-implemented in another language by one person in a weekend — that's intentional. **Streamo isn't trying to be a platform. It's trying to be a primitive that lets a thousand platforms grow.**
+
 ## core ideas
 
 - **No server holds authority** — the server is a relay; your data lives on your devices and can't be seized or censored. Disconnect the server and everything is still yours.

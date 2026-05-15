@@ -611,6 +611,31 @@ own component; shared instrument components in a live music session.
 
 Not planned, not prioritized — just things worth remembering.
 
+- **`s3Sync` should be bidirectional like `archiveSync`** — currently
+  `s3Sync` is push-only (replicate chunks to S3). The natural shape is
+  the same load-and-watch as `archiveSync`: on startup, "do we have
+  this repo? let me check S3... loading from cache (not as a live data
+  source, just to bootstrap)." Then watch the streamo for new chunks
+  and append-to-S3. Different from origin/outlet sync (no live push
+  *from* S3), but matches the boot-time-bootstrap pattern from the
+  streamo side. Pairs naturally with the caching-relay's `UpstreamS3`
+  adapter.
+
+- **Read-only sync flavors** — `originSync` is bidirectional today.
+  A `readOnly: true` option would let a localhost dev box receive
+  updates from `streamo.dev` without ever pushing — defense-in-depth
+  against accidentally shipping in-progress edits to prod. Not
+  needed for the existing three-phase workflow (just don't run
+  origin during dev), but a nicety.
+
+- **`POST /api/file` needs auth or to go away** — the current write
+  endpoint in `webSync.js` accepts arbitrary writes from any HTTP
+  client. CORS doesn't protect it (curl bypasses CORS), so this is a
+  real footgun as the home repo grows more important. Options:
+  require a signed payload from a registered author, drop the
+  endpoint entirely (CLI/REPL only for writes), or gate it behind a
+  shared secret. Worth a focused conversation when this lands.
+
 - **Claude as chat shell** — type `send a greeting to the chatroom` and
   `CHATROOM: hello there 👋` appears in the chat. Natural language as a
   thin shell over streamo operations, with Claude interpreting intent and

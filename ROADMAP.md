@@ -77,23 +77,109 @@ shape.
 
 **Order of work, roughly:**
 
-1. Add `remoteParent` to the commit record codec (additive — old
+1. **Serve-from-Repo (the inverse of fileSync).** A small Express
+   middleware that maps `req.path → repo.files[req.path]` and
+   responds with the right MIME type. Mount it ahead of the existing
+   `express.static(publicDir)` so any path present in the Repo wins;
+   anything else falls through to the disk pile. This is fully
+   standalone — no codec change, no `remoteParent` yet. The shape it
+   serves is exactly what `fileSync` produces (a flat
+   `{ relPath: content | Uint8Array }` map at the repo's value).
+   ~80 lines + ~5 lines of integration in `webSync.js`. *(This is
+   the **next session's first move** — see "tomorrow's seam" at the
+   bottom of this section.)*
+2. Add `remoteParent` to the commit record codec (additive — old
    commits stay valid without it). Update `Repo.set()` to accept
    `{ remoteParent }` in commit options.
-2. UI in the explorer: render `remoteParent` as a clickable link
+3. UI in the explorer: render `remoteParent` as a clickable link
    to the cited commit on the other chain.
-3. Page-as-Repo: extract `public/index.html`'s content into a JSON
-   shape; render the page from a Repo's value via `mount`. The
-   server-served default is the relay's home Repo (current
-   behavior, just with the page derived from `repo.get()` instead
-   of hardcoded HTML).
-4. Move Claude's journal/homepage to a fork of the home Repo. Her
+4. Page-as-Repo proper: extract `public/index.html`'s content into a
+   shape that lives in a Repo (either a flat files-map served by
+   step 1's middleware, or a structured `{ wordmark, tagline,
+   ideas, journal, apps }` rendered via `mount`). With step 1
+   landed, this is mostly authoring + a one-time seed step.
+5. Move Claude's journal/homepage to a fork of the home Repo. Her
    first commit is pure-copy from the home Repo's current value;
    subsequent commits are mixed (her ongoing chain + occasional
    remoteParent pulls when the home Repo gets a material update).
 
-Step 1 alone is small and useful even without the rest. Each step
-lands independently.
+Steps 1 and 2 each stand alone. Each subsequent step composes on
+what's already there.
+
+**Tomorrow's seam — serve-from-Repo, drilled in:**
+
+*Read sweep done 2026-05-14 evening; concrete enough to walk into
+fresh.*
+
+The middleware is small and self-contained. The bytes that come
+out of `fileSync`'s read pass (`readFolder` →
+`{ files: { [rel]: string | Uint8Array | object } }`) are exactly
+the bytes that go in. The new module is the mirror:
+
+```
+// public/streamo/repoFileServer.js  (sketch — names not locked)
+export function serveFromRepo (repo, { fallthrough = true } = {}) {
+  // returns an Express middleware that:
+  //   - looks up files[req.path] (with '/'→'/index.html' fallback)
+  //   - serializes objects (JSON files round-trip through fileSync as parsed)
+  //   - infers Content-Type from the extension
+  //   - calls next() when nothing matches and fallthrough is true
+}
+```
+
+**Wire-up in webSync.js:** one new option (e.g. `serveRepoFiles`)
+that, when set, mounts the middleware ahead of `express.static`.
+Or — simpler — always mount it but no-op when the repo's value
+has no `files` shape.
+
+**MIME table — keep it inline.** No new dependency. A small map
+covering the cases the homepage actually uses: `.html` → `text/html;
+charset=utf-8`, `.css`, `.js`, `.json`, `.svg`, `.png`, `.jpg`,
+`.ico`, `.txt`. Anything not in the table falls through to
+`application/octet-stream` and the browser figures it out.
+
+**Decisions for morning-David** *(I deliberately did not lock
+these in tonight)*:
+
+- **Where does the homepage Repo live?** Two natural shapes:
+  - *Inside the home repo.* The chat home gets a sibling key like
+    `files`, so `home.get()` is `{ members, journalists, entries,
+    files: { ... } }`. The middleware reads `repo.get('files',
+    path)`. Mixes concerns but keeps everything in one cascade.
+  - *Separate `homepage` repo.* The relay derives a second keypair
+    (`signer.keysFor('homepage')`) and that repo's whole value IS
+    the files map (matches the `fileSync` shape exactly). Cleaner
+    and reusable — anyone with a directory-shaped repo can serve
+    it. But the relay now has two repos to think about, and we
+    need to teach `hello` which one to announce (or list it under
+    `members` of the home so it's reachable in the cascade).
+- **How does the homepage get *into* the Repo?**
+  - One-shot seed at startup (like the journal seed in `chat/server.js`).
+  - Or wire `fileSync` to a `public/homepage/` directory — then the
+    homepage is editable on disk during dev and round-trips. (This
+    is the most aesthetically streamo-coherent option: the
+    development workflow IS the data flow.)
+
+My pull is toward **separate `homepage` repo + fileSync wiring** —
+it's the option that exercises the most of what streamo already
+is, and the file-tree-as-repo idiom generalizes cleanly to other
+"serve a site from a Repo" stories. But the in-home-repo path is
+simpler to land in a single session. Either way, step 1's
+middleware is exactly the same code.
+
+**Edges I want to handle in the first pass:**
+
+- Path normalization (decode `%20`, reject `..`, treat `/` as
+  `/index.html`)
+- Binary vs. text values (`Uint8Array` written as-is; strings
+  written with the right encoding; objects JSON-stringified — this
+  inverts `fileSync`'s `encodeFile`)
+- ETag from the chunk content address (we have content-addressing
+  *for free*; a strong ETag means clients cache forever and only
+  re-fetch when the address changes)
+
+The ETag bit is the small extra mile that turns "served from a
+Repo" into "served *better* than from disk." Worth doing.
 
 ### richer explorer
 

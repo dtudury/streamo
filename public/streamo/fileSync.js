@@ -144,39 +144,78 @@ function filesEqual (a, b) {
 }
 
 /**
+ * Read the files-map this fileSync owns according to filesKey:
+ *   - null  → the whole repo value IS the files map
+ *   - other → repo.value[filesKey] is the files map; siblings are untouched
+ * Returns a plain map (possibly empty), or null if the repo has no files at
+ * this key (lastCommit may still exist for other sibling state).
+ */
+function readRepoFiles (repo, filesKey) {
+  if (filesKey === null) {
+    const v = repo.files
+    if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null
+    return v
+  }
+  const v = repo.get(filesKey)
+  if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null
+  return v
+}
+
+/**
  * Two-way sync between a folder and a Repo.
  *
  * Initial state (startup authority via timestamps):
- *   - repo has commits and no disk file is newer than the last commit → repo wins
- *   - repo is empty or any disk file is newer than the last commit → disk wins
+ *   - repo has files at filesKey AND no disk file is newer than the last
+ *     commit → repo wins
+ *   - repo has no files at filesKey, OR any disk file is newer than the
+ *     last commit → disk wins
  *
  * Ongoing:
  *   - Repo changes (new commit from peer/archive) → write changed files to disk
  *   - Disk changes → checkout, update files, commit to repo
  *
+ * When `filesKey` is non-null, the sync is mounted at `repo.value[filesKey]`
+ * — other top-level keys on the value (the chat home's `members`,
+ * `journalists`, `entries`, etc.) are preserved across writes. The default
+ * (null) keeps the legacy "value IS files" behavior.
+ *
  * @param {import('./Repo.js').Repo} repo
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
+ * @param {{ filesKey?: string|null }} [options]
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
-export async function fileSync (repo, folder = '.', dataDir = '.stream') {
+export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
+  const { filesKey = null } = options
   const accepts = buildFilter(folder, dataDir)
+
+  // Local helpers that respect filesKey.  Encapsulating the branching here
+  // keeps the body below readable as one flow.
+  const getRepoFiles = () => readRepoFiles(repo, filesKey)
+  const setRepoFiles = (working, files) => {
+    if (filesKey === null) return working.set(files)
+    // On a fresh checkout (no prior commits), there's no parent object for
+    // path-set to navigate into.  Materialize the wrapping object explicitly.
+    if (working.get() === undefined) return working.set({ [filesKey]: files })
+    return working.set(filesKey, files)
+  }
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, accepts)
   const lastCommit = repo.lastCommit
   const commitTime = lastCommit ? lastCommit.date.getTime() : 0
+  const repoFiles = getRepoFiles()
 
-  if (lastCommit && diskMtime <= commitTime) {
+  if (lastCommit && repoFiles && diskMtime <= commitTime) {
     // Repo wins: write committed files to disk
-    const repoFiles = repo.files
     const toDelete = Object.keys(diskFiles).filter(k => !(k in repoFiles))
     await writeToFolder(folder, repoFiles)
     await deleteFromFolder(folder, toDelete)
   } else if (Object.keys(diskFiles).length > 0) {
-    // Disk wins: commit current disk state as the initial commit
+    // Disk wins: commit current disk state.  When filesKey is set, this
+    // adds (or replaces) only that subkey — siblings on the value survive.
     const working = repo.checkout()
-    working.set(diskFiles)
-    repo.commit(working, 'initial')
+    setRepoFiles(working, diskFiles)
+    repo.commit(working, filesKey ? `seed ${filesKey}` : 'initial')
   }
 
   // Repo → disk: retries if a write is in progress so no commit is ever dropped
@@ -188,7 +227,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream') {
     writingToDisk = true
     pendingDiskFlush = false
     try {
-      const files = repo.files
+      const files = getRepoFiles()
       if (!files) return
       const { files: current } = await readFolder(folder, accepts)
       if (filesEqual(current, files)) return
@@ -223,10 +262,10 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream') {
     ;(async () => {
       try {
         const { files: newFiles } = await readFolder(folder, accepts)
-        const current = repo.files ?? {}
+        const current = getRepoFiles() ?? {}
         if (filesEqual(current, newFiles)) return
         const working = repo.checkout()
-        working.set(newFiles)
+        setRepoFiles(working, newFiles)
         repo.commit(working, 'file change')
       } finally {
         committingFromDisk = false

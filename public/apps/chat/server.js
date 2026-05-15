@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
 import { config } from 'dotenv'
+import { fileURLToPath } from 'url'
+import { dirname, join } from 'path'
 import { StreamoServer } from '../../streamo/StreamoServer.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
@@ -60,7 +62,20 @@ console.log(`[chat] serving on http://localhost:${port}/apps/chat/`)
   }
 }
 
+// Mirror the authored homepage at public/homepage/ to/from the home repo's
+// `files` key.  fileSync is bidirectional: edits on disk become commits,
+// commits become disk writes.  The home repo now multiplexes three
+// concerns on one stream — chat bookkeeping, journal entries, and the
+// homepage's served bytes — and consumers route via object paths.
+const homepageDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'homepage')
+await server.files(homepageDir, { filesKey: 'files' })
+console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
+
 await server.web(port, {
+  // serveFromRepo middleware reads the home repo's `files` key on every
+  // request — any path present wins; misses fall through to express.static
+  // so /apps/explorer/, /streamo/*.js, /apps/styles/*.css keep working.
+  serveRepoFiles: { repo: server.streamo, filesKey: 'files' },
   onAnnounce: (key, topic) => {
     if (topic !== server.publicKeyHex) return
     const members = server.streamo.get('members') ?? []

@@ -67,10 +67,41 @@ streamo --env-file .env
 | `STREAMO_PASSWORD` | `--password` | signing password |
 | `STREAMO_DATA_DIR` | `--data-dir` | archive directory (default `.streamo`) |
 | `STREAMO_FILES` | `--files` | mirror local files |
+| `STREAMO_FILES_KEY` | `--files-key` | mount file sync at `value[key]` (preserves sibling state) |
 | `STREAMO_WEB` | `--web` | HTTP + WebSocket server port |
 | `STREAMO_OUTLET` | `--outlet` | accept inbound peer connections |
 | `STREAMO_ORIGIN` | `--origin` | connect to a remote outlet |
 | `STREAMO_S3_BUCKET` | `--s3-bucket` | S3 bucket for replication |
+
+### serving a site from a repo
+
+If your streamo's value is (or contains) a flat path→content map, the
+`--web` flag automatically serves those files over HTTP. Combined with
+`--files`, this is **live-edit your public site**:
+
+```bash
+streamo \
+  --name my-site \
+  --username alice \
+  --files ./public \
+  --files-key files \
+  --web 8080
+```
+
+Edit a file in `./public/`, save, and the served bytes update on the
+next request. The streamo's signed commit log IS your site's history.
+ETags are strong, derived from the content address — browsers cache
+forever and re-fetch only when bytes change.
+
+`--files-key files` mounts file sync at `value.files` so the same
+streamo can hold sibling data (member list, journal entries, etc.)
+without leaking onto the web. Drop the flag and the whole value is
+the file tree.
+
+HTML responses get an importmap injected that maps `@dtudury/streamo`
+and `@dtudury/streamo/*` to the relay's `/streamo/` path. Your pages
+can use bare-specifier imports and remain host-agnostic — a fork
+served by another relay resolves them automatically.
 
 ## javascript api
 
@@ -238,6 +269,13 @@ and repo explorer are all served by the same process on port 8080. The
 "server" is just another streamo node — it holds the room's member list
 in its own repo and auto-accepts anyone who announces to it. Its public
 key is the room address. No special authority, no hidden state.
+
+The homepage you land on is **served from the relay's own home repo**
+(`files` key). `public/homepage/` is mirrored to/from that key by
+`fileSync` — edit a file there and your change becomes a signed
+commit; the next HTTP request serves the new bytes. The same streamo
+multiplexes four concerns on one stream: `members` (chat), `entries`
+(journal), `journalists` (entry sources), and `files` (the homepage).
 
 Useful URLs once it's running:
 

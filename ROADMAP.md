@@ -78,60 +78,56 @@ shape.
 **Order of work, roughly:**
 
 1. ~~**Serve-from-Repo (the inverse of fileSync).**~~ *(landed
-   2026-05-14 — see `public/streamo/repoFileServer.js`.* The
+   2026-05-14 — `public/streamo/repoFileServer.js`.)* The
    middleware is `serveFromRepo(repo, { filesKey, injectImportMap,
    libraryPath, libraryPackageName })`, mounted behind
-   `peerOptions.serveRepoFiles = { repo, ...opts }` in `webSync.js`
-   as a no-op default. HTML responses get an importmap injected
-   that binds `@dtudury/streamo` and `@dtudury/streamo/*` to a
-   configurable library path — the seam that lets a forked
-   homepage Repo's HTML stay truly host-agnostic. ETag is strong,
-   derived from `lastCommit.dataAddress + path`; 304 on
-   If-None-Match. 25 unit tests + 2 HTTP smoke tests.)*
-2. **Wire up a homepage Repo and turn the middleware on.** Two
-   decisions still open (see *open decisions* below). Whichever
-   shape we pick, this is the session where `serveRepoFiles`
-   gets set in `chat/server.js` and `streamo.dev` starts serving
-   its own face from a Repo it signed.
-3. Add `remoteParent` to the commit record codec (additive — old
-   commits stay valid without it). Update `Repo.set()` to accept
-   `{ remoteParent }` in commit options.
+   `peerOptions.serveRepoFiles = { repo, ...opts }` in `webSync.js`.
+   HTML responses get an importmap injected that binds
+   `@dtudury/streamo` and `@dtudury/streamo/*` to a configurable
+   library path. ETag is strong, derived from
+   `lastCommit.dataAddress + path`; 304 on If-None-Match. 25 unit
+   tests + 2 HTTP smoke tests.
+2. ~~**Wire up the homepage Repo.**~~ *(landed 2026-05-15.)* The
+   `fileSync` got a `filesKey` option (5 tests) and `chat/server.js`
+   now mirrors `public/homepage/` to/from the home repo's `files`
+   key. The home repo multiplexes four data sources on one stream:
+   `members`, `journalists`, `entries`, `files`. Edit a file in
+   `public/homepage/`, the change becomes a signed commit; the next
+   HTTP request serves the new bytes. CLI gets `--files-key` and
+   auto-wires `serveRepoFiles` when `--web` is set, so
+   `npx @dtudury/streamo --web --files=. --files-key=files` is a
+   one-liner for "serve my repo as a website."
+3. **Add `remoteParent` to the commit record codec** *(next)*.
+   Additive — old commits stay valid without it. Update
+   `Repo.set()` to accept `{ remoteParent }` in commit options.
+   Shape: `{ host, repo, address }` pointing at another author's
+   value at a specific content address. Two natural flavors —
+   *pure-copy* (no local parent) starts a fork from someone else's
+   value; *mixed* (both local parent + remoteParent) records "I
+   pulled this in from over there" while continuing my chain.
 4. UI in the explorer: render `remoteParent` as a clickable link
    to the cited commit on the other chain.
-5. Move Claude's journal/homepage to a fork of the home Repo. Her
-   first commit is pure-copy from the home Repo's current value;
+5. Move Claude's journal/homepage to a fork of the home repo. Her
+   first commit is pure-copy from the home repo's current value;
    subsequent commits are mixed (her ongoing chain + occasional
-   remoteParent pulls when the home Repo gets a material update).
+   remoteParent pulls when the home repo gets a material update).
 
-**Open decisions for the next session** *(deliberately not locked
-in when the middleware landed)*:
+**The shape that emerged.** The home repo is *one streamo
+multiplexing several data sources by object path*. Mount + Recaller
+route reads at the consumer end; sync sources (fileSync at `files`,
+the chat seed at the top, member-add at `members`) target different
+paths and don't collide. This is the streamo idiom proving itself
+on real infrastructure: the relay's identity, the chat room, the
+journal, and the public website are all one signed commit log.
 
-- **Where does the homepage Repo live?** Two natural shapes:
-  - *Inside the home repo.* The chat home gets a sibling key
-    `files`, so `home.get()` becomes `{ members, journalists,
-    entries, files: { ... } }`. Default `filesKey: 'files'`
-    matches this directly. Mixes concerns but keeps everything
-    in one cascade.
-  - *Separate `homepage` repo.* The relay derives a second keypair
-    (`signer.keysFor('homepage')`) and that repo's whole value IS
-    the files map. Use `filesKey: null` on the middleware. Cleaner
-    and reusable — any directory-shaped Repo gets a server for
-    free. But the relay now tracks two repos and `hello` /
-    `members` need to announce the second one for cascade
-    discovery.
-- **How does the homepage get *into* the Repo?**
-  - One-shot seed at startup (like the journal seed in
-    `chat/server.js`).
-  - Or wire `fileSync` to a `public/homepage/` directory — then
-    the homepage is editable on disk during dev and round-trips.
-    The streamo-coherent option: the development workflow IS the
-    data flow.
-
-The pull from the read-sweep was *separate `homepage` repo +
-fileSync wiring* (most generic, exercises the most of what streamo
-already is). David has since said *"fundamentally I think it should
-be a separate homepage repo"* — confirming the first half. The
-fileSync-vs-seed question is still open.
+**Deployment note** *(deferred — see "known limitations" on
+multi-device writes)*. Live-editing the public homepage from
+localhost while `streamo.dev`'s prod server is also running risks
+the multi-device write conflict (same keypair, two writers). For
+now the dev workflow is "stop prod, edit dev, restart prod from
+the synced state" or "edit only via prod." The clean fix is either
+fork-detection-with-error or chunk-level content addressing —
+both already on the known-limitations list.
 
 **The library-import problem — solved.** A homepage Repo's HTML
 needs to import the streamo library, but the host where the page is
@@ -141,10 +137,9 @@ injection solves this declaratively: the page writes
 relay binds it to its own `/streamo/` at serve time. Forked
 homepages on other relays get the right resolution automatically.
 No build step, no bundler, no per-Repo library copy. For
-IDE/editor resolution (inside or outside the streamo repo), use
-`jsconfig.json` paths (already present at the repo root, ES2022
-configured) — same shape as the importmap and the package.json
-`exports` map, parallel and independent.
+IDE/editor resolution, `jsconfig.json` paths at the repo root map
+the same specifiers to local files — parallel to the runtime
+importmap and the package.json `exports` map.
 
 ### richer explorer
 

@@ -57,8 +57,8 @@ export class StreamoServer {
     return originSync(this.streamo, this.publicKeyHex, host, +port)
   }
 
-  async files (folder = '.') {
-    return fileSync(this.streamo, folder, this.#dataDir)
+  async files (folder = '.', options = {}) {
+    return fileSync(this.streamo, folder, this.#dataDir, options)
   }
 
   async s3 ({ bucket, endpoint, region, accessKeyId, secretAccessKey }) {

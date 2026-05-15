@@ -48,6 +48,10 @@ program
       .preset('.')
   )
   .addOption(
+    new Option('--files-key <key>', 'mount file sync at repo.value[key] instead of replacing the whole value (preserves sibling state like members/journalists/entries)')
+      .env('STREAMO_FILES_KEY')
+  )
+  .addOption(
     new Option('--state-file <path>', 'write streamo state as JSON to this file on every change')
       .env('STREAMO_STATE_FILE')
   )
@@ -148,8 +152,9 @@ ${rows.map(([l, v], i) => [
 
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'
-  await server.files(folder)
-  console.log(`\x1b[32mmirroring files: ${folder}\x1b[0m`)
+  const filesKey = options.filesKey || null
+  await server.files(folder, { filesKey })
+  console.log(`\x1b[32mmirroring files: ${folder}${filesKey ? ` (at value.${filesKey})` : ''}\x1b[0m`)
 }
 
 if (options.stateFile) {
@@ -169,7 +174,19 @@ if (options.s3Bucket) {
 }
 
 if (options.web) {
-  await server.web(+options.web)
+  const webOptions = {}
+  // When the user is mirroring a folder into the streamo, serve those
+  // bytes via the repo on the same port — the page-as-Repo shape.
+  // Misses fall through to express.static so the streamo lib + bundled
+  // apps still work for forks that don't override them.
+  if (options.files) {
+    webOptions.serveRepoFiles = {
+      repo: server.streamo,
+      filesKey: options.filesKey || null
+    }
+    console.log(`\x1b[32mserving from repo: ${options.filesKey ? `value.${options.filesKey}` : 'value'} ↔ http://localhost:${+options.web}/\x1b[0m`)
+  }
+  await server.web(+options.web, webOptions)
 }
 
 if (options.outlet) {

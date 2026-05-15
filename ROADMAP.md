@@ -97,16 +97,23 @@ shape.
    auto-wires `serveRepoFiles` when `--web` is set, so
    `npx @dtudury/streamo --web --files=. --files-key=files` is a
    one-liner for "serve my repo as a website."
-3. **Add `remoteParent` to the commit record codec** *(next)*.
-   Additive — old commits stay valid without it. Update
-   `Repo.set()` to accept `{ remoteParent }` in commit options.
-   Shape: `{ host, repo, address }` pointing at another author's
-   value at a specific content address. Two natural flavors —
-   *pure-copy* (no local parent) starts a fork from someone else's
-   value; *mixed* (both local parent + remoteParent) records "I
-   pulled this in from over there" while continuing my chain.
-4. UI in the explorer: render `remoteParent` as a clickable link
-   to the cited commit on the other chain.
+3. ~~**Add `remoteParent` to the commit record codec.**~~ *(landed
+   2026-05-15.)* `Repo.commit(working, message, { remoteParent })`
+   accepts an optional `{ host, repo, dataAddress }` citation. The
+   OBJECT codec encodes only present keys, so old commits without
+   the field stay bit-identical — `'remoteParent' in record` is
+   false on plain commits, not just `remoteParent: undefined`. Both
+   shapes work: *pure-copy* (empty repo + remoteParent → no parent)
+   and *mixed* (existing chain + remoteParent → both set). 5 tests
+   covering backward compat, both shapes, and history() iteration.
+   `Repo.set()` is unchanged — its variadic signature doesn't
+   accept options cleanly, so the explicit `commit()` API is the
+   path when remoteParent is wanted; that's fine because forking
+   is intentional, not incidental.
+4. **UI in the explorer** *(next)*: render `remoteParent` as a
+   clickable link to the cited commit on the other chain. The
+   explorer already shows commit metadata as a kv table; this is
+   adding one more row with a chip-link if the field is present.
 5. Move Claude's journal/homepage to a fork of the home repo. Her
    first commit is pure-copy from the home repo's current value;
    subsequent commits are mixed (her ongoing chain + occasional

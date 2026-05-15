@@ -1,10 +1,22 @@
 /**
  * @file Repo — a Streamo whose every set() becomes a signed commit.
  *
- * Each commit is a record { message, date, dataAddress, parent }. The
- * commit log is what flows over the wire during sync. attachSigner
- * makes commits sign automatically, with concurrent commits batched
- * into one signature.
+ * Each commit is a record { message, date, dataAddress, parent,
+ * remoteParent? }. The commit log is what flows over the wire during
+ * sync. attachSigner makes commits sign automatically, with concurrent
+ * commits batched into one signature.
+ *
+ * The optional `remoteParent` field cites another author's value at a
+ * specific content address — `{ host, repo, dataAddress }`. It's a
+ * cryptographic footnote: anyone with the cited stream can verify the
+ * value really was at that address. The chain stays single-author-
+ * signed; remote citations don't break the invariant.
+ *
+ * Two natural shapes emerge:
+ *   - pure-copy commit  (no local parent, remoteParent set) — the
+ *     start of a fork: "I'm beginning my chain from their value"
+ *   - mixed commit      (both parent and remoteParent set) — "I'm
+ *     continuing my chain while pulling this in from over there"
  *
  * See design.md §8.
  */
@@ -74,7 +86,7 @@ export class Repo extends Streamo {
   /**
    * The latest commit record, or null if nothing has been committed yet.
    * Registers a reactive dependency on the commit log length.
-   * @returns {{ message: string, date: Date, dataAddress: number, parent: number|undefined }|null}
+   * @returns {{ message: string, date: Date, dataAddress: number, parent: number|undefined, remoteParent?: { host: string, repo: string, dataAddress: number } }|null}
    */
   get lastCommit () {
     this.recaller.reportKeyAccess(this, 'length')
@@ -214,16 +226,26 @@ export class Repo extends Streamo {
    * correct parent commit address rather than byteLength - 1, which could
    * point to a signature chunk when sign-in auto-signs after each commit.
    *
+   * When `options.remoteParent` is set, the commit cites another author's
+   * value: `{ host, repo, dataAddress }`. The local commit is still signed
+   * by us and append-only on our chain — `remoteParent` is a footnote, not
+   * a merge. Anyone holding the cited stream can verify the citation by
+   * decoding the value at `remoteParent.dataAddress` in that stream.
+   *
    * @param {Streamo} workingStreamo
    * @param {string} [message='']
+   * @param {{ remoteParent?: { host: string, repo: string, dataAddress: number } }} [options]
    * @returns {number} address of the new commit record
    */
-  commit (workingStreamo, message = '') {
+  commit (workingStreamo, message = '', options = {}) {
     if (workingStreamo.byteLength === 0) throw new Error('nothing to commit')
+    const { remoteParent } = options
     const parentAddr = super.valueAddress
     const parent = parentAddr >= 0 ? parentAddr : undefined
     const dataAddress = this.copyFrom(workingStreamo, workingStreamo.byteLength - 1)
-    const code = this.encode({ message, date: new Date(), dataAddress, parent })
+    const record = { message, date: new Date(), dataAddress, parent }
+    if (remoteParent !== undefined) record.remoteParent = remoteParent
+    const code = this.encode(record)
     const result = this.append(code)
     this.#scheduleSign()
     return result

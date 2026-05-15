@@ -79,4 +79,68 @@ describe(import.meta.url, ({ test }) => {
     const working = repo.checkout()
     assert.throws(() => repo.commit(working, 'nothing here'))
   })
+
+  // ── remoteParent: citing another author's value ────────────────────────
+
+  test('commit without options has no remoteParent (backward compat)', ({ assert }) => {
+    const repo = new Repo()
+    const working = repo.checkout()
+    working.set({ a: 1 })
+    repo.commit(working, 'unmarked')
+    assert.equal(repo.lastCommit.remoteParent, undefined)
+  })
+
+  test('pure-copy commit: empty repo + remoteParent → no parent, has remoteParent', ({ assert }) => {
+    // The fork-start shape: my chain begins with someone else's value.
+    const remote = { host: 'streamo.dev', repo: 'aabbccdd', dataAddress: 42 }
+    const repo = new Repo()
+    const working = repo.checkout()
+    working.set({ forked: 'value' })
+    repo.commit(working, 'fork', { remoteParent: remote })
+    const c = repo.lastCommit
+    assert.equal(c.parent, undefined)
+    assert.deepEqual(c.remoteParent, remote)
+    assert.deepEqual(repo.decode(c.dataAddress), { forked: 'value' })
+  })
+
+  test('mixed commit: existing repo + remoteParent → both parent and remoteParent set', ({ assert }) => {
+    // The pull-from-upstream shape: chain continues, footnoting a remote citation.
+    const remote = { host: 'streamo.dev', repo: 'aabbccdd', dataAddress: 87 }
+    const repo = new Repo()
+    const working = repo.checkout()
+    working.set({ v: 1 })
+    repo.commit(working, 'first')
+    working.set('v', 2)
+    repo.commit(working, 'pulled', { remoteParent: remote })
+    const c = repo.lastCommit
+    assert.equal(c.message, 'pulled')
+    assert.notEqual(c.parent, undefined)
+    assert.deepEqual(c.remoteParent, remote)
+  })
+
+  test('remoteParent survives history() iteration', ({ assert }) => {
+    const remote = { host: 'streamo.dev', repo: 'deadbeef', dataAddress: 13 }
+    const repo = new Repo()
+    const working = repo.checkout()
+    working.set({ v: 1 })
+    repo.commit(working, 'plain')
+    working.set('v', 2)
+    repo.commit(working, 'with-citation', { remoteParent: remote })
+    const all = [...repo.history()]
+    assert.equal(all.length, 2)
+    assert.deepEqual(all[0].remoteParent, remote)
+    assert.equal(all[1].remoteParent, undefined)
+  })
+
+  test('commit without remoteParent omits the key entirely (not just undefined)', ({ assert }) => {
+    // OBJECT encodes only present keys, so a plain commit's decoded record
+    // should not even have a `remoteParent` property — old chunks stay
+    // bit-identical and the field doesn't pollute every commit.
+    const repo = new Repo()
+    const working = repo.checkout()
+    working.set({ x: 1 })
+    repo.commit(working, 'plain')
+    const record = repo.lastCommit
+    assert.ok(!('remoteParent' in record))
+  })
 })

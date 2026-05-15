@@ -6,6 +6,7 @@
 //   recaller     the one Recaller every reactive thing shares
 //   registry     RepoRegistry — exposes its own dep/fire via shared recaller
 //   state        cross-view UI state (currently just connection-pill)
+//   homeKey      the relay's home repo key (set by main.js from `hello`)
 //   hovered      live-preview hover address — a single-value LiveSource
 //   loc          liveLocation over window.location
 //
@@ -29,6 +30,12 @@ export const registry = new RepoRegistry(undefined, { recaller, name: 'explorer'
 export const state = liveObject({
   connection: { status: '', text: 'connecting…' }
 }, { recaller, name: 'app' })
+
+// The relay's home repo key, delivered by the `hello` handshake message.
+// main.js writes it via the registrySync onHello callback; the registry
+// view reads it to render the home card and walk `home.value.members`
+// for the cascade. Null until the handshake completes.
+export const homeKey = liveValue(null, { recaller, name: 'homeKey' })
 
 // Live-preview hover state — single value. interactions.js writes it
 // (mouseover/mouseout); byte-stream and at-view's CONTENT slot read it.

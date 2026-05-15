@@ -4,8 +4,8 @@
 //     #/                          →  the inlined registry list, below
 //     #/repo/<keyHex>[/at/<a>]    →  AtView                    (at-view.js)
 //
-//   App singletons   context.js        recaller, registry, state, loc, hovered,
-//                                      getKeyHex / getAddress / go
+//   App singletons   context.js        recaller, registry, state, homeKey,
+//                                      loc, hovered, getKeyHex / getAddress / go
 //   AtView           at-view.js        owns its own atTab + sub-factories
 //   DOM event wiring interactions.js   drag / hover / post-render strip pin
 //
@@ -19,7 +19,7 @@ import { h } from '../../streamo/h.js'
 import { mount } from '../../streamo/mount.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { truncKey, fmtDate } from './format.js'
-import { recaller, registry, state, loc, getKeyHex, go } from './context.js'
+import { recaller, registry, state, homeKey, loc, getKeyHex, go } from './context.js'
 import { setupInteractions } from './interactions.js'
 import { AtView, handleAtViewAction } from './at-view.js'
 
@@ -27,12 +27,77 @@ import { AtView, handleAtViewAction } from './at-view.js'
 
 const port = +location.port || (location.protocol === 'https:' ? 443 : 80)
 
-// Connection status — fires `connection` so the conn-pill slot in the
-// mount template re-renders. Not awaited: the page paints immediately
-// with the "connecting…" state; the .then / .catch flips it later.
-registrySync(registry, location.hostname, port)
-  .then(() => state.set('connection', { status: 'ok',  text: `connected · ${location.hostname}:${port}` }))
+// Session reference, populated when registrySync resolves. The paste-a-key
+// form below uses session.subscribe(); the conn pill at the top tells the
+// user when the connection is ready, so submit-before-ready is rare.
+let session = null
+
+// onHello stores the relay's home key in context; follow walks
+// home.value.members and cascades subscriptions. Together these are
+// the public face — every other repo is reached by pasting a key.
+registrySync(registry, location.hostname, port, {
+  onHello: msg => { if (msg.home) homeKey.set(msg.home) },
+  follow: (keyHex, repo, subscribe) => {
+    for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
+  }
+})
+  .then(s => {
+    session = s
+    state.set('connection', { status: 'ok',  text: `connected · ${location.hostname}:${port}` })
+  })
   .catch(e => state.set('connection', { status: 'err', text: `connection failed: ${e.message}` }))
+
+// Paste-a-key form handler. Accepts a 66-char hex public key, asks the
+// session to subscribe, then navigates to that repo's at-view. Repos
+// the relay hasn't endorsed aren't enumerated to anyone — this is the
+// door for everything off the public list (private repos, repos on
+// other relays you know about out-of-band).
+async function subscribeToPastedKey (e) {
+  e.preventDefault()
+  const input = e.target.elements.key
+  const keyHex = input.value.trim().toLowerCase()
+  if (!/^[0-9a-f]{66}$/.test(keyHex)) {
+    input.setCustomValidity('Expected a 66-character hex public key')
+    input.reportValidity()
+    return
+  }
+  input.setCustomValidity('')
+  if (!session) return
+  input.value = ''
+  await session.subscribe(keyHex)
+  go({ keyHex, address: 'HEAD' })
+}
+
+// A clickable repo row used by both the home card and the members
+// cascade. `extraClass` lets home call attention to itself (the green
+// border treatment). Repo may be undefined if subscription is open but
+// no bytes have arrived yet; we show the key + a quiet status.
+function repoCard (keyHex, repo, extraClass = null) {
+  if (!repo) {
+    return h`
+      <div class=${['row', extraClass]} data-key=${keyHex} data-action="open-repo">
+        <span class="row-label">
+          <span class="mono dim">${truncKey(keyHex)}</span>
+        </span>
+        <span class="when dim">…</span>
+        <span class="msg dim">syncing…</span>
+      </div>
+    `
+  }
+  const last = repo.lastCommit
+  const when = last ? fmtDate(last.date) : `${repo.byteLength} b`
+  const name = repo.get('name')
+  return h`
+    <div class=${['row', extraClass]} data-key=${keyHex} data-action="open-repo">
+      <span class="row-label">
+        ${name ? h`<span class="row-name">${name}</span> ` : null}
+        <span class="mono dim">${truncKey(keyHex)}</span>
+      </span>
+      <span class=${['when', last ? null : 'dim']}>${when}</span>
+      <span class="msg dim">${last?.message || ''}</span>
+    </div>
+  `
+}
 
 // ── DOM wiring ────────────────────────────────────────────────────────────
 
@@ -76,27 +141,40 @@ mount(h`
     const keyHex = getKeyHex()
     if (!keyHex) return h`
       <section class="view" data-key="view-registry">
-        <h2>repos <span class="dim">${() => `(${[...registry].length})`}</span></h2>
+        <h2>home <span class="dim">the relay's public face</span></h2>
         ${() => {
-          const rows = []
-          for (const [keyHex, repo] of registry) {
-            // No claims about state we can't verify — show the date when we
-            // resolve a commit, otherwise show the byte count. byteLength
-            // is honest: it's what we actually have on hand. The watcher
-            // fires as more chunks land and the row settles to a date once
-            // the commit chunk resolves at the end of the stream.
-            const last = repo.lastCommit
-            const when = last ? fmtDate(last.date) : `${repo.byteLength} b`
-            rows.push(h`
-              <div class="row" data-key=${keyHex} data-action="open-repo">
-                <span class="mono">${truncKey(keyHex)}</span>
-                <span class=${['when', last ? null : 'dim']}>${when}</span>
-                <span class="msg dim">${last?.message || ''}</span>
-              </div>
-            `)
-          }
-          return rows.length ? rows : h`<div class="empty">waiting for repos…</div>`
+          // Home card — the repo delivered by `hello`. Reads homeKey,
+          // looks it up in the registry, renders the same row shape as
+          // members below. Until the handshake's `hello` arrives the
+          // key is null; once it arrives but bytes haven't streamed in
+          // yet the registry lookup is empty.
+          const home = homeKey.get()
+          if (!home) return h`<div class="empty">waiting for hello…</div>`
+          const repo = registry.get(home)
+          return repoCard(home, repo, 'home-card')
         }}
+        <h2>members <span class="dim">${() => {
+          const home = homeKey.get()
+          const list = home ? (registry.get(home)?.get('members') ?? []) : []
+          return `(${list.length})`
+        }}</span></h2>
+        ${() => {
+          // Members cascade — read home.value.members reactively so the
+          // list grows as new participants join. `follow` has already
+          // subscribed each one, so registry.get() will be populated
+          // for any member whose bytes have streamed in.
+          const home = homeKey.get()
+          if (!home) return null
+          const members = registry.get(home)?.get('members') ?? []
+          if (members.length === 0) return h`<div class="empty">no members yet</div>`
+          return members.map(memberKey => repoCard(memberKey, registry.get(memberKey)))
+        }}
+        <h2>subscribe to a key</h2>
+        <p class="hint">Private repos aren't enumerated by the relay. Paste a hex public key you know about to fetch it.</p>
+        <form class="subscribe-form" onsubmit=${() => subscribeToPastedKey}>
+          <input type="text" name="key" placeholder="66-char hex public key" autocomplete="off" spellcheck="false">
+          <button type="submit">subscribe</button>
+        </form>
       </section>
     `
     return h`<section class="view" data-key=${`view-at-${keyHex}`}>${AtView({ keyHex })}</section>`

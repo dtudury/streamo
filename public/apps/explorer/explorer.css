@@ -55,6 +55,57 @@
     .row .mono { font-size: 0.85rem; }
     .row .when { font-size: 0.78rem; color: var(--ink-dim); }
     .row .msg  { font-size: 0.85rem; }
+    .row .row-name { font-size: 0.9rem; font-weight: 500; margin-right: 0.4rem; }
+
+    /* Home card — the relay's public face, set apart from the members
+       cascade below by a green-tinted border + faint wash. Same .row
+       grid so layout stays uniform; just the framing changes. */
+    .row.home-card {
+      border: 1.5px solid #16a34a;
+      background: rgba(22, 163, 74, 0.05);
+      padding: 0.85rem;
+    }
+    .row.home-card .row-name { font-size: 1rem; }
+
+    /* Paste-a-key form: text input + button, sized to feel like a real
+       door (not a cramped admin field). Hint paragraph above the form
+       explains why this exists; quiet enough to skip if you already
+       know what to do. */
+    .hint {
+      font-size: 0.85rem;
+      color: var(--ink-dim);
+      margin: 0.25rem 0 0.6rem;
+      line-height: 1.5;
+    }
+    .subscribe-form {
+      display: flex;
+      gap: 0.5rem;
+      margin: 0.25rem 0 0.75rem;
+    }
+    .subscribe-form input {
+      flex: 1;
+      padding: 0.5rem 0.75rem;
+      border: 1.5px solid var(--rule);
+      border-radius: var(--radius);
+      font-family: monospace;
+      font-size: 0.85rem;
+      background: #fefdf8;
+      color: var(--ink);
+    }
+    .subscribe-form input:focus {
+      outline: none;
+      border-color: var(--ink);
+    }
+    .subscribe-form button {
+      padding: 0.5rem 1rem;
+      border: 1.5px solid var(--ink);
+      border-radius: var(--radius);
+      background: var(--ink);
+      color: #fefdf8;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .subscribe-form button:hover { opacity: 0.85; }
     .row .kind {
       font-size: 0.7rem;
       text-transform: uppercase;

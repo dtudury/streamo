@@ -381,8 +381,8 @@
         const recaller = new Recaller('home')
         const registry = new RepoRegistry(undefined, { recaller, name: 'home' })
         await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
-          filter: key => key === info.primaryKeyHex,
-          // When the home repo's value updates, pull out its journalists
+          // The server's `hello` auto-subscribes us to its home repo.
+          // When that repo's value updates, pull out its journalists
           // and subscribe to each. `subscribe` is idempotent, so calling
           // it on every settle is safe and self-healing if the list grows.
           follow: (keyHex, repo, subscribe) => {

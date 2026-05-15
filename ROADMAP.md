@@ -7,22 +7,25 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 6.0.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. 6.0
-replaced the signature scheme with a SHA-256 hash chain (every
-SIGNATURE carries the running accumulator at the moment of signing)
-and added staging to the verified receive path, so an untrusted
-peer cannot push bytes that no signature covers — closing the
-historical `[commit, bad_sig]` corruption hole. The change is a
-hard break: pre-6.0 stores are incompatible. The network still
-hosts more than one author cleanly: the relay's home repo carries
-a `journalists` array of pubkeys, and the homepage merges entries
+Streamo is at 7.0.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. 7.0 —
+**Operation Obsecurity** — reshaped registry sync so the relay no
+longer enumerates every repo it stores. The server now opens with
+`{type: 'hello', home}` and the client auto-subscribes; the `follow`
+callback walks `home.members` for cascade discovery. Private repos
+remain syncable by anyone who knows the key but are never advertised
+on the wire. The earlier hash-chain work from 6.0 (every SIGNATURE
+carries a running SHA-256 accumulator; staged verification on the
+receive path) is in place underneath. The network still hosts more
+than one author cleanly: the relay's home repo carries a
+`journalists` array of pubkeys, and the homepage merges entries
 from all of them. The explorer (the centerpiece app since 4.0.x)
 reads as a real instrument: draggable byte strip, persistent chunk
 inspector, value / storage / refs tabs, chunk graph in both
-directions. The all-in-one server (`npm run dev` / `npm run prod`)
-hosts the homepage, chat, and explorer on one port. 121 tests
-passing.
+directions, with a registry view that mirrors the new home-on-top +
+members-cascade shape. The all-in-one server (`npm run dev` /
+`npm run prod`) hosts the homepage, chat, and explorer on one port.
+121 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.
@@ -31,44 +34,7 @@ here.
 
 ## what's next
 
-### Operation Obsecurity *(complete — ready to ship as 7.0.0)*
-
-A four-step reshape of the registry sync protocol so the relay no longer
-leaks the list of every repo it stores. The name is a portmanteau of
-"security" and "obscurity": private repos remain syncable by anyone who
-knows their key, but the catalog mechanism that enumerated them all is
-gone.
-
-**The new protocol:** after the `"registry"` handshake, the server sends
-`{ type: 'hello', home: '<hex>' }`. The client auto-subscribes to that
-home repo; the `follow` callback walks `home.value.members` and
-subscribes to each member in turn. That cascade IS the public face.
-Repos not in `members` and not explicitly subscribed never appear on the
-wire to anyone — they're held privately by the relay until requested by
-key out-of-band.
-
-**All four steps landed:**
-- **A** — handshake announces `hello { home }` *(7860da8)*
-- **B** — catalog filters to home + members, reactive on member changes
-  *(13b0897)*
-- **C** — drop the catalog message entirely; auto-subscribe-on-hello;
-  consumers (chat / chat-cli) shed the now-vacuous `filter` option
-  *(f740caa)*
-- **D** — explorer registry view matches the new model: home card on
-  top, members cascade beneath, "paste a key" input as the door for
-  everything off the public list *(134b44e)*
-
-**Next: cut 7.0.0.** The protocol break is real (pre-Obsecurity clients
-won't understand the new handshake), so this is a major bump. Bump
-`package.json` to 7.0.0, write a CHANGELOG entry describing the
-Obsecurity arc end-to-end (motivation: the relay was leaking the list
-of every cached repo; new shape: hello-as-bootstrap + members cascade
-+ explicit out-of-band subscribe for everything else), and publish.
-The page-as-Repo thread below picks up from there.
-
----
-
-### page-as-Repo + remote-parent commits *(the next big thread after Obsecurity)*
+### page-as-Repo + remote-parent commits *(the next big thread)*
 
 The homepage at streamo.dev is currently static HTML that *walks* a
 Repo for journal entries. The journal slice is data; the bones are

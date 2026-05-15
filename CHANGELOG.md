@@ -5,6 +5,78 @@ for what's next.
 
 ---
 
+## 7.0.0 — Operation Obsecurity: the relay stops enumerating
+
+**Breaking change.** The registry-sync wire protocol no longer carries
+a `catalog` message in either direction, and the `filter` option is
+gone. Pre-7.0 clients connecting to a 7.0 relay (or vice versa) will
+sit in a non-fatal stall — they read each other's frames as unknown
+JSON types and never auto-subscribe — so a coordinated upgrade is
+needed. The name is a portmanteau of "security" and "obscurity":
+private repos remain syncable by anyone who knows their key, but the
+enumeration mechanism that listed them all is gone.
+
+**Why.** Before this release, the relay's `catalog` message announced
+every repo the relay happened to be storing — every cached private
+repo's public key, leaked to anyone who opened a WebSocket. Clients
+applied a `filter` to choose which ones to mirror, but the leak was
+already done by the time the filter ran. The catalog was load-bearing
+for discovery in early streamo, but as soon as the relay started
+caching repos for users beyond its own home, "what's in there?"
+became an answer the relay was giving out for free.
+
+**What changed:**
+
+- **`hello` is the new bootstrap.** A peer configured with a `home`
+  repo (any relay; servers, typically) sends `{type: "hello", home:
+  "<hex>"}` immediately after the `"registry"` handshake. The receiver
+  auto-subscribes to that key — no out-of-band coordination required
+  to learn the relay's public face.
+- **Cascade discovery replaces enumeration.** The `follow` callback
+  fires reactively on the home repo's value; walking `home.members`
+  and calling `subscribe` on each member key is the streamo idiom.
+  The cascade fans out from `hello` through content — every peer the
+  relay exposes is reachable through some chain of `members` arrays.
+- **Everything else is opt-in by key.** A client that knows a private
+  repo's key can still call `session.subscribe(keyHex)` and the relay
+  will serve the bytes. The protocol no longer announces that the
+  relay even has that repo — knowledge of the key is the entire
+  access-control surface for unlisted repos.
+- **Removed from the wire**: the `{type: "catalog", keys: [...]}`
+  message in both directions, the on-open re-broadcast of catalog
+  changes, and the `filter` option (it was only ever a filter on the
+  catalog).
+- **Consumer cleanup.** `public/apps/chat/main.js` and
+  `public/streamo/chat-cli.js` shed the now-vacuous `filter: k => k
+  === rootKey` option. The chat is unchanged behaviorally — the home
+  IS the chat room, so auto-subscribing to `hello.home` lands them at
+  the same repo.
+- **Explorer registry view (`#/`)**. Reshaped around the new model: a
+  home card on top (the repo delivered by `hello`), a members cascade
+  beneath it, and a paste-a-key input as the door for everything off
+  the public list. The old "every repo we've seen" list is gone.
+
+**The arc.** Operation Obsecurity landed in four commits, each
+green-tested in isolation: (A) server announces `hello { home }`
+purely additively; (B) catalog filters to home + members, reactive
+on member changes; (C) catalog message removed entirely, client
+auto-subscribes on hello; (D) explorer registry view matches.
+Six `registrySync.test.js` tests were rewritten around the new
+protocol shape — most notably "private repos do not sync without
+explicit subscribe" replaced the old "filter prevents unwanted
+syncing," because the security claim itself sharpened.
+
+**Caveats.** Two writers with the same keypair still fork chains
+(unchanged from 6.0; called out in `MEMORY.md`). The local `.streamo`
+dataDir is forward-compatible — no on-disk format change — but
+deployed relays and clients must be upgraded together to talk again.
+
+**Test architecture.** 121 tests, all passing. No new test files;
+six tests in `registrySync.test.js` were rewritten to match the new
+protocol.
+
+---
+
 ## 6.0.0 — hash chain #1: only the author writes to her repo
 
 **Breaking change.** The signature scheme is replaced with a SHA-256

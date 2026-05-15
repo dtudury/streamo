@@ -168,10 +168,11 @@ state.set('atTab', 'storage')                          // fires the watcher
 import { registrySync } from '@dtudury/streamo'
 
 const session = await registrySync(registry, 'localhost', 8080, {
-  // only sync repos you care about
-  filter: key => key === rootKey,
-
-  // follow links embedded in repo data (content-driven discovery)
+  // discovery cascades through content. The server's `hello` message
+  // announces its home repo and we auto-subscribe; from there `follow`
+  // walks each repo's value for related keys and subscribes to them.
+  // Repos not reachable through that cascade never appear on the wire
+  // unless explicitly subscribed by key (see `session.subscribe` below).
   follow: (keyHex, repo, subscribe) => {
     for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
   },

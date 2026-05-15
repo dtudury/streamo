@@ -248,9 +248,8 @@ function passed to the constructor decides what each repo gets wired
 with — `archiveSync` for disk persistence, `s3Sync` for object storage,
 or just plain in-memory `new Repo()`.
 
-`onOpen` callbacks fire when a new repo is opened, used by
-`registrySync` to broadcast catalog updates and by clients to watch
-new participants as they appear.
+`onOpen` callbacks fire when a new repo is opened — used by clients
+to watch new participants as they appear in a registry.
 
 **Cross-recaller bridging, built in.** Each `Repo` owns its own
 `Recaller` — that gives it fine-grained dependency tracking on its
@@ -292,8 +291,15 @@ Once a WebSocket is open, this is the protocol:
    `"registry"`. The accepting side recognizes it and switches into
    registry-sync mode.
 
-2. **JSON control messages**:
-   - `{type: "catalog", keys: [...]}` — what repos this side has open.
+2. **Hello**: the server (any peer configured with a `home` repo
+   key) sends `{type: "hello", home: "<hex>"}` immediately after
+   the handshake. The receiver auto-subscribes to that key — that
+   is the bootstrap pointer, and from there the `follow` callback
+   walks the home's `members` for cascade discovery. A relay's
+   `hello` is its entire public face: any repo it stores that is
+   not reachable through this cascade is never enumerated.
+
+3. **JSON control messages**:
    - `{type: "subscribe", key: "<hex>"}` — request bidirectional sync
      for a specific repo.
    - `{type: "interest", key: "<topic>"}` — express interest in
@@ -304,23 +310,24 @@ Once a WebSocket is open, this is the protocol:
    - `{type: "ping"}` — 20-second keep-alive so PaaS hosts don't
      idle-close.
 
-3. **Binary frames**:
+4. **Binary frames**:
    `[33-byte compressed-secp256k1-public-key prefix][chunk bytes]`.
    The 33-byte prefix routes the chunk to the right repo. Frames are
    fed straight from `makeReadableStream` on the sender into
    `makeVerifiedWritableStream` on the receiver — including signature
    verification on every SIGNATURE chunk.
 
-4. **Discovery**:
-   - `filter(key)` — gates which repos from a peer's catalog get
-     auto-subscribed. Default: all of them.
+5. **Discovery**:
    - `follow(keyHex, repo, subscribe)` — invoked reactively whenever a
      synced repo's value changes. Used to walk content (e.g., a list of
      member keys in a chat room) and call `subscribe` on discovered
      keys. This is **content-driven discovery** — peers find each other
-     through the data.
+     through the data, starting from the `hello` pointer.
    - `onAnnounce(key, topic)` — runs on the client when a peer
      announces against a topic the client expressed interest in.
+   - Repos off the cascade still sync on demand: a client that knows
+     a private key can call `session.subscribe(key)` and the relay
+     will serve it. The relay simply doesn't advertise that it has it.
 
 ## 11. Sync backends
 

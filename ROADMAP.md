@@ -135,12 +135,22 @@ shape.
    history repo appears as a clickable card.  Result: the
    explorer is now lit up with the project's whole 231-commit
    story.
-6. **Claude's pure-copy fork from history**.  *(next, smaller
-   session.)* A script that, given Claude's credentials, makes
-   her first commit as a pure-copy from a chosen address on the
-   `streamo-history` chain with `remoteParent` set to cite that
-   address.  Her chain becomes a fork with a visible upstream;
-   the explorer's chip-link points back at history.
+6. ~~**first-user fork experience.**~~ *(landed 2026-05-15.)*
+   `scripts/fork-homepage.js` (aliased `npm run fork-homepage`)
+   walks a brand-new user — any identity, including Claude's —
+   from clone to their own signed fork of the relay's homepage in
+   one command.  Prompts for username + password, derives the
+   keypair, pulls the relay's home repo via `/streams/<key>/raw`,
+   commits a pure-copy of the `files` value with `remoteParent`
+   citing the relay's latest commit, archives locally, prints the
+   exact CLI command to serve the fork.  End-to-end loop verified
+   against `npm run dev`: fork → serve → edit → re-served.
+   [`FIRST_STEPS.md`](./FIRST_STEPS.md) is the guided walkthrough
+   anchored on this script — linked from README and from the
+   homepage (small CTA above the footer + a footer chip).  Same
+   mechanism Claude would use for her own fork: she runs the
+   script with her own credentials and her fork has `remoteParent`
+   citing wherever she chose to fork from.
 
 **The shape that emerged.** The home repo is *one streamo
 multiplexing several data sources by object path*. Mount + Recaller

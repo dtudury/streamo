@@ -3,9 +3,19 @@
   "version": "7.0.1",
   "description": "peer-to-peer sync where your data and identity belong to you, not the server",
   "keywords": ["p2p", "peer-to-peer", "sync", "reactive", "content-addressed", "websocket", "signed", "append-only", "offline-first", "cryptographic", "identity"],
-  "repository": "git@github.com:dtudury/streamo.git",
+  "homepage": "https://streamo.dev",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dtudury/streamo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dtudury/streamo/issues"
+  },
   "author": "David Tudury <david.tudury@gmail.com>",
   "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "main": "./index.js",
   "exports": {
@@ -35,9 +45,10 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "test": "node --test",
-    "dev":  "node public/apps/chat/server.js --env-file .env.dev",
-    "prod": "node public/apps/chat/server.js --env-file .env.prod",
-    "seed-history": "node scripts/seed-history.js"
+    "test":          "node --test",
+    "dev":           "node public/apps/chat/server.js --env-file .env.dev",
+    "prod":          "node public/apps/chat/server.js --env-file .env.prod",
+    "seed-history":  "node scripts/seed-history.js",
+    "fork-homepage": "node scripts/fork-homepage.js"
   }
 }

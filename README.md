@@ -8,6 +8,8 @@
 
 Streamo is a peer-to-peer sync library built around a simple promise: **no server holds authority over your data or your identity.** The server is a relay, not a gatekeeper. Your keypair is your identity — derived from your credentials, not stored in a file. Your commit log is the source of truth, and every connected peer sees the same history.
 
+> **New here?** → [**FIRST_STEPS.md**](./FIRST_STEPS.md) walks you from clone to your own signed fork of the homepage in ~10 minutes.
+
 ## core ideas
 
 - **No server holds authority** — the server is a relay; your data lives on your devices and can't be seized or censored. Disconnect the server and everything is still yours.

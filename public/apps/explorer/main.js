@@ -38,7 +38,11 @@ let session = null
 registrySync(registry, location.hostname, port, {
   onHello: msg => { if (msg.home) homeKey.set(msg.home) },
   follow: (keyHex, repo, subscribe) => {
+    // Walk both `members` (chat participants) and `journalists` (peers
+    // whose repos contribute named slices — currently entries + the
+    // history streamo).  Both are "interesting to the explorer" lists.
     for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
+    for (const journalistKey of repo.get('journalists') ?? []) subscribe(journalistKey)
   }
 })
   .then(s => {
@@ -168,6 +172,24 @@ mount(h`
           const members = registry.get(home)?.get('members') ?? []
           if (members.length === 0) return h`<div class="empty">no members yet</div>`
           return members.map(memberKey => repoCard(memberKey, registry.get(memberKey)))
+        }}
+        <h2>journalists <span class="dim">${() => {
+          const home = homeKey.get()
+          if (!home) return ''
+          const list = (registry.get(home)?.get('journalists') ?? []).filter(k => k !== home)
+          return `(${list.length})`
+        }}</span></h2>
+        ${() => {
+          // Journalists cascade — repos contributing named slices (entries,
+          // the project's git-history streamo, future contributors). The
+          // home repo's own key is in the list canonically but is shown as
+          // the home card above, so we filter it out here to avoid the
+          // duplicate row.
+          const home = homeKey.get()
+          if (!home) return null
+          const journalists = (registry.get(home)?.get('journalists') ?? []).filter(k => k !== home)
+          if (journalists.length === 0) return h`<div class="empty">no journalists registered</div>`
+          return journalists.map(jKey => repoCard(jKey, registry.get(jKey)))
         }}
         <h2>subscribe to a key</h2>
         <p class="hint">Private repos aren't enumerated by the relay. Paste a hex public key you know about to fetch it.</p>

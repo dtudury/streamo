@@ -4,6 +4,7 @@ import { config } from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { StreamoServer } from '../../streamo/StreamoServer.js'
+import { bytesToHex } from '../../streamo/utils.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
 if (envFile) config({ path: envFile })
@@ -24,7 +25,16 @@ const extraJournalists = (process.env.STREAMO_JOURNALISTS ?? process.env.STREAMO
 
 const server = await StreamoServer.create({ name, username, password, dataDir, keyIterations: keyIter })
 
-console.log(`[chat] room key: ${server.publicKeyHex}`)
+// The history repo: deterministic keypair from the same credentials, named
+// `streamo-history`.  Seeded by `npm run seed-history`; opened here so it's
+// available in the registry for the WS sync to serve and added to the home
+// repo's `journalists` so cascade discovery finds it on connect.
+const historyKey = await server.signer.keysFor('streamo-history')
+const historyKeyHex = bytesToHex(historyKey.publicKey)
+const historyRepo = await server.registry.open(historyKeyHex)
+const historyCommits = [...historyRepo.history()].length
+console.log(`[chat] room key:    ${server.publicKeyHex}`)
+console.log(`[chat] history key: ${historyKeyHex} (${historyCommits} commits)`)
 console.log(`[chat] serving on http://localhost:${port}/apps/chat/`)
 
 // Seed the primary repo with chat-room bookkeeping AND the journal —
@@ -41,7 +51,7 @@ console.log(`[chat] serving on http://localhost:${port}/apps/chat/`)
   // The relay's own pubkey is always included; STREAMO_JOURNALISTS adds
   // others (Claude, future contributors). Idempotent — we only append.
   if (!Array.isArray(seed.journalists)) { seed.journalists = []; needsCommit = true }
-  const wantJournalists = [server.publicKeyHex, ...extraJournalists]
+  const wantJournalists = [server.publicKeyHex, historyKeyHex, ...extraJournalists]
   const missingJournalists = wantJournalists.filter(k => !seed.journalists.includes(k))
   if (missingJournalists.length) {
     seed.journalists = [...seed.journalists, ...missingJournalists]

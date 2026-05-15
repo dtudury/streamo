@@ -143,4 +143,13 @@ describe(import.meta.url, ({ test }) => {
     const record = repo.lastCommit
     assert.ok(!('remoteParent' in record))
   })
+
+  test('commit accepts a custom date via options (back-stamping for history replay)', ({ assert }) => {
+    const oldDate = new Date('2020-01-15T12:00:00Z')
+    const repo = new Repo()
+    const working = repo.checkout()
+    working.set({ x: 1 })
+    repo.commit(working, 'recovered', { date: oldDate })
+    assert.equal(+repo.lastCommit.date, +oldDate)
+  })
 })

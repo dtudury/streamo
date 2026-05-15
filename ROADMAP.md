@@ -117,12 +117,30 @@ shape.
    that subscribes-then-navigates so the at-view doesn't land on
    an "opening…" empty state; cross-host citations are plain
    anchors with `target="_blank"` (link-only, zero CORS exposure).
-5. **Move Claude's journal/homepage to a fork of the home repo**
-   *(next)*. Her first commit is pure-copy from the home repo's
-   current value; subsequent commits are mixed (her ongoing chain
-   + occasional remoteParent pulls when the home repo gets a
-   material update). This is the session where remoteParent gets
-   real data flowing through it.
+5. **Build the upstream Streamo Claude forks from out of git
+   history.** *(landed 2026-05-15.)* `scripts/seed-history.js`
+   walks `git log --first-parent --reverse` and replays each git
+   commit as a streamo commit on a `streamo-history` repo (a
+   second keypair derived from the relay's credentials via
+   `signer.keysFor('streamo-history')`).  Per-commit value:
+   `{ sha, tree, parents, author, body }`.  Idempotent: walks
+   existing streamo commits, verifies prefix matches by sha,
+   appends only the missing tail.  `Repo.commit()` gained
+   `options.date` so committer timestamps round-trip from git
+   onto streamo's signed chain.  `chat/server.js` opens the
+   history repo via the registry and adds its pubkey to
+   `journalists` for cascade discovery; the explorer's `follow`
+   callback walks `journalists` too (it only walked `members`
+   before), and its home view grows a journalists section so the
+   history repo appears as a clickable card.  Result: the
+   explorer is now lit up with the project's whole 231-commit
+   story.
+6. **Claude's pure-copy fork from history**.  *(next, smaller
+   session.)* A script that, given Claude's credentials, makes
+   her first commit as a pure-copy from a chosen address on the
+   `streamo-history` chain with `remoteParent` set to cite that
+   address.  Her chain becomes a fork with a visible upstream;
+   the explorer's chip-link points back at history.
 
 **The shape that emerged.** The home repo is *one streamo
 multiplexing several data sources by object path*. Mount + Recaller

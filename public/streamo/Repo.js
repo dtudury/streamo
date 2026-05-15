@@ -232,18 +232,21 @@ export class Repo extends Streamo {
    * a merge. Anyone holding the cited stream can verify the citation by
    * decoding the value at `remoteParent.dataAddress` in that stream.
    *
+   * `options.date` overrides the default "now" — useful when replaying
+   * pre-existing history (e.g. seeding a streamo from git log).
+   *
    * @param {Streamo} workingStreamo
    * @param {string} [message='']
-   * @param {{ remoteParent?: { host: string, repo: string, dataAddress: number } }} [options]
+   * @param {{ remoteParent?: { host: string, repo: string, dataAddress: number }, date?: Date }} [options]
    * @returns {number} address of the new commit record
    */
   commit (workingStreamo, message = '', options = {}) {
     if (workingStreamo.byteLength === 0) throw new Error('nothing to commit')
-    const { remoteParent } = options
+    const { remoteParent, date = new Date() } = options
     const parentAddr = super.valueAddress
     const parent = parentAddr >= 0 ? parentAddr : undefined
     const dataAddress = this.copyFrom(workingStreamo, workingStreamo.byteLength - 1)
-    const record = { message, date: new Date(), dataAddress, parent }
+    const record = { message, date, dataAddress, parent }
     if (remoteParent !== undefined) record.remoteParent = remoteParent
     const code = this.encode(record)
     const result = this.append(code)

@@ -20,9 +20,9 @@ async function makeKey (name = 'smoke') {
   return { signer, publicKey, publicKeyHex: toHex(publicKey) }
 }
 
-async function startServer (publicKeyHex, stream) {
+async function startServer (publicKeyHex, stream, peerOptions = {}) {
   const registry = new RepoRegistry(() => stream)
-  const server = await webSync(registry, publicKeyHex, 0, 'smoke-test', KEY_ITERATIONS)
+  const server = await webSync(registry, publicKeyHex, 0, 'smoke-test', KEY_ITERATIONS, peerOptions)
   const { port } = server.address()
   const close = () => new Promise(resolve => server.close(resolve))
   return { port, close }
@@ -111,6 +111,56 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(stream.get('count'), 1)
     // get() must also skip past the signature
     assert.deepEqual(stream.get(), { count: 1 })
+  })
+
+  test('serveRepoFiles middleware serves homepage Repo bytes via HTTP', async ({ assert }) => {
+    const { publicKeyHex } = await makeKey('serveRepo-smoke')
+    const homepage = new Repo()
+    const working = homepage.checkout()
+    working.set({ files: { 'index.html': '<!doctype html><html><head><title>x</title></head><body>hi</body></html>' } })
+    homepage.commit(working, 'seed homepage')
+
+    const { port, close } = await startServer(publicKeyHex, new Streamo(), {
+      serveRepoFiles: { repo: homepage }
+    })
+    try {
+      const res = await fetch(`http://localhost:${port}/`)
+      assert.equal(res.status, 200)
+      assert.equal(res.headers.get('content-type'), 'text/html; charset=utf-8')
+      const body = await res.text()
+      assert.ok(body.includes('<title>x</title>'))
+      // importmap was injected
+      assert.ok(body.includes('<script type="importmap">'))
+      assert.ok(body.includes('@dtudury/streamo'))
+      // ETag set
+      const etag = res.headers.get('etag')
+      assert.ok(etag && etag.startsWith('"'))
+      // If-None-Match returns 304
+      const cached = await fetch(`http://localhost:${port}/`, { headers: { 'If-None-Match': etag } })
+      assert.equal(cached.status, 304)
+    } finally {
+      await close()
+    }
+  })
+
+  test('serveRepoFiles falls through to express.static when path not in Repo', async ({ assert }) => {
+    const { publicKeyHex } = await makeKey('fallthrough-smoke')
+    const homepage = new Repo()
+    const working = homepage.checkout()
+    working.set({ files: { 'something-else.html': 'not the request' } })
+    homepage.commit(working, 'seed')
+
+    const { port, close } = await startServer(publicKeyHex, new Streamo(), {
+      serveRepoFiles: { repo: homepage }
+    })
+    try {
+      // /api/info is served by the express route AFTER static; falling through
+      // here means the middleware did not match `/api/info` (which is correct)
+      const info = await fetch(`http://localhost:${port}/api/info`).then(r => r.json())
+      assert.equal(info.primaryKeyHex, publicKeyHex)
+    } finally {
+      await close()
+    }
   })
 
   test('archiveSync persists data and reloads it on a fresh Streamo', async ({ assert }) => {

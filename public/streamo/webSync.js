@@ -4,6 +4,7 @@ import express from 'express'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { attachStreamSync } from './outletSync.js'
+import { serveFromRepo } from './repoFileServer.js'
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -23,10 +24,21 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
  * @param {import('./RepoRegistry.js').RepoRegistry} registry
  * @param {string} primaryKeyHex   public key of the "main" streamo for GET /
  * @param {number} port
+ * @param {object} [peerOptions.serveRepoFiles]  optional config to serve a
+ *   homepage Repo's files via serveFromRepo: `{ repo, ...serveOpts }`. When
+ *   set, the middleware mounts ahead of express.static so any path present
+ *   in the Repo wins; misses fall through to disk.
  * @returns {Promise<import('http').Server>}
  */
 export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000, peerOptions = {}) {
   const app = express()
+
+  const { serveRepoFiles, ...peerOpts } = peerOptions
+
+  if (serveRepoFiles && serveRepoFiles.repo) {
+    const { repo, ...serveOpts } = serveRepoFiles
+    app.use(serveFromRepo(repo, serveOpts))
+  }
 
   app.use(express.static(publicDir))
 
@@ -111,7 +123,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // The relay announces its public face — `primaryKeyHex` is the "home" repo
   // any browser/client connecting here can bootstrap from. See registrySync.js
   // protocol docs for the `hello` message shape.
-  attachStreamSync(new WebSocketServer({ server }), registry, 'web', { ...peerOptions, home: primaryKeyHex })
+  attachStreamSync(new WebSocketServer({ server }), registry, 'web', { ...peerOpts, home: primaryKeyHex })
 
   await new Promise((resolve, reject) => {
     server.listen(port, err => err ? reject(err) : resolve())

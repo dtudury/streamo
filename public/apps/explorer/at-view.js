@@ -252,6 +252,32 @@ export function AtView ({ keyHex }) {
           const addrLink = (addr) => addr === undefined
             ? h`<span class="dim">(none — first commit)</span>`
             : h`<span class="dim">→ </span><a class="addr-link" data-action="open-at" data-keyhex=${keyHex} data-addr=${addr}>@${addr}</a>`
+          // remoteParent renders as a chip that navigates to the cited
+          // commit on the OTHER chain. Same-host citations use the
+          // open-foreign-at action (subscribe-then-go); cross-host
+          // citations are plain anchors that open the other relay's
+          // explorer in a new tab.  Either way, the chip is link-only —
+          // no inline fetch, no CORS concerns. The cited commit's
+          // bytes are reached by navigation.
+          const remoteParentLink = (rp) => {
+            if (!rp || typeof rp !== 'object') return h`<span class="dim">(malformed)</span>`
+            const { host, repo: remoteRepoKey, dataAddress } = rp
+            const sameHost = !host || host === location.hostname
+            if (sameHost) {
+              return h`
+                <a class="addr-link" data-action="open-foreign-at" data-keyhex=${remoteRepoKey} data-addr=${dataAddress}>
+                  <span class="mono">${truncKey(remoteRepoKey)}</span> <span class="dim">→ @${dataAddress}</span>
+                </a>
+              `
+            }
+            const proto = location.protocol === 'file:' ? 'https:' : location.protocol
+            const url = `${proto}//${host}/apps/explorer/#/repo/${remoteRepoKey}/at/${dataAddress}`
+            return h`
+              <a class="addr-link" href=${url} target="_blank" rel="noopener">
+                <span class="dim">${host}</span> · <span class="mono">${truncKey(remoteRepoKey)}</span> <span class="dim">↗ @${dataAddress}</span>
+              </a>
+            `
+          }
           const commitFieldsTable = h`
             <table class="kv">
               <tbody>
@@ -259,6 +285,9 @@ export function AtView ({ keyHex }) {
                 <tr><td class="mono">date</td><td>${typedValue(decoded.date)}</td></tr>
                 <tr><td class="mono">dataAddress</td><td>${addrLink(decoded.dataAddress)}</td></tr>
                 <tr><td class="mono">parent</td><td>${addrLink(decoded.parent)}</td></tr>
+                ${decoded.remoteParent
+                  ? h`<tr><td class="mono">remoteParent</td><td>${remoteParentLink(decoded.remoteParent)}</td></tr>`
+                  : null}
               </tbody>
             </table>
           `

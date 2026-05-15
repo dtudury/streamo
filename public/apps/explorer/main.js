@@ -193,6 +193,19 @@ document.body.addEventListener('click', e => {
   switch (el.dataset.action) {
     case 'open-repo':     return go({ keyHex: el.dataset.key,    address: 'HEAD' })
     case 'open-at':       return go({ keyHex: el.dataset.keyhex, address: +el.dataset.addr })
+    case 'open-foreign-at': {
+      // Same-host remoteParent citation — the cited repo might not be in
+      // the registry yet.  Subscribe (idempotent) before navigating so the
+      // at-view doesn't land on an "opening…" empty state.
+      const keyHex = el.dataset.keyhex
+      const addr = +el.dataset.addr
+      if (!/^[0-9a-f]{66}$/.test(keyHex)) return
+      ;(async () => {
+        if (session) await session.subscribe(keyHex)
+        go({ keyHex, address: addr })
+      })()
+      return
+    }
     case 'back-registry': return go({})
     case 'back-repo':     return go({ keyHex: el.dataset.keyhex, address: 'HEAD' })
     case 'select-commit': {

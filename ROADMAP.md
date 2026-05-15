@@ -110,14 +110,19 @@ shape.
    accept options cleanly, so the explicit `commit()` API is the
    path when remoteParent is wanted; that's fine because forking
    is intentional, not incidental.
-4. **UI in the explorer** *(next)*: render `remoteParent` as a
-   clickable link to the cited commit on the other chain. The
-   explorer already shows commit metadata as a kv table; this is
-   adding one more row with a chip-link if the field is present.
-5. Move Claude's journal/homepage to a fork of the home repo. Her
-   first commit is pure-copy from the home repo's current value;
-   subsequent commits are mixed (her ongoing chain + occasional
-   remoteParent pulls when the home repo gets a material update).
+4. ~~**UI in the explorer**~~ *(landed 2026-05-15.)* The commit-
+   fields kv table grows a `remoteParent` row when present. The
+   chip-link points at the cited commit on the other chain;
+   same-host citations dispatch a new `open-foreign-at` action
+   that subscribes-then-navigates so the at-view doesn't land on
+   an "opening…" empty state; cross-host citations are plain
+   anchors with `target="_blank"` (link-only, zero CORS exposure).
+5. **Move Claude's journal/homepage to a fork of the home repo**
+   *(next)*. Her first commit is pure-copy from the home repo's
+   current value; subsequent commits are mixed (her ongoing chain
+   + occasional remoteParent pulls when the home repo gets a
+   material update). This is the session where remoteParent gets
+   real data flowing through it.
 
 **The shape that emerged.** The home repo is *one streamo
 multiplexing several data sources by object path*. Mount + Recaller

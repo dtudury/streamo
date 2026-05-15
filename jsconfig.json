@@ -4,7 +4,12 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "node16",
     "moduleResolution": "node16",
-    "checkJs": false
+    "checkJs": false,
+    "baseUrl": ".",
+    "paths": {
+      "@dtudury/streamo": ["./index.js"],
+      "@dtudury/streamo/*": ["./public/streamo/*"]
+    }
   },
   "exclude": ["node_modules"]
 }

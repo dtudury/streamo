@@ -55,7 +55,7 @@ function flag (name, def) {
 
 const host          = flag('host',           'localhost')
 const port          = +flag('port',          8080)
-const dataDir       = flag('data-dir',       '.streamo-fork')
+const dataDir       = flag('data-dir',       '.streamo')
 const streamName    = flag('name',           'homepage')
 const keyIterations = +(process.env.STREAMO_KEY_ITERATIONS || flag('key-iterations', null) || 100000)
 

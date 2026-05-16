@@ -94,7 +94,7 @@ The script will:
    homepage with `remoteParent` set to the relay's commit you're
    forking. The commit has no local parent (it's your first) and a
    cryptographic footnote pointing at where you started.
-4. Save your repo to `.streamo-fork/<your-pubkey>.bin`
+4. Save your repo to `.streamo/<your-pubkey>.bin`
 5. Print the exact command to serve your fork
 
 ## 4. serve your fork
@@ -105,7 +105,7 @@ Paste the command the script printed. It'll look like:
 npx @dtudury/streamo \
   --name "homepage" \
   --username "your-username" \
-  --data-dir ".streamo-fork" \
+  --data-dir ".streamo" \
   --files "./my-streamo-files" \
   --files-key files \
   --key-iterations 100000 \

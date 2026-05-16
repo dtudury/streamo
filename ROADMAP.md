@@ -7,25 +7,23 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 7.0.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. 7.0 —
-**Operation Obsecurity** — reshaped registry sync so the relay no
-longer enumerates every repo it stores. The server now opens with
-`{type: 'hello', home}` and the client auto-subscribes; the `follow`
-callback walks `home.members` for cascade discovery. Private repos
-remain syncable by anyone who knows the key but are never advertised
-on the wire. The earlier hash-chain work from 6.0 (every SIGNATURE
-carries a running SHA-256 accumulator; staged verification on the
-receive path) is in place underneath. The network still hosts more
-than one author cleanly: the relay's home repo carries a
-`journalists` array of pubkeys, and the homepage merges entries
-from all of them. The explorer (the centerpiece app since 4.0.x)
-reads as a real instrument: draggable byte strip, persistent chunk
-inspector, value / storage / refs tabs, chunk graph in both
-directions, with a registry view that mirrors the new home-on-top +
-members-cascade shape. The all-in-one server (`npm run dev` /
-`npm run prod`) hosts the homepage, chat, and explorer on one port.
-121 tests passing.
+Streamo is at 7.1.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. 7.1 —
+**Page-as-Repo** — closes the loop on streamo's main pitch by making
+the relay's homepage itself a signed streamo: bytes served from the
+home repo's `files` key, edits flow through `fileSync` as signed
+commits, and a new optional `remoteParent` field on commits makes
+forks first-class with cryptographic citations. The project's git
+log is now itself replayable as a streamo (`scripts/seed-history.js`
+produces a `streamo-history` repo whose commit chain mirrors git
+first-parent history); the explorer's journalists section surfaces
+its 231 historical commits as clickable cards. Any user can produce
+their own signed pure-copy fork of the homepage with one command
+(`npm run fork-homepage`); [`FIRST_STEPS.md`](./FIRST_STEPS.md) is
+the walkthrough. Underneath, 7.0 Obsecurity registry hygiene and
+6.0 hash-chain accumulator are unchanged. The all-in-one server
+(`npm run dev` / `npm run prod`) hosts the homepage, chat, explorer,
+and the live history repo on one port. 159 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.
@@ -34,152 +32,29 @@ here.
 
 ## what's next
 
-### page-as-Repo + remote-parent commits *(the next big thread)*
+### explorer value-view performance *(the next active thread)*
 
-The homepage at streamo.dev is currently static HTML that *walks* a
-Repo for journal entries. The journal slice is data; the bones are
-hardcoded. The next step is to make the **whole page** a Repo —
-something like `{ wordmark, tagline, ideas, journal, apps }` —
-and have the server render whichever Repo is the canonical
-homepage.
+Now that the `streamo-history` repo is loaded by `npm run dev`, the
+explorer is the first place the value tab encounters genuinely big
+data: 231 commits, each with a `{ sha, tree, parents, author, body }`
+value plus the commit-record envelope around it. Opening a commit
+feels slow. Reported 2026-05-16.
 
-This unlocks the "fork the homepage" shape: an author (a Claude, a
-guest contributor) has their own Repo with all the page's contents.
-The server serves that Repo at `/`. The author can change the
-wording, add a section, rewrite the apps grid — everything. The
-"home" Repo becomes upstream-template that forks track.
+Likely culprits, in rough order of suspected weight:
 
-The structural piece needed to make forks first-class is an
-**optional `remoteParent` field on commits**:
+- The `safeJSON` rehydrated `<pre>` stringifies the *whole* decoded
+  value on every render, even when most of it isn't visible.
+- The kv-table walk descends the full tree eagerly at render time.
+- The HEAD-N commit dropdown lists every commit (no virtualization,
+  no filter); the list keeps growing with chain length.
+- Slot re-renders may be wider than needed (a hover near the strip
+  shouldn't trigger a value-tab re-render).
 
-    { message, date, dataAddress, parent?, remoteParent? }
-
-Where `remoteParent = { host, repo, address }` points at another
-author's value at a specific content address. Two natural flavors:
-
-- *Pure-copy commit* — no local parent, only remoteParent. The
-  start of a fork: "I'm beginning my chain from their value."
-- *Mixed commit* — both local parent and remoteParent. Continuing
-  my chain while recording "I pulled this in from over there."
-
-What makes this beautiful: it preserves streamo's single-author-
-signed-chain invariant exactly. My chain stays mine, every commit
-signed by me, append-only. The `remoteParent` is a footnote with
-cryptographic teeth — `dataAddress` is content-addressed, so anyone
-can verify the cited value really is what was at their address. No
-semantic merge required; the human decides what to incorporate and
-commits the result on their own chain.
-
-This is the missing primitive for **cooperation across authors
-without compromise**. Fork-of-homepage, journal replies ("in
-response to bob's entry"), quoting another author — all the same
-shape.
-
-**Order of work, roughly:**
-
-1. ~~**Serve-from-Repo (the inverse of fileSync).**~~ *(landed
-   2026-05-14 — `public/streamo/repoFileServer.js`.)* The
-   middleware is `serveFromRepo(repo, { filesKey, injectImportMap,
-   libraryPath, libraryPackageName })`, mounted behind
-   `peerOptions.serveRepoFiles = { repo, ...opts }` in `webSync.js`.
-   HTML responses get an importmap injected that binds
-   `@dtudury/streamo` and `@dtudury/streamo/*` to a configurable
-   library path. ETag is strong, derived from
-   `lastCommit.dataAddress + path`; 304 on If-None-Match. 25 unit
-   tests + 2 HTTP smoke tests.
-2. ~~**Wire up the homepage Repo.**~~ *(landed 2026-05-15.)* The
-   `fileSync` got a `filesKey` option (5 tests) and `chat/server.js`
-   now mirrors `public/homepage/` to/from the home repo's `files`
-   key. The home repo multiplexes four data sources on one stream:
-   `members`, `journalists`, `entries`, `files`. Edit a file in
-   `public/homepage/`, the change becomes a signed commit; the next
-   HTTP request serves the new bytes. CLI gets `--files-key` and
-   auto-wires `serveRepoFiles` when `--web` is set, so
-   `npx @dtudury/streamo --web --files=. --files-key=files` is a
-   one-liner for "serve my repo as a website."
-3. ~~**Add `remoteParent` to the commit record codec.**~~ *(landed
-   2026-05-15.)* `Repo.commit(working, message, { remoteParent })`
-   accepts an optional `{ host, repo, dataAddress }` citation. The
-   OBJECT codec encodes only present keys, so old commits without
-   the field stay bit-identical — `'remoteParent' in record` is
-   false on plain commits, not just `remoteParent: undefined`. Both
-   shapes work: *pure-copy* (empty repo + remoteParent → no parent)
-   and *mixed* (existing chain + remoteParent → both set). 5 tests
-   covering backward compat, both shapes, and history() iteration.
-   `Repo.set()` is unchanged — its variadic signature doesn't
-   accept options cleanly, so the explicit `commit()` API is the
-   path when remoteParent is wanted; that's fine because forking
-   is intentional, not incidental.
-4. ~~**UI in the explorer**~~ *(landed 2026-05-15.)* The commit-
-   fields kv table grows a `remoteParent` row when present. The
-   chip-link points at the cited commit on the other chain;
-   same-host citations dispatch a new `open-foreign-at` action
-   that subscribes-then-navigates so the at-view doesn't land on
-   an "opening…" empty state; cross-host citations are plain
-   anchors with `target="_blank"` (link-only, zero CORS exposure).
-5. **Build the upstream Streamo Claude forks from out of git
-   history.** *(landed 2026-05-15.)* `scripts/seed-history.js`
-   walks `git log --first-parent --reverse` and replays each git
-   commit as a streamo commit on a `streamo-history` repo (a
-   second keypair derived from the relay's credentials via
-   `signer.keysFor('streamo-history')`).  Per-commit value:
-   `{ sha, tree, parents, author, body }`.  Idempotent: walks
-   existing streamo commits, verifies prefix matches by sha,
-   appends only the missing tail.  `Repo.commit()` gained
-   `options.date` so committer timestamps round-trip from git
-   onto streamo's signed chain.  `chat/server.js` opens the
-   history repo via the registry and adds its pubkey to
-   `journalists` for cascade discovery; the explorer's `follow`
-   callback walks `journalists` too (it only walked `members`
-   before), and its home view grows a journalists section so the
-   history repo appears as a clickable card.  Result: the
-   explorer is now lit up with the project's whole 231-commit
-   story.
-6. ~~**first-user fork experience.**~~ *(landed 2026-05-15.)*
-   `scripts/fork-homepage.js` (aliased `npm run fork-homepage`)
-   walks a brand-new user — any identity, including Claude's —
-   from clone to their own signed fork of the relay's homepage in
-   one command.  Prompts for username + password, derives the
-   keypair, pulls the relay's home repo via `/streams/<key>/raw`,
-   commits a pure-copy of the `files` value with `remoteParent`
-   citing the relay's latest commit, archives locally, prints the
-   exact CLI command to serve the fork.  End-to-end loop verified
-   against `npm run dev`: fork → serve → edit → re-served.
-   [`FIRST_STEPS.md`](./FIRST_STEPS.md) is the guided walkthrough
-   anchored on this script — linked from README and from the
-   homepage (small CTA above the footer + a footer chip).  Same
-   mechanism Claude would use for her own fork: she runs the
-   script with her own credentials and her fork has `remoteParent`
-   citing wherever she chose to fork from.
-
-**The shape that emerged.** The home repo is *one streamo
-multiplexing several data sources by object path*. Mount + Recaller
-route reads at the consumer end; sync sources (fileSync at `files`,
-the chat seed at the top, member-add at `members`) target different
-paths and don't collide. This is the streamo idiom proving itself
-on real infrastructure: the relay's identity, the chat room, the
-journal, and the public website are all one signed commit log.
-
-**Deployment note** *(deferred — see "known limitations" on
-multi-device writes)*. Live-editing the public homepage from
-localhost while `streamo.dev`'s prod server is also running risks
-the multi-device write conflict (same keypair, two writers). For
-now the dev workflow is "stop prod, edit dev, restart prod from
-the synced state" or "edit only via prod." The clean fix is either
-fork-detection-with-error or chunk-level content addressing —
-both already on the known-limitations list.
-
-**The library-import problem — solved.** A homepage Repo's HTML
-needs to import the streamo library, but the host where the page is
-served might not be streamo.dev. The middleware's importmap
-injection solves this declaratively: the page writes
-`import { Repo } from '@dtudury/streamo'` as a bare specifier; the
-relay binds it to its own `/streamo/` at serve time. Forked
-homepages on other relays get the right resolution automatically.
-No build step, no bundler, no per-Repo library copy. For
-IDE/editor resolution, `jsconfig.json` paths at the repo root map
-the same specifiers to local files — parallel to the runtime
-importmap and the package.json `exports` map.
+Goals for this thread: open a commit feels instant; deep nesting
+expands on click rather than rendering eagerly; the dropdown stays
+usable at 200+ commits. Probably touches `at-view.js`, `render.js`,
+and the typed-value composite renderers from the
+streamo-typed-value-displays thread in `THREADS.md`.
 
 ### fork as a CLI primitive — collapse FIRST_STEPS to all-npx
 

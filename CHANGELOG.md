@@ -5,6 +5,119 @@ for what's next.
 
 ---
 
+## 7.1.0 — Page-as-Repo: the homepage is a signed streamo you can fork
+
+**The headline.** The relay's homepage is no longer a static file on
+disk — it's the bytes of a signed repo, served straight from the home
+log's `files` key. Edit a file in `public/homepage/` and your change
+is a signed commit; the next HTTP request serves the new bytes; every
+visitor with the public key can sync the whole chain. With one
+command (`npm run fork-homepage`) any user authors their own
+pure-copy fork of the page with a `remoteParent` citation back to the
+relay, ready to serve and edit locally.
+
+**Why this matters.** Streamo's pitch has always been "no server
+holds authority over your data or your identity." But until now, the
+relay's most visible artifact — its public face — was the one thing
+on the server-side that streamo *didn't* author. Page-as-Repo closes
+that loop. The website is now made of the same primitive the rest of
+streamo uses; fork-able by anyone with a keypair; served the same way
+any other repo gets served. The streamo project bootstraps onto its
+own substrate.
+
+**The arc, six pieces that compose:**
+
+- **`serveFromRepo` middleware** — Express middleware that maps
+  `req.path` → `repo.value[filesKey]` and responds with the right
+  MIME type. Strong content-addressed ETags derived from
+  `lastCommit.dataAddress + path`; 304 on `If-None-Match` match.
+  HTML responses get an importmap injected that binds bare
+  specifiers like `@dtudury/streamo` to a configurable library
+  path — so a forked homepage on another relay self-resolves
+  without edits.
+- **`fileSync` gains `options.filesKey`** — the sync can now mount
+  at a sub-key on the repo's value, leaving siblings (chat
+  `members`, `journalists`, `entries`) untouched.
+- **`remoteParent` on commit records** — `Repo.commit(working,
+  message, { remoteParent })` accepts an optional
+  `{ host, repo, dataAddress }` citation. The local chain stays
+  single-author-signed; the remote citation is a footnote with
+  cryptographic teeth (any peer with the cited stream can verify
+  the value was at that address). The OBJECT codec encodes only
+  present keys, so existing chunks stay bit-identical and old
+  clients decode new commits as records without the field. Two
+  natural shapes fall out: *pure-copy* (no local parent + a
+  remote citation → "I'm starting my chain from their value")
+  and *mixed* (existing parent + a remote citation → "I'm
+  continuing my chain while recording a pull from over there").
+  `Repo.commit` also got `options.date` for replaying
+  pre-existing history with back-stamped timestamps.
+- **Explorer renders `remoteParent`** — the commit metadata kv
+  table grows a row when present, with a chip-link that
+  navigates to the cited commit on the other chain. Same-host
+  citations subscribe-then-navigate (new `open-foreign-at`
+  action); cross-host citations are plain anchors in a new tab.
+- **`streamo-history`** — a streamo whose commit chain mirrors
+  the project's git log. `scripts/seed-history.js` walks
+  `git log --first-parent --reverse` and replays each git commit
+  as a streamo commit with value
+  `{ sha, tree, parents, author, body }` and the git committer
+  date back-stamped via `options.date`. Idempotent: re-runs
+  append only the tail. The chat home now lists the history repo
+  in `journalists`; the explorer's `follow` callback walks
+  `journalists` too, and the home view shows them as cards — so
+  the explorer now lights up with 231 signed commits the moment
+  you boot the demo.
+- **`scripts/fork-homepage.js`** — the first-user fork experience.
+  Prompts for credentials, derives a keypair via PBKDF2, fetches
+  the relay's home via `/streams/<key>/raw`, makes a pure-copy
+  commit on the user's local repo with `remoteParent` set, prints
+  the exact CLI command to serve the fork. Same mechanism any
+  identity (including Claude's) would use; the script is just
+  the ergonomic wrapper.
+
+**Onboarding.** New [FIRST_STEPS.md](./FIRST_STEPS.md) walks any
+user from clone to their own signed fork of the homepage in
+~10 minutes (six steps; the fork is step 3). README gains a "Why
+streamo?" section between intro and core ideas — a "things you
+don't have to build" table (auth, API, sync, storage, backups,
+multi-device, backend) + a "streamo fits if you…" audience list
+(indie devs, personal-site folks, data-sovereignty builders, AI
+tinkerers). The homepage gets a "first steps →" CTA above the
+footer + a footer chip.
+
+**CLI / API additions** *(all additive, no breaking changes):*
+
+- `--files-key <key>` flag (env `STREAMO_FILES_KEY`) — mount
+  fileSync at a sub-key
+- `--web` auto-wires `serveRepoFiles` when `--files` is set, so
+  `npx @dtudury/streamo --web --files=. --files-key=files` is the
+  new one-liner for "serve my repo as a website"
+- `serveFromRepo(repo, options)` exported via subpath import
+- `npm run seed-history`, `npm run fork-homepage` script aliases
+- `package.json`: `engines.node: ">=20"`, `homepage`, `bugs.url`,
+  normalized `repository` to `{type, url}` object, and `bin`
+  simplified to string form so `npx @dtudury/streamo …` resolves
+  the binary cleanly for scoped packages
+
+**Caveats.** Live-editing the public homepage from localhost while
+prod is also running risks the multi-device write conflict from
+"known limitations" (same keypair, two writers). Operational
+workflow for now: stop prod before live-editing dev, or edit only
+via prod. The structural fix (fork-detection-with-error or chunk-
+level content addressing) is tracked there. Also: collapsing
+FIRST_STEPS to an all-`npx` flow (no `git clone` + `npm install`
+required) is queued as the next active thread — fold the fork-
+homepage capability into the binary as `--fork-from <relay>`.
+
+**Tests.** 159 passing, up from 121 in 7.0.0. New:
+`repoFileServer.test.js` (25 unit + 2 HTTP smoke),
+`fileSync.test.js` (5, including the critical "lastCommit exists
+but no value at filesKey → disk wins, doesn't wipe" edge), 6
+remoteParent/date tests added to `Repo.test.js`.
+
+---
+
 ## 7.0.0 — Operation Obsecurity: the relay stops enumerating
 
 **Breaking change.** The registry-sync wire protocol no longer carries

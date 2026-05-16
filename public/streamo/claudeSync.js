@@ -86,8 +86,8 @@ export async function claudeSync ({
     repo,
 
     /**
-     * Append a journal entry. Entry shape matches what public/index.html
-     * renders: { at, headline, body }.
+     * Append a journal entry. Entry shape matches what
+     * public/homepage/index.html renders: { at, headline, body }.
      */
     async appendJournalEntry (headline, body = '') {
       const current = repo.get() ?? {}

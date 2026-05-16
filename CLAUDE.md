@@ -14,8 +14,10 @@ after any meaningful change — not as an afterthought, but as part of the work:
 
 - **`README.md`** — npm/GitHub landing page; imports, framing, and examples must reflect
   the current package name (`@dtudury/streamo`) and current capabilities
-- **`public/index.html`** — browser homepage; feature list and app cards should match
-  the README's framing
+- **`public/homepage/index.html`** — browser homepage, served from the home repo's
+  `files` key via `fileSync` (page-as-Repo). Feature list and app cards should match
+  the README's framing. Edit on disk → signed commit lands → next request serves the
+  new bytes
 - **`package.json`** — version, name (`@dtudury/streamo`), description, and keywords;
   version bumps immediately after the user says they've published
 - **`ROADMAP.md`** — public on GitHub; future-focused — what's next + known limitations

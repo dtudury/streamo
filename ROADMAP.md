@@ -181,6 +181,66 @@ IDE/editor resolution, `jsconfig.json` paths at the repo root map
 the same specifiers to local files — parallel to the runtime
 importmap and the package.json `exports` map.
 
+### fork as a CLI primitive — collapse FIRST_STEPS to all-npx
+
+`scripts/fork-homepage.js` (yesterday's first-user experience) is
+project-local — it lives in the cloned repo, so the first-user
+flow requires `git clone` + `npm install` before it's reachable.
+The natural next move is to fold its capability into the
+`@dtudury/streamo` binary so the whole flow becomes a single
+`npx` invocation:
+
+```bash
+npx @dtudury/streamo \
+  --name homepage --username alice --password ... \
+  --fork-from streamo.dev \
+  --files ./mysite \
+  --files-key files \
+  --web 8081 \
+  --interactive
+```
+
+The new flag `--fork-from <relay>` runs *only when the local
+repo is empty*: fetch the relay's home repo snapshot via
+`/streams/<key>/raw`, decode the value, make a pure-copy commit
+with `remoteParent` set, then continue normal startup. Idempotent
+on subsequent runs (skipped because the repo has commits).
+
+**Tiny library-side addition** that supports it: a `fork()`
+helper on `Repo` (or a free function) that takes an upstream
+URL or peer Repo + an optional sub-key slice, makes the
+pure-copy commit. Same logic that's in `fork-homepage.js`
+today, factored into the library. Exposed in the `--interactive`
+REPL too, so `await streamo.fork('streamo.dev', 'files')` is
+the manual equivalent.
+
+**What's the advantage of a separate fork directory?** (asked
+2026-05-16) — for the *archive* directory: none. `.streamo`
+holds one .bin file per pubkey; multiple repos coexist fine.
+For the *files* directory under `fileSync`: it MUST be its own
+folder if any other process is also fileSyncing somewhere
+nearby — two repos with active fileSync on the same folder
+fight (TOCTOU at the fs layer, same shape as the archiveSync
+bug from 2026-05-15). If the user's streamo has no fileSync
+(just serves bytes from archive), the folder question
+disappears. The current FIRST_STEPS uses separate folders for
+clarity, but architecturally only the second case is forced.
+
+**Two fork flavors that could both be supported:**
+
+- *Light fork (current behavior)*: HTTP fetch of the upstream
+  snapshot, pure-copy commit + remoteParent.  No upstream
+  history kept locally.  Small, fast, what most users want.
+- *Heavy fork (future)*: connect via WebSocket and sync the
+  whole upstream chain into the local registry first; fork from
+  any commit in that chain.  Bigger disk footprint, but lets you
+  browse history and verify any commit in the upstream's chain.
+  Useful for forking a project, not just a page.
+
+**The end state**: FIRST_STEPS.md shrinks from 6 steps with two
+tools to maybe 2 steps with one tool (npx). Onboarding latency
+drops from minutes to ~30 seconds.
+
 ### richer explorer
 
 Most of the original list shipped during 4.0.x — the explorer now reads as

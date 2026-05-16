@@ -30,9 +30,7 @@
     "!public/streamo/utils/testing.js",
     "!public/streamo/utils/mockDOM.js"
   ],
-  "bin": {
-    "streamo": "./bin/streamo.js"
-  },
+  "bin": "./bin/streamo.js",
   "dependencies": {
     "@aws-sdk/client-s3": "^3.958.0",
     "@gerhobbelt/gitignore-parser": "^0.2.0-9",

@@ -37,16 +37,19 @@ console.log(`[chat] room key:    ${server.publicKeyHex}`)
 console.log(`[chat] history key: ${historyKeyHex} (${historyCommits} commits)`)
 console.log(`[chat] serving on http://localhost:${port}/apps/chat/`)
 
-// Seed the primary repo with chat-room bookkeeping AND the journal —
-// the home repo doubles as the homepage's content source. Each future
-// journal entry is a new commit on this repo, and the homepage walks
-// `entries` to render. The relay link in the explorer now points
-// somewhere meaningful: the journal you just read on the homepage.
+// Seed the primary repo with the journal — the home repo doubles as the
+// homepage's content source. Each future journal entry is a new commit on
+// this repo, and the homepage walks `entries` to render. The relay link
+// in the explorer points somewhere meaningful: the journal you just read
+// on the homepage.
+//
+// Note: no `members` seed. Chat-room membership is now discovered live
+// via the announce/interest layer (see `onAnnounce` replay in
+// registrySync.js) — no signed roster, no server-written list.
 {
   const current = server.streamo.get() ?? {}
   const seed = { ...current }
   let needsCommit = false
-  if (!seed.members) { seed.members = []; needsCommit = true }
   // Journalists: peers whose repos the homepage walks for journal entries.
   // The relay's own pubkey is always included; STREAMO_JOURNALISTS adds
   // others (Claude, future contributors). Idempotent — we only append.
@@ -85,13 +88,9 @@ await server.web(port, {
   // serveFromRepo middleware reads the home repo's `files` key on every
   // request — any path present wins; misses fall through to express.static
   // so /apps/explorer/, /streamo/*.js, /apps/styles/*.css keep working.
-  serveRepoFiles: { repo: server.streamo, filesKey: 'files' },
-  onAnnounce: (key, topic) => {
-    if (topic !== server.publicKeyHex) return
-    const members = server.streamo.get('members') ?? []
-    if (!members.includes(key)) {
-      server.streamo.set({ ...(server.streamo.get() ?? {}), members: [...members, key] })
-      console.log(`[chat] new member: ${key.slice(0, 12)}…`)
-    }
-  }
+  serveRepoFiles: { repo: server.streamo, filesKey: 'files' }
+  // No onAnnounce handler: the relay no longer writes membership into a
+  // signed roster. Peers discover each other via the announce/interest
+  // ephemeral layer (with server-side replay for newcomers), and the
+  // chat client builds its member view locally from announces.
 })

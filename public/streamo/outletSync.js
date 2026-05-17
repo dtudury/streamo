@@ -21,8 +21,12 @@ import { handleRegistryPeer } from './registrySync.js'
  */
 export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {}) {
   // Shared routing state for the ephemeral interest/announce messaging layer.
-  // Lives for the lifetime of the server; entries are cleaned up on disconnect.
-  const routing = { interestMap: new Map() }
+  // interestMap: topic → Set<ws> currently interested (for live fan-out).
+  // announcementMap: topic → Map<ws, Set<key>> of currently-live announcements
+  // (replayed to peers who express interest after the fact, so a newcomer
+  // discovers existing announcers without anyone heartbeating). Entries are
+  // cleaned up on disconnect — "live" = "by a currently-connected peer."
+  const routing = { interestMap: new Map(), announcementMap: new Map() }
 
   wss.on('connection', ws => {
     let reader = null

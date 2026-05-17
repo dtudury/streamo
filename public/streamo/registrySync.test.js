@@ -378,6 +378,120 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('late interest replays current announces (newcomer learns about prior peers)', async ({ assert }) => {
+    // The closing-the-loop case: alice announces on a topic, then later bob
+    // connects and expresses interest in the same topic. Without replay, bob
+    // never learns about alice unless alice keeps heartbeating. With replay,
+    // bob receives alice's announce immediately as part of his interest.
+    const { wss, port } = await startServer(new RepoRegistry())
+    const topic = fakeKey(40)
+    const aliceKey = fakeKey(41)
+
+    const sessionAlice = await registrySync(new RepoRegistry(), 'localhost', port)
+    sessionAlice.announce(aliceKey, topic)
+
+    // Give the announce time to register on the server before bob connects.
+    await new Promise(r => setTimeout(r, 50))
+
+    const received = []
+    const sessionBob = await registrySync(new RepoRegistry(), 'localhost', port, {
+      onAnnounce: (key, t) => received.push({ key, topic: t })
+    })
+    sessionBob.interest(topic)
+
+    await waitFor(() => received.length === 1)
+    assert.equal(received[0].key, aliceKey)
+    assert.equal(received[0].topic, topic)
+
+    sessionAlice.close()
+    sessionBob.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('late interest replay does not echo the newcomer\'s own prior announces', async ({ assert }) => {
+    // If the same socket announces and then expresses interest, the replay
+    // should not bounce its own announces back at it.
+    const { wss, port } = await startServer(new RepoRegistry())
+    const topic = fakeKey(42)
+    const selfKey = fakeKey(43)
+
+    const received = []
+    const session = await registrySync(new RepoRegistry(), 'localhost', port, {
+      onAnnounce: (key) => received.push(key)
+    })
+    session.announce(selfKey, topic)
+    await new Promise(r => setTimeout(r, 50))
+    session.interest(topic)
+
+    await new Promise(r => setTimeout(r, 100))
+    assert.equal(received.length, 0, 'sender should not receive its own prior announce via replay')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('disconnected peers\' announces are dropped from replay', async ({ assert }) => {
+    // Once alice disconnects, her announce is gone — a later-arriving bob
+    // should not learn about her stale presence. Replay is "currently live,"
+    // not "ever announced."
+    const { wss, port } = await startServer(new RepoRegistry())
+    const topic = fakeKey(44)
+    const aliceKey = fakeKey(45)
+
+    const sessionAlice = await registrySync(new RepoRegistry(), 'localhost', port)
+    sessionAlice.announce(aliceKey, topic)
+    await new Promise(r => setTimeout(r, 50))
+    sessionAlice.close()
+    await new Promise(r => setTimeout(r, 50))
+
+    const received = []
+    const sessionBob = await registrySync(new RepoRegistry(), 'localhost', port, {
+      onAnnounce: (key) => received.push(key)
+    })
+    sessionBob.interest(topic)
+
+    await new Promise(r => setTimeout(r, 100))
+    assert.equal(received.length, 0, 'no stale replay after announcer disconnects')
+
+    sessionBob.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('replay covers multiple existing announcers on the same topic', async ({ assert }) => {
+    // Three peers already in a topic; a fourth joins and learns about all of them.
+    const { wss, port } = await startServer(new RepoRegistry())
+    const topic = fakeKey(46)
+    const aliceKey = fakeKey(47)
+    const bobKey   = fakeKey(48)
+    const carolKey = fakeKey(49)
+
+    const sessionAlice = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionBob   = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionCarol = await registrySync(new RepoRegistry(), 'localhost', port)
+    sessionAlice.announce(aliceKey, topic)
+    sessionBob.announce(bobKey,     topic)
+    sessionCarol.announce(carolKey, topic)
+    await new Promise(r => setTimeout(r, 50))
+
+    const received = []
+    const sessionDavid = await registrySync(new RepoRegistry(), 'localhost', port, {
+      onAnnounce: (key) => received.push(key)
+    })
+    sessionDavid.interest(topic)
+
+    await waitFor(() => received.length === 3)
+    assert.equal(new Set(received).size, 3, 'all three announcers represented')
+    assert.ok(received.includes(aliceKey))
+    assert.ok(received.includes(bobKey))
+    assert.ok(received.includes(carolKey))
+
+    sessionAlice.close()
+    sessionBob.close()
+    sessionCarol.close()
+    sessionDavid.close()
+    await new Promise(r => wss.close(r))
+  })
+
   test('after disconnect, interest is cleaned up and announcements stop', async ({ assert }) => {
     const { wss, port } = await startServer(new RepoRegistry())
     const topic = fakeKey(28)

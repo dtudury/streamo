@@ -240,9 +240,20 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           await syncKey(msg.key)
         } else if (msg.type === 'interest') {
           if (routing) {
-            const { interestMap } = routing
+            const { interestMap, announcementMap } = routing
             if (!interestMap.has(msg.key)) interestMap.set(msg.key, new Set())
             interestMap.get(msg.key).add(ws)
+            // Replay current announces on this topic so the newcomer learns
+            // about peers who announced before they arrived.  Skip the
+            // newcomer's own announces (in case interest follows announce on
+            // the same socket).
+            for (const [announcer, keys] of announcementMap.get(msg.key) ?? []) {
+              if (announcer === ws) continue
+              for (const key of keys) {
+                if (ws.readyState === ws.OPEN)
+                  ws.send(JSON.stringify({ type: 'announce', key, topic: msg.key }))
+              }
+            }
           }
         } else if (msg.type === 'announce') {
           // Fan out to all subscribers of this topic (server-side routing)
@@ -251,6 +262,13 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
               if (sub !== ws && sub.readyState === sub.OPEN)
                 sub.send(JSON.stringify({ type: 'announce', key: msg.key, topic: msg.topic }))
             }
+            // Remember this announce so future interest from new peers
+            // gets it replayed.  Lifetime: until this socket disconnects.
+            const { announcementMap } = routing
+            if (!announcementMap.has(msg.topic)) announcementMap.set(msg.topic, new Map())
+            const perTopic = announcementMap.get(msg.topic)
+            if (!perTopic.has(ws)) perTopic.set(ws, new Set())
+            perTopic.get(ws).add(msg.key)
           }
           // Deliver to local callback (client-side)
           onAnnounce?.(msg.key, msg.topic)
@@ -282,6 +300,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     }
     if (routing) {
       for (const subs of routing.interestMap.values()) subs.delete(ws)
+      for (const perTopic of routing.announcementMap.values()) perTopic.delete(ws)
     }
   }
 

@@ -253,4 +253,98 @@ export class Repo extends Streamo {
     this.#scheduleSign()
     return result
   }
+
+  /**
+   * Incorporate a slice of `source`'s value into this repo as a single
+   * signed commit, with `remoteParent` set to cite the source.
+   *
+   * **Mode**: this version supports only `policy: 'replace'` — source's
+   * value at `from` REPLACES our value at `into`.  Sibling keys at `into`'s
+   * parent are preserved (because `commit` works on a path-set into the
+   * working stream, not a whole-value overwrite).  The descending
+   * attribute-walk policies (`'theirs'`, `'ours'`, `'throw'`) are reserved
+   * in the API but not yet implemented — they need real workloads to
+   * settle their defaults (absent-vs-deleted, Uint8Array semantics, etc).
+   *
+   * **Two shapes fall out naturally:**
+   *   - *Fork*  — merge into an empty repo → no local parent + remoteParent
+   *   - *Pull-overwrite* — merge into an existing chain → both set
+   *
+   * @param {Repo} source — the repo to read from (in-memory; URL-source
+   *   support is a later nibble)
+   * @param {object} options
+   * @param {string|Array<string|number>} [options.from=[]] — path on source
+   *   to read; `[]` or omitted means the whole value. String shorthand
+   *   `'files'` is normalized to `['files']`.
+   * @param {string|Array<string|number>} [options.into=options.from] — path
+   *   on this repo to write at
+   * @param {'replace'} [options.policy='replace'] — only `'replace'` is
+   *   implemented in this version
+   * @param {{ host: string, repo: string, dataAddress?: number }}
+   *   options.remoteParent — REQUIRED.  `host` and `repo` describe the
+   *   source's location and identity (the Repo class doesn't store either
+   *   itself, so callers provide them).  `dataAddress` defaults to
+   *   `source.lastCommit.dataAddress` (the citation points at source's
+   *   most recent value).
+   * @param {string} [options.message] — commit message; defaults to either
+   *   `"fork from <host>"` (empty target) or `"merge from <host>"` (existing)
+   * @returns {number} address of the new commit record
+   */
+  merge (source, options = {}) {
+    const normalizePath = p => p == null ? [] : Array.isArray(p) ? p : [p]
+    const from = normalizePath(options.from)
+    const into = normalizePath(options.into ?? options.from)
+    const { policy = 'replace', remoteParent, message } = options
+
+    if (policy !== 'replace') {
+      throw new Error(`Repo.merge: policy '${policy}' is reserved but not yet implemented; only 'replace' is supported in this version`)
+    }
+    if (!remoteParent || typeof remoteParent !== 'object' || !remoteParent.host || !remoteParent.repo) {
+      throw new Error('Repo.merge: options.remoteParent is required as { host, repo, dataAddress? }')
+    }
+
+    // Citation: the address on source's stream we're incorporating from.
+    // Defaults to source's latest commit's data address; callers can cite
+    // a specific historical address via remoteParent.dataAddress.
+    const sourceLast = source.lastCommit
+    if (!sourceLast && remoteParent.dataAddress === undefined) {
+      throw new Error('Repo.merge: source has no commits and no explicit remoteParent.dataAddress given')
+    }
+    const citationAddress = remoteParent.dataAddress ?? sourceLast.dataAddress
+    const citation = { host: remoteParent.host, repo: remoteParent.repo, dataAddress: citationAddress }
+
+    // Read source's value at the citation, walk into `from`.
+    let sourceValue = source.decode(citationAddress)
+    for (const key of from) {
+      if (sourceValue == null || typeof sourceValue !== 'object') {
+        throw new Error(`Repo.merge: source has no value at path [${from.join('.')}]`)
+      }
+      sourceValue = sourceValue[key]
+    }
+    if (sourceValue === undefined) {
+      throw new Error(`Repo.merge: source has no value at path [${from.join('.')}]`)
+    }
+
+    // Apply 'replace': set our value at `into` to source's slice.  Empty
+    // target needs the wrapping object materialized (same pattern as
+    // fileSync's setRepoFiles for an empty repo).
+    const working = this.checkout()
+    if (into.length === 0) {
+      working.set(sourceValue)
+    } else if (working.get() === undefined) {
+      let wrapped = sourceValue
+      for (let i = into.length - 1; i >= 0; i--) {
+        wrapped = { [into[i]]: wrapped }
+      }
+      working.set(wrapped)
+    } else {
+      working.set(...into, sourceValue)
+    }
+
+    const wasEmpty = !this.lastCommit
+    const defaultMessage = wasEmpty
+      ? `fork from ${remoteParent.host}`
+      : `merge from ${remoteParent.host}`
+    return this.commit(working, message ?? defaultMessage, { remoteParent: citation })
+  }
 }

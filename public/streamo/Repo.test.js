@@ -152,4 +152,189 @@ describe(import.meta.url, ({ test }) => {
     repo.commit(working, 'recovered', { date: oldDate })
     assert.equal(+repo.lastCommit.date, +oldDate)
   })
+
+  // ── merge: replace-policy (Mode A) ────────────────────────────────────
+
+  test('merge into empty target: pure-copy fork — no parent, has remoteParent', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ files: { 'index.html': '<h1>upstream</h1>' } })
+    source.commit(sw, 'upstream content')
+
+    const target = new Repo()
+    target.merge(source, {
+      remoteParent: { host: 'upstream.test', repo: '03aaaaaaaabbbbbbbbcccc' }
+    })
+    const c = target.lastCommit
+    assert.equal(c.parent, undefined)
+    assert.equal(c.remoteParent.host, 'upstream.test')
+    assert.equal(c.remoteParent.repo, '03aaaaaaaabbbbbbbbcccc')
+    assert.equal(c.remoteParent.dataAddress, source.lastCommit.dataAddress)
+    assert.equal(c.message, 'fork from upstream.test')
+    assert.deepEqual(target.get(), { files: { 'index.html': '<h1>upstream</h1>' } })
+  })
+
+  test('merge into non-empty target: mixed — both parent and remoteParent set', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ files: { 'a.html': '<a>' } })
+    source.commit(sw, 'src')
+
+    const target = new Repo()
+    const tw = target.checkout()
+    tw.set({ existing: 'value' })
+    target.commit(tw, 'initial')
+
+    target.merge(source, {
+      from: ['files'],
+      remoteParent: { host: 'h', repo: 'r' }
+    })
+    const c = target.lastCommit
+    assert.notEqual(c.parent, undefined)
+    assert.deepEqual(c.remoteParent, { host: 'h', repo: 'r', dataAddress: source.lastCommit.dataAddress })
+    assert.equal(c.message, 'merge from h')
+    assert.equal(target.get('existing'), 'value')   // sibling preserved
+    assert.deepEqual(target.get('files'), { 'a.html': '<a>' })
+  })
+
+  test('merge with from path slices source', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ files: { 'index.html': '<x>' }, members: ['alice'] })
+    source.commit(sw, 'src')
+
+    const target = new Repo()
+    target.merge(source, {
+      from: ['files'],
+      remoteParent: { host: 'h', repo: 'r' }
+    })
+    assert.deepEqual(target.get(), { files: { 'index.html': '<x>' } })  // only files
+    assert.equal(target.get('members'), undefined)                       // not pulled in
+  })
+
+  test('merge with from and into differing paths', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ original_files: { 'a.html': '<a>' } })
+    source.commit(sw, 'src')
+
+    const target = new Repo()
+    target.merge(source, {
+      from: ['original_files'],
+      into: ['my_files'],
+      remoteParent: { host: 'h', repo: 'r' }
+    })
+    assert.deepEqual(target.get('my_files'), { 'a.html': '<a>' })
+  })
+
+  test('merge with from=[] takes the whole value', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ a: 1, b: 2 })
+    source.commit(sw, 'src')
+
+    const target = new Repo()
+    target.merge(source, { remoteParent: { host: 'h', repo: 'r' } })
+    assert.deepEqual(target.get(), { a: 1, b: 2 })
+  })
+
+  test('merge accepts string shorthand for from/into', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ files: { 'x': 'y' } })
+    source.commit(sw, 'src')
+
+    const target = new Repo()
+    target.merge(source, {
+      from: 'files',
+      into: 'files',
+      remoteParent: { host: 'h', repo: 'r' }
+    })
+    assert.deepEqual(target.get('files'), { 'x': 'y' })
+  })
+
+  test('merge with explicit remoteParent.dataAddress cites a historical address', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ v: 1 })
+    source.commit(sw, 'first')
+    const firstAddr = source.lastCommit.dataAddress
+
+    sw.set('v', 2)
+    source.commit(sw, 'second')
+
+    const target = new Repo()
+    target.merge(source, {
+      remoteParent: { host: 'h', repo: 'r', dataAddress: firstAddr }
+    })
+    // We cited the FIRST commit's address, so the value we got is v: 1
+    assert.deepEqual(target.get(), { v: 1 })
+    assert.equal(target.lastCommit.remoteParent.dataAddress, firstAddr)
+  })
+
+  test('merge requires options.remoteParent', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ x: 1 })
+    source.commit(sw, 's')
+
+    const target = new Repo()
+    assert.throws(() => target.merge(source, {}))
+  })
+
+  test('merge requires source to have commits (when dataAddress is not given)', ({ assert }) => {
+    const source = new Repo()
+    const target = new Repo()
+    assert.throws(() => target.merge(source, {
+      remoteParent: { host: 'h', repo: 'r' }
+    }))
+  })
+
+  test('merge throws clearly for not-yet-implemented policies', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ x: 1 })
+    source.commit(sw, 's')
+
+    const target = new Repo()
+    assert.throws(() => target.merge(source, {
+      remoteParent: { host: 'h', repo: 'r' },
+      policy: 'theirs'
+    }))
+    assert.throws(() => target.merge(source, {
+      remoteParent: { host: 'h', repo: 'r' },
+      policy: 'ours'
+    }))
+    assert.throws(() => target.merge(source, {
+      remoteParent: { host: 'h', repo: 'r' },
+      policy: 'throw'
+    }))
+  })
+
+  test('merge throws when source path does not exist', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ a: 1 })
+    source.commit(sw, 's')
+
+    const target = new Repo()
+    assert.throws(() => target.merge(source, {
+      from: ['nonexistent'],
+      remoteParent: { host: 'h', repo: 'r' }
+    }))
+  })
+
+  test('merge accepts a custom message', ({ assert }) => {
+    const source = new Repo()
+    const sw = source.checkout()
+    sw.set({ x: 1 })
+    source.commit(sw, 's')
+
+    const target = new Repo()
+    target.merge(source, {
+      remoteParent: { host: 'h', repo: 'r' },
+      message: 'because I said so'
+    })
+    assert.equal(target.lastCommit.message, 'because I said so')
+  })
 })

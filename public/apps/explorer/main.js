@@ -18,6 +18,7 @@
 import { h } from '../../streamo/h.js'
 import { mount } from '../../streamo/mount.js'
 import { registrySync } from '../../streamo/registrySync.js'
+import { liveValue } from '../../streamo/LiveSource.js'
 import { truncKey, fmtDate } from './format.js'
 import { recaller, registry, state, homeKey, loc, getKeyHex, go } from './context.js'
 import { setupInteractions } from './interactions.js'
@@ -32,22 +33,49 @@ const port = +location.port || (location.protocol === 'https:' ? 443 : 80)
 // user when the connection is ready, so submit-before-ready is rare.
 let session = null
 
+// Currently-announcing peers on the home topic — populated live by the
+// announce/interest ephemeral layer, which is now how chat-room membership
+// is surfaced (no signed `members` array anymore). Append-on-first-seen,
+// so the order is stable for the UI; we don't drop entries on peer
+// disconnect because the explorer is a passive observer and stale rows
+// already render naturally as "syncing…" once their repo stops updating.
+const currentMembers = liveValue([], { recaller, name: 'currentMembers' })
+
 // onHello stores the relay's home key in context; follow walks
-// home.value.members and cascades subscriptions. Together these are
-// the public face — every other repo is reached by pasting a key.
+// home.value.journalists and cascades subscriptions. The `members`
+// list, when present (historical data on existing relays), is also
+// walked — new joins arrive via announce instead.
 registrySync(registry, location.hostname, port, {
   onHello: msg => { if (msg.home) homeKey.set(msg.home) },
   follow: (keyHex, repo, subscribe) => {
-    // Walk both `members` (chat participants) and `journalists` (peers
-    // whose repos contribute named slices — currently entries + the
-    // history streamo).  Both are "interesting to the explorer" lists.
+    // Walk both `members` (legacy — historical chat participants on
+    // relays from before the announce-based discovery model) and
+    // `journalists` (peers whose repos contribute named slices —
+    // currently entries + the history streamo). Both are "interesting
+    // to the explorer" lists.
     for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
     for (const journalistKey of repo.get('journalists') ?? []) subscribe(journalistKey)
+  },
+  onAnnounce: (key, topic) => {
+    // The relay replays current announces to us on interest, and fans
+    // out new ones live. Filter to the home topic and accumulate.
+    if (topic !== homeKey.get()) return
+    const list = currentMembers.get()
+    if (!list.includes(key)) currentMembers.set([...list, key])
+    // Subscribe so the row can render the peer's name + lastCommit.
+    session?.subscribe(key)
   }
 })
   .then(s => {
     session = s
     state.set('connection', { status: 'ok',  text: `connected · ${location.hostname}:${port}` })
+    // Express interest in the home topic once it's known. The watch
+    // re-fires when homeKey arrives from `hello`; idempotent on the
+    // server side, so the once-it-arrives behavior is what we want.
+    recaller.watch('explorer-interest', () => {
+      const home = homeKey.get()
+      if (home) session.interest(home)
+    })
   })
   .catch(e => state.set('connection', { status: 'err', text: `connection failed: ${e.message}` }))
 
@@ -157,20 +185,14 @@ mount(h`
           const repo = registry.get(home)
           return repoCard(home, repo, 'home-card')
         }}
-        <h2>members <span class="dim">${() => {
-          const home = homeKey.get()
-          const list = home ? (registry.get(home)?.get('members') ?? []) : []
-          return `(${list.length})`
-        }}</span></h2>
+        <h2>members <span class="dim">${() => `(${currentMembers.get().length})`}</span></h2>
         ${() => {
-          // Members cascade — read home.value.members reactively so the
-          // list grows as new participants join. `follow` has already
-          // subscribed each one, so registry.get() will be populated
-          // for any member whose bytes have streamed in.
-          const home = homeKey.get()
-          if (!home) return null
-          const members = registry.get(home)?.get('members') ?? []
-          if (members.length === 0) return h`<div class="empty">no members yet</div>`
+          // Currently-announcing peers on the home topic — the live, ephemeral
+          // version of "who's in the room right now." Populated by the
+          // announce/interest layer (server replays existing announcers on
+          // interest + fans out new ones live). No signed roster involved.
+          const members = currentMembers.get()
+          if (members.length === 0) return h`<div class="empty">no one is here right now</div>`
           return members.map(memberKey => repoCard(memberKey, registry.get(memberKey)))
         }}
         <h2>journalists <span class="dim">${() => {

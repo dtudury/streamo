@@ -88,54 +88,41 @@ locally (instead of HTTP-snapshot fetching).  Useful for forking
 a project whose history you want to browse offline.  Not blocking;
 the current light-fork covers fork-the-page well.
 
-### dumb-pipe relay — move home-repo signing to the author's laptop *(next big arc)*
+### dumb-pipe relay — move home-repo signing to the author's laptop *(foundation landed; deployment is opt-in)*
 
-The "smart edge" that needed to live in the server has mostly
-**dissolved into client code**. The chat-room's signed `members`
-roster is gone; chat-client peers discover each other via the
-`announce`/`interest` ephemeral layer with server-side replay for
-newcomers (landed in the post-7.3.0 main branch). The explorer's
-members view reads from the same announce stream rather than from a
-signed list. What used to be `chat/server.js`'s `onAnnounce`
-write-to-members callback is dead code, deleted.
+The library and CLI now support both modes:
 
-What still keeps `chat/server.js` from being a pure byte pipe:
+- **Relay-only mode** — `StreamoServer.create({ publicKeyHex })`
+  opens a repo by pubkey with no signer derivation, no
+  attached signer. `files()`/`merge()` throw. The CLI flag
+  `--home-key <pubkeyhex>` (env: `STREAMO_HOME_KEY`) selects this
+  mode; `--files` and `--merge-from` are refused up front because
+  both want to commit. `chat/server.js` detects relay-only mode
+  from env and skips seed + fileSync entirely.
+- **Author mode** — the existing CLI shape (`--name --username
+  --password --files --origin`). Signs commits locally and pushes
+  them to a relay via origin sync. **Merge IS the deploy** — no
+  separate deploy step; sign on your laptop, the relay archives
+  and serves as soon as the bytes flow.
 
-1. It holds the home repo's **signing keypair** (`Signer` derived
-   from `.env.prod` credentials).
-2. It **seeds journal entries** into the home repo on startup.
-3. It runs **fileSync** between disk and the home repo's `files` key.
+Both shapes are the same binary; flags select the mode. `chat/
+server.js` runs in author-mode when credentials are in env (the
+existing `npm run dev` / `npm run prod` workflows are unchanged),
+and in relay-only mode when `STREAMO_HOME_KEY` is set without
+credentials.
 
-All three are *authoring* responsibilities, not *serving*
-responsibilities. The natural shape: move them off the public-port
-process entirely. The relay opens the home repo's archive (read-only
-view; archive is populated by sync from elsewhere), serves its
-`files` via page-as-Repo middleware, moves bytes for any repo people
-subscribe to, and holds no keys.
-
-Authoring happens on the author's machine — David's laptop, my
-session, anyone the home key trusts to sign for it. The author
-runs streamo with a signer, opens the home repo locally, makes
-commits (edits to `files`, journal entries, merges-from-upstream),
-and pushes via origin sync to the public relay. **Merge IS the
-deploy** — there's no separate deploy step; the relay archives the
-new bytes and starts serving them as soon as they arrive.
-
-Sketch:
+Sketch of a production split deployment:
 
 ```bash
-# Public-facing relay (npx, no signer, only knows the pubkey to advertise):
-npx @dtudury/streamo \
-  --home-key <pubkeyhex> \
-  --web 443
+# Public-facing relay (no signer, just bytes):
+STREAMO_HOME_KEY=<hex> STREAMO_WEB=443 \
+  node public/apps/chat/server.js --env-file .env.prod
 
-# Author's laptop (where the keypair lives — could be anywhere):
+# Author elsewhere (their laptop, or a separate user on the same box):
 npx @dtudury/streamo \
-  --name homepage --username alice \
-  --files ./mysite --files-key files \
+  --name homepage --username alice --password ... \
+  --files ./public/homepage --files-key files \
   --origin streamo.dev
-# (signs commits locally as you edit; pushes via origin sync;
-# `--merge-from` pulls in upstream changes as signed merges)
 ```
 
 **Why this is the right shape:**
@@ -150,36 +137,29 @@ npx @dtudury/streamo \
   pushes; the relay archives and serves. Test-before-live = merge
   into a staging key, eyeball it on the relay, then merge to your
   live key.
-- *Deepens the "no server holds authority" pitch.* Today the
-  pitch is that the relay can't make up content. After this split,
-  the public-port process is *literally just a dumb pipe* — it
-  doesn't even know how to write to the chain it serves.
+- *Deepens the "no server holds authority" pitch.* The public-port
+  process is *literally just a dumb pipe* — it doesn't even know
+  how to write to the chain it serves.
 
-**Library additions** that support it:
+**What's left** (not blocking — the foundation works, deployment is
+a config choice):
 
-- `--home-key <pubkeyhex>` flag — the relay opens this repo's
-  archive, announces it in `hello`, but never derives a signer for
-  it. Replaces `--name`/`--username`/`--password` when the process
-  is purely a relay.
-- Possibly a `--no-sign` mode that strips even the implicit signer,
-  just to be explicit about "this process holds no secrets."
-
-**What the relay needs to drop:** the `Signer` derivation in
-`StreamoServer.create`, the journal seed in `chat/server.js`, the
-fileSync call. Strip those and `chat/server.js` becomes ~10 lines
-of "open home repo, run relay, serve files-via-middleware."
-
-**What needs to live on the author side:** what's already in the
-CLI (`bin/streamo.js --merge-from --files --origin`). The author
-ends up running their own `npx @dtudury/streamo` with a signer,
-pointed at the relay. Same binary, different flags. No second
-codepath.
-
-Probably 2-3 hours, decomposable: (1) `--home-key` flag + skip-
-signer path; (2) move seed/fileSync out of chat/server.js; (3)
-deploy-as-merge — author script that signs the homepage edits +
-pushes; (4) docs + FIRST_STEPS update reflecting the new
-deployment story.
+- *Deploy streamo.dev with the split.* Pick where the author
+  process runs (David's laptop on demand, a separate systemd unit
+  on the same box, etc.) and update `.env.prod` + the systemd
+  shape. The relay side is already mode-aware via env.
+- *Dev ergonomics.* `npm run dev` is still all-in-one (one process
+  with creds). If we want to test the split during dev, it's two
+  commands today. A `scripts/dev-split.js` that spawns both could
+  help, but isn't urgent — the all-in-one mode exercises the same
+  protocol paths.
+- *`--no-sign` flag.* Even more explicit "this process holds no
+  secrets" — would refuse the credential env vars entirely, not
+  just decline to derive a signer. Mostly cosmetic.
+- *Origin sync hardening for unattended authors.* If we ever want
+  the author process to run as a long-lived systemd unit pushing
+  edits to the relay, the disconnect/reconnect story needs polish
+  (today's origin sync doesn't auto-reconnect on connection loss).
 
 ### richer explorer
 

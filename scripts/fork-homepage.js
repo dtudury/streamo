@@ -3,10 +3,10 @@
  * @file fork-homepage — fork the homepage of a running streamo relay
  * into your own signed local repo.
  *
- * This is the first-user move and the integration-test-by-running:
- * a single command that exercises the whole page-as-Repo stack — the
- * relay's serve-from-Repo middleware, the home repo's `files` key, the
- * `remoteParent` commit field, the explorer's fork-link rendering.
+ * Thin shell around `Repo.merge(url, { from: 'files' })`: prompt for
+ * credentials, derive a keypair, open the local archive, call merge,
+ * print the next-step command.  All the HTTP fetch + pure-copy commit
+ * machinery now lives in `Repo.merge` itself.
  *
  * Mechanics:
  *
@@ -14,21 +14,17 @@
  *      keypair via PBKDF2-SHA256 for the stream named "homepage" — the
  *      same shape any streamo identity uses, deterministic across
  *      runs.
- *   2. Fetch the target relay's `/api/info` to learn its home repo's
- *      public key, then `/streams/<home>/raw` to pull the full
- *      wire-format snapshot into a local Repo.  No live WebSocket
- *      needed — one-shot HTTP is enough for a fork.
- *   3. Read the home repo's `files` value (its homepage content) and
- *      the address of its latest commit.
- *   4. Create a new local Repo at `<data-dir>/<your-pubkey>.bin` and
- *      commit a *pure-copy* of those files — no local parent (it's
- *      your first commit) but `remoteParent` cites the home repo's
- *      latest commit on the target host.  Signed by your keypair.
- *   5. Print the exact command to serve your fork.
+ *   2. Open `<data-dir>/<your-pubkey>.bin` via archiveSync, attach
+ *      your signer.
+ *   3. `await myRepo.merge(httpUrl, { from: 'files' })` — fetches the
+ *      relay's home repo via `/streams/<key>/raw`, walks into `files`,
+ *      makes a pure-copy commit signed by you with `remoteParent`
+ *      cited automatically (URL form auto-fills host + repo).
+ *   4. Print the exact CLI command to serve your fork.
  *
  * Idempotent in the soft sense: re-running with the same credentials
  * produces the same keypair, opens the same archive, and appends a
- * second pure-copy commit (since each run is a fresh checkout).  If
+ * second pure-copy commit (since each merge is its own commit).  If
  * you only want one fork commit, run once.
  *
  * Usage:
@@ -39,6 +35,7 @@
  *
  * Reads from env when set:
  *   STREAMO_USERNAME, STREAMO_PASSWORD  (skip the prompts)
+ *   STREAMO_KEY_ITERATIONS              (defaults to 100000)
  */
 import { question } from 'readline-sync'
 import { Signer } from '../public/streamo/Signer.js'
@@ -86,72 +83,46 @@ console.log(`  your '${streamName}' key:`)
 console.log(`    ${myKeyHex}`)
 console.log('')
 
-// ── pull relay info ───────────────────────────────────────────────
-console.log(`  fetching relay info from ${httpUrl}/api/info…`)
-let info
-try {
-  info = await fetch(`${httpUrl}/api/info`).then(r => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`)
-    return r.json()
-  })
-} catch (e) {
-  console.error(`  could not reach relay: ${e.message}`)
-  console.error(`  is a streamo running at ${httpUrl}?  try 'npm run dev' in another terminal.`)
-  process.exit(3)
-}
-const homeKeyHex = info.primaryKeyHex
-console.log(`  relay's home repo: ${homeKeyHex}`)
-console.log('')
-
-// ── pull the home repo's bytes ────────────────────────────────────
-console.log(`  pulling ${httpUrl}/streams/${homeKeyHex.slice(0, 12)}…/raw…`)
-const raw = new Uint8Array(
-  await fetch(`${httpUrl}/streams/${homeKeyHex}/raw`).then(r => r.arrayBuffer())
-)
-const homeRepo = new Repo()
-const writer = homeRepo.makeWritableStream().getWriter()
-await writer.write(raw)
-const homeLast = homeRepo.lastCommit
-if (!homeLast) {
-  console.error("  the relay's home repo has no commits yet — nothing to fork")
-  process.exit(4)
-}
-console.log(`  home has ${[...homeRepo.history()].length} commits; pulling the latest snapshot.`)
-console.log('')
-
-// ── read the files we're forking ──────────────────────────────────
-const homeFiles = homeRepo.get('files')
-if (!homeFiles || typeof homeFiles !== 'object') {
-  console.error("  the home repo has no `files` key — there's no homepage to fork.")
-  process.exit(5)
-}
-const fileNames = Object.keys(homeFiles)
-console.log(`  forking ${fileNames.length} file${fileNames.length === 1 ? '' : 's'}:`)
-for (const name of fileNames.slice(0, 8)) console.log(`    · ${name}`)
-if (fileNames.length > 8) console.log(`    · …and ${fileNames.length - 8} more`)
-console.log('')
-
-// ── make the fork commit on your local repo ───────────────────────
+// ── open local fork repo ──────────────────────────────────────────
 const myRepo = new Repo()
 await archiveSync(myRepo, dataDir, myKeyHex)
 myRepo.attachSigner(signer, streamName)
 
-const working = myRepo.checkout()
-working.set({ files: homeFiles })
-myRepo.commit(working, `fork from ${host}`, {
-  remoteParent: {
-    host,
-    repo: homeKeyHex,
-    dataAddress: homeLast.dataAddress
+// ── merge ─────────────────────────────────────────────────────────
+// Repo.merge does the HTTP fetch, snapshot load, pure-copy commit
+// with auto-filled remoteParent.  The `from: 'files'` slice means
+// we incorporate the relay's homepage content (not its chat/journal
+// state) — leaving room for our fork to grow its own siblings.
+console.log(`  merging files from ${httpUrl}…`)
+try {
+  await myRepo.merge(httpUrl, { from: 'files' })
+} catch (e) {
+  if (/no value at path/.test(e.message)) {
+    console.error(`  the relay's home repo has no \`files\` key — there's no homepage to fork.`)
+    process.exit(5)
   }
-})
+  if (/no commits/.test(e.message)) {
+    console.error("  the relay's home repo has no commits yet — nothing to fork.")
+    process.exit(4)
+  }
+  console.error(`  could not merge from ${httpUrl}: ${e.message}`)
+  console.error(`  is a streamo running there?  try \`npm run dev\` in another terminal.`)
+  process.exit(3)
+}
 
 const myCommit = myRepo.lastCommit
-console.log('  ✨ fork commit landed:')
+const rp = myCommit.remoteParent
+const fileNames = Object.keys(myRepo.get('files') ?? {})
+console.log('')
+console.log(`  ✨ forked ${fileNames.length} file${fileNames.length === 1 ? '' : 's'} from ${rp.host} (${rp.repo.slice(0, 12)}…):`)
+for (const name of fileNames.slice(0, 8)) console.log(`    · ${name}`)
+if (fileNames.length > 8) console.log(`    · …and ${fileNames.length - 8} more`)
+console.log('')
+console.log(`  fork commit landed:`)
 console.log(`     message:      "${myCommit.message}"`)
 console.log(`     dataAddress:  @${myCommit.dataAddress}`)
 console.log(`     parent:       ${myCommit.parent ?? '(none — first commit, pure-copy fork)'}`)
-console.log(`     remoteParent: ${host} · ${homeKeyHex.slice(0, 12)}… · @${myCommit.remoteParent.dataAddress}`)
+console.log(`     remoteParent: ${rp.host} · ${rp.repo.slice(0, 12)}… · @${rp.dataAddress}`)
 console.log('')
 
 // ── wait for sign + archive flush ─────────────────────────────────

@@ -4,7 +4,7 @@ import express from 'express'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { attachStreamSync } from './outletSync.js'
-import { serveFromRepo } from './repoFileServer.js'
+import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -39,6 +39,13 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
     const { repo, ...serveOpts } = serveRepoFiles
     app.use(serveFromRepo(repo, serveOpts))
   }
+
+  // Multi-home file serving: any repo the registry holds is addressable at
+  // /streams/<keyhex>/<path>. Mounted as a prefix so Express strips it from
+  // req.url before serveFromRegistry / serveFromRepo run. The middleware
+  // skips the bare `/streams/<keyhex>` (→ JSON view) and `/streams/<keyhex>/raw`
+  // (→ raw-bytes endpoint) so the legacy routes below keep working.
+  app.use('/streams/:keyhex', serveFromRegistry(registry, { filesKey: 'files' }))
 
   app.use(express.static(publicDir))
 

@@ -116,6 +116,10 @@ function injectImportMap (html, importMap) {
  *   importmap binds `@dtudury/streamo/` to
  * @param {string} [options.libraryPackageName='@dtudury/streamo']  the bare
  *   specifier the importmap binds
+ * @param {(req) => string} [options.pathFromReq]  override how the lookup
+ *   path is derived from the request — defaults to `req.path`. Used by
+ *   `serveFromRegistry` to feed in the wildcard tail instead of the full
+ *   URL path.
  * @returns {(req, res, next) => void} Express middleware
  */
 export function serveFromRepo (repo, options = {}) {
@@ -123,13 +127,14 @@ export function serveFromRepo (repo, options = {}) {
     filesKey = 'files',
     injectImportMap: doInject = true,
     libraryPath = '/streamo/',
-    libraryPackageName = '@dtudury/streamo'
+    libraryPackageName = '@dtudury/streamo',
+    pathFromReq = req => req.path
   } = options
 
   return function repoFileMiddleware (req, res, next) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
 
-    const path = normalize(req.path)
+    const path = normalize(pathFromReq(req))
     if (!path) return next()
 
     const files = readFilesMap(repo, filesKey)
@@ -173,5 +178,52 @@ export function serveFromRepo (repo, options = {}) {
     } else {
       res.end(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength))
     }
+  }
+}
+
+/**
+ * Multi-home Express middleware: serve files from any repo in a registry,
+ * addressed by hex pubkey in the URL.
+ *
+ * Mount via a prefix so Express strips it from req.url before delegating:
+ *
+ *   app.use('/streams/:keyhex', serveFromRegistry(registry, { filesKey: 'files' }))
+ *
+ * Then `/streams/<66-hex>/index.html` serves `repo.get('files', 'index.html')`,
+ * `/streams/<66-hex>/foo.css` serves `repo.get('files', 'foo.css')`, etc.
+ * Missing repos and missing files fall through to `next()` — so sibling
+ * routes like `/streams/:key/raw` (raw bytes) and `/streams/:key` (JSON view)
+ * remain reachable when the requested file isn't in the repo.
+ *
+ * Behavior at the bare path (`'/'` — i.e. `/streams/<keyhex>` and
+ * `/streams/<keyhex>/`) is HOMEPAGE-style: serves `files/index.html` if the
+ * repo has it, else falls through to the legacy JSON view. So repos that
+ * opt into having a homepage (by putting an `index.html` under their
+ * `files` key) get one for free; repos that don't keep their JSON-view
+ * default. The path `'/raw'` is skipped unconditionally so the raw-bytes
+ * endpoint wins — a real-but-rare collision for repos that have a file
+ * literally named `raw`.
+ *
+ * Any pubkey the registry already holds becomes addressable as a public
+ * URL. The relay didn't have to be configured for it; the author just
+ * needed to push their bytes via origin sync.
+ *
+ * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {object} [options]  same shape as serveFromRepo's options
+ *   (filesKey, injectImportMap, libraryPath, libraryPackageName)
+ * @returns {(req, res, next) => Promise<void>} Express middleware
+ */
+export function serveFromRegistry (registry, options = {}) {
+  return async function multiHomeMiddleware (req, res, next) {
+    if (req.url === '/raw') return next()
+    const { keyhex } = req.params
+    if (!/^[0-9a-f]{66}$/.test(keyhex)) return next()
+    let repo
+    try {
+      repo = await registry.open(keyhex)
+    } catch {
+      return next()
+    }
+    return serveFromRepo(repo, options)(req, res, next)
   }
 }

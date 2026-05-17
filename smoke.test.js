@@ -20,12 +20,15 @@ async function makeKey (name = 'smoke') {
   return { signer, publicKey, publicKeyHex: toHex(publicKey) }
 }
 
-async function startServer (publicKeyHex, stream, peerOptions = {}) {
-  const registry = new RepoRegistry(() => stream)
+async function startServer (publicKeyHex, streamOrFactory, peerOptions = {}) {
+  const factory = typeof streamOrFactory === 'function'
+    ? streamOrFactory
+    : () => streamOrFactory
+  const registry = new RepoRegistry(factory)
   const server = await webSync(registry, publicKeyHex, 0, 'smoke-test', KEY_ITERATIONS, peerOptions)
   const { port } = server.address()
   const close = () => new Promise(resolve => server.close(resolve))
-  return { port, close }
+  return { port, close, registry }
 }
 
 describe(import.meta.url, ({ test }) => {
@@ -138,6 +141,52 @@ describe(import.meta.url, ({ test }) => {
       // If-None-Match returns 304
       const cached = await fetch(`http://localhost:${port}/`, { headers: { 'If-None-Match': etag } })
       assert.equal(cached.status, 304)
+    } finally {
+      await close()
+    }
+  })
+
+  test('multi-home: /streams/:key/<path> serves files from that repo', async ({ assert }) => {
+    // The relay holds the primary streamo (whatever it is) plus a fork
+    // repo with its own homepage. Hitting /streams/<fork-key>/index.html
+    // should serve the fork's bytes, even though the fork isn't the
+    // primary. This is the multi-tenant property: any repo the relay
+    // holds is addressable as a public URL.
+    const { publicKeyHex: primaryKey } = await makeKey('multi-home-primary')
+    const { signer: forkSigner, publicKeyHex: forkKey } = await makeKey('multi-home-fork')
+
+    const fork = new Repo()
+    fork.attachSigner(forkSigner, 'multi-home-fork')
+    const working = fork.checkout()
+    working.set({ files: { 'index.html': '<!doctype html><title>fork</title><p>forked site</p>' } })
+    fork.commit(working, 'seed fork homepage')
+
+    // Key-aware factory: primary key gets a fresh Streamo (so the JSON view
+    // route still works); fork key gets the prepared fork Repo.
+    const { port, close } = await startServer(primaryKey, (key) => {
+      if (key === forkKey) return fork
+      return new Streamo()
+    })
+    try {
+      const html = await fetch(`http://localhost:${port}/streams/${forkKey}/index.html`)
+      assert.equal(html.status, 200)
+      assert.equal(html.headers.get('content-type'), 'text/html; charset=utf-8')
+      const body = await html.text()
+      assert.ok(body.includes('forked site'), 'served the fork\'s bytes')
+
+      // Trailing slash → index.html
+      const root = await fetch(`http://localhost:${port}/streams/${forkKey}/`)
+      assert.equal(root.status, 200)
+      assert.ok((await root.text()).includes('forked site'))
+
+      // The /raw endpoint still serves raw bytes, not a file named 'raw'
+      const raw = await fetch(`http://localhost:${port}/streams/${forkKey}/raw`)
+      assert.equal(raw.status, 200)
+      assert.equal(raw.headers.get('content-type'), 'application/octet-stream')
+
+      // Missing file in fork → 404 (no fallback to static)
+      const missing = await fetch(`http://localhost:${port}/streams/${forkKey}/no-such-file.html`)
+      assert.equal(missing.status, 404)
     } finally {
       await close()
     }

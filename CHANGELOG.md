@@ -5,6 +5,89 @@ for what's next.
 
 ---
 
+## 7.5.0 — multi-home serving: every pushed repo is a public URL
+
+**The headline.** Any repo a streamo relay holds is now addressable
+as a public site at `/streams/<keyhex>/<path>`. Push your fork to
+`streamo.dev` via `--origin streamo.dev`, and your fork is live at
+`https://streamo.dev/streams/<your-key>/` immediately. No relay-side
+configuration. No admin step. The author signs commits locally, the
+bytes flow up via origin sync, the URL serves.
+
+This is the multi-tenant property the dumb-pipe split was reaching
+toward. The relay holds bytes; the URL pattern resolves any held
+bytes to a public URL. The relay doesn't know what's being hosted —
+it just serves whatever the registry holds at whatever path that
+repo's `files` key contains.
+
+**What changes for users.**
+
+- The home repo keeps its privileged `/` mount (unchanged).
+- Plus it's now also addressable at `/streams/<homekey>/`, serving the
+  same bytes via the multi-home path.
+- Any *other* repo the relay holds (forks, side-projects, anything
+  pushed via origin sync) becomes addressable at
+  `/streams/<thatkey>/`. If the repo has `files/index.html`, that's
+  the homepage; assets at `files/foo.css` etc. work.
+- Repos without an `index.html` fall through to the legacy JSON view
+  at `/streams/<keyhex>` — backwards-compat preserved.
+- `/streams/<keyhex>/raw` (raw bytes endpoint) is preserved as-is;
+  it's skipped by the multi-home middleware so a file literally named
+  `raw` would be shadowed (real-but-rare collision).
+
+**Library API.** New named export `serveFromRegistry`:
+
+```js
+import express from 'express'
+import { serveFromRegistry } from '@dtudury/streamo/repoFileServer.js'
+
+const app = express()
+app.use('/streams/:keyhex', serveFromRegistry(registry, { filesKey: 'files' }))
+```
+
+Mounts as a prefix; Express strips the prefix before delegating to
+`serveFromRepo` under the hood. The middleware:
+
+- Validates `:keyhex` as 66-char hex; falls through if not.
+- Opens the repo from the registry (creates an empty one if no bytes
+  are yet pushed — same obsecurity model as the existing routes).
+- Delegates to `serveFromRepo` with the stripped sub-path.
+- Falls through (calls `next()`) on missing repos, missing files,
+  and the `/raw` sub-path so legacy routes win.
+
+**Internally**, `serveFromRepo` gained a `pathFromReq` option that lets
+callers override how the lookup path is derived from the request.
+`serveFromRegistry` uses it indirectly (via Express's prefix-strip)
+but the hook is also useful for custom routing schemes.
+
+**190 tests** (was 189): +1 multi-home smoke test covering the
+trailing-slash case, raw-bytes preservation, missing-file 404, and
+that a fork's bytes serve at its own URL distinct from the primary.
+The `smoke.test.js` `startServer` helper was extended to accept a
+key-aware factory so tests can build registries with multiple repos.
+
+**Why this matters.** Streamo just became a thing you can *publish*
+on, not just sync through. A streamo-backed website used to require
+its own relay (because the page-as-Repo middleware only knew one
+home). Now a single public relay can host any number of independent
+sites, each owned by a different keypair, each at its own URL. The
+relay literally cannot tell what it's hosting — it doesn't have the
+signing keys for any of it. Same dumb-pipe pitch, deeper realization.
+
+**Migration notes.**
+
+- *Existing relays* — no action needed. The home repo's privileged `/`
+  mount is preserved; `/streams/<homekey>/` serves the same bytes
+  via the new path. Existing `/streams/<key>` JSON view and
+  `/streams/<key>/raw` raw-bytes endpoints are preserved.
+- *Existing forks* — anyone who pushed a fork to a relay (via
+  `--origin streamo.dev` etc.) gets a public URL retroactively. No
+  re-push needed.
+- *Custom Express apps using `serveFromRepo`* — keep working; new
+  consumers can opt into `serveFromRegistry` for multi-home.
+
+---
+
 ## 7.4.0 — presence is ephemeral; the relay can drop its signer
 
 **The headline.** Chat-room membership is no longer a signed list on a

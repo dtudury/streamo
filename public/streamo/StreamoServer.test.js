@@ -1,5 +1,8 @@
+import { mkdtempSync, rmSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { describe } from './utils/testing.js'
-import { parseOrigin } from './StreamoServer.js'
+import { parseOrigin, StreamoServer } from './StreamoServer.js'
 
 describe(import.meta.url, ({ test }) => {
   // ── URL-shape (explicit protocol) ──────────────────────────────────────
@@ -39,5 +42,63 @@ describe(import.meta.url, ({ test }) => {
   test('shorthand bare host (no port) → wss + 443 (production default)', ({ assert }) => {
     assert.deepEqual(parseOrigin('streamo.dev'),
       { host: 'streamo.dev', port: 443, protocol: 'wss' })
+  })
+
+  // ── relay-only mode (StreamoServer.create with publicKeyHex) ───────────
+
+  // A valid compressed secp256k1 pubkey (0x02 or 0x03 prefix + 32-byte x).
+  // Doesn't need to match a real private key — the relay-only path never
+  // signs anything, so any well-formed pubkey is fine for these tests.
+  const HOMEKEY = '02' + 'ab'.repeat(32)
+
+  test('relay-only: create with publicKeyHex skips signer derivation', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-relay-'))
+    try {
+      const server = await StreamoServer.create({ publicKeyHex: HOMEKEY, dataDir: dir, keyIterations: 1 })
+      assert.equal(server.signer, null, 'no signer in relay-only mode')
+      assert.equal(server.publicKeyHex, HOMEKEY, 'publicKeyHex propagates')
+      assert.ok(server.streamo, 'streamo is opened')
+      assert.equal(server.streamo.byteLength, 0, 'empty archive on fresh dir')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('relay-only: files() throws (signing required)', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-relay-'))
+    try {
+      const server = await StreamoServer.create({ publicKeyHex: HOMEKEY, dataDir: dir, keyIterations: 1 })
+      await assert.rejects(() => server.files('/tmp'), 'files() rejects without a signer')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('relay-only: rejects mixing publicKeyHex with credentials', async ({ assert }) => {
+    await assert.rejects(
+      () => StreamoServer.create({ publicKeyHex: HOMEKEY, username: 'alice', password: 'x', keyIterations: 1 }),
+      'rejects publicKeyHex + credentials together'
+    )
+  })
+
+  test('relay-only: rejects malformed publicKeyHex', async ({ assert }) => {
+    await assert.rejects(
+      () => StreamoServer.create({ publicKeyHex: 'not-a-key', keyIterations: 1 }),
+      'rejects non-66-hex pubkey'
+    )
+  })
+
+  test('credentials mode: still works (no regression)', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-author-'))
+    try {
+      const server = await StreamoServer.create({
+        name: 'test', username: 'alice', password: 'hunter2',
+        dataDir: dir, keyIterations: 1
+      })
+      assert.ok(server.signer, 'signer present in credentials mode')
+      assert.ok(/^[0-9a-f]{66}$/.test(server.publicKeyHex), 'derived publicKeyHex looks valid')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

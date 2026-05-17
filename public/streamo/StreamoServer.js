@@ -54,20 +54,40 @@ export class StreamoServer {
     Object.assign(this, fields)
   }
 
-  static async create ({ name, username, password, dataDir = '.streamo', keyIterations = 100000 }) {
-    const signer = new Signer(username, password, keyIterations)
-    const { publicKey } = await signer.keysFor(name)
-    const publicKeyHex = bytesToHex(publicKey)
+  static async create ({ name, username, password, publicKeyHex, dataDir = '.streamo', keyIterations = 100000 }) {
+    let signer = null
+    let resolvedPublicKeyHex
+
+    if (publicKeyHex) {
+      // Relay-only mode: open a repo by its pubkey, no credential derivation,
+      // no signer attached. Bytes arrive via sync (origin or outlet); commits
+      // happen elsewhere (an author process with the matching credentials).
+      // files() / merge() throw in this mode because both write signed commits.
+      if (username || password) {
+        throw new Error('StreamoServer.create: cannot combine publicKeyHex with {username, password}')
+      }
+      if (!/^[0-9a-f]{66}$/.test(publicKeyHex)) {
+        throw new Error(`StreamoServer.create: invalid publicKeyHex (expected 66 hex chars), got: ${publicKeyHex}`)
+      }
+      resolvedPublicKeyHex = publicKeyHex
+    } else {
+      if (!name || !username || password == null) {
+        throw new Error('StreamoServer.create: requires either publicKeyHex (relay-only) or {name, username, password} (author)')
+      }
+      signer = new Signer(username, password, keyIterations)
+      const { publicKey } = await signer.keysFor(name)
+      resolvedPublicKeyHex = bytesToHex(publicKey)
+    }
 
     const registry = new RepoRegistry(async key => {
       const repo = new Repo()
       await archiveSync(repo, dataDir, key)
       return repo
     })
-    const streamo = await registry.open(publicKeyHex)
-    streamo.attachSigner(signer, name)
+    const streamo = await registry.open(resolvedPublicKeyHex)
+    if (signer) streamo.attachSigner(signer, name)
 
-    const server = new StreamoServer({ name, username, publicKeyHex, signer, streamo, registry })
+    const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
     server.#dataDir = dataDir
     server.#keyIterations = keyIterations
     return server
@@ -87,6 +107,9 @@ export class StreamoServer {
   }
 
   async files (folder = '.', options = {}) {
+    if (!this.signer) {
+      throw new Error('files() requires a signer — open this server with {name, username, password} instead of publicKeyHex')
+    }
     return fileSync(this.streamo, folder, this.#dataDir, options)
   }
 

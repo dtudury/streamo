@@ -38,6 +38,10 @@ program
       .env('STREAMO_PASSWORD')
   )
   .addOption(
+    new Option('--home-key <pubkeyhex>', 'open a repo by pubkey in relay-only mode (no signer derived; bytes arrive via sync from an author process). Mutually exclusive with --name/--username/--password and incompatible with --files/--merge-from.')
+      .env('STREAMO_HOME_KEY')
+  )
+  .addOption(
     new Option('--data-dir <path>', 'directory for archive files')
       .env('STREAMO_DATA_DIR')
       .default('.streamo')
@@ -122,22 +126,51 @@ if (options.envFile) {
   Object.assign(options, program.opts())
 }
 
-options.name     ||= question('Name: ')
-options.username ||= question('Username: ')
-// Single-entry hidden input — same deterministic-key model as
-// fork-homepage.js.  No confirmation prompt: streamo's password →
-// keypair is recoverable (re-run with the right password lands on
-// the right key), so the double-prompt was security theater for
-// this use case and friction on every re-run.
-const password = options.password || question('Password (hidden): ', { hideEchoBack: true, mask: '' })
-
-const server = await StreamoServer.create({
-  name:          options.name,
-  username:      options.username,
-  password,
-  dataDir:       options.dataDir,
-  keyIterations: options.keyIterations,
-})
+// Two startup shapes:
+//   (1) Author — derives a signer from {name, username, password}; can
+//       commit (--files, --merge-from, REPL writes).
+//   (2) Relay-only — opens a repo by pubkey via --home-key; holds no
+//       secrets; bytes arrive via sync from an author process running
+//       elsewhere with the matching credentials.
+//
+// In relay-only mode, --files / --merge-from are rejected up front
+// because both require a signer.
+let server
+if (options.homeKey) {
+  if (options.username || options.password || options.name) {
+    console.error('\x1b[31mcannot combine --home-key with --name/--username/--password — author and relay are mutually exclusive modes\x1b[0m')
+    process.exit(2)
+  }
+  if (options.files) {
+    console.error('\x1b[31m--files requires a signer; not available with --home-key (run an author process separately for the signing side)\x1b[0m')
+    process.exit(2)
+  }
+  if (options.mergeFrom) {
+    console.error('\x1b[31m--merge-from writes a signed commit; not available with --home-key (run an author process for the merge)\x1b[0m')
+    process.exit(2)
+  }
+  server = await StreamoServer.create({
+    publicKeyHex:  options.homeKey,
+    dataDir:       options.dataDir,
+    keyIterations: options.keyIterations,
+  })
+} else {
+  options.name     ||= question('Name: ')
+  options.username ||= question('Username: ')
+  // Single-entry hidden input — same deterministic-key model as
+  // fork-homepage.js.  No confirmation prompt: streamo's password →
+  // keypair is recoverable (re-run with the right password lands on
+  // the right key), so the double-prompt was security theater for
+  // this use case and friction on every re-run.
+  const password = options.password || question('Password (hidden): ', { hideEchoBack: true, mask: '' })
+  server = await StreamoServer.create({
+    name:          options.name,
+    username:      options.username,
+    password,
+    dataDir:       options.dataDir,
+    keyIterations: options.keyIterations,
+  })
+}
 
 const { name, username, publicKeyHex, signer, streamo, registry } = server
 
@@ -145,8 +178,9 @@ const envDir  = options.envFile ? dirname(options.envFile).replace(/^public\//, 
 const appPath = (envDir && envDir !== '.') ? `/${envDir}/` : '/'
 const webUrl  = options.web ? `http://localhost:${+options.web}${appPath}` : null
 const rows = [
-  ['NAME',       name],
-  ['USERNAME',   username],
+  ...(name     ? [['NAME',     name]]     : []),
+  ...(username ? [['USERNAME', username]] : []),
+  ...(server.signer ? [] : [['MODE', 'relay-only (no signer)']]),
   ['PUBLIC KEY', publicKeyHex],
   ...(webUrl ? [['URL', webUrl]] : []),
 ]

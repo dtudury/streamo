@@ -5,6 +5,100 @@ for what's next.
 
 ---
 
+## 7.4.0 — presence is ephemeral; the relay can drop its signer
+
+**The headline.** Chat-room membership is no longer a signed list on a
+chain. Peers discover each other live via the existing
+`announce`/`interest` ephemeral layer, with one new primitive: the
+relay tracks current announces per (topic, ws) and **replays them to
+peers expressing fresh interest**. Lifetime is "currently connected,"
+not "ever announced" — on disconnect, the peer's announces are
+dropped. Newcomers learn about already-broadcasting peers without
+anyone heartbeating.
+
+This dissolves what was left of the chat-room's smart edge:
+
+- `chat-server.js`'s `onAnnounce → members` write is gone — was
+  redundant with the chat client's own announce-back path, which is
+  what was carrying real-time discovery already.
+- The chat client renders the thread from per-author repos (as
+  before); the explorer's "members" section now renders from a live
+  `currentMembers` LiveSource populated by announces.
+- Streamo.dev's existing `members` array (historical signed data)
+  keeps loading via the chat client's legacy `follow: members` path,
+  so old chat history remains readable. The roster naturally
+  retires as those historical members fall away.
+
+And the library + CLI gain a **relay-only mode** so the public-facing
+server can hold no keys at all:
+
+- `StreamoServer.create({ publicKeyHex })` opens a repo by pubkey
+  with no signer derivation — `files()` and other write paths throw
+  with helpful messages.
+- `bin/streamo.js --home-key <pubkeyhex>` (env: `STREAMO_HOME_KEY`)
+  bypasses the credential prompts; refuses `--files` /
+  `--merge-from` up front because both want to commit. Banner shows
+  a `MODE: relay-only (no signer)` row so the running shape is
+  obvious.
+- `chat/server.js` detects relay-only mode from env (set
+  `STREAMO_HOME_KEY` without `STREAMO_USERNAME`) and skips the
+  journal seed + fileSync entirely. The same binary, two startup
+  shapes selected by config. The existing `npm run dev` / `npm run
+  prod` workflows are unchanged — they fall into the legacy
+  all-in-one path when credentials are present.
+
+**Why this matters.** The dumb-pipe split is now a deployment-shape
+choice, not an architecture problem. Deploy the relay with
+`STREAMO_HOME_KEY` on the public box; run the author process with
+your credentials wherever you like (your laptop, a separate user on
+the same machine, a CI job triggered by a webhook). Sign commits
+locally, push via `--origin streamo.dev`, the relay archives and
+serves. Merge IS the deploy — no script needed (though `npm run
+deploy` still works for shipping streamo itself).
+
+**Library API.** New `StreamoServer.create` signature accepts
+either credentials or `publicKeyHex`:
+
+```js
+// Author — derives signer, can commit
+const server = await StreamoServer.create({
+  name, username, password,
+  dataDir, keyIterations
+})
+
+// Relay-only — opens repo by pubkey, no signer
+const server = await StreamoServer.create({
+  publicKeyHex,
+  dataDir, keyIterations
+})
+```
+
+**189 tests** (was 180): +4 for the announce-replay primitive (late
+interest replays current announces; replay doesn't echo own
+announces; disconnected peers drop from replay; replay covers
+multiple announcers), +5 for the StreamoServer relay-only mode
+(publicKeyHex propagates, `files()` rejects without a signer,
+mode-mixing rejected, malformed pubkey rejected, credentials mode
+no-regression).
+
+**Migration notes.**
+
+- *Existing relays* — no action needed. With credentials in env,
+  `chat/server.js` runs in legacy all-in-one mode; the only visible
+  change is a `[chat] mode: ...` log line at startup and the
+  retirement of `[chat] new member: …` lines (members no longer
+  written).
+- *To run a relay without a signer* — set `STREAMO_HOME_KEY` in
+  your env file, remove `STREAMO_USERNAME` / `STREAMO_PASSWORD`,
+  restart. The relay opens the home repo's archive and serves
+  bytes; an author process elsewhere supplies the signed commits.
+- *Existing chat-room data* — append-only chains preserve history.
+  Your relay's `home.value.members` array stays where it is; new
+  joins simply don't append to it. The chat client still walks it
+  for backwards compat.
+
+---
+
 ## 7.3.0 — merge primitive + all-npx fork-and-serve
 
 **The headline.** Forking a streamo-backed site into your own signed

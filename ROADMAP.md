@@ -7,8 +7,8 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 7.2.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. 7.2 —
+Streamo is at 7.3.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. 7.3 —
 **merge primitive + all-npx fork-and-serve** — promotes forking
 from "a script you run inside a clone" to "one `npx` command,
 anywhere." `Repo.merge(source, options)` is the library primitive

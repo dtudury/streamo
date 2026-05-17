@@ -5,7 +5,7 @@ for what's next.
 
 ---
 
-## 7.2.0 — merge primitive + all-npx fork-and-serve
+## 7.3.0 — merge primitive + all-npx fork-and-serve
 
 **The headline.** Forking a streamo-backed site into your own signed
 repo is now one command. No `git clone`, no `npm install`, no

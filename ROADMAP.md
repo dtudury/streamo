@@ -56,65 +56,80 @@ usable at 200+ commits. Probably touches `at-view.js`, `render.js`,
 and the typed-value composite renderers from the
 streamo-typed-value-displays thread in `THREADS.md`.
 
-### fork as a CLI primitive — collapse FIRST_STEPS to all-npx
+### merge as a primitive *(landed 2026-05-17, six nibbles, awaiting publish)*
 
-`scripts/fork-homepage.js` (yesterday's first-user experience) is
-project-local — it lives in the cloned repo, so the first-user
-flow requires `git clone` + `npm install` before it's reachable.
-The natural next move is to fold its capability into the
-`@dtudury/streamo` binary so the whole flow becomes a single
-`npx` invocation:
+`Repo.merge(source, options)` — incorporate a slice of another
+repo's value into this one as a single signed commit with
+`remoteParent` cited. Two source shapes: in-memory `Repo`
+instance, or string URL (`http(s)://host[:port]/streams/<keyHex>`
+or `host[:port]` shorthand via `/api/info`). One policy
+implemented: `'replace'` (Mode A — source slice replaces target
+slice). Three more reserved (`'theirs'`, `'ours'`, `'throw'`) for
+attribute-walk semantics when real workloads drive their
+defaults.
+
+CLI: `--merge-from <url>` flag on `bin/streamo.js` runs the merge
+*only when the local repo is empty* (idempotent on re-run), so
+the all-`npx` first-user flow is one command:
 
 ```bash
 npx @dtudury/streamo \
-  --name homepage --username alice --password ... \
-  --fork-from streamo.dev \
-  --files ./mysite \
-  --files-key files \
-  --web 8081 \
-  --interactive
+  --name homepage --username alice \
+  --merge-from streamo.dev --merge-from-key files \
+  --files ./mysite --files-key files \
+  --web 8081
 ```
 
-The new flag `--fork-from <relay>` runs *only when the local
-repo is empty*: fetch the relay's home repo snapshot via
-`/streams/<key>/raw`, decode the value, make a pure-copy commit
-with `remoteParent` set, then continue normal startup. Idempotent
-on subsequent runs (skipped because the repo has commits).
+FIRST_STEPS.md is now anchored on this command. `scripts/fork-homepage.js`
+stays as a worked scripting example. The `--interactive` REPL
+exposes `merge` as a shorthand for `streamo.merge`. Password
+prompt simplified to single-entry hidden (the double-prompt
+"confirm" was security-theater for the deterministic key model).
 
-**Tiny library-side addition** that supports it: a `fork()`
-helper on `Repo` (or a free function) that takes an upstream
-URL or peer Repo + an optional sub-key slice, makes the
-pure-copy commit. Same logic that's in `fork-homepage.js`
-today, factored into the library. Exposed in the `--interactive`
-REPL too, so `await streamo.fork('streamo.dev', 'files')` is
-the manual equivalent.
+173 tests passing (12 new in `Repo.test.js`, 2 new in
+`smoke.test.js`).
 
-**What's the advantage of a separate fork directory?** (asked
-2026-05-16) — for the *archive* directory: none. `.streamo`
-holds one .bin file per pubkey; multiple repos coexist fine.
-For the *files* directory under `fileSync`: it MUST be its own
-folder if any other process is also fileSyncing somewhere
-nearby — two repos with active fileSync on the same folder
-fight (TOCTOU at the fs layer, same shape as the archiveSync
-bug from 2026-05-15). If the user's streamo has no fileSync
-(just serves bytes from archive), the folder question
-disappears. The current FIRST_STEPS uses separate folders for
-clarity, but architecturally only the second case is forced.
+### publish-to — completing the round-trip *(next active thread)*
 
-**Two fork flavors that could both be supported:**
+Today's all-`npx` flow does a one-way *pull*: HTTP fetch the
+upstream snapshot, commit a pure-copy locally, serve at
+`localhost:8081`. To make the user's fork visible at
+`streamo.dev/streams/<their-key>`, the user's bytes need to flow
+*up* to streamo.dev — WebSocket sync plus an `announce` against
+the relay's home topic. The CLI's `--origin` flag does the
+connect but doesn't announce; the manual REPL incantation would
+be `session.announce(publicKeyHex, homeKey)` after a connect.
 
-- *Light fork (current behavior)*: HTTP fetch of the upstream
-  snapshot, pure-copy commit + remoteParent.  No upstream
-  history kept locally.  Small, fast, what most users want.
-- *Heavy fork (future)*: connect via WebSocket and sync the
-  whole upstream chain into the local registry first; fork from
-  any commit in that chain.  Bigger disk footprint, but lets you
-  browse history and verify any commit in the upstream's chain.
-  Useful for forking a project, not just a page.
+The natural next flag is `--publish-to <host>`: opens a WebSocket
+to the host, fetches `hello.home` (the relay's home topic),
+announces the local pubkey against that topic, and continues. The
+relay's existing `onAnnounce` callback (already in
+`chat/server.js` for the chat-member flow) adds the new key to
+`members`, subscribes back to it, and the user's bytes start
+flowing up.
 
-**The end state**: FIRST_STEPS.md shrinks from 6 steps with two
-tools to maybe 2 steps with one tool (npx). Onboarding latency
-drops from minutes to ~30 seconds.
+Once landed, the all-`npx` *publish* flow becomes:
+
+```bash
+npx @dtudury/streamo \
+  --name homepage --username alice \
+  --merge-from streamo.dev --merge-from-key files \
+  --publish-to streamo.dev \
+  --files ./mysite --files-key files \
+  --web 8081
+```
+
+And FIRST_STEPS gets a fifth step: *"visit
+https://streamo.dev/streams/&lt;your-key&gt; — your fork lives on the
+public relay now."* This completes the fork→edit→serve→publish
+loop the page-as-Repo arc has been building toward. ~1-2 hr scope,
+similar shape to the merge nibbles.
+
+**Future-extension worth keeping in mind**: a heavy-fork mode for
+merge that connects via WebSocket and syncs the full upstream chain
+locally (instead of HTTP-snapshot fetching). Useful for forking a
+project whose history you want to browse offline. Not blocking; the
+current light-fork covers fork-the-page well.
 
 ### richer explorer
 

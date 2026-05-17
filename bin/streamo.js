@@ -250,6 +250,7 @@ if (options.verbose) {
 if (options.interactive) {
   const get     = (...args) => streamo.get(...args)
   const set     = (...args) => streamo.set(...args)
+  const merge   = (source, opts) => streamo.merge(source, opts)
   const ls      = () => [...registry].map(([k, s]) => ({ key: k.slice(0, 8) + '…', bytes: s.byteLength }))
   const connect = (hostPort) => server.connect(hostPort)
 
@@ -259,7 +260,7 @@ if (options.interactive) {
     // data
     streamo, registry,
     // shorthands
-    get, set, ls,
+    get, set, merge, ls,
     // networking
     connect, originSync, outletSync,
     // sync modules
@@ -271,6 +272,8 @@ if (options.interactive) {
   console.log(`\x1b[36m
   get(...path)          streamo.get() — read a value by path
   set(value)            streamo.set() — write a value
+  await merge(src, opts) streamo.merge() — fork or pull from another repo
+                        e.g. await merge('streamo.dev', { from: 'files' })
   ls()                  list all open streamos in the registry
   connect('host:port')  connect this streamo to a remote outlet
   streamo / registry    the live streamo and registry instances

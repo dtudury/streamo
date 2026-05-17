@@ -155,14 +155,14 @@ describe(import.meta.url, ({ test }) => {
 
   // ── merge: replace-policy (Mode A) ────────────────────────────────────
 
-  test('merge into empty target: pure-copy fork — no parent, has remoteParent', ({ assert }) => {
+  test('merge into empty target: pure-copy fork — no parent, has remoteParent', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ files: { 'index.html': '<h1>upstream</h1>' } })
     source.commit(sw, 'upstream content')
 
     const target = new Repo()
-    target.merge(source, {
+    await target.merge(source, {
       remoteParent: { host: 'upstream.test', repo: '03aaaaaaaabbbbbbbbcccc' }
     })
     const c = target.lastCommit
@@ -174,7 +174,7 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(target.get(), { files: { 'index.html': '<h1>upstream</h1>' } })
   })
 
-  test('merge into non-empty target: mixed — both parent and remoteParent set', ({ assert }) => {
+  test('merge into non-empty target: mixed — both parent and remoteParent set', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ files: { 'a.html': '<a>' } })
@@ -185,7 +185,7 @@ describe(import.meta.url, ({ test }) => {
     tw.set({ existing: 'value' })
     target.commit(tw, 'initial')
 
-    target.merge(source, {
+    await target.merge(source, {
       from: ['files'],
       remoteParent: { host: 'h', repo: 'r' }
     })
@@ -197,14 +197,14 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(target.get('files'), { 'a.html': '<a>' })
   })
 
-  test('merge with from path slices source', ({ assert }) => {
+  test('merge with from path slices source', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ files: { 'index.html': '<x>' }, members: ['alice'] })
     source.commit(sw, 'src')
 
     const target = new Repo()
-    target.merge(source, {
+    await target.merge(source, {
       from: ['files'],
       remoteParent: { host: 'h', repo: 'r' }
     })
@@ -212,14 +212,14 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(target.get('members'), undefined)                       // not pulled in
   })
 
-  test('merge with from and into differing paths', ({ assert }) => {
+  test('merge with from and into differing paths', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ original_files: { 'a.html': '<a>' } })
     source.commit(sw, 'src')
 
     const target = new Repo()
-    target.merge(source, {
+    await target.merge(source, {
       from: ['original_files'],
       into: ['my_files'],
       remoteParent: { host: 'h', repo: 'r' }
@@ -227,25 +227,25 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(target.get('my_files'), { 'a.html': '<a>' })
   })
 
-  test('merge with from=[] takes the whole value', ({ assert }) => {
+  test('merge with from=[] takes the whole value', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ a: 1, b: 2 })
     source.commit(sw, 'src')
 
     const target = new Repo()
-    target.merge(source, { remoteParent: { host: 'h', repo: 'r' } })
+    await target.merge(source, { remoteParent: { host: 'h', repo: 'r' } })
     assert.deepEqual(target.get(), { a: 1, b: 2 })
   })
 
-  test('merge accepts string shorthand for from/into', ({ assert }) => {
+  test('merge accepts string shorthand for from/into', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ files: { 'x': 'y' } })
     source.commit(sw, 'src')
 
     const target = new Repo()
-    target.merge(source, {
+    await target.merge(source, {
       from: 'files',
       into: 'files',
       remoteParent: { host: 'h', repo: 'r' }
@@ -253,7 +253,7 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(target.get('files'), { 'x': 'y' })
   })
 
-  test('merge with explicit remoteParent.dataAddress cites a historical address', ({ assert }) => {
+  test('merge with explicit remoteParent.dataAddress cites a historical address', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ v: 1 })
@@ -264,7 +264,7 @@ describe(import.meta.url, ({ test }) => {
     source.commit(sw, 'second')
 
     const target = new Repo()
-    target.merge(source, {
+    await target.merge(source, {
       remoteParent: { host: 'h', repo: 'r', dataAddress: firstAddr }
     })
     // We cited the FIRST commit's address, so the value we got is v: 1
@@ -272,66 +272,66 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(target.lastCommit.remoteParent.dataAddress, firstAddr)
   })
 
-  test('merge requires options.remoteParent', ({ assert }) => {
+  test('merge requires options.remoteParent', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ x: 1 })
     source.commit(sw, 's')
 
     const target = new Repo()
-    assert.throws(() => target.merge(source, {}))
+    await assert.rejects(() => target.merge(source, {}))
   })
 
-  test('merge requires source to have commits (when dataAddress is not given)', ({ assert }) => {
+  test('merge requires source to have commits (when dataAddress is not given)', async ({ assert }) => {
     const source = new Repo()
     const target = new Repo()
-    assert.throws(() => target.merge(source, {
+    await assert.rejects(() => target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' }
     }))
   })
 
-  test('merge throws clearly for not-yet-implemented policies', ({ assert }) => {
+  test('merge throws clearly for not-yet-implemented policies', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ x: 1 })
     source.commit(sw, 's')
 
     const target = new Repo()
-    assert.throws(() => target.merge(source, {
+    await assert.rejects(() => target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' },
       policy: 'theirs'
     }))
-    assert.throws(() => target.merge(source, {
+    await assert.rejects(() => target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' },
       policy: 'ours'
     }))
-    assert.throws(() => target.merge(source, {
+    await assert.rejects(() => target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' },
       policy: 'throw'
     }))
   })
 
-  test('merge throws when source path does not exist', ({ assert }) => {
+  test('merge throws when source path does not exist', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ a: 1 })
     source.commit(sw, 's')
 
     const target = new Repo()
-    assert.throws(() => target.merge(source, {
+    await assert.rejects(() => target.merge(source, {
       from: ['nonexistent'],
       remoteParent: { host: 'h', repo: 'r' }
     }))
   })
 
-  test('merge accepts a custom message', ({ assert }) => {
+  test('merge accepts a custom message', async ({ assert }) => {
     const source = new Repo()
     const sw = source.checkout()
     sw.set({ x: 1 })
     source.commit(sw, 's')
 
     const target = new Repo()
-    target.merge(source, {
+    await target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' },
       message: 'because I said so'
     })

@@ -57,6 +57,14 @@ export const assert = {
     let threw = false
     try { fn() } catch { threw = true }
     if (!threw) throw new AssertionError(msg ?? 'expected function to throw')
+  },
+  async rejects (fn, msg) {
+    // Async counterpart to throws — for functions that return a Promise
+    // that should reject (e.g. `async` functions that throw inside their
+    // body, which become rejections rather than sync throws).
+    let threw = false
+    try { await fn() } catch { threw = true }
+    if (!threw) throw new AssertionError(msg ?? 'expected promise to reject')
   }
 }
 

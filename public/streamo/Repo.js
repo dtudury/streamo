@@ -23,6 +23,68 @@
 import { Streamo, changedPaths } from './Streamo.js'
 
 /**
+ * Fetch a Repo snapshot from an HTTP source URL or host shorthand.
+ * Returns `{ repo, host, keyHex }` — the loaded Repo plus enough context
+ * to construct a `remoteParent` citation automatically.
+ *
+ * Accepted inputs:
+ *   - `http://host:port/streams/<keyHex>` — full URL with explicit key
+ *   - `https://host/streams/<keyHex>`     — TLS, default port
+ *   - `https://host`                       — TLS, no path; falls through
+ *                                            to /api/info for primaryKeyHex
+ *   - `host:port`                          — shorthand; assumes http
+ *   - `host`                               — shorthand; assumes https
+ *
+ * `host` in the returned object drops the port when it's the default for
+ * the protocol (so `remoteParent.host` is canonically e.g. `streamo.dev`
+ * rather than `streamo.dev:443`).
+ */
+async function fetchSnapshot (input) {
+  // Normalize bare host shorthand to a full URL.  The heuristic: if a
+  // port is given, assume non-TLS (local dev convention); otherwise
+  // assume TLS (production convention).  Callers can always pass a
+  // full URL to override.
+  let urlString = input
+  if (!input.includes('://')) {
+    urlString = (input.includes(':') ? 'http://' : 'https://') + input
+  }
+  const url = new URL(urlString)
+
+  const isDefaultPort =
+    (url.protocol === 'http:' && (url.port === '' || url.port === '80')) ||
+    (url.protocol === 'https:' && (url.port === '' || url.port === '443'))
+  const host = isDefaultPort ? url.hostname : url.host
+
+  // If the URL path matches /streams/<66-hex>, use that; else
+  // fetch /api/info for primaryKeyHex.
+  const keyMatch = url.pathname.match(/^\/streams\/([0-9a-f]{66})\/?$/)
+  let keyHex
+  if (keyMatch) {
+    keyHex = keyMatch[1]
+  } else {
+    const infoUrl = new URL('/api/info', url)
+    const info = await fetch(infoUrl).then(r => {
+      if (!r.ok) throw new Error(`HTTP ${r.status} fetching ${infoUrl}`)
+      return r.json()
+    })
+    keyHex = info.primaryKeyHex
+    if (!keyHex) throw new Error(`${infoUrl} did not return primaryKeyHex`)
+  }
+
+  const rawUrl = new URL(`/streams/${keyHex}/raw`, url)
+  const buf = await fetch(rawUrl).then(r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status} fetching ${rawUrl}`)
+    return r.arrayBuffer()
+  })
+
+  const repo = new Repo()
+  const writer = repo.makeWritableStream().getWriter()
+  await writer.write(new Uint8Array(buf))
+
+  return { repo, host, keyHex }
+}
+
+/**
  * A Streamo whose values are commit records.
  *
  * Every write goes through a commit: checkout() → set() → commit(). This makes
@@ -270,8 +332,12 @@ export class Repo extends Streamo {
    *   - *Fork*  — merge into an empty repo → no local parent + remoteParent
    *   - *Pull-overwrite* — merge into an existing chain → both set
    *
-   * @param {Repo} source — the repo to read from (in-memory; URL-source
-   *   support is a later nibble)
+   * @param {Repo|string} source — the repo to read from.  When a string,
+   *   resolves as an HTTP URL (`http(s)://host[:port]/streams/<keyHex>`)
+   *   or a host shorthand (`host[:port]`, with `/api/info` discovering
+   *   the primary key).  URL form auto-fills `remoteParent.host` and
+   *   `remoteParent.repo` from the resolved URL when the caller leaves
+   *   them blank.
    * @param {object} options
    * @param {string|Array<string|number>} [options.from=[]] — path on source
    *   to read; `[]` or omitted means the whole value. String shorthand
@@ -290,7 +356,21 @@ export class Repo extends Streamo {
    *   `"fork from <host>"` (empty target) or `"merge from <host>"` (existing)
    * @returns {number} address of the new commit record
    */
-  merge (source, options = {}) {
+  async merge (source, options = {}) {
+    // URL-source: resolve to an in-memory Repo, and auto-fill the
+    // remoteParent context from the URL itself.  The URL form encodes
+    // enough about the source (host + keyHex) that requiring the caller
+    // to also pass remoteParent would be redundant — but they can
+    // override if they want (e.g. to record a different canonical host).
+    if (typeof source === 'string') {
+      const { repo: fetched, host, keyHex } = await fetchSnapshot(source)
+      source = fetched
+      options = {
+        ...options,
+        remoteParent: options.remoteParent ?? { host, repo: keyHex }
+      }
+    }
+
     const normalizePath = p => p == null ? [] : Array.isArray(p) ? p : [p]
     const from = normalizePath(options.from)
     const into = normalizePath(options.into ?? options.from)

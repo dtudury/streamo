@@ -163,6 +163,49 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  test('Repo.merge accepts a full URL source and auto-fills remoteParent', async ({ assert }) => {
+    const { publicKeyHex } = await makeKey('merge-url')
+    const sourceRepo = new Repo()
+    const sw = sourceRepo.checkout()
+    sw.set({ files: { 'index.html': '<from-url>' }, members: ['ignored'] })
+    sourceRepo.commit(sw, 'seed')
+
+    const { port, close } = await startServer(publicKeyHex, sourceRepo)
+    try {
+      const target = new Repo()
+      await target.merge(`http://localhost:${port}/streams/${publicKeyHex}`, { from: 'files' })
+
+      assert.deepEqual(target.get(), { files: { 'index.html': '<from-url>' } })
+      const c = target.lastCommit
+      assert.equal(c.parent, undefined)                                   // pure-copy fork
+      assert.equal(c.remoteParent.host, `localhost:${port}`)              // auto-filled from URL
+      assert.equal(c.remoteParent.repo, publicKeyHex)                     // auto-filled from URL path
+      assert.equal(c.remoteParent.dataAddress, sourceRepo.lastCommit.dataAddress)
+    } finally {
+      await close()
+    }
+  })
+
+  test('Repo.merge with host shorthand discovers primary key via /api/info', async ({ assert }) => {
+    const { publicKeyHex } = await makeKey('merge-host')
+    const sourceRepo = new Repo()
+    const sw = sourceRepo.checkout()
+    sw.set({ files: { 'p.html': '<host-mode>' } })
+    sourceRepo.commit(sw, 'seed')
+
+    const { port, close } = await startServer(publicKeyHex, sourceRepo)
+    try {
+      const target = new Repo()
+      // host shorthand — no path; merge fetches /api/info to find the key
+      await target.merge(`localhost:${port}`, { from: 'files' })
+
+      assert.equal(target.get('files', 'p.html'), '<host-mode>')
+      assert.equal(target.lastCommit.remoteParent.repo, publicKeyHex)
+    } finally {
+      await close()
+    }
+  })
+
   test('archiveSync persists data and reloads it on a fresh Streamo', async ({ assert }) => {
     const { publicKeyHex } = await makeKey('archive')
     const dir = await mkdtemp(join(tmpdir(), 'smoke-'))

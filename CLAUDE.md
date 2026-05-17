@@ -86,6 +86,25 @@ lands without tests passing, you have failed the contract.
   `defineComponent(name, fn, { recaller })` does the same for custom-
   element components: pass the app's Recaller and the component's
   cells compose with app state instead of isolating.
+- **Function components without `data-key` fresh-mount on every parent
+  re-render.** `<${MyComponent} ...prop=${x}/>` produces an HElement
+  whose `tag` is a function. Mount's recycler matches by string tag
+  or by `data-key`; a function tag with no key doesn't match the pool,
+  so the existing DOM (and its watchers, focus, scroll, partial input)
+  is torn down and the component is freshly invoked. Add `data-key=${id}`
+  to the invocation to enroll it in recycling — the previous DOM
+  survives, the function gets called with new props, attrs/children
+  reconcile in place. **Rule of thumb: any function-component
+  invocation that appears in a list, or whose inner DOM holds state,
+  needs a `data-key`.**
+- **Recycling-by-tag can mix semantically different elements.** Two
+  `<input>` siblings in the same parent are interchangeable to mount
+  unless they're keyed. If a re-render swaps `<input name="username">`
+  for `<input class="new-todo">`, mount happily mutates the existing
+  input's attrs in place — same DOM node, totally different meaning.
+  Browser side-effects of "fresh insertion" (autofocus, password
+  manager attribution) don't fire. **Add `data-key` whenever two
+  semantically distinct elements share a tag in the same slot.**
 
 ## architecture notes
 

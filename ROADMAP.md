@@ -215,6 +215,19 @@ not work the list in order. Treat this as a menu, not a queue.
 
 ### eat your vegetables *(low-glamour cleanups for between-arcs days)*
 
+- **Cross-slot element recycling.** Today's mount recycles within a slot
+  (between its start/end comment anchors), and within an element's
+  children. It does NOT consider elements across sibling slots in the
+  same parent. So a template like `${when(cond, sectionA)}${when(!cond,
+  sectionB)}` tears down sectionA and fresh-mounts sectionB on every
+  flip — even when sectionA is a perfectly valid element to recycle.
+  David's proposed shape: a multi-pass match within a parent's full
+  child list — pass 1 by data-key (across slots), pass 2 by tag, pass
+  3 fresh — would dissolve this. Worth doing eventually for general
+  correctness; not load-bearing for the current bugs, which were about
+  function-component recycling and tag-pool input identity (both
+  shipped 2026-05-17).
+
 - **Drop `public/apps/chat/server.js`** as a separate entry point. With
   the relay/author split landed in 7.4.0, chat/server.js is now a thin
   wrapper around `bin/streamo.js` plus a one-time journal seed and the

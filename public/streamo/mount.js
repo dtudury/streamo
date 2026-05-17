@@ -174,11 +174,19 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
 
     let el = null
     if (key != null) {
-      // Keyed: only match an existing element with the same data-key
+      // Keyed: only match an existing element with the same data-key.
+      // Works for both string tags AND function components — a keyed
+      // function-component invocation participates in the recycling pool
+      // by matching the existing element whose inner vnode carried the
+      // same data-key. See reconcileElement for the function-component
+      // call.
       const candidate = keyedMap.get(key)
       if (candidate && !recycledEls.has(candidate)) el = candidate
-    } else {
-      // Unkeyed: take the first unused same-tag element from the pool
+    } else if (typeof vnode.tag === 'string') {
+      // Unkeyed string-tag vnode: take the first unused same-tag element
+      // from the pool. Function components without a data-key always
+      // fresh-mount — they don't participate in tag-pool matching because
+      // their tag is a function, not a DOM tag name.
       const pool = tagPool.get(vnode.tag)
       if (pool) el = pool.find(e => !recycledEls.has(e)) ?? null
     }
@@ -189,23 +197,31 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
     }
   }
 
-  // Detach recycled elements before wiping so they survive the cleanup pass
-  for (const el of recycledEls) el.remove()
-
-  // Clean up and remove all remaining old content
-  while (start.nextSibling !== end) {
-    const old = start.nextSibling
-    cleanupNode(old, recaller)
-    old.remove()
+  // Cleanup pass: remove only NON-recycled nodes between start and end.
+  // Recycled elements stay in place; we'll reorder them in the insert pass
+  // via end.before(), which moves already-attached nodes atomically. Atomic
+  // moves do NOT fire blur on focused descendants — which would otherwise
+  // run user onblur handlers mid-reconcile (e.g. todomvc's edit input
+  // cancelling itself the moment its parent form is touched).
+  {
+    let node = start.nextSibling
+    while (node !== end) {
+      const next = node.nextSibling
+      if (!(node.nodeType === Node.ELEMENT_NODE && recycledEls.has(node))) {
+        cleanupNode(node, recaller)
+        node.remove()
+      }
+      node = next
+    }
   }
 
-  // Reinsert recycled elements (recursively reconciled) and mount fresh
-  // ones, in order. Recursive reconcile preserves descendant DOM and
-  // watchers — only attrs of the matched element are reset, children
-  // that match by data-key/tag are themselves reconciled in place. This
-  // is what lets a deeply nested data-keyed element (e.g. the byte
-  // strip's container) survive an outer-slot re-render with its
-  // scrollLeft, focus, and inner slot state intact.
+  // Insert pass: for each vnode in order, move the recycled element (atomic)
+  // or mount fresh. Recursive reconcile preserves descendant DOM and
+  // watchers — only attrs of the matched element are reset, children that
+  // match by data-key/tag are themselves reconciled in place. This is what
+  // lets a deeply nested data-keyed element (e.g. the byte strip's
+  // container, or a focused edit input) survive an outer-slot re-render
+  // with its scrollLeft, focus, and inner slot state intact.
   for (const vnode of newVNodes) {
     const recycled = vnodeToEl.get(vnode)
     if (recycled) {
@@ -236,6 +252,45 @@ function reconcileSlot (start, end, newVNodes, recaller, ns = HTML_NS) {
 // don't match an existing child are fresh-mounted.
 
 function reconcileElement (el, vnode, recaller, ns) {
+  // Function components: call the function with props to get the actual
+  // vnode tree, then reconcile that against the recycled element. The
+  // function component contributed its data-key for matching; now we
+  // unwrap so the recycle sees the real element-vnode underneath. If
+  // the inner result isn't a single HElement (e.g. it returned an array
+  // or null), we can't sensibly reconcile against the single recycled
+  // DOM element — fall back to clean + fresh-mount.
+  if (typeof vnode.tag === 'function') {
+    let inner = vnode.tag(buildProps(vnode))
+    // h templates ALWAYS return arrays (`return parseChildren(sc, null)`).
+    // A single-root template like:
+    //   return h`
+    //     <li>...</li>
+    //   `
+    // produces `[HText("\n  "), liVnode, HText("\n")]` — three items, because
+    // of the whitespace around the root. Filter to HElement-only and unwrap
+    // if there's exactly one; that's the common "function component returns
+    // a single root" case. The fallback below handles the truly multi-element
+    // case (which currently has a known re-attach bug — see comment).
+    if (Array.isArray(inner)) {
+      const elements = inner.filter(v => v instanceof HElement)
+      if (elements.length === 1) inner = elements[0]
+    }
+    if (!(inner instanceof HElement)) {
+      // Multi-element / null / primitive return from a function component:
+      // can't reconcile against a single recycled element. Dispose of el and
+      // fresh-mount inner in its place. NOTE: this path leaves a stale
+      // reference for reconcileSlot's `end.before(recycled)` call to
+      // re-attach — known shape limitation; only matters when a function
+      // component returns >1 root. Currently no such component in the
+      // codebase.
+      const parent = el.parentNode
+      cleanupNode(el, recaller)
+      el.remove()
+      if (parent) mountNode(inner, parent, recaller, ns)
+      return
+    }
+    vnode = inner
+  }
   // Determine child namespace, mirroring mountNode
   const nsAttr = vnode.attrs.find(a => a?.name === 'xmlns')?.value
   const elemNs = nsAttr
@@ -305,36 +360,47 @@ function reconcileChildren (parent, vnodeChildren, recaller, ns) {
   const vnodeToEl = new Map()
   for (const vnode of flat) {
     if (!(vnode instanceof HElement)) continue
-    if (typeof vnode.tag === 'function') continue  // function components mount fresh
     const keyAttr = vnode.attrs.find(a => a?.name === 'data-key')
     const keyVal = keyAttr?.value
     const key = (keyVal != null && typeof keyVal !== 'function' && !Array.isArray(keyVal))
       ? String(keyVal) : null
     let el = null
     if (key != null) {
+      // Keyed: match by data-key. Works for string tags AND function
+      // components — a keyed function component recycles the previous
+      // element whose inner vnode carried the same data-key, preserving
+      // descendant DOM (focus, scroll, partial input) across parent
+      // re-renders.
       const candidate = keyedMap.get(key)
       if (candidate && !recycledEls.has(candidate)) el = candidate
-    } else {
+    } else if (typeof vnode.tag === 'string') {
+      // Unkeyed string tag: tag-pool match.
       const pool = tagPool.get(vnode.tag)
       if (pool) el = pool.find(e => !recycledEls.has(e)) ?? null
     }
+    // Unkeyed function components fall through and fresh-mount.
     if (el) {
       recycledEls.add(el)
       vnodeToEl.set(vnode, el)
     }
   }
 
-  // Detach recycled, cleanup + remove the rest (text nodes, comments,
-  // unmatched elements all go through cleanupNode so any watchers in
-  // their subtrees are released).
-  for (const el of recycledEls) el.remove()
-  while (parent.firstChild) {
-    const old = parent.firstChild
-    cleanupNode(old, recaller)
-    old.remove()
+  // Cleanup pass: remove only non-recycled children (text nodes, comments,
+  // unmatched elements). Recycled elements stay in place; the insert pass
+  // reorders them via appendChild, which moves already-attached nodes
+  // atomically and does NOT fire blur on focused descendants. See the
+  // matching note in reconcileSlot.
+  {
+    const existing = [...parent.childNodes]
+    for (const child of existing) {
+      if (child.nodeType === Node.ELEMENT_NODE && recycledEls.has(child)) continue
+      cleanupNode(child, recaller)
+      child.remove()
+    }
   }
 
-  // Insert in order: recursively reconcile recycled, mount fresh otherwise.
+  // Insert/reorder pass: for each vnode in order, recursively reconcile +
+  // appendChild the recycled (atomic move; no blur), or mount fresh.
   for (const vnode of flat) {
     const recycled = vnodeToEl.get(vnode)
     if (recycled) {
@@ -415,6 +481,13 @@ function setAttr (el, name, value) {
     el[name] = typeof value === 'function' ? value : null
   } else if (name === 'value' && 'value' in el) {
     el.value = value
+  } else if (name === 'checked' && 'checked' in el) {
+    // Checkboxes/radios use the `checked` PROPERTY for visual state; the
+    // attribute reflects only the initial state and is ignored after the
+    // element is created. Set the property; mirror to the attribute so
+    // CSS attribute selectors and SSR-equivalent observers still see it.
+    el.checked = !!value
+    el.toggleAttribute('checked', !!value)
   } else if (typeof value === 'boolean') {
     el.toggleAttribute(name, value)
   } else if (value == null) {

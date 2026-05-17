@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamo · todos</title>
+  <link rel="icon" type="image/svg+xml" href="/streamo.svg">
+  <!-- canonical TodoMVC styles, externally hosted so the streamo demo
+       stays purely about behavior, not appearance. Borrows the look
+       people already know. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/todomvc-common@1.0.5/base.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/todomvc-app-css@2.4.3/index.min.css">
+  <style>
+    /* Login form — uses todomvc's color palette but its own layout, since
+       todomvc-app-css doesn't cover credential entry. Lives in the same
+       <section class="todoapp"> container so the visual continuity
+       across sign-in is just an inner-content swap. */
+    .login              { padding: 16px 16px 24px }
+    .login input        { width: 100%; padding: 12px; margin-bottom: 8px; border: 1px solid #ddd; font-size: 16px; box-sizing: border-box; font-family: inherit }
+    .login button       { width: 100%; padding: 12px; background: #af5b5e; color: #fff; border: 0; cursor: pointer; font-size: 16px; font-family: inherit }
+    .login button:hover { opacity: .9 }
+    .login-status       { margin-top: 8px; color: #777; font-size: 13px; min-height: 1.2em }
+  </style>
+</head>
+<body>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

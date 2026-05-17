@@ -68,6 +68,7 @@ class MockElement extends MockNode {
   constructor (tag) {
     super(1)
     this.tag = tag
+    this.tagName = tag
   }
 
   setAttribute (name, val) { this.#attrs[name] = String(val) }

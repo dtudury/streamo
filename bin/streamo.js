@@ -52,6 +52,14 @@ program
       .env('STREAMO_FILES_KEY')
   )
   .addOption(
+    new Option('--merge-from <url>', 'on first run only (empty repo), fork from this URL or host. Accepts http(s)://host[:port]/streams/<keyHex> or just "host[:port]" (uses /api/info to find the primary key). Idempotent — skipped on subsequent runs.')
+      .env('STREAMO_MERGE_FROM')
+  )
+  .addOption(
+    new Option('--merge-from-key <key>', 'when merging from --merge-from, only incorporate the source value at this sub-key (e.g. "files" to merge just the homepage; defaults to the whole value)')
+      .env('STREAMO_MERGE_FROM_KEY')
+  )
+  .addOption(
     new Option('--state-file <path>', 'write streamo state as JSON to this file on every change')
       .env('STREAMO_STATE_FILE')
   )
@@ -149,6 +157,35 @@ ${rows.map(([l, v], i) => [
   i < rows.length - 1 ? `    ├──────────────────┼──${div}──┤` : null
 ].filter(Boolean).join('\n')).join('\n')}
     ╰──────────────────┴──${'━'.repeat(maxLength)}──╯\x1b[0m`)
+
+// First-run fork: if --merge-from is set AND this repo is empty,
+// pull a snapshot from the upstream and commit a pure-copy with
+// remoteParent cited.  On subsequent runs (repo has commits already),
+// this is a no-op — the user's own chain is the canonical state and
+// re-merging would just append duplicate fork commits.  Runs BEFORE
+// --files so fileSync sees the merged content when it starts.
+if (options.mergeFrom) {
+  if (streamo.lastCommit) {
+    if (options.verbose) {
+      console.log(`\x1b[33mmerge-from: skipping (repo already has commits)\x1b[0m`)
+    }
+  } else {
+    try {
+      const mergeOptions = options.mergeFromKey ? { from: options.mergeFromKey } : {}
+      await streamo.merge(options.mergeFrom, mergeOptions)
+      const c = streamo.lastCommit
+      const rp = c.remoteParent
+      const slice = options.mergeFromKey
+        ? `value.${options.mergeFromKey}`
+        : 'value'
+      console.log(`\x1b[32mmerge-from: forked from ${rp.host} (${rp.repo.slice(0, 12)}…) — ${slice} @${rp.dataAddress}\x1b[0m`)
+    } catch (e) {
+      console.error(`\x1b[31mmerge-from failed: ${e.message}\x1b[0m`)
+      console.error(`\x1b[31m  is a streamo running at ${options.mergeFrom}?\x1b[0m`)
+      process.exit(7)
+    }
+  }
+}
 
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'

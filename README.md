@@ -98,6 +98,8 @@ streamo --env-file .env
 | `STREAMO_DATA_DIR` | `--data-dir` | archive directory (default `.streamo`) |
 | `STREAMO_FILES` | `--files` | mirror local files |
 | `STREAMO_FILES_KEY` | `--files-key` | mount file sync at `value[key]` (preserves sibling state) |
+| `STREAMO_MERGE_FROM` | `--merge-from` | on first run only (empty repo), fork from this URL or host |
+| `STREAMO_MERGE_FROM_KEY` | `--merge-from-key` | only incorporate this sub-key from the merge source (e.g. `files`) |
 | `STREAMO_WEB` | `--web` | HTTP + WebSocket server port |
 | `STREAMO_OUTLET` | `--outlet` | accept inbound peer connections |
 | `STREAMO_ORIGIN` | `--origin` | connect to a remote outlet |
@@ -132,6 +134,41 @@ HTML responses get an importmap injected that maps `@dtudury/streamo`
 and `@dtudury/streamo/*` to the relay's `/streamo/` path. Your pages
 can use bare-specifier imports and remain host-agnostic — a fork
 served by another relay resolves them automatically.
+
+### forking an existing site in one command
+
+`--merge-from <url>` makes your first run a fork — on an empty repo,
+the CLI fetches a snapshot from the named relay and commits a
+pure-copy on your chain with `remoteParent` cited automatically.
+Combined with `--files` and `--web`, **this is the all-npx
+first-user experience**:
+
+```bash
+npx @dtudury/streamo \
+  --name homepage \
+  --username alice \
+  --merge-from streamo.dev \
+  --merge-from-key files \
+  --files ./mysite \
+  --files-key files \
+  --web 8081
+```
+
+What happens on first run, in order:
+
+1. Derives your keypair from `--username` + your password
+2. Fetches `streamo.dev`'s home repo snapshot via HTTP
+3. Commits a pure-copy of `value.files` to your local repo,
+   `remoteParent` set
+4. `fileSync` writes the merged files to `./mysite/` (creates it
+   if missing)
+5. Serves your fork at `http://localhost:8081/`
+
+Subsequent runs skip the merge (the repo already has commits) —
+your edits to `./mysite/` are the authoritative state, syncing as
+signed commits the same way any other streamo content does.
+`--merge-from-key` is optional; omit it to fork the whole upstream
+value, not just one slice.
 
 ## javascript api
 

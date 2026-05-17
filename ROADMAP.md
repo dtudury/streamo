@@ -7,23 +7,26 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 7.1.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. 7.1 —
-**Page-as-Repo** — closes the loop on streamo's main pitch by making
-the relay's homepage itself a signed streamo: bytes served from the
-home repo's `files` key, edits flow through `fileSync` as signed
-commits, and a new optional `remoteParent` field on commits makes
-forks first-class with cryptographic citations. The project's git
-log is now itself replayable as a streamo (`scripts/seed-history.js`
-produces a `streamo-history` repo whose commit chain mirrors git
-first-parent history); the explorer's journalists section surfaces
-its 231 historical commits as clickable cards. Any user can produce
-their own signed pure-copy fork of the homepage with one command
-(`npm run fork-homepage`); [`FIRST_STEPS.md`](./FIRST_STEPS.md) is
-the walkthrough. Underneath, 7.0 Obsecurity registry hygiene and
-6.0 hash-chain accumulator are unchanged. The all-in-one server
-(`npm run dev` / `npm run prod`) hosts the homepage, chat, explorer,
-and the live history repo on one port. 159 tests passing.
+Streamo is at 7.2.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. 7.2 —
+**merge primitive + all-npx fork-and-serve** — promotes forking
+from "a script you run inside a clone" to "one `npx` command,
+anywhere." `Repo.merge(source, options)` is the library primitive
+— incorporates a slice of another repo's value into this one as a
+signed commit with `remoteParent` cited, where `source` is either
+an in-memory Repo or an HTTP URL (full or shorthand). The CLI
+flag `--merge-from <url>` runs the merge on an empty repo at
+startup; combined with `--files` and `--web` it makes the
+page-as-Repo first-user experience a five-flag one-liner.
+[`FIRST_STEPS.md`](./FIRST_STEPS.md) is anchored on that command;
+[`scripts/fork-homepage.js`](./scripts/fork-homepage.js) stays as
+a worked scripting example. Underneath, 7.1 Page-as-Repo (homepage
+served from a signed Repo via `fileSync`, `remoteParent` field on
+commits), 7.0 Obsecurity registry hygiene, and 6.0 hash-chain
+accumulator are unchanged. The all-in-one server (`npm run dev` /
+`npm run prod`) hosts the homepage, chat, explorer, and the
+`streamo-history` repo (project git log replayed as 231 signed
+commits) on one port. 173 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.
@@ -56,40 +59,7 @@ usable at 200+ commits. Probably touches `at-view.js`, `render.js`,
 and the typed-value composite renderers from the
 streamo-typed-value-displays thread in `THREADS.md`.
 
-### merge as a primitive *(landed 2026-05-17, six nibbles, awaiting publish)*
-
-`Repo.merge(source, options)` — incorporate a slice of another
-repo's value into this one as a single signed commit with
-`remoteParent` cited. Two source shapes: in-memory `Repo`
-instance, or string URL (`http(s)://host[:port]/streams/<keyHex>`
-or `host[:port]` shorthand via `/api/info`). One policy
-implemented: `'replace'` (Mode A — source slice replaces target
-slice). Three more reserved (`'theirs'`, `'ours'`, `'throw'`) for
-attribute-walk semantics when real workloads drive their
-defaults.
-
-CLI: `--merge-from <url>` flag on `bin/streamo.js` runs the merge
-*only when the local repo is empty* (idempotent on re-run), so
-the all-`npx` first-user flow is one command:
-
-```bash
-npx @dtudury/streamo \
-  --name homepage --username alice \
-  --merge-from streamo.dev --merge-from-key files \
-  --files ./mysite --files-key files \
-  --web 8081
-```
-
-FIRST_STEPS.md is now anchored on this command. `scripts/fork-homepage.js`
-stays as a worked scripting example. The `--interactive` REPL
-exposes `merge` as a shorthand for `streamo.merge`. Password
-prompt simplified to single-entry hidden (the double-prompt
-"confirm" was security-theater for the deterministic key model).
-
-173 tests passing (12 new in `Repo.test.js`, 2 new in
-`smoke.test.js`).
-
-### publish-to — completing the round-trip *(next active thread)*
+### publish-to — completing the round-trip *(small next thread)*
 
 Today's all-`npx` flow does a one-way *pull*: HTTP fetch the
 upstream snapshot, commit a pure-copy locally, serve at
@@ -130,6 +100,86 @@ merge that connects via WebSocket and syncs the full upstream chain
 locally (instead of HTTP-snapshot fetching). Useful for forking a
 project whose history you want to browse offline. Not blocking; the
 current light-fork covers fork-the-page well.
+
+### dumb-pipe + smart-edge split — relay as `npx`, app as peer *(big architectural arc)*
+
+Today, `chat/server.js` is BOTH the relay (HTTP+WebSocket on the
+public port) AND the application logic (chat-room bookkeeping —
+member-add on announce, journal seeding, fileSync to disk). Same
+process holds the signing keypair, runs the public port, and
+writes commits. That conflates two concerns at different trust
+levels.
+
+**The split**: separate the public-facing relay into a small,
+keypair-less `npx` process that's a *pure byte pipe*, and let the
+application logic run as a peer process that connects to the
+relay over WebSocket. The application has the keypair, signs
+commits, runs the chat-member logic. The relay holds bytes and
+serves them — never writes anything itself.
+
+Sketch:
+
+```bash
+# Public-facing relay (npx, no signer, only knows the pubkey to advertise):
+npx @dtudury/streamo \
+  --home-key <pubkeyhex> \
+  --web 443
+
+# Application process (clone-based, where the keypair lives):
+node public/apps/chat/server.js \
+  --env-file .env.prod \
+  --origin localhost:443    # or wherever the relay runs
+```
+
+The app process loads its keypair from `.env`, opens the home
+repo locally, runs `onAnnounce`/seeding/fileSync as today, and
+pushes its commits up to the relay via origin sync. The relay
+sees signed bytes arrive and persists them. Clients connecting
+to the relay's public port get the right bytes from `hello`'s
+home topic without the relay ever holding a signer.
+
+**Why this is the right shape:**
+
+- *Same page-as-Repo pattern, deeper layer.* Page-as-Repo split
+  content-authoring (signed bytes) from content-serving (a dumb
+  relay). This split does the same thing for application logic.
+  The relay becomes purely "byte mover and content-addressed
+  store"; semantics live in signed bytes written by author
+  processes.
+- *Security improves.* The public-port process never holds the
+  signing key. Compromise of the relay leaks bytes (already
+  public) and the relay's ability to censor (already minimal —
+  clients can switch). The keypair stays with the application
+  process, which doesn't need a public port.
+- *Deployment simplifies.* The relay is a stable, low-volatility
+  `npx` invocation. Application logic (more volatile, more
+  app-specific) updates independently. `npx @dtudury/streamo@latest`
+  for the relay; `git pull` for the app process.
+- *Deepens the "no server holds authority" pitch.* Today the
+  pitch is that the relay can't make up content. After the split,
+  the public-port process is *literally just a dumb pipe* — it
+  doesn't even know how to write to the chain it serves.
+
+**Library additions** that support it:
+
+- `--home-key <pubkeyhex>` flag — the relay opens this repo's
+  archive, announces it in `hello`, but never signs anything for
+  it. Replaces `--name`/`--username`/`--password` when the relay
+  is purely a pipe.
+- Possibly a `--no-sign` mode that strips even the relay's own
+  keypair derivation, just to be explicit about "this process
+  holds no secrets."
+
+**What the application process needs**: roughly what
+`chat/server.js` does today, minus the `server.web()` call.
+Connect via origin, attach signer, run the seed step, watch
+announces, write member-adds. Most of the code stays; the entry
+point changes shape.
+
+Bigger than `--publish-to`. Probably 4-6 hours, decomposable into
+nibbles (1: `--home-key` flag for the relay side; 2: refactor
+chat-server.js into pure-app-process shape; 3: end-to-end test of
+the split running; 4: docs and FIRST_STEPS variant).
 
 ### richer explorer
 

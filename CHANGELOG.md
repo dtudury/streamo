@@ -5,6 +5,120 @@ for what's next.
 
 ---
 
+## 7.2.0 — merge primitive + all-npx fork-and-serve
+
+**The headline.** Forking a streamo-backed site into your own signed
+repo is now one command. No `git clone`, no `npm install`, no
+project-local script:
+
+```bash
+npx @dtudury/streamo \
+  --name homepage --username alice \
+  --merge-from streamo.dev --merge-from-key files \
+  --files ./mysite --files-key files \
+  --web 8081
+```
+
+You type five flags and a password, and you have a signed pure-copy
+fork of streamo.dev's homepage running on `:8081` with files
+mirrored to disk for editing. Re-running is idempotent (merge step
+skipped because the repo isn't empty); your edits become signed
+commits the same way any other streamo content does.
+
+**Library API.** A new method on `Repo`:
+
+```js
+await repo.merge(source, {
+  from: 'files',            // path on source to read (default: whole value)
+  into: 'files',            // path on target to write (default: same as from)
+  policy: 'replace',        // only 'replace' implemented; 'theirs'/'ours'/'throw' reserved
+  remoteParent: { host, repo, dataAddress? },  // REQUIRED for Repo-source
+  message: '…',             // optional; defaults to 'fork from <host>' / 'merge from <host>'
+})
+```
+
+Incorporates a slice of `source`'s value into this repo as a single
+signed commit with `remoteParent` cited. Two source shapes:
+
+- **In-memory `Repo` instance** — caller provides `remoteParent`
+  context (Repo class doesn't store its own host/keyhex)
+- **URL string** — `http(s)://host[:port]/streams/<keyHex>` or
+  shorthand `host[:port]`. The CLI fetches the snapshot via HTTP,
+  loads into a temp Repo, falls through to the in-memory path.
+  `remoteParent.host` and `remoteParent.repo` are *auto-filled* from
+  the resolved URL.
+
+Two natural shapes fall out of one primitive:
+
+- **Pure-copy fork** — empty target + remote citation → no local
+  parent, has `remoteParent`. "I'm starting my chain from their
+  value."
+- **Pull-overwrite** — existing chain + remote citation → both
+  `parent` and `remoteParent` set. "I'm continuing while pulling
+  this in from over there."
+
+Only `policy: 'replace'` is implemented in this release. The three
+descending policies (`'theirs'`/`'ours'`/`'throw'`) are reserved in
+the API signature — adding them later doesn't change the surface.
+Their semantic questions (absent-vs-deleted, Uint8Array equality)
+deserve real workloads to settle defaults.
+
+`Repo.commit` also gained `options.date` for back-stamping (used
+internally by `streamo-history` seeding and merge replay scenarios).
+
+**CLI flags.** `--merge-from <url>` (env `STREAMO_MERGE_FROM`) runs
+the merge *only when the local repo is empty*; idempotent on re-run.
+`--merge-from-key <key>` (env `STREAMO_MERGE_FROM_KEY`) optionally
+slices a sub-key from the source value. Both new flags are
+documented in the README CLI section.
+
+**Onboarding.** [FIRST_STEPS.md](./FIRST_STEPS.md) reshaped around
+the one-command flow — 4 steps (see, fork+serve, edit, find your
+fork in the explorer) instead of 6 across two tools. The CTAs on
+the README and homepage updated to match ("from zero to your own
+signed fork in one `npx` command"). The
+[`scripts/fork-homepage.js`](./scripts/fork-homepage.js) script
+stays as a worked scripting example of using `Repo.merge()`
+directly from Node.
+
+**REPL exposure.** `--interactive` REPL gains `merge` as a
+shorthand for `streamo.merge(...)`, alongside the existing `get` /
+`set` / `connect` / `ls` shorthands.
+
+**CLI polish.** The password prompt switched from
+`questionNewPassword` (double-prompt for confirmation) to
+single-entry hidden input. The deterministic password→key model
+makes confirmation security-theater (typo'd password = wrong key
+on the wire, not data loss). Friction on every re-run.
+
+**`bin` field shape.** `"bin": "./bin/streamo.js"` (string) instead
+of `"bin": { "streamo": "./bin/streamo.js" }` (object). Functionally
+equivalent for installed packages but resolves more reliably via
+`npx` for scoped packages.
+
+**Testing.** Added `assert.rejects(fn, msg?)` to the testing utility
+as the async counterpart to `assert.throws` — needed because
+`async` functions wrap body-throws into rejected promises rather
+than raising them synchronously. Existing `throws` unchanged.
+
+**Tests.** 173 passing, up from 159. 12 new in `Repo.test.js`
+(merge shape, slicing, citation, error cases, custom message),
+2 new in `smoke.test.js` (URL-source via real HTTP server: full
+URL form + host shorthand with `/api/info` discovery).
+
+**What's next.** Two threads, sized differently:
+
+- `--publish-to <host>` (~1-2 hr) — completes the round-trip so
+  your fork becomes visible at `<host>/streams/<your-key>` via a
+  single flag, not a manual REPL incantation.
+- *Dumb-pipe + smart-edge split* (bigger) — separate the
+  public-port relay process (npx, no signer) from the application
+  logic process (chat semantics, journal seeding, etc.) so the
+  public-facing surface is small, simple, and signer-less. See
+  ROADMAP.
+
+---
+
 ## 7.1.0 — Page-as-Repo: the homepage is a signed streamo you can fork
 
 **The headline.** The relay's homepage is no longer a static file on

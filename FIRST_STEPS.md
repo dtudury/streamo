@@ -1,17 +1,22 @@
 # first steps with streamo
 
-A guided tour from "I just heard about this" to "I have my own
-signed fork of the homepage running on my machine." **One command.**
-About five minutes (most of it credential derivation).
+A guided tour from "I just heard about this" to "my own signed
+fork of the homepage is running on my machine AND live on the
+public relay." **One command.** About five minutes (most of it
+credential derivation).
 
 If you'd rather skim, the shape is:
 
 1. **see it** — visit `streamo.dev` (or run a local relay)
-2. **fork + serve** — one `npx` command makes you a signed identity
-   and a copy on your machine
+2. **fork + serve + publish** — one `npx` command makes you a
+   signed identity, a copy on your machine, and pushes your bytes
+   up to the public relay
 3. **edit** — files on disk; commits sign themselves
-4. **find your fork** — paste your pubkey in the explorer; see the
+4. **find your fork in the explorer** — paste your pubkey; see the
    `remoteParent` chip pointing back at the original
+5. **share your URL** — `https://streamo.dev/streams/<your-key>`
+   is now your fork, live on the public relay. Text it to a
+   friend.
 
 ---
 
@@ -43,7 +48,7 @@ chunk that holds its value.
 and `npm install && npm run dev`. The command below works against
 either `streamo.dev` or `localhost:8080`.*
 
-## 2. fork + serve in one command
+## 2. fork + serve + publish in one command
 
 This is the fun part:
 
@@ -53,6 +58,7 @@ npx @dtudury/streamo \
   --username yourname \
   --merge-from streamo.dev \
   --merge-from-key files \
+  --origin streamo.dev \
   --files ./mysite \
   --files-key files \
   --web 8081
@@ -77,15 +83,18 @@ What happens on first run, in order:
 4. **Mirrors the merged files to `./mysite/`** via `fileSync` (creates
    the directory if missing)
 5. **Serves your fork at `http://localhost:8081/`**
+6. **Opens a WebSocket to `wss://streamo.dev`** via `--origin` — your
+   signed bytes flow up to the public relay, where they're persisted
+   on disk and reachable at `https://streamo.dev/streams/<your-key>`
 
-Open that URL — that's **your** signed fork of the homepage. Same
-content as `streamo.dev`, but every byte is signed by your keypair,
+Open `http://localhost:8081/` — that's **your** signed fork of the
+homepage, served locally. Every byte is signed by your keypair,
 append-only on your chain.
 
 *Re-running the CLI with the same flags is idempotent — the merge
 step is skipped on subsequent runs because the repo already has
 commits. Your own chain is the authoritative state from run 2
-onward.*
+onward. The origin connection re-syncs cleanly each run.*
 
 ## 3. edit it
 
@@ -104,6 +113,28 @@ on startup). Subscribe. Your fork appears on `streamo.dev`'s
 explorer — and your commit's `remoteParent` row has a chip-link
 pointing back at the home repo's commit. Click it. **That's the
 fork lineage**, visible and clickable across hosts.
+
+## 5. share your URL
+
+`https://streamo.dev/streams/<your-key>` is now your fork, served
+by the public relay. Your bytes got there via `--origin streamo.dev`
+in step 2 — the WebSocket handshake made the relay open your repo
+on its side, and your signed chunks flowed up via origin sync as
+they were created.
+
+The relay has no special permission to your bytes — it just holds
+and serves them. Anyone can fetch:
+
+```bash
+curl https://streamo.dev/streams/<your-key>
+```
+
+…and get your repo's value as JSON. Or visit the URL in a browser.
+Or text it to a friend. *No server holds authority over your data or
+your identity* — and the URL is the proof. Same bytes, signed by
+you, on someone else's hardware, addressable forever as long as
+the relay holds them. (When you edit `./mysite/index.html`, the
+new commit flows up too; refresh the URL to see it.)
 
 ---
 

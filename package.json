@@ -47,6 +47,7 @@
     "dev":           "node public/apps/chat/server.js --env-file .env.dev",
     "prod":          "node public/apps/chat/server.js --env-file .env.prod",
     "seed-history":  "node scripts/seed-history.js",
-    "fork-homepage": "node scripts/fork-homepage.js"
+    "fork-homepage": "node scripts/fork-homepage.js",
+    "deploy":        "bash scripts/deploy.sh"
   }
 }

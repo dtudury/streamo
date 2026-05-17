@@ -8,7 +8,7 @@
 
 Streamo is a peer-to-peer sync library built around a simple promise: **no server holds authority over your data or your identity.** The server is a relay, not a gatekeeper. Your keypair is your identity — derived from your credentials, not stored in a file. Your commit log is the source of truth, and every connected peer sees the same history.
 
-> **New here?** → [**FIRST_STEPS.md**](./FIRST_STEPS.md) walks you from clone to your own signed fork of the homepage in ~10 minutes.
+> **New here?** → [**FIRST_STEPS.md**](./FIRST_STEPS.md) walks you from zero to your own signed fork of the homepage in one `npx` command (~5 minutes, no clone needed).
 
 ## why streamo?
 

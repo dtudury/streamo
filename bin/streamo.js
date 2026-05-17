@@ -4,7 +4,7 @@ import { readFileSync } from 'fs'
 import { dirname } from 'path'
 import { Option, program } from 'commander'
 import { config } from 'dotenv'
-import { question, questionNewPassword } from 'readline-sync'
+import { question } from 'readline-sync'
 import { start as startRepl } from 'repl'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
 import { Repo } from '../public/streamo/Repo.js'
@@ -124,7 +124,12 @@ if (options.envFile) {
 
 options.name     ||= question('Name: ')
 options.username ||= question('Username: ')
-const password = options.password || questionNewPassword('Password [ATTENTION!: Backspace won\'t work here]: ', { min: 4, max: 999 })
+// Single-entry hidden input — same deterministic-key model as
+// fork-homepage.js.  No confirmation prompt: streamo's password →
+// keypair is recoverable (re-run with the right password lands on
+// the right key), so the double-prompt was security theater for
+// this use case and friction on every re-run.
+const password = options.password || question('Password (hidden): ', { hideEchoBack: true, mask: '' })
 
 const server = await StreamoServer.create({
   name:          options.name,

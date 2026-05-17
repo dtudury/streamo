@@ -88,21 +88,38 @@ locally (instead of HTTP-snapshot fetching).  Useful for forking
 a project whose history you want to browse offline.  Not blocking;
 the current light-fork covers fork-the-page well.
 
-### dumb-pipe + smart-edge split — relay as `npx`, app as peer *(big architectural arc)*
+### dumb-pipe relay — move home-repo signing to the author's laptop *(next big arc)*
 
-Today, `chat/server.js` is BOTH the relay (HTTP+WebSocket on the
-public port) AND the application logic (chat-room bookkeeping —
-member-add on announce, journal seeding, fileSync to disk). Same
-process holds the signing keypair, runs the public port, and
-writes commits. That conflates two concerns at different trust
-levels.
+The "smart edge" that needed to live in the server has mostly
+**dissolved into client code**. The chat-room's signed `members`
+roster is gone; chat-client peers discover each other via the
+`announce`/`interest` ephemeral layer with server-side replay for
+newcomers (landed in the post-7.3.0 main branch). The explorer's
+members view reads from the same announce stream rather than from a
+signed list. What used to be `chat/server.js`'s `onAnnounce`
+write-to-members callback is dead code, deleted.
 
-**The split**: separate the public-facing relay into a small,
-keypair-less `npx` process that's a *pure byte pipe*, and let the
-application logic run as a peer process that connects to the
-relay over WebSocket. The application has the keypair, signs
-commits, runs the chat-member logic. The relay holds bytes and
-serves them — never writes anything itself.
+What still keeps `chat/server.js` from being a pure byte pipe:
+
+1. It holds the home repo's **signing keypair** (`Signer` derived
+   from `.env.prod` credentials).
+2. It **seeds journal entries** into the home repo on startup.
+3. It runs **fileSync** between disk and the home repo's `files` key.
+
+All three are *authoring* responsibilities, not *serving*
+responsibilities. The natural shape: move them off the public-port
+process entirely. The relay opens the home repo's archive (read-only
+view; archive is populated by sync from elsewhere), serves its
+`files` via page-as-Repo middleware, moves bytes for any repo people
+subscribe to, and holds no keys.
+
+Authoring happens on the author's machine — David's laptop, my
+session, anyone the home key trusts to sign for it. The author
+runs streamo with a signer, opens the home repo locally, makes
+commits (edits to `files`, journal entries, merges-from-upstream),
+and pushes via origin sync to the public relay. **Merge IS the
+deploy** — there's no separate deploy step; the relay archives the
+new bytes and starts serving them as soon as they arrive.
 
 Sketch:
 
@@ -112,61 +129,57 @@ npx @dtudury/streamo \
   --home-key <pubkeyhex> \
   --web 443
 
-# Application process (clone-based, where the keypair lives):
-node public/apps/chat/server.js \
-  --env-file .env.prod \
-  --origin localhost:443    # or wherever the relay runs
+# Author's laptop (where the keypair lives — could be anywhere):
+npx @dtudury/streamo \
+  --name homepage --username alice \
+  --files ./mysite --files-key files \
+  --origin streamo.dev
+# (signs commits locally as you edit; pushes via origin sync;
+# `--merge-from` pulls in upstream changes as signed merges)
 ```
-
-The app process loads its keypair from `.env`, opens the home
-repo locally, runs `onAnnounce`/seeding/fileSync as today, and
-pushes its commits up to the relay via origin sync. The relay
-sees signed bytes arrive and persists them. Clients connecting
-to the relay's public port get the right bytes from `hello`'s
-home topic without the relay ever holding a signer.
 
 **Why this is the right shape:**
 
-- *Same page-as-Repo pattern, deeper layer.* Page-as-Repo split
-  content-authoring (signed bytes) from content-serving (a dumb
-  relay). This split does the same thing for application logic.
-  The relay becomes purely "byte mover and content-addressed
-  store"; semantics live in signed bytes written by author
-  processes.
 - *Security improves.* The public-port process never holds the
   signing key. Compromise of the relay leaks bytes (already
   public) and the relay's ability to censor (already minimal —
-  clients can switch). The keypair stays with the application
-  process, which doesn't need a public port.
-- *Deployment simplifies.* The relay is a stable, low-volatility
-  `npx` invocation. Application logic (more volatile, more
-  app-specific) updates independently. `npx @dtudury/streamo@latest`
-  for the relay; `git pull` for the app process.
+  clients can switch). The keypair stays with the author, on a
+  machine that doesn't need a public port.
+- *Deployment simplifies.* No deploy script, no service restart,
+  no staging dance. Sign a commit on your laptop; origin sync
+  pushes; the relay archives and serves. Test-before-live = merge
+  into a staging key, eyeball it on the relay, then merge to your
+  live key.
 - *Deepens the "no server holds authority" pitch.* Today the
-  pitch is that the relay can't make up content. After the split,
+  pitch is that the relay can't make up content. After this split,
   the public-port process is *literally just a dumb pipe* — it
   doesn't even know how to write to the chain it serves.
 
 **Library additions** that support it:
 
 - `--home-key <pubkeyhex>` flag — the relay opens this repo's
-  archive, announces it in `hello`, but never signs anything for
-  it. Replaces `--name`/`--username`/`--password` when the relay
-  is purely a pipe.
-- Possibly a `--no-sign` mode that strips even the relay's own
-  keypair derivation, just to be explicit about "this process
-  holds no secrets."
+  archive, announces it in `hello`, but never derives a signer for
+  it. Replaces `--name`/`--username`/`--password` when the process
+  is purely a relay.
+- Possibly a `--no-sign` mode that strips even the implicit signer,
+  just to be explicit about "this process holds no secrets."
 
-**What the application process needs**: roughly what
-`chat/server.js` does today, minus the `server.web()` call.
-Connect via origin, attach signer, run the seed step, watch
-announces, write member-adds. Most of the code stays; the entry
-point changes shape.
+**What the relay needs to drop:** the `Signer` derivation in
+`StreamoServer.create`, the journal seed in `chat/server.js`, the
+fileSync call. Strip those and `chat/server.js` becomes ~10 lines
+of "open home repo, run relay, serve files-via-middleware."
 
-Probably 4-6 hours, decomposable into nibbles (1: `--home-key`
-flag for the relay side; 2: refactor chat-server.js into
-pure-app-process shape; 3: end-to-end test of the split running;
-4: docs and FIRST_STEPS variant).
+**What needs to live on the author side:** what's already in the
+CLI (`bin/streamo.js --merge-from --files --origin`). The author
+ends up running their own `npx @dtudury/streamo` with a signer,
+pointed at the relay. Same binary, different flags. No second
+codepath.
+
+Probably 2-3 hours, decomposable: (1) `--home-key` flag + skip-
+signer path; (2) move seed/fileSync out of chat/server.js; (3)
+deploy-as-merge — author script that signs the homepage edits +
+pushes; (4) docs + FIRST_STEPS update reflecting the new
+deployment story.
 
 ### richer explorer
 
@@ -196,12 +209,12 @@ loosely from "small follow-up" to "could be its own session":
 - *Diff view between commits.* `changedPaths` walks two snapshots; a
   diff view could show old → new for each path. Best paired with the
   changedPaths-richer polish above.
-- *Member visualization.* Walk a repo's `members` array, show each as
-  a clickable card linking to their repo. Adds a graph-y dimension to
-  the registry list.
-- *Presence layer.* Mentioned in its own section below — surfacing
-  "alice is here right now" via the `interest`/`announce` ephemeral
-  layer. The infrastructure is there; the UI isn't.
+- *Presence richness.* The members section in the home view now
+  surfaces "currently announcing on this topic" peers via the
+  ephemeral layer (announce + replay-on-interest landed post-7.3.0).
+  Future polish: drop stale rows on disconnect-signal, last-seen
+  timestamps, "X people are here" header counter that doesn't lie
+  about closed connections.
 - *Custom value-renderer per repo.* If a repo's value happens to be a
   chat-shaped `{ messages: [...] }`, render it as a chat thread instead
   of generic JSON. The principle generalizes: repos describe how they
@@ -247,13 +260,26 @@ Specific items so far:
 
 All three items done; this thread's at a natural pause.
 
-### presence indicators
+### presence indicators *(landed at the protocol layer; UI polish remains)*
 
-Who's currently online? The WS-level keep-alive (20s JSON ping in
-`registrySync`) keeps connections from idle-closing, but doesn't surface
-"alice is here" anywhere in the UI. Presence proper would announce
-periodically via `interest`/`announce` and time out peers we haven't heard
-from. Ephemeral by design — not stored in any Repo.
+Post-7.3.0: the `announce`/`interest` ephemeral layer plus
+server-side replay of currently-live announces on new interest gives
+the relay a real "who's broadcasting right now" view, with lifetime
+tied to the announcer's WS connection (drop on disconnect). The
+chat client and explorer both render from it. What's still loose:
+
+- *Disconnect signalling.* Today the relay drops an announcer from
+  its replay state on socket close, but doesn't *notify* other peers
+  — they only notice the dropped peer by their data stopping. A
+  small protocol addition (`{type: 'depart', key, topic}` fan-out)
+  would let UI views grey out or remove rows immediately.
+- *Heartbeat for keep-alive.* The 20s JSON ping keeps WebSockets
+  from idle-closing, but the announce itself is fire-and-forget. If
+  we ever want "last-seen recently" UI hints (not just "currently
+  connected"), an explicit heartbeat with timestamps would carry
+  more than the connection state.
+
+Neither blocks anything; both are quality-of-presence-display polish.
 
 ---
 

@@ -91,6 +91,20 @@ single-entry hidden input. The deterministic password→key model
 makes confirmation security-theater (typo'd password = wrong key
 on the wire, not data loss). Friction on every re-run.
 
+**TLS-aware `--origin`.** The `--origin` flag now accepts either
+URL shape (`wss://host[:port]` / `ws://host[:port]`) or
+`host[:port]` shorthand with auto-detect (port 443 → wss, no port
+→ wss, other port → ws — same heuristic `Repo.merge`'s URL
+parser uses). This makes the round-trip story work end-to-end
+without a new flag: `outletSync` opens the user's repo on
+handshake via `registry.open` (archiveSync-backed), so chunks
+flowing up via origin sync are *automatically* persisted on the
+relay's disk and addressable at `<host>/streams/<your-key>`.
+The previously-drafted `--publish-to` flag was retired — byte
+publishing falls out of the existing protocol; only TLS support
+was missing.  Exported `parseOrigin(hostPort)` from
+`StreamoServer.js` for callers and tests.
+
 **`bin` field shape.** `"bin": "./bin/streamo.js"` (string) instead
 of `"bin": { "streamo": "./bin/streamo.js" }` (object). Functionally
 equivalent for installed packages but resolves more reliably via
@@ -101,20 +115,22 @@ as the async counterpart to `assert.throws` — needed because
 `async` functions wrap body-throws into rejected promises rather
 than raising them synchronously. Existing `throws` unchanged.
 
-**Tests.** 173 passing, up from 159. 12 new in `Repo.test.js`
+**Tests.** 180 passing, up from 159. 12 new in `Repo.test.js`
 (merge shape, slicing, citation, error cases, custom message),
 2 new in `smoke.test.js` (URL-source via real HTTP server: full
-URL form + host shorthand with `/api/info` discovery).
+URL form + host shorthand with `/api/info` discovery), 7 new in
+`StreamoServer.test.js` for the `parseOrigin` helper.
 
 **What's next.** Two threads, sized differently:
 
-- `--publish-to <host>` (~1-2 hr) — completes the round-trip so
-  your fork becomes visible at `<host>/streams/<your-key>` via a
-  single flag, not a manual REPL incantation.
+- *FIRST_STEPS step 5* (small, post-publish) — extend the
+  all-`npx` flow with `--origin streamo.dev`, verify the bytes
+  arrive on streamo.dev's disk, document the
+  `<host>/streams/<your-key>` URL as the fifth step.
 - *Dumb-pipe + smart-edge split* (bigger) — separate the
   public-port relay process (npx, no signer) from the application
   logic process (chat semantics, journal seeding, etc.) so the
-  public-facing surface is small, simple, and signer-less. See
+  public-facing surface is small, simple, and signer-less.  See
   ROADMAP.
 
 ---

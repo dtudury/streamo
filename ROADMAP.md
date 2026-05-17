@@ -59,47 +59,34 @@ usable at 200+ commits. Probably touches `at-view.js`, `render.js`,
 and the typed-value composite renderers from the
 streamo-typed-value-displays thread in `THREADS.md`.
 
-### publish-to — completing the round-trip *(small next thread)*
+### FIRST_STEPS step 5 — visit your fork on the public relay *(post-publish)*
 
-Today's all-`npx` flow does a one-way *pull*: HTTP fetch the
-upstream snapshot, commit a pure-copy locally, serve at
-`localhost:8081`. To make the user's fork visible at
-`streamo.dev/streams/<their-key>`, the user's bytes need to flow
-*up* to streamo.dev — WebSocket sync plus an `announce` against
-the relay's home topic. The CLI's `--origin` flag does the
-connect but doesn't announce; the manual REPL incantation would
-be `session.announce(publicKeyHex, homeKey)` after a connect.
+Once 7.2.0 ships, the all-`npx` flow can be extended with
+`--origin streamo.dev` (or `--origin wss://streamo.dev`).  The
+relay's `outletSync` opens the user's repo on handshake via
+`registry.open`, which is archiveSync-backed, so the user's
+chunks are persisted on the relay's disk as they flow up.  No
+new flag needed; this falls out of the existing protocol +
+TLS-aware `--origin` parsing landed in 7.2.0.
 
-The natural next flag is `--publish-to <host>`: opens a WebSocket
-to the host, fetches `hello.home` (the relay's home topic),
-announces the local pubkey against that topic, and continues. The
-relay's existing `onAnnounce` callback (already in
-`chat/server.js` for the chat-member flow) adds the new key to
-`members`, subscribes back to it, and the user's bytes start
-flowing up.
+When `streamo.dev` is verified end-to-end, FIRST_STEPS gets its
+fifth step: *"visit https://streamo.dev/streams/&lt;your-key&gt; —
+your fork lives on the public relay now."*
 
-Once landed, the all-`npx` *publish* flow becomes:
-
-```bash
-npx @dtudury/streamo \
-  --name homepage --username alice \
-  --merge-from streamo.dev --merge-from-key files \
-  --publish-to streamo.dev \
-  --files ./mysite --files-key files \
-  --web 8081
-```
-
-And FIRST_STEPS gets a fifth step: *"visit
-https://streamo.dev/streams/&lt;your-key&gt; — your fork lives on the
-public relay now."* This completes the fork→edit→serve→publish
-loop the page-as-Repo arc has been building toward. ~1-2 hr scope,
-similar shape to the merge nibbles.
+*Earlier draft proposed a `--publish-to <host>` flag with
+explicit announce semantics.  David caught it (2026-05-17):
+announce is chat-app discovery — adding the user to the home
+repo's `members` cascade — not a generic "publish my bytes"
+operation.  Byte publishing already falls out of the existing
+origin handshake + the relay's archiveSync-backed factory.
+Don't add new flags for things that fall out of the existing
+protocol.*
 
 **Future-extension worth keeping in mind**: a heavy-fork mode for
 merge that connects via WebSocket and syncs the full upstream chain
-locally (instead of HTTP-snapshot fetching). Useful for forking a
-project whose history you want to browse offline. Not blocking; the
-current light-fork covers fork-the-page well.
+locally (instead of HTTP-snapshot fetching).  Useful for forking
+a project whose history you want to browse offline.  Not blocking;
+the current light-fork covers fork-the-page well.
 
 ### dumb-pipe + smart-edge split — relay as `npx`, app as peer *(big architectural arc)*
 
@@ -176,10 +163,10 @@ Connect via origin, attach signer, run the seed step, watch
 announces, write member-adds. Most of the code stays; the entry
 point changes shape.
 
-Bigger than `--publish-to`. Probably 4-6 hours, decomposable into
-nibbles (1: `--home-key` flag for the relay side; 2: refactor
-chat-server.js into pure-app-process shape; 3: end-to-end test of
-the split running; 4: docs and FIRST_STEPS variant).
+Probably 4-6 hours, decomposable into nibbles (1: `--home-key`
+flag for the relay side; 2: refactor chat-server.js into
+pure-app-process shape; 3: end-to-end test of the split running;
+4: docs and FIRST_STEPS variant).
 
 ### richer explorer
 

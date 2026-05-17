@@ -94,7 +94,7 @@ program
       .preset('1024')
   )
   .addOption(
-    new Option('--origin <host:port>', 'connect to a remote outlet')
+    new Option('--origin <url>', 'connect to a remote outlet over WebSocket. Accepts ws://host[:port] or wss://host[:port] (URL shape), or host[:port] shorthand (port 443 → wss, no port → wss, other port → ws). On open, the remote opens (and persists, if archiveSync-backed) your streamo on its side — for a publicly-served relay, this is how your bytes become reachable at <host>/streams/<your-key>.')
       .env('STREAMO_ORIGIN')
   )
   .addOption(

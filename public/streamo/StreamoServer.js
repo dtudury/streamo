@@ -10,6 +10,35 @@ import { stateFileSync } from './stateFileSync.js'
 import { bytesToHex } from './utils.js'
 import { webSync } from './webSync.js'
 
+/**
+ * Parse an origin spec into { host, port, protocol } for `originSync`.
+ *
+ * Accepts:
+ *   - `ws://host[:port]` / `wss://host[:port]` — explicit URL shape
+ *   - `host:port` shorthand — `:443` → wss, any other port → ws
+ *   - `host` shorthand (no port) — wss (production default; same
+ *      heuristic `Repo.merge`'s URL parser uses)
+ *
+ * Defaults the missing port from the protocol (wss → 443, ws → 80).
+ * Exported so `bin/streamo.js`, alternative entry points, and tests
+ * can share one canonical parser.
+ *
+ * @param {string} hostPort
+ * @returns {{ host: string, port: number, protocol: 'ws'|'wss' }}
+ */
+export function parseOrigin (hostPort) {
+  let urlString = hostPort
+  if (!/^wss?:\/\//.test(hostPort)) {
+    const port = hostPort.split(':')[1]
+    const useWss = !port || port === '443'
+    urlString = (useWss ? 'wss://' : 'ws://') + hostPort
+  }
+  const url = new URL(urlString)
+  const protocol = url.protocol === 'wss:' ? 'wss' : 'ws'
+  const port = +(url.port || (protocol === 'wss' ? 443 : 80))
+  return { host: url.hostname, port, protocol }
+}
+
 export class StreamoServer {
   #dataDir
   #keyIterations
@@ -53,8 +82,8 @@ export class StreamoServer {
   }
 
   async connect (hostPort) {
-    const [host, port] = hostPort.split(':')
-    return originSync(this.streamo, this.publicKeyHex, host, +port)
+    const { host, port, protocol } = parseOrigin(hostPort)
+    return originSync(this.streamo, this.publicKeyHex, host, port, { protocol })
   }
 
   async files (folder = '.', options = {}) {

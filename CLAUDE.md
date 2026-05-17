@@ -106,7 +106,7 @@ lands without tests passing, you have failed the contract.
   and browser; content-driven discovery via `follow`; sends 20-second JSON keep-alive
   pings so idle-closing PaaS hosts don't drop the connection
 - CLI `--web` flag — starts a WebSocket relay + static file server; `chat-server.js` is
-  retired; `public/streamo/chat-cli.js` is the terminal chat client
+  retired; `public/apps/chat/cli.js` is the terminal chat client
 - `public/apps/chat/server.js` is the **all-in-one demo / production server** —
   chat room + static files for homepage + chat + explorer, on one port. `npm run
   dev` runs it with `.env.dev`; `npm run prod` runs it with `.env.prod`.

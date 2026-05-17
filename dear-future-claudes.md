@@ -50,12 +50,6 @@ genuinely helps. Plain DOM manipulation, separate `.html` shells with
 imperative `.js` files — all fine. The point of `h` is making the
 code legible for someone who's going to read it.
 
-`public/apps/hello-vanilla/` is a worked example of the alternative
-shape: the same hello-world streamo app written without `h` at all,
-the most vanilla DOM-API way possible. Useful as a side-by-side
-reference when the partner asks "is `h` doing anything I couldn't do
-with `createElement`?"
-
 ## the `on*` attribute trap
 
 `onclick=${handler}` is the footgun. Mount calls `handler(el)` *once*

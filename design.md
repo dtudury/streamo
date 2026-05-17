@@ -411,7 +411,7 @@ you discover the hard way when a slot mysteriously stays stale.
 ## 14. The chat-room demo
 
 > Files: `public/apps/chat/server.js`, `public/apps/chat/main.js`,
-> `public/streamo/chat-cli.js`
+> `public/apps/chat/cli.js`
 
 A whole-system test of the design:
 

@@ -1,21 +1,21 @@
 #!/usr/bin/env node
 /**
- * streamo chat CLI
+ * streamo chat CLI — the terminal counterpart to apps/chat/main.js.
  *
  * Usage:
- *   node public/streamo/chat-cli.js [username] [password] [host] [port]
+ *   node public/apps/chat/cli.js [username] [password] [host] [port]
  *
  * Joins the chat room, prints incoming messages, and reads outgoing messages
  * from stdin (one line = one message).
  *
  * Example for Claude to join and help debug:
- *   node public/streamo/chat-cli.js claude claude localhost 8080
+ *   node public/apps/chat/cli.js claude claude localhost 8080
  */
 import readline from 'node:readline'
-import { Signer } from './Signer.js'
-import { RepoRegistry } from './RepoRegistry.js'
-import { registrySync } from './registrySync.js'
-import { bytesToHex } from './utils.js'
+import { Signer } from '../../streamo/Signer.js'
+import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { registrySync } from '../../streamo/registrySync.js'
+import { bytesToHex } from '../../streamo/utils.js'
 
 const [,, username = 'claude', password = 'claude', host = 'localhost', portStr = '8080'] = process.argv
 const port = Number(portStr)

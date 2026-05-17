@@ -213,6 +213,30 @@ loosely from "small follow-up" to "could be its own session":
 The user's stated plan is to **meander** — pick whatever feels right,
 not work the list in order. Treat this as a menu, not a queue.
 
+### eat your vegetables *(low-glamour cleanups for between-arcs days)*
+
+- **Drop `public/apps/chat/server.js`** as a separate entry point. With
+  the relay/author split landed in 7.4.0, chat/server.js is now a thin
+  wrapper around `bin/streamo.js` plus a one-time journal seed and the
+  streamo-history open at startup. Both can be extracted: the seed
+  becomes `scripts/seed-journal.js` (mirroring `seed-history.js`); the
+  streamo-history opening already cascades for free via the home repo's
+  `journalists` array on first client subscribe. After that, `npm run
+  dev` / `npm run prod` call `node bin/streamo.js` with appropriate
+  flags. Maybe 30-60 minutes; touches `package.json`, `DEPLOY.md`, the
+  systemd unit's ExecStart. Result: one less entry-point file, the
+  library boundary stays sharper.
+
+- **TodoMVC demo at `/apps/todomvc/`** to replace the retired `hello`
+  and `hello-vanilla` apps. TodoMVC is a familiar benchmark; doing the
+  streamo version side-by-side with the vanilla version (whose CSS is
+  externally hosted at todomvc.com/examples) gives readers a direct
+  comparison with frameworks they already know. The shape maps cleanly
+  to streamo: value is `{ todos: [{ id, text, done, at }, ...] }`,
+  every edit is a signed commit, two browser tabs see each other live.
+  Target: 50-100 LOC total, no project-local CSS. Add an app-card to
+  the homepage when it lands.
+
 ### toward reference-quality clarity
 
 Streamo is small and deliberate enough that someone could reasonably

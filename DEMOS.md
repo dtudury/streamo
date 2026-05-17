@@ -34,14 +34,16 @@ journal app itself can append fresh entries to that same Repo,
 making the project's history both the demo content AND a living
 document.
 
-### hello — the smallest streamo app
+### todo-mvc — the streamo entry in a familiar benchmark
 
-Already shipped (2026-05-11) at `/apps/hello/`. Five-move starter
-template: identity → registry+sync → my repo+signer → reactive view
-→ write. Writes `{ text, at }` entries; growing it into the full
-journal app is "add fields and typography," not "rewrite." Lives
-alongside chat and explorer as a peer app — a copy-and-adapt
-starting point for new streamo apps.
+Replace the retired `hello` / `hello-vanilla` demos with a streamo
+implementation of TodoMVC. The shape maps cleanly to a Repo: value
+is `{ todos: [{ id, text, done, at }, ...] }`, edits are signed
+commits, two browser tabs see each other live. Borrow the external
+TodoMVC CSS (`todomvc.com/examples/...`) so the file stays small and
+people can compare streamo against their preferred framework
+side-by-side. The "spec" is well-known; the streamo version
+*should* be 50-100 lines of code total.
 
 ---
 

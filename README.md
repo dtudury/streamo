@@ -354,7 +354,7 @@ Useful URLs once it's running:
 To join chat from a terminal instead of the browser:
 
 ```bash
-node public/streamo/chat-cli.js alice secret localhost 8080
+node public/apps/chat/cli.js alice secret localhost 8080
 ```
 
 Each participant owns their own message stream. Same data structure,

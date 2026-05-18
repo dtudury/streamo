@@ -35,6 +35,38 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(span.textContent, 'world', 'updated after set')
   })
 
+  test('attribute setting is a no-op when the value did not change', async ({ assert }) => {
+    // Regression: terraform used to clear-all-then-reapply, so every re-render
+    // mutated the DOM for every attribute even when nothing changed.
+    // After the noop-when-same optimization, setAttribute should fire only
+    // for attributes whose value actually differs from what's already there.
+    const stream = new Streamo()
+    stream.set({ a: 'one', b: 'two' })
+    const container = document.createElement('div')
+    mount(
+      h`<div data-a=${() => stream.get('a')} data-b=${() => stream.get('b')}></div>`,
+      container, stream.recaller
+    )
+    const div = container.childNodes[0]
+    assert.equal(div.getAttribute('data-a'), 'one', 'initial data-a')
+    assert.equal(div.getAttribute('data-b'), 'two', 'initial data-b')
+
+    // Instrument setAttribute on this element to count post-mount calls
+    let setCount = 0
+    const origSet = div.setAttribute.bind(div)
+    div.setAttribute = (...args) => { setCount++; return origSet(...args) }
+
+    // Mutate `a` but not `b`. Both function-attrs are evaluated during the
+    // re-render (single root watcher), so this catches the case: setAttribute
+    // fires for the one that changed, NOT for the one whose value is the same.
+    stream.set('a', 'three')
+    await new Promise(r => setTimeout(r, 20))
+
+    assert.equal(div.getAttribute('data-a'), 'three', 'data-a updated')
+    assert.equal(div.getAttribute('data-b'), 'two', 'data-b unchanged')
+    assert.equal(setCount, 1, 'setAttribute fired exactly once — for the changed attr only')
+  })
+
   test('reactive attribute updates after stream.set', async ({ assert }) => {
     const stream = new Streamo()
     stream.set({ cls: 'active' })

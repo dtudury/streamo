@@ -183,44 +183,57 @@ function resolveNs (vnode, ns) {
 }
 
 function terraform (el, vnode, recaller, ns) {
-  // Reset attrs — naive: clear and reapply
-  const oldNames = el.attributes ? Array.from(el.attributes, a => a.name) : []
-  for (const name of oldNames) el.removeAttribute(name)
+  // Diff-and-apply attrs. `touched` collects every attribute name the new
+  // vnode sets; after the loop, anything on the element NOT touched is
+  // stale and gets removed. The compare-before-mutate guard inside setAttr
+  // makes "attrs are the same as last render" a true no-op — no DOM write,
+  // no style recalc, no mutation-observer fire.
+  const touched = new Set()
   for (const attr of vnode.attrs) {
     if (attr == null) continue
-    applyAttr(el, attr)
+    applyAttr(el, attr, touched)
+  }
+  if (el.attributes) {
+    for (const a of Array.from(el.attributes)) {
+      if (!touched.has(a.name)) el.removeAttribute(a.name)
+    }
   }
   reconcileChildren(el, vnode.children, recaller, ns)
 }
 
-function applyAttr (el, attr) {
+function applyAttr (el, attr, touched) {
   if (typeof attr === 'object' && attr.name == null) {
     // spread object: ${attrs} in attribute position
-    for (const [k, v] of Object.entries(attr)) applyAttr(el, { name: k, value: v })
+    for (const [k, v] of Object.entries(attr)) applyAttr(el, { name: k, value: v }, touched)
     return
   }
   const { name, value } = attr
   if (typeof value === 'function') {
-    setAttr(el, name, value(el))
+    setAttr(el, name, value(el), touched)
     return
   }
   if (Array.isArray(value)) {
     if (value.some(p => typeof p === 'function')) {
       const str = value.map(p => typeof p === 'function' ? p(el) : String(p ?? '')).join('')
-      setAttr(el, name, str)
+      setAttr(el, name, str, touched)
     } else {
-      setAttr(el, name, value)
+      setAttr(el, name, value, touched)
     }
     return
   }
   if (value === undefined) {
-    el.toggleAttribute(name, true) // boolean attribute (no value)
+    // Boolean attribute with no value (e.g. <input autofocus>). Route
+    // through setAttr so the touched-tracking + noop-when-same path applies.
+    setAttr(el, name, true, touched)
     return
   }
-  setAttr(el, name, value)
+  setAttr(el, name, value, touched)
 }
 
-function setAttr (el, name, value) {
+function setAttr (el, name, value, touched) {
+  if (touched) touched.add(name)
+  // Normalize class arrays and objects to a space-separated string before
+  // any comparison so noop-when-same works on canonical form.
   if (name === 'class') {
     if (Array.isArray(value)) value = value.filter(Boolean).join(' ')
     else if (value !== null && value !== undefined && typeof value === 'object') {
@@ -228,18 +241,25 @@ function setAttr (el, name, value) {
     }
   }
   if (name.startsWith('on')) {
-    el[name] = typeof value === 'function' ? value : null
+    // Event handlers set as JS properties. Reference comparison: skip the
+    // reassign only when the new handler is literally the same function as
+    // the current one. With handle() returning a fresh closure per render
+    // this rarely hits, but a static handler reference does.
+    const newHandler = typeof value === 'function' ? value : null
+    if (el[name] !== newHandler) el[name] = newHandler
   } else if (name === 'value' && 'value' in el) {
-    el.value = value
+    if (el.value !== value) el.value = value
   } else if (name === 'checked' && 'checked' in el) {
-    el.checked = !!value
-    el.toggleAttribute('checked', !!value)
+    const bool = !!value
+    if (el.checked !== bool) el.checked = bool
+    if (el.hasAttribute('checked') !== bool) el.toggleAttribute('checked', bool)
   } else if (typeof value === 'boolean') {
-    el.toggleAttribute(name, value)
+    if (el.hasAttribute(name) !== value) el.toggleAttribute(name, value)
   } else if (value == null) {
-    el.removeAttribute(name)
+    if (el.hasAttribute(name)) el.removeAttribute(name)
   } else {
-    el.setAttribute(name, value)
+    const str = String(value)
+    if (el.getAttribute(name) !== str) el.setAttribute(name, str)
   }
 }
 

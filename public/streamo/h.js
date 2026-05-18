@@ -255,3 +255,26 @@ export function h (strings, ...values) {
   const sc = new Scanner(strings, values)
   return parseChildren(sc, null)
 }
+
+/**
+ * De-curry a flat (event, element) handler into the (element → event → ...)
+ * shape that mount expects from function-valued event attributes.
+ *
+ * Function-valued attrs are reactive cells: mount calls them with `(element)`
+ * once per render and assigns the *return value* to the attribute. For event
+ * handlers, that means the attr needs to evaluate to a handler function —
+ * so the cell itself has to return one. The natural shape `element => event
+ * => fn(event, element)` is correct but unpleasant to write inline. `handle`
+ * lets you write a flat handler:
+ *
+ *   <button onclick=${handle((event, element) => doThing(event, element))}>
+ *
+ * And in function-component scope, you usually close over what you need and
+ * skip the arguments entirely:
+ *
+ *   <button onclick=${handle(() => toggleTodo(todo.id))}>
+ *
+ * @param {(event: Event, element: Element) => any} fn
+ * @returns {(element: Element) => (event: Event) => any}
+ */
+export const handle = fn => element => event => fn(event, element)

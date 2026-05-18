@@ -4,7 +4,7 @@
 // Open in two tabs as the same user → live sync. Different users get
 // different lists. Append-only history, every edit signed.
 
-import { h }            from '../../streamo/h.js'
+import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
@@ -44,10 +44,6 @@ const filterFromHash = () => {
 // Set after successful login. Plain lets — the slots that read them are
 // only constructed after loggedIn flips true, so closure capture is fine.
 let myRepo, myKey
-
-// `when(cond, vnode)` — render `vnode` while cond() is truthy. Tiny
-// helper that pairs with the loggedIn boolean to swap whole sections.
-const when = (cond, vnode) => () => cond() ? vnode : null
 
 // ── handlers ─────────────────────────────────────────────────────────
 
@@ -115,18 +111,33 @@ const toggleAll = () => {
   setTodos(todos.map(t => ({ ...t, done: !allDone })), allDone ? 'unmark all' : 'mark all done')
 }
 
-function saveEdit (e) {
+function saveEdit (e, id) {
   e.preventDefault()
-  const id = +e.target.dataset.id
   const text = e.target.elements.text.value.trim()
   if (!text) { deleteTodo(id); return }
   setTodos(getTodos().map(t => t.id === id ? { ...t, text } : t), `edit "${text}"`)
   editingId.set(null)
 }
 
-// Cancel on blur — clicking away (or tabbing out) discards the edit
-// instead of saving. Enter still saves via the form's submit; Escape
-// still cancels via the body keydown listener.
+// Set editingId then focus the freshly-mounted .edit input on the next
+// reactive tick. `autofocus` doesn't reliably fire on dynamic inserts (and
+// gets ignored entirely if mount recycles an existing input element), so we
+// focus explicitly once the DOM has caught up. Only one todo can be editing
+// at a time, so document.querySelector('.edit') unambiguously finds it.
+function startEdit (id) {
+  editingId.set(id)
+  requestAnimationFrame(() => {
+    const input = document.querySelector('.edit')
+    if (input) {
+      input.focus()
+      input.setSelectionRange(input.value.length, input.value.length)
+    }
+  })
+}
+
+// Cancel on blur — clicking away (or tabbing out) discards the edit.
+// Enter saves via the form's onsubmit; Escape cancels via the input's
+// onkeydown. No global keydown listener needed.
 const cancelEdit = () => editingId.set(null)
 
 // ── view ─────────────────────────────────────────────────────────────
@@ -137,13 +148,17 @@ function TodoItem ({ todo }) {
   return h`
     <li class=${classes} data-key=${todo.id}>
       <div class="view">
-        <input class="toggle" type="checkbox" checked=${todo.done} data-action="toggle" data-id=${todo.id}>
-        <label data-action="edit-start" data-id=${todo.id}>${todo.text}</label>
-        <button class="destroy" data-action="delete" data-id=${todo.id}></button>
+        <input class="toggle" type="checkbox" checked=${todo.done}
+               onclick=${handle(() => toggleTodo(todo.id))}>
+        <label ondblclick=${handle(() => startEdit(todo.id))}>${todo.text}</label>
+        <button class="destroy" onclick=${handle(() => deleteTodo(todo.id))}></button>
       </div>
       ${editing ? h`
-        <form onsubmit=${() => saveEdit} data-id=${todo.id}>
-          <input class="edit" name="text" value=${todo.text} onblur=${() => cancelEdit} autofocus>
+        <form onsubmit=${handle(e => saveEdit(e, todo.id))}>
+          <input class="edit" name="text" value=${todo.text}
+                 onblur=${handle(cancelEdit)}
+                 onkeydown=${handle(e => e.key === 'Escape' && cancelEdit())}
+                 autofocus>
         </form>
       ` : null}
     </li>
@@ -160,11 +175,11 @@ mount(h`
     <header class="header">
       <h1>todos</h1>
       ${() => loggedIn.get() ? h`
-        <form data-key="new-todo-form" onsubmit=${() => addTodo}>
+        <form data-key="new-todo-form" onsubmit=${handle(addTodo)}>
           <input data-key="new-todo" class="new-todo" name="text" placeholder="What needs to be done?" autofocus autocomplete="off">
         </form>
       ` : h`
-        <form data-key="login-form" class="login" onsubmit=${() => login}>
+        <form data-key="login-form" class="login" onsubmit=${handle(login)}>
           <input data-key="username" name="username" placeholder="username" autocomplete="username" autofocus>
           <input data-key="password" name="password" type="password" placeholder="password" autocomplete="current-password">
           <button>sign in</button>
@@ -175,7 +190,9 @@ mount(h`
 
     ${() => !loggedIn.get() || getTodos().length === 0 ? null : h`
       <section class="main">
-        <input id="toggle-all" class="toggle-all" type="checkbox" checked=${getTodos().every(t => t.done)} data-action="toggle-all">
+        <input id="toggle-all" class="toggle-all" type="checkbox"
+               checked=${getTodos().every(t => t.done)}
+               onclick=${handle(toggleAll)}>
         <label for="toggle-all">Mark all as complete</label>
         <ul class="todo-list">${() => {
           const filter = filterFromHash()
@@ -207,7 +224,7 @@ mount(h`
           `
         }}</ul>
         ${() => getTodos().some(t => t.done)
-          ? h`<button class="clear-completed" data-action="clear-completed">Clear completed</button>`
+          ? h`<button class="clear-completed" onclick=${handle(clearCompleted)}>Clear completed</button>`
           : null}
       </footer>
     `}
@@ -221,40 +238,3 @@ mount(h`
     </footer>
   ` : null}
 `, document.body, recaller)
-
-// ── event delegation ─────────────────────────────────────────────────
-
-document.body.addEventListener('click', e => {
-  const el = e.target.closest('[data-action]')
-  if (!el) return
-  switch (el.dataset.action) {
-    case 'toggle':          return toggleTodo(+el.dataset.id)
-    case 'delete':          return deleteTodo(+el.dataset.id)
-    case 'toggle-all':      return toggleAll()
-    case 'clear-completed': return clearCompleted()
-  }
-})
-
-document.body.addEventListener('dblclick', e => {
-  const el = e.target.closest('[data-action="edit-start"]')
-  if (!el) return
-  const id = +el.dataset.id
-  editingId.set(id)
-  // Mount inserts the edit input on the next reactive tick; `autofocus`
-  // doesn't reliably fire on dynamic inserts (and gets ignored entirely
-  // if mount recycles an existing input element), so we focus explicitly
-  // once the DOM has caught up. Cursor goes to the end so the user can
-  // append immediately without clicking again.
-  requestAnimationFrame(() => {
-    const input = document.querySelector(`form[data-id="${id}"] .edit`)
-    if (input) {
-      input.focus()
-      input.setSelectionRange(input.value.length, input.value.length)
-    }
-  })
-})
-
-// Cancel-edit on Escape; the form's onsubmit handles save-on-Enter.
-document.body.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && editingId.get() !== null) editingId.set(null)
-})

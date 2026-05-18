@@ -116,6 +116,13 @@ export class Streamo extends CodecRegistry {
   #recaller
   #signedLength = 0
   #committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
+  // Address of the current top value. Tracks explicitly so it stays correct
+  // even when set() encodes a value whose outermost subcode already exists
+  // in the content map (dedup) — in that case super.append() returns the
+  // existing address but byteLength doesn't grow. Falling back to
+  // byteLength-1 would land on the previous top, NOT on the value just set.
+  // -1 means "uninitialized; fall back to chunk-walk in the getter."
+  #valueAddress = -1
 
   /**
    * @param {Recaller} [recaller]
@@ -152,6 +159,8 @@ export class Streamo extends CodecRegistry {
       const sig = this.decode(code)
       this.#signedLength = super.byteLength
       this.#committedAccumulator = sig.accumulator
+    } else {
+      this.#valueAddress = address
     }
     this.#recaller.reportKeyMutation(this, 'length')
     return address
@@ -208,6 +217,7 @@ export class Streamo extends CodecRegistry {
 
     const prevAddress = super.byteLength > 0 ? this.valueAddress : undefined
 
+    let newAddress
     if (path.length === 0 || baseAddress < 0) {
       // Whole-value set: encode and store, bypassing Streamo.append so 'length'
       // is not fired — changedPaths will emit the right path-level mutations.
@@ -218,7 +228,11 @@ export class Streamo extends CodecRegistry {
         for (let i = path.length - 1; i >= 0; i--) obj = { [path[i]]: obj }
         encodedValue = obj
       }
-      super.append(this.encode(encodedValue))
+      // Capture super.append's return: it's the outermost subcode's address
+      // whether newly appended OR content-deduplicated to an existing chunk.
+      // Falling back to byteLength-1 would be wrong when dedup happens — the
+      // new "top" is at the existing address, not at the unchanged tail.
+      newAddress = super.append(this.encode(encodedValue))
     } else {
       // Path update: navigate via _asRefsForWrite to avoid decoding untouched
       // subtrees, then rebuild only the changed path bottom-up, reusing sibling
@@ -246,9 +260,12 @@ export class Streamo extends CodecRegistry {
         const code = this.encode(newRefs, true)
         childAddr = this.addressOf(code) ?? super.append(code)
       }
+      // After the walk-up, childAddr is the address of the new root —
+      // possibly an existing address if everything deduplicated.
+      newAddress = childAddr
     }
 
-    const newAddress = super.byteLength - 1
+    this.#valueAddress = newAddress
     for (const changed of changedPaths(this, prevAddress, newAddress)) {
       this.#recaller.reportKeyMutation(this, JSON.stringify(changed))
     }
@@ -308,7 +325,11 @@ export class Streamo extends CodecRegistry {
       childAddr = this.addressOf(code) ?? super.append(code)
     }
 
-    const newAddress = super.byteLength - 1
+    // childAddr is the address of the new root — possibly an existing
+    // address if the path-update fully deduplicated. Use it directly
+    // instead of byteLength-1, which would land on the unchanged tail.
+    const newAddress = childAddr
+    this.#valueAddress = newAddress
     for (const changed of changedPaths(this, prevAddress, newAddress)) {
       this.#recaller.reportKeyMutation(this, JSON.stringify(changed))
     }
@@ -352,6 +373,13 @@ export class Streamo extends CodecRegistry {
    * trailing SIGNATURE chunks so get() and set() always operate on real data.
    */
   get valueAddress () {
+    // Prefer the explicit pointer (updated by set/setRefs/append for the
+    // current top value). It stays correct even when set() deduplicates to
+    // an existing address — byteLength-1 would lie in that case.
+    if (this.#valueAddress >= 0) return this.#valueAddress
+    // Fallback for fresh / cloned streams that haven't seen an explicit
+    // set or append yet: walk back from byteLength-1 past any SIGNATURE
+    // chunks. Same as the original behavior.
     let address = super.byteLength - 1
     while (address >= 0) {
       const code = this.resolve(address)
@@ -373,6 +401,7 @@ export class Streamo extends CodecRegistry {
     super._reset()
     this.#signedLength = 0
     this.#committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
+    this.#valueAddress = -1
   }
 
   /**

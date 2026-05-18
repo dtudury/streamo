@@ -50,6 +50,39 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(s.addressOf(code42), a1, 'second encode of 42 reuses the existing address')
   })
 
+  test('set returns dedup address (and valueAddress reflects it) when encoded value already exists', ({ assert }) => {
+    // Regression: a set whose encoded outermost subcode already exists in the
+    // content map (toggling back to a state that's been seen before) must
+    // return the existing address AND make valueAddress point at it. Pre-fix,
+    // set returned byteLength-1 (= the unchanged tail) and a subsequent read
+    // would see the OLD value, not the just-set one. This broke todomvc toggle.
+    const s = new Streamo()
+    const valueA = { todos: [{ id: 1, done: true }] }
+    const valueB = { todos: [{ id: 1, done: false }] }
+
+    // First, store both values so the content map knows about them.
+    const addrA = s.set(valueA)
+    assert.deepEqual(s.get(), valueA, 'after set(A): get returns A')
+    assert.equal(s.valueAddress, addrA, 'valueAddress = addrA')
+
+    const addrB = s.set(valueB)
+    assert.deepEqual(s.get(), valueB, 'after set(B): get returns B')
+    assert.equal(s.valueAddress, addrB, 'valueAddress = addrB')
+    assert.notEqual(addrA, addrB, 'A and B have distinct addresses')
+
+    // Now toggle BACK to A. The encoded outermost already exists at addrA.
+    // byteLength-1 would point at B's tail; only addrA is the right answer.
+    const addrA2 = s.set(valueA)
+    assert.equal(addrA2, addrA, 'set(A) the second time returns the existing addrA')
+    assert.equal(s.valueAddress, addrA, 'valueAddress is now addrA, not byteLength-1')
+    assert.deepEqual(s.get(), valueA, 'get returns A — not the stale B at byteLength-1')
+
+    // And toggle back to B one more time for good measure.
+    const addrB2 = s.set(valueB)
+    assert.equal(addrB2, addrB, 'set(B) again returns the existing addrB')
+    assert.deepEqual(s.get(), valueB, 'get returns B after the second-toggle')
+  })
+
   test('reactive get/set/watch', async ({ assert }) => {
     const s = new Streamo()
     let callCount = 0

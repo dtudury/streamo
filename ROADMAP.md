@@ -213,6 +213,43 @@ loosely from "small follow-up" to "could be its own session":
 The user's stated plan is to **meander** — pick whatever feels right,
 not work the list in order. Treat this as a menu, not a queue.
 
+### softening the landing for newcomers *(welcome-the-skeptics)*
+
+The trades in [PHILOSOPHY.md](./PHILOSOPHY.md) are real, but several
+have known softening paths. These are *invitations,* not commitments —
+we'd happily review, iterate on, and merge contributions on any of
+them.
+
+- **A focused linter (phase 1).** ESLint rule that reuses `h.js`'s
+  scanner to catch the known footguns: `onclick=${nonCurried}`,
+  function-component-in-list without `data-key`, sibling-input
+  recycling collisions, attribute-name typos, unknown tag names.
+  Tractable in a long weekend; ~500–800 LOC. Catches 80% of the
+  mistakes we've actually made. Worth doing when someone hits the
+  gap hard enough to feel motivated; until then it's bounded and
+  known.
+- **Editor support / language server (phase 2-3).** Completion,
+  go-to-definition, find-references for component names is a
+  couple weeks of focused work. Type inference on attrs / handlers /
+  props is months. We aren't committing to either; we'd happily
+  review work in this direction.
+- **Explorer-as-isolatable-components experiment.** Rewrite the
+  explorer app so every component takes everything as props — no
+  closure capture. Result: a worked example of the
+  isolatable-component pattern that streamo doesn't enforce by
+  default. Mid-priority; would land as its own arc.
+- **Streamo client in another language.** The protocol is small.
+  Python, Rust, Go, Swift, Elixir would all be welcome — write us
+  if you're considering it and we'll help you find the corners.
+- **Demos at scale.** Virtualized lists. Real-time collab on long
+  documents. The embedded-Canvas-component pattern for data-heavy
+  apps. Each is a worked answer to "does this scale to *my*
+  thing?"
+
+If you're thinking about any of these, file an issue or open a PR —
+we'd love your name in `CONTRIBUTORS.md` (which doesn't exist yet
+because no one's needed it; the day someone does, we'll create it).
+
 ### eat your vegetables *(low-glamour cleanups for between-arcs days)*
 
 - **Cross-slot element recycling.** Today's mount recycles within a slot

@@ -371,6 +371,15 @@ node --test public/streamo/Repo.test.js  # single file
 
 See [ROADMAP.md](./ROADMAP.md) for what's been built and what's next.
 
+## philosophy + honest trades
+
+Streamo makes specific trades — small core, zero build, no type system,
+no editor support, an idiosyncratic style. Some you'll love, some will
+rub. [PHILOSOPHY.md](./PHILOSOPHY.md) is the honest record: what you pay,
+what you get, and what's coming that would soften the costs. Read it
+before you decide streamo is for you (or that it isn't); we want the
+choice to be made with eyes open.
+
 ## collaboration
 
 Built with significant AI collaboration via [Claude Code](https://claude.ai/code). Human-directed; Claude is a co-author and contributor, not an autonomous builder.

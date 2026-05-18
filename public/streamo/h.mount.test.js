@@ -35,6 +35,31 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(span.textContent, 'world', 'updated after set')
   })
 
+  test('text nodes are recycled positionally across re-render (nodeValue updates in place)', async ({ assert }) => {
+    // Regression: text nodes used to be re-created on every reactive re-
+    // render (fresh document.createTextNode + old one cleaned up). That
+    // breaks user text selection that spans the node — browser selection
+    // anchors at a Node, not at a document offset. After pass-4, text
+    // vnodes match positionally to the still-unclaimed text nodes in the
+    // parent, and the build pass updates nodeValue in place. The text-node
+    // INSTANCE survives the re-render; its value updates.
+    const stream = new Streamo()
+    stream.set({ msg: 'hello' })
+    const container = document.createElement('div')
+    mount(h`<p>${() => stream.get('msg')}</p>`, container, stream.recaller)
+
+    const p = container.childNodes[0]
+    const originalTextNode = p.childNodes[0]
+    assert.equal(originalTextNode.nodeType, 3, 'is a text node')
+    assert.equal(originalTextNode.nodeValue, 'hello', 'initial text')
+
+    stream.set('msg', 'world')
+    await new Promise(r => setTimeout(r, 20))
+
+    assert.equal(p.childNodes[0], originalTextNode, 'same text node instance — recycled, not replaced')
+    assert.equal(p.childNodes[0].nodeValue, 'world', 'nodeValue updated in place')
+  })
+
   test('attribute setting is a no-op when the value did not change', async ({ assert }) => {
     // Regression: terraform used to clear-all-then-reapply, so every re-render
     // mutated the DOM for every attribute even when nothing changed.

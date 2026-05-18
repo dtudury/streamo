@@ -124,6 +124,33 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
     }
   }
 
+  // Pass 4: match text vnodes (HText, strings, numbers) to existing text
+  // nodes positionally — claim the Nth still-unclaimed text node in the
+  // old children for the Nth text vnode in the new children. Preserves
+  // text-node identity across re-renders so a user's text selection that
+  // spans a node survives (browser selection anchors at a Node, not a
+  // document offset). nodeValue is updated in the build pass below
+  // when the text content differs.
+  {
+    let textCursor = 0
+    for (let i = 0; i < resolved.length; i++) {
+      if (newChildren[i]) continue
+      const v = resolved[i]
+      const isText = v instanceof HText || typeof v === 'string' || typeof v === 'number'
+      if (!isText) continue
+      while (textCursor < oldChildren.length) {
+        const n = oldChildren[textCursor]
+        if (n && n.nodeType === 3) break // text node
+        textCursor++ // skip nulls + non-text nodes
+      }
+      if (textCursor < oldChildren.length) {
+        newChildren[i] = oldChildren[textCursor]
+        oldChildren[textCursor] = null
+        textCursor++
+      }
+    }
+  }
+
   // ── Cleanup unmatched old children ──
   for (const child of oldChildren) {
     if (child) child.remove()
@@ -133,7 +160,11 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
   for (let i = 0; i < resolved.length; i++) {
     const v = resolved[i]
     if (v instanceof HText) {
-      newChildren[i] = document.createTextNode(v.value)
+      if (!newChildren[i]) {
+        newChildren[i] = document.createTextNode(v.value)
+      } else if (newChildren[i].nodeValue !== v.value) {
+        newChildren[i].nodeValue = v.value
+      }
     } else if (v instanceof HElement) {
       if (!newChildren[i]) {
         const elemNs = resolveNs(v, ns)
@@ -143,7 +174,12 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
     } else if (typeof Node !== 'undefined' && v instanceof Node) {
       newChildren[i] = v
     } else if (typeof v === 'string' || typeof v === 'number') {
-      newChildren[i] = document.createTextNode(String(v))
+      const str = String(v)
+      if (!newChildren[i]) {
+        newChildren[i] = document.createTextNode(str)
+      } else if (newChildren[i].nodeValue !== str) {
+        newChildren[i].nodeValue = str
+      }
     }
   }
 

@@ -427,6 +427,71 @@ A whole-system test of the design:
   `{name, messages: [...]}`. Other clients see them via the
   subscription set up by `follow`.
 
+## 15. The module boundary — three layers in one package
+
+streamo ships as one npm package, but it's really three loosely-coupled
+layers stacked on top of each other. Knowing where the seams are makes
+the codebase easier to navigate and makes the eventual split (if it
+ever happens) feel mechanical instead of architectural.
+
+The three layers:
+
+- **The reactive primitive.** `Recaller` (with `LiveSource` /
+  `liveValue` as its lightest convenience wrappers). ~150 lines of
+  fine-grained dependency tracking — read a key, depend on it; mutate
+  a key, fire watchers. Doesn't know about streams, repos, signers,
+  HTTP, or DOM. Pure coordination.
+- **The data layer.** `Streamo`, `Repo`, `RepoRegistry`, the sync
+  backends (`registrySync`, `archiveSync`, `fileSync`, `originSync`,
+  `outletSync`, `webSync`, `s3Sync`, `stateFileSync`), the codec
+  system (`Addressifier`, `ContentMap`, `codecs.js`, `CodecRegistry`),
+  and `Signer` / `Signature`. ~1500 lines of "your data, content-
+  addressed, signed, append-only, syncable." Uses Recaller to fire
+  watchers when bytes change; doesn't know about DOM, h, or mount.
+- **The UI layer.** `h` (template parser → virtual nodes), `mount`
+  (reactive DOM renderer with the three-pass match recycler),
+  `handle` (the event-handler de-curry shim), and `StreamoComponent`
+  (custom-element base class for hot-reloadable components). ~500
+  lines. Uses Recaller to subscribe to whatever reactive sources its
+  templates read; doesn't know about streams, repos, or signers.
+
+The actual cross-imports between layers are minimal: `mount.js` imports
+`Recaller`, `LiveSource.js` imports `Recaller`, and that's basically
+it. `h.js` is dependency-free; `Streamo.js`, `Repo.js`, and the sync
+backends don't import anything from the UI layer; the UI layer doesn't
+import anything from the data layer. **`Recaller` is the only shared
+infrastructure.**
+
+This means the layers are *already separable.* What holds them together
+in one package is convenience and a shared aesthetic — the Recaller
+idiom ("one recaller per app, passed to the registry, read by mount"),
+the data-key recycler convention, the function-component-with-closure-
+capture style — not code-level coupling.
+
+**Why they ship as one (today).** Cohesion. A small project with two
+authors gets to skip cross-repo coordination, cross-package versioning,
+and the discovery problem of "which streamo thing do I install?". The
+unified `@dtudury/streamo` import is what every demo, the homepage,
+the chat app, and the explorer use. The exports map supports subpath
+imports (`@dtudury/streamo/mount.js`, etc.) for users who want to pull
+in only part of the surface, with tree-shaking handling the bundle-
+size concern.
+
+**When a split would make sense.** When demand from external users
+pulls it — *"I want streamo's data layer with React,"* or *"I want
+mount/h without the crypto stack."* The signal is people asking,
+not us predicting. The split would be roughly mechanical: bump
+version, publish `@dtudury/recaller` + `@dtudury/mount` + `@dtudury/
+streamo` (the last keeping its current name and the data layer; the
+others gaining their own homes); update the docs; existing demos
+keep working since they already import from precise paths.
+
+**Lazy fission.** The current posture is to keep the option open
+without paying for it. This section makes the boundary legible.
+Subpath imports give callers fine-grained control today. If someone
+shows up wanting the full split, it's a focused afternoon of
+mechanical work, not a refactor.
+
 ## What's not here
 
 A few things that are deliberately not yet built; flagged on the

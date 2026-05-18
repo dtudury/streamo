@@ -60,6 +60,34 @@ class MockNode {
     }
     this.#parent.#children.splice(i, 0, ...toInsert)
   }
+
+  insertBefore (newNode, refNode) {
+    // If refNode is null, append. Otherwise insert before refNode.
+    // If newNode is already a child of this node, it's a move — detach first
+    // so the index lookup against refNode is unambiguous.
+    if (newNode.#parent === this) {
+      this.#children = this.#children.filter(c => c !== newNode)
+      newNode.#parent = null
+    } else if (newNode.#parent) {
+      newNode.remove()
+    }
+    newNode.#parent = this
+    if (refNode == null) {
+      this.#children.push(newNode)
+    } else {
+      const i = this.#children.indexOf(refNode)
+      if (i < 0) throw new Error('insertBefore: refNode is not a child')
+      this.#children.splice(i, 0, newNode)
+    }
+    return newNode
+  }
+
+  removeChild (child) {
+    if (child.#parent !== this) throw new Error('removeChild: not a child')
+    this.#children = this.#children.filter(c => c !== child)
+    child.#parent = null
+    return child
+  }
 }
 
 class MockElement extends MockNode {
@@ -69,6 +97,10 @@ class MockElement extends MockNode {
     super(1)
     this.tag = tag
     this.tagName = tag
+  }
+
+  get attributes () {
+    return Object.entries(this.#attrs).map(([name, value]) => ({ name, value }))
   }
 
   setAttribute (name, val) { this.#attrs[name] = String(val) }

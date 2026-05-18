@@ -40,6 +40,34 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(repo.decode(repo.lastCommit.dataAddress), { v: 1 })
   })
 
+  test('Repo.set toggling between two values via Repo.set persists each one', ({ assert }) => {
+    // Regression: when Repo.set encodes a value whose outermost subcode
+    // already exists in working's content map (toggling back to a state the
+    // repo has previously held), copyFrom must use working.valueAddress
+    // (which Streamo.set updates explicitly) — NOT working.byteLength-1,
+    // which would be unchanged in the dedup case and cite the wrong data.
+    // This was the bug that broke todomvc toggle.
+    const repo = new Repo()
+    const valueA = { items: [{ id: 1, done: true }] }
+    const valueB = { items: [{ id: 1, done: false }] }
+
+    repo.set(valueA)
+    assert.deepEqual(repo.get(), valueA, 'after set(A): get returns A')
+
+    repo.set(valueB)
+    assert.deepEqual(repo.get(), valueB, 'after set(B): get returns B')
+
+    // Toggle BACK to A — encoded outermost already exists in working's content
+    // map. With the bug, dataAddress would point at B's tail; with the fix,
+    // dataAddress is A's existing address and get() returns A.
+    repo.set(valueA)
+    assert.deepEqual(repo.get(), valueA, 'after toggle back to A: get returns A')
+
+    // And once more to B.
+    repo.set(valueB)
+    assert.deepEqual(repo.get(), valueB, 'after toggle back to B: get returns B')
+  })
+
   test('multiple commits produce a linked history via parent', ({ assert }) => {
     const repo = new Repo()
     const working = repo.checkout()

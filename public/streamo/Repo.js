@@ -307,7 +307,13 @@ export class Repo extends Streamo {
     const { remoteParent, date = new Date() } = options
     const parentAddr = super.valueAddress
     const parent = parentAddr >= 0 ? parentAddr : undefined
-    const dataAddress = this.copyFrom(workingStreamo, workingStreamo.byteLength - 1)
+    // Use valueAddress (the explicit top-value pointer), not byteLength-1.
+    // When working.set encodes a value whose outermost subcode already exists
+    // in working's content map (dedup — e.g. toggling back to a state the
+    // repo has seen before), byteLength does NOT grow but valueAddress
+    // correctly points at the existing address of the just-set value.
+    // byteLength-1 would land on an unchanged tail, citing the wrong data.
+    const dataAddress = this.copyFrom(workingStreamo, workingStreamo.valueAddress)
     const record = { message, date, dataAddress, parent }
     if (remoteParent !== undefined) record.remoteParent = remoteParent
     const code = this.encode(record)

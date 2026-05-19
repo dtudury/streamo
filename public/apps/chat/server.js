@@ -4,6 +4,7 @@ import { config } from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { StreamoServer } from '../../streamo/StreamoServer.js'
+import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
 import { buildTarotData } from '../../../scripts/tarot-data.js'
 
@@ -85,8 +86,12 @@ if (server.signer) {
   const tarotKeyHex = bytesToHex(tarotKey.publicKey)
   const tarotRepo = await server.registry.open(tarotKeyHex)
   if (tarotRepo.byteLength === 0) {
-    tarotRepo.set(buildTarotData())
-    console.log(`[chat] tarot demo seeded: ${tarotRepo.byteLength} bytes, no commits`)
+    // Repo.set() auto-commits (checkout → working.set → this.commit), which
+    // we DON'T want — we want a no-commits Streamo. Bypass the Repo
+    // override by calling Streamo's prototype set directly. This appends
+    // data chunks to the byte stream without writing a commit record.
+    Streamo.prototype.set.call(tarotRepo, buildTarotData())
+    console.log(`[chat] tarot demo seeded (no commit): ${tarotRepo.byteLength} bytes`)
   }
   console.log(`[chat] tarot key: ${tarotKeyHex} (${tarotRepo.byteLength} bytes, ${[...tarotRepo.history()].length} commits)`)
 

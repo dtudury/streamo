@@ -5,6 +5,39 @@ for what's next.
 
 ---
 
+## 7.6.1 — mount hardening: louder failure for unkeyed siblings; no-recaller mode works again
+
+Two protective changes on top of 7.6.0's fine-grained watcher boundaries:
+
+- **Multiple unkeyed function-components at the same parent now throw
+  a clear error** instead of silently churning instances on every
+  render. The position-based fallback key (`__pos:N`) was only ever
+  safe for singletons; when more than one unkeyed function-component
+  shares a parent and upstream shape changes (a conditional emits
+  `null`, a list shrinks, etc.), positions drift and instance lookup
+  breaks. The error names both components and tells you to add
+  `data-key="…"`. Singletons (`mount(h\`<${App}/>\`, …)`) keep
+  working unchanged.
+
+- **Static rendering (no recaller) works again for function-
+  components.** 7.6.0 made the instance machinery mandatory — but
+  the instance needs a watcher to register against, so calling
+  `mount(h\`<${App}/>\`, container)` without a recaller threw with
+  *"Cannot read properties of undefined (reading 'watch')"*. Fixed:
+  when no recaller is provided, function-components invoke inline
+  (the legacy non-isolated path) and skip the instance/watcher
+  dance entirely. Same shape as plain HElement vnodes in
+  no-recaller mode.
+
+**Two new internal tests** also landed, covering existing behavior
+that the 7.6.0 release didn't yet exercise: nested cleanup (drop a
+three-level subtree, verify the recursive walk tears down nested
+watchers) and component-swap-on-key (same `data-key` bound to a
+different component function — old instance tears down, new takes
+over). 205 → 209 tests.
+
+---
+
 ## 7.6.0 — fine-grained watcher boundaries: components own their reactivity
 
 **The headline.** Each function-component invocation

@@ -7,20 +7,22 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 7.6.0, published to npm as `@dtudury/streamo`, and
+Streamo is at 7.6.1, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment. 7.6 —
 **fine-grained watcher boundaries** — promotes each
 `<${Component}/>` invocation to its own recaller watch scope.
 Reads inside a component register on that component's watcher;
 mutation re-fires only the components that read the mutated dep,
-not the whole tree. Underneath, 7.5 multi-home serving (every
-pushed repo is a public URL at `/streams/<keyhex>/`), 7.4
-dumb-pipe relay (the relay can drop its signer), 7.3 merge
-primitive + all-npx fork-and-serve, 7.1 Page-as-Repo, 7.0
-Obsecurity, and 6.0 hash-chain accumulator are unchanged. The
-all-in-one server (`npm run dev` / `npm run prod`) hosts the
-homepage, chat, explorer, todomvc, and the `streamo-history`
-repo on one port. 205 tests passing.
+not the whole tree. 7.6.1 hardens this with a loud throw on
+multiple unkeyed sibling function-components and restores
+no-recaller static-rendering mode. Underneath, 7.5 multi-home
+serving (every pushed repo is a public URL at
+`/streams/<keyhex>/`), 7.4 dumb-pipe relay (the relay can drop
+its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
+Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain accumulator are
+unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
+hosts the homepage, chat, explorer, todomvc, and the
+`streamo-history` repo on one port. 209 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.

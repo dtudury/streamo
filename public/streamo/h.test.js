@@ -10,6 +10,27 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(div.children, [])
   })
 
+  test('skeleton cache: same template, different slot values, distinct trees with correct values', ({ assert }) => {
+    // Regression: tagged template strings are interned per call site, so h
+    // caches the tokenization skeleton per `strings` identity. Each h() call
+    // must still produce a fresh tree with THIS call's values substituted —
+    // never a stale tree with values from a previous call.
+    const make = (cls, text) => h`<span class=${cls}>${text}</span>`
+    const [tree1] = make('a', 'hello')
+    const [tree2] = make('b', 'world')
+
+    assert.equal(tree1.attrs[0].value, 'a', 'tree1 class is "a"')
+    assert.equal(tree2.attrs[0].value, 'b', 'tree2 class is "b" (NOT "a" from prev call)')
+    assert.equal(tree1.children[0], 'hello', 'tree1 text slot is "hello"')
+    assert.equal(tree2.children[0], 'world', 'tree2 text slot is "world"')
+    // Fresh vnode instances per call — only the tokenization is shared, not
+    // the parsed tree. Caching the tree would break mount's per-render
+    // assumptions (each render presents a fresh tree to reconcile against).
+    assert.notEqual(tree1, tree2, 'fresh tree per call')
+    assert.notEqual(tree1.attrs, tree2.attrs, 'fresh attrs array per call')
+    assert.notEqual(tree1.children, tree2.children, 'fresh children array per call')
+  })
+
   test('void element produces no children', ({ assert }) => {
     const [br] = h`<br>`
     assert.ok(br instanceof HElement)

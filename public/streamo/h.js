@@ -40,14 +40,39 @@ export class HText {
 // ── Scanner ──────────────────────────────────────────────────────────────
 
 class Scanner {
+  // Tagged template literals intern the `strings` array — every h`...` call
+  // site passes the SAME strings reference across invocations. So we can
+  // cache the expensive character-by-character tokenization once per call
+  // site and reuse it forever. The cached "skeleton" stores characters as
+  // strings and slot positions as { slotIdx: i } markers (NOT the values,
+  // which differ per call). The constructor stitches the skeleton together
+  // with this call's actual values into the parser's expected token shape.
+  //
+  // For the parser downstream, nothing about the token shape changes —
+  // peek() still returns `{ slot: <value> }` for slots and a single
+  // character for static tokens. Only the tokenization phase is cached.
+  static #skeletonCache = new WeakMap()
   #tokens
   #i = 0
 
   constructor (strings, values) {
-    this.#tokens = []
-    for (let i = 0; i < strings.length; i++) {
-      for (const c of strings[i]) this.#tokens.push(c)
-      if (i < values.length) this.#tokens.push({ slot: values[i] })
+    let skeleton = Scanner.#skeletonCache.get(strings)
+    if (!skeleton) {
+      skeleton = []
+      for (let i = 0; i < strings.length; i++) {
+        for (const c of strings[i]) skeleton.push(c)
+        if (i < strings.length - 1) skeleton.push({ slotIdx: i })
+      }
+      Scanner.#skeletonCache.set(strings, skeleton)
+    }
+    // Per-call: substitute this call's values at slot positions. Each call
+    // gets a fresh tokens array so the per-instance `#i` cursor and the
+    // parser's downstream mutations (none today, but possible) don't bleed
+    // across calls.
+    this.#tokens = new Array(skeleton.length)
+    for (let i = 0; i < skeleton.length; i++) {
+      const t = skeleton[i]
+      this.#tokens[i] = (t && t.slotIdx !== undefined) ? { slot: values[t.slotIdx] } : t
     }
   }
 

@@ -320,7 +320,6 @@ export function AtView ({ keyHex }) {
                 </tbody>
               </table>
             ` : null}
-            ${repoExtras(repo, keyHex)}
             ${economicsBlock}
           `
         }

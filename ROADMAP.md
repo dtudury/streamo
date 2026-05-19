@@ -283,6 +283,41 @@ because no one's needed it; the day someone does, we'll create it).
   Target: 50-100 LOC total, no project-local CSS. Add an app-card to
   the homepage when it lands.
 
+- **Trust-me mode — inspect non-Repo Streamos in the explorer.**
+  Today the browser's `makeVerifiedWritableStream` (Streamo.js:485)
+  gates incoming chunks on a covering signature — non-SIG chunks
+  stage indefinitely without it, so `byteLength` stays 0 in the
+  browser and the explorer can't see unsigned data even though the
+  relay holds the bytes (this is a *feature*: the dumb-pipe stays
+  dumb, the smart guard lives at the edge, and untrusted bytes
+  can't enter your local repo). For debugging — "open this binary
+  as hex in vim" energy, not a polished feature — a server started
+  with `STREAMO_TRUST_ALL=1` would route subscriptions through a
+  new `Streamo.makeWritableStream()` (no staging, no verification,
+  just `append()`). The main relay stays signed-only; you stand up
+  a separate trust-me server when you want to look at unsigned
+  bytes and point your browser at it manually. **Scope:** ~50-70
+  LOC + one smoke test (new writer ~20, registrySync session-mode
+  ~10, env+log ~10, test ~30). Zero explorer changes — the chunks
+  just arrive, `byteLength` grows, the existing tabs work, and the
+  no-head case's `repoExtras` block surfaces the chunks naturally.
+  **When this pulls:** when a real "I need to inspect bytes from a
+  broken/unsigned repo" use-case shows up. Until then the verifier
+  gate is exactly the right behavior.
+
+- **Auto-subscribe-on-URL in the explorer.** Today, opening
+  `/apps/explorer/#/repo/<keyHex>` directly leaves the explorer
+  stuck on "opening…" if the browser's registry doesn't already
+  have that key — `AtView` reads `registry.get(keyHex)`, finds
+  undefined, displays the loading state forever. The only entry
+  paths that work are the registry-list links and the
+  "subscribe to a key" form. **Fix:** when `AtView` mounts and
+  `registry.get(keyHex)` is undefined, call `session.subscribe(keyHex)`
+  to pull the bytes through (idempotent; see `open-foreign-at` in
+  `main.js:240` for the existing precedent). ~10 LOC + a smoke
+  test. Found 2026-05-19 while seeding the tarot demo for the
+  non-Repo Streamo investigation.
+
 ### toward reference-quality clarity
 
 Streamo is small and deliberate enough that someone could reasonably

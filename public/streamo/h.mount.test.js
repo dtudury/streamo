@@ -348,4 +348,149 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(resolve => setTimeout(resolve, 20))
     assert.equal(lis()[0].textContent, 'a', 'after editingId.set(null): item 1 returns to text')
   })
+
+  test('component-level isolation: a sibling whose dep did not change does not re-render', async ({ assert }) => {
+    // The fine-grained-watcher-boundary contract: each function-component
+    // invocation is its own watch point. Reads inside ItemA register on
+    // ItemA's watcher, reads inside ItemB register on ItemB's watcher.
+    // Mutating cellA should re-fire ONLY ItemA — ItemB's body must not
+    // be invoked again, and the root reconcile must not walk the tree.
+    //
+    // Today's mount uses a single root watcher, so any reactive change
+    // re-evaluates everything (including ItemB). This test will fail
+    // until function-components get their own watch boundaries.
+    const recaller = new Recaller('isolation')
+    const cellA = liveValue('A', { recaller, name: 'cellA' })
+    const cellB = liveValue('B', { recaller, name: 'cellB' })
+
+    let renderA = 0
+    let renderB = 0
+
+    function ItemA () {
+      renderA++
+      return h`<li data-key="a">${cellA.get()}</li>`
+    }
+    function ItemB () {
+      renderB++
+      return h`<li data-key="b">${cellB.get()}</li>`
+    }
+
+    const container = document.createElement('div')
+    mount(h`<ul><${ItemA} data-key="a"/><${ItemB} data-key="b"/></ul>`, container, recaller)
+
+    const ul = container.childNodes[0]
+    const lis = () => ul.childNodes.filter(n => n.nodeType === 1)
+    assert.equal(lis().length, 2, 'two items rendered initially')
+    assert.equal(lis()[0].textContent, 'A', 'A initial text')
+    assert.equal(lis()[1].textContent, 'B', 'B initial text')
+    assert.equal(renderA, 1, 'A body ran once initially')
+    assert.equal(renderB, 1, 'B body ran once initially')
+
+    cellA.set('A2')
+    await new Promise(r => setTimeout(r, 20))
+
+    assert.equal(lis()[0].textContent, 'A2', 'A text updated after its cell changed')
+    assert.equal(lis()[1].textContent, 'B', 'B text unchanged')
+    assert.equal(renderA, 2, 'A body re-ran (its dep changed)')
+    assert.equal(renderB, 1, 'B body did NOT re-run — its dep did not change')
+
+    cellB.set('B2')
+    await new Promise(r => setTimeout(r, 20))
+
+    assert.equal(lis()[0].textContent, 'A2', 'A text unchanged on cellB mutation')
+    assert.equal(lis()[1].textContent, 'B2', 'B text updated after its cell changed')
+    assert.equal(renderA, 2, 'A body did NOT re-run on cellB mutation')
+    assert.equal(renderB, 2, 'B body re-ran (its dep changed)')
+  })
+
+  test('nested isolation: inner component dep change does NOT re-fire its ancestors', async ({ assert }) => {
+    // Stronger test of the fine-grained boundary: Outer wraps Middle wraps
+    // Inner. A reactive cell is read only inside Inner. Mutating it should
+    // re-fire ONLY Inner's body — Middle and Outer's bodies must not re-run.
+    // This proves the watcher stack works the way we need: nested
+    // recaller.watch calls isolate reads to the innermost scope, so the
+    // ancestors never registered the dep in the first place.
+    const recaller = new Recaller('nested')
+    const cell = liveValue('inner-1', { recaller, name: 'cell' })
+
+    let outerRuns = 0
+    let middleRuns = 0
+    let innerRuns = 0
+
+    function Inner () {
+      innerRuns++
+      return h`<span>${cell.get()}</span>`
+    }
+    function Middle () {
+      middleRuns++
+      return h`<em><${Inner} data-key="i"/></em>`
+    }
+    function Outer () {
+      outerRuns++
+      return h`<div><${Middle} data-key="m"/></div>`
+    }
+
+    const container = document.createElement('div')
+    mount(h`<${Outer} data-key="o"/>`, container, recaller)
+
+    const outerDiv = container.childNodes[0]
+    const em = outerDiv.childNodes[0]
+    const span = em.childNodes[0]
+    assert.equal(span.textContent, 'inner-1', 'initial: deepest text rendered')
+    assert.equal(outerRuns, 1)
+    assert.equal(middleRuns, 1)
+    assert.equal(innerRuns, 1)
+
+    cell.set('inner-2')
+    await new Promise(r => setTimeout(r, 20))
+
+    assert.equal(span.textContent, 'inner-2', 'inner text updated')
+    assert.equal(outerRuns, 1, 'outer did NOT re-run')
+    assert.equal(middleRuns, 1, 'middle did NOT re-run')
+    assert.equal(innerRuns, 2, 'inner re-ran (its dep changed)')
+  })
+
+  test('component teardown: dropping a function-component unwatches its watcher', async ({ assert }) => {
+    // When a function-component invocation disappears from the parent's
+    // resolved set, its watcher must be unregistered from the recaller —
+    // otherwise mutating its (now-disconnected) deps would still fire a
+    // ghost render against a detached element. The visible symptom would
+    // be a leak; the immediate-fail symptom is the watcher still running
+    // and doing something visible.
+    const recaller = new Recaller('teardown')
+    const show = liveValue(true, { recaller, name: 'show' })
+    const inner = liveValue('a', { recaller, name: 'inner' })
+
+    let innerRuns = 0
+    function Item () {
+      innerRuns++
+      return h`<li>${inner.get()}</li>`
+    }
+
+    const container = document.createElement('div')
+    mount(h`<ul>${() => show.get() ? h`<${Item} data-key="i"/>` : null}</ul>`, container, recaller)
+
+    const ul = container.childNodes[0]
+    assert.equal(ul.childNodes.length, 1, 'item rendered initially')
+    assert.equal(innerRuns, 1)
+
+    // Drop the item — show=false means the slot resolves to null
+    show.set(false)
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(ul.childNodes.length, 0, 'item removed')
+    const runsAfterDrop = innerRuns
+
+    // Mutate inner's dep — if teardown worked, Item's watcher is gone and
+    // innerRuns must NOT increment. If it leaks, the watcher fires and
+    // tries to terraform a detached element.
+    inner.set('b')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(innerRuns, runsAfterDrop, 'dropped Item watcher did NOT fire on inner.set')
+
+    // Bring it back: a fresh instance should appear and render the current value
+    show.set(true)
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(ul.childNodes.length, 1, 'item re-rendered')
+    assert.equal(ul.childNodes[0].textContent, 'b', 'shows current inner value')
+  })
 })

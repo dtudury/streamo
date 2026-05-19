@@ -1,21 +1,24 @@
 /**
  * mount — reactive DOM renderer for h virtual trees
  *
- * Naive laid-bare version. Slots are abandoned. The whole tree is a single
- * watch boundary: when any reactive read fires, the root render re-evaluates
- * top-to-bottom and reconciles the DOM in place. The recycler keeps it cheap.
+ * Slots are abandoned. The root tree has one watcher; each function-component
+ * invocation gets its OWN watcher. Reads inside a component's body register
+ * on that component's watcher, not the root's — so when a reactive read
+ * mutates, only the components that actually read it re-fire. Siblings and
+ * ancestors stay untouched. (Fine-grained watcher boundaries.)
  *
- * The reconcile algorithm is three best-fit passes against the parent's
- * current children: match by data-key, then by id, then by tag. Unmatched
- * old children are removed; unmatched new vnodes get fresh elements. Each
- * kept element is terraformed (attrs reset, children recursively reconciled).
- * Positioning happens via insertBefore, never replaceChildren, so focused
- * descendants stay focused across reorder.
+ * The reconcile algorithm is four best-fit passes against the parent's
+ * current children: match by data-key, by id, by tag (unkeyed-only), then
+ * text positionally. Unmatched old children are removed; unmatched new
+ * vnodes get fresh elements. Each kept element is terraformed (attrs reset,
+ * children recursively reconciled). Positioning is via insertBefore so
+ * focused descendants stay focused across reorder.
  *
- * Function components must return exactly one HElement (we unwrap an array
- * of one). Inline functions in child position are tiny anonymous components.
- * Function-valued attributes are invoked at render time; the root watcher
- * captures the dep automatically.
+ * Function-components must return exactly one HElement (we unwrap an array
+ * of one). Inline `() => …` in child position are tiny anonymous components
+ * but currently share the parent's watcher (no separate scope) — only named
+ * function-components get isolated boundaries. Function-valued attributes
+ * are invoked at render time; the enclosing watcher captures the dep.
  */
 
 import { HElement, HText } from './h.js'
@@ -25,10 +28,18 @@ const SVG_NS  = 'http://www.w3.org/2000/svg'
 
 const rootWatchers = new WeakMap() // container → watcher fn
 
+// Per-parent component-instance registries. Keyed by parent element so an
+// element removed from the DOM frees its instance map for GC. Inner entries
+// are explicitly torn down when their keys are dropped during reconcile (and
+// recursively when a subtree is removed). See ComponentInstance below.
+const instancesByParent = new WeakMap() // parent → Map<key, ComponentInstance>
+
 export function dismount (root, recaller) {
   const watcher = rootWatchers.get(root)
   if (watcher && recaller) recaller.unwatch(watcher)
   rootWatchers.delete(root)
+  // Tear down any component instances rooted under this container.
+  cleanupSubtreeInstances(root)
 }
 
 export function mount (nodes, container, recaller, ns = HTML_NS) {
@@ -45,6 +56,84 @@ export function mount (nodes, container, recaller, ns = HTML_NS) {
   }
 }
 
+// ── ComponentInstance ────────────────────────────────────────────────────
+//
+// One instance per function-component invocation (identified by (parent,
+// key) where `key` is the wrapper's data-key, falling back to position).
+//
+// `watcher` re-runs the component body and tracks reactive reads on its
+// own scope. On async re-fire (recaller flush, no parent reconcile on the
+// stack) the watcher terraforms its own DOM element in place. On
+// parent-triggered re-render the watcher just produces a fresh lastVnode;
+// the parent's build pass will terraform.
+
+class ComponentInstance {
+  constructor (fn, recaller, name) {
+    this.fn = fn
+    this.recaller = recaller
+    this.name = name
+    this.ns = HTML_NS
+    this.props = null
+    this.wrapperKey = null   // data-key declared on the wrapper invocation
+    this.domEl = null        // bound after first build pass
+    this.lastVnode = null    // single HElement produced by fn(props)
+    this.parentTriggered = false
+    this.watcher = () => this.#render()
+  }
+
+  #render () {
+    const out = this.fn(this.props)
+    const arr = Array.isArray(out) ? out : [out]
+    const elements = arr.filter(x => x instanceof HElement)
+    if (elements.length !== 1) {
+      this.lastVnode = null
+      return
+    }
+    this.lastVnode = elements[0]
+    // Inherit data-key from the wrapper invocation if the inner element
+    // doesn't carry one of its own. Same rule as the legacy inline path —
+    // necessary so terraform's touched-attr sweep doesn't strip data-key.
+    if (this.wrapperKey != null && staticAttrValue(this.lastVnode, 'data-key') == null) {
+      this.lastVnode.attrs = [...this.lastVnode.attrs, { name: 'data-key', value: this.wrapperKey }]
+    }
+    // Async re-fire path: recaller's flush invoked us with no parent
+    // reconcile on the stack. We must terraform our element ourselves —
+    // no one else will. On parent-triggered renders the parent's build
+    // pass terraforms, so we skip here to avoid double work and competing
+    // dep registrations (a second terraform under the parent's watcher
+    // frame would re-register the same reads on the parent).
+    if (this.domEl && !this.parentTriggered) {
+      terraform(this.domEl, this.lastVnode, this.recaller, this.ns)
+    }
+  }
+
+  teardown () {
+    this.recaller.unwatch(this.watcher)
+    this.domEl = null
+    this.lastVnode = null
+  }
+}
+
+function getOrCreateInstanceMap (parent) {
+  let m = instancesByParent.get(parent)
+  if (!m) { m = new Map(); instancesByParent.set(parent, m) }
+  return m
+}
+
+// Walk a subtree (post-detachment or pre-removal), tearing down any
+// component instances rooted under each element. Maps are keyed by the
+// element-that-owns-them, so we look up each descendant and clean it.
+function cleanupSubtreeInstances (el) {
+  if (!el || el.nodeType !== 1) return
+  const map = instancesByParent.get(el)
+  if (map) {
+    for (const inst of map.values()) inst.teardown()
+    instancesByParent.delete(el)
+  }
+  const children = el.childNodes
+  if (children) for (const child of children) cleanupSubtreeInstances(child)
+}
+
 // ── reconcileChildren ────────────────────────────────────────────────────
 //
 // The single reconcile operation. Mount is just reconcileChildren against an
@@ -52,30 +141,74 @@ export function mount (nodes, container, recaller, ns = HTML_NS) {
 
 function reconcileChildren (parent, vnodes, recaller, ns) {
   // ── Resolve pass ──
-  // Flatten arrays. Drop null/false. Invoke inline functions and function-
-  // components, unwrap single-element returns.
+  // Flatten arrays. Drop null/false. Invoke inline functions. Function-
+  // components are routed through ComponentInstance: each invocation gets
+  // (or reuses) its own watcher scope, and we pull `instance.lastVnode`
+  // into `resolved` for the downstream match/build pipeline.
   const resolved = []
+  const resolvedInstances = []   // parallel array; null for non-component vnodes
+  const keptInstanceKeys = new Set()
   const resolve = (v) => {
     if (v == null || v === false) return
     if (Array.isArray(v)) { v.forEach(resolve); return }
     if (typeof v === 'function') { resolve(v(parent)); return }
     if (v instanceof HElement && typeof v.tag === 'function') {
-      const inner = v.tag(buildProps(v))
-      const arr = Array.isArray(inner) ? inner : [inner]
-      const elements = arr.filter(x => x instanceof HElement)
-      if (elements.length !== 1) return // invalid component output; drop
-      const child = elements[0]
-      // Inherit data-key from invocation if the inner element doesn't carry one
       const wrapperKey = staticAttrValue(v, 'data-key')
-      if (wrapperKey != null && staticAttrValue(child, 'data-key') == null) {
-        child.attrs = [...child.attrs, { name: 'data-key', value: wrapperKey }]
+      const key = wrapperKey != null ? String(wrapperKey) : `__pos:${resolved.length}`
+      const parentMap = getOrCreateInstanceMap(parent)
+      let instance = parentMap.get(key)
+      if (instance && instance.fn !== v.tag) {
+        // Same key now bound to a different component — tear the old one
+        // down and let a fresh instance take its place. The old element (if
+        // still in the DOM) will get tag-matched or replaced by the rest of
+        // the pipeline.
+        instance.teardown()
+        parentMap.delete(key)
+        instance = null
       }
-      resolved.push(child)
+      if (!instance) {
+        const name = `comp:${v.tag.name || 'anon'}:${key}`
+        instance = new ComponentInstance(v.tag, recaller, name)
+        parentMap.set(key, instance)
+      }
+      instance.wrapperKey = wrapperKey
+      instance.ns = ns
+      instance.props = buildProps(v)
+      // recaller.watch invokes the watcher synchronously inside its own
+      // stack frame, so reads inside fn(props) register on instance.watcher
+      // (not on whatever outer watcher called reconcileChildren). The
+      // parentTriggered flag tells the watcher's terraform path to defer
+      // to the parent's upcoming build pass.
+      instance.parentTriggered = true
+      try { recaller.watch(instance.name, instance.watcher) }
+      finally { instance.parentTriggered = false }
+      keptInstanceKeys.add(key)
+      if (instance.lastVnode) {
+        resolved.push(instance.lastVnode)
+        resolvedInstances.push(instance)
+      }
       return
     }
     resolved.push(v)
+    resolvedInstances.push(null)
   }
   vnodes.forEach(resolve)
+
+  // ── Cleanup dropped instances ──
+  // Any instance whose key wasn't claimed by this resolve pass is gone —
+  // tear down its watcher now. Its DOM element will fall out via the
+  // orphan cleanup below (it's not in newChildren, so it stays in
+  // oldChildren and gets removed). Nested instances inside that element
+  // get cleaned by cleanupSubtreeInstances during orphan removal.
+  const existingMap = instancesByParent.get(parent)
+  if (existingMap) {
+    for (const [key, instance] of existingMap) {
+      if (!keptInstanceKeys.has(key)) {
+        instance.teardown()
+        existingMap.delete(key)
+      }
+    }
+  }
 
   // ── Three-pass best-fit match ──
   // Each pass uses a precomputed index over oldChildren — O(N) to build, O(1)
@@ -192,13 +325,19 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
   }
 
   // ── Cleanup unmatched old children ──
+  // Walk each orphan's subtree first so any component instances rooted in
+  // it (at any depth) get their watchers unregistered before the DOM goes.
   for (const child of oldChildren) {
-    if (child) child.remove()
+    if (child) {
+      cleanupSubtreeInstances(child)
+      child.remove()
+    }
   }
 
   // ── Build / terraform ──
   for (let i = 0; i < resolved.length; i++) {
     const v = resolved[i]
+    const instance = resolvedInstances[i]
     if (v instanceof HText) {
       if (!newChildren[i]) {
         newChildren[i] = document.createTextNode(v.value)
@@ -212,6 +351,13 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
         newChildren[i] = document.createElementNS(elemNs, v.tag)
       }
       const el = newChildren[i]
+      // For component instances, bind the element on first build. The
+      // build pass owns terraform on parent-triggered renders (the watcher
+      // skipped it via parentTriggered=true so reads in nested slots/
+      // function-attrs register on the right scope). Async re-fires
+      // never reach this pass — the watcher terraforms itself in that
+      // path. Net: exactly one terraform per render of the instance.
+      if (instance && instance.domEl !== el) instance.domEl = el
       terraform(el, v, recaller, resolveNs(v, ns))
       // Honor `autofocus` on freshly-mounted elements. Browsers respect the
       // attribute on initial page load but quietly skip it on dynamic
@@ -249,7 +395,9 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
     cursor++
   }
   while (parent.childNodes.length > cursor) {
-    parent.removeChild(parent.childNodes[parent.childNodes.length - 1])
+    const last = parent.childNodes[parent.childNodes.length - 1]
+    cleanupSubtreeInstances(last)
+    parent.removeChild(last)
   }
 }
 

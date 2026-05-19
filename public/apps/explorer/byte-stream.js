@@ -11,7 +11,7 @@
 import { h } from '../../streamo/h.js'
 import { codecCategory } from './shapes.js'
 import { repoReuseStats } from './analytics.js'
-import { hovered } from './context.js'
+import { hovered, getAddress } from './context.js'
 
 export function makeByteStreamSection () {
   // Byte stream as a color-coded SVG strip — every chunk is a rect, color
@@ -22,7 +22,27 @@ export function makeByteStreamSection () {
   // dragged off it — so a live stream "follows" the newest activity. The
   // signed-commits dropdown above is for jumping to a known commit; this
   // strip is for poking around between them.
-  return function byteStreamSection (repo, keyHex, currentAddress) {
+  //
+  // Memoization: at 286+ commits, the chunk walk + repoReuseStats walk
+  // (BFS through each commit's data tree via asRefs) is tens of thousands
+  // of operations. Called every navigation = browser-killing. The result
+  // only changes when bytes arrive (byteLength grows), so we cache the
+  // HElement tree per (repo, byteLength). Navigation through the dropdown
+  // hits the cache; new chunks trigger a fresh build. The inspector slot
+  // inside the cached tree is still a function — it reads hovered +
+  // getAddress reactively at invocation time, so the live "what's under
+  // the cursor" display works against the cached tree.
+  const cache = new WeakMap() // repo → { byteLength, result }
+  return function byteStreamSection (repo, keyHex) {
+    const cached = cache.get(repo)
+    if (cached && cached.byteLength === repo.byteLength) return cached.result
+    const result = buildByteStreamSection(repo, keyHex)
+    cache.set(repo, { byteLength: repo.byteLength, result })
+    return result
+  }
+}
+
+function buildByteStreamSection (repo, keyHex) {
     const chunks = []
     let addr = repo.byteLength - 1
     while (addr >= 0) {
@@ -118,7 +138,11 @@ export function makeByteStreamSection () {
         <svg class="byte-map byte-strip" width=${stripW} height=${H} viewBox=${`0 0 ${stripW} ${H}`}>
           ${layout.map(c => {
             const cat = commitAddrs.has(c.address) ? 'commit' : codecCategory(c.codecType)
-            const cls = ['chunk', `cat-${cat}`, c.address === currentAddress ? 'current' : null]
+            // `.current` highlight removed 2026-05-19 — it depended on the
+            // navigation cursor and forced the whole strip to rebuild on
+            // every commit click. The dropdown above is the canonical
+            // signal for "you are here" anyway.
+            const cls = ['chunk', `cat-${cat}`]
             // Sigs carry their coverage range in data-attrs so hover handlers
             // (anywhere on the page) can position the coverage overlay.
             // Non-sigs get null which removes the attrs.
@@ -141,12 +165,17 @@ export function makeByteStreamSection () {
       </div>
       ${() => {
         // Inspector slot — re-runs as the user hovers (reading
-        // `hovered` registers it). layout, total, currentAddress
-        // are closed over from byteStreamSection's call (which only
-        // runs on bridge fires; chunk content is fixed per render).
-        // isPeekActive lights up the .active background only when the
-        // inspector is showing something other than the URL's chunk.
+        // `hovered`) OR navigates (reading `getAddress`). layout,
+        // total, reuse, commitAddrs are closed over from the cached
+        // build pass (only re-runs on byteLength change). The slot
+        // function itself is cached AS A REFERENCE in the memoized
+        // tree, so it's the same function across navigations but
+        // still evaluates against current reactive state per call.
+        // isPeekActive lights up the .active background only when
+        // the inspector is showing something other than the URL's
+        // chunk.
         const peek = hovered.get()
+        const currentAddress = getAddress()
         const inspectorAddr = peek != null && peek < total
           ? peek
           : currentAddress
@@ -181,5 +210,4 @@ export function makeByteStreamSection () {
                       data-key=${`inspector-${keyHex}`}>${inspectorContent}</div>`
       }}
     `
-  }
 }

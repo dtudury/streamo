@@ -89,7 +89,7 @@ export function AtView ({ keyHex }) {
           </nav>
         `
         const selector = commitSelectorSection(repo, keyHex, ctx.resolved)
-        const bytes = byteStreamSection(repo, keyHex, ctx.resolved)
+        const bytes = byteStreamSection(repo, keyHex)
         return h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
       }}
 

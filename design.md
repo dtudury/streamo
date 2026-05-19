@@ -352,16 +352,34 @@ hook in via the `RepoRegistry` factory.
 ``h`<div class=${cls}>${() => repo.get('name')}</div>` `` returns a
 virtual tree of `HElement` / `HText` / slot nodes.
 
-`mount(nodes, container, recaller)` renders them into the DOM. The
-clever bit: function slots (`${() => ...}`) are wrapped in a
-`recaller.watch`, so they re-run automatically when the data they read
-mutates. Only the exact nodes bound to mutated paths re-render — no
-virtual-DOM diffing.
+`mount(nodes, container, recaller)` renders them into the DOM. One
+root `recaller.watch` runs the top-level reconcile. Each reconcile
+pass produces a flat list of children for the parent, then runs four
+best-fit match passes against the parent's current DOM children:
+data-key, id, tag (unkeyed-only), and text (positional). Kept
+elements are terraformed in place — attrs reset, children
+recursively reconciled. Unmatched old nodes are removed; unmatched
+new vnodes get fresh elements. Positioning uses `insertBefore` so
+focused descendants stay focused across reorder.
 
 Function components — plain `(props) => h\`...\`` functions — work
-directly as tags inside `h\`<${Card}/>\``. Custom-element components
-extend `StreamoComponent` (browser-only — extends `HTMLElement` at
-module load).
+directly as tags inside `h\`<${Card} data-key=${id}/>\``. **Each
+function-component invocation is its own watch boundary**: mount
+creates a `ComponentInstance` per `(parent, key)` with its own
+`recaller.watch` scope, and reads inside the component body register
+on *that* watcher, not the root's. When a reactive read mutates,
+only the components that actually read it re-fire — siblings and
+ancestors stay untouched. So the "one watcher, simple" framing
+applies only at the root; each component layered on top of it owns
+its own reactive scope. The two re-fire paths (parent reconcile vs
+async recaller flush) are distinguished by a `parentTriggered` flag
+so terraform happens exactly once per render in either path.
+Lifecycle: dropped instances tear down their watchers immediately,
+and a recursive subtree walk catches nested instances when a parent
+element is removed.
+
+Custom-element components extend `StreamoComponent` (browser-only —
+extends `HTMLElement` at module load).
 
 ## 13. `LiveSource` — the reactive data source contract
 

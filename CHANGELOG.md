@@ -5,6 +5,77 @@ for what's next.
 
 ---
 
+## 7.6.0 — fine-grained watcher boundaries: components own their reactivity
+
+**The headline.** Each function-component invocation
+(`<${Component} data-key=… />`) is now its own watch boundary. Reads
+inside the component body register on that component's own recaller
+watcher, not on whatever outer scope is rendering. When a reactive
+read mutates, only the components that actually read it re-fire —
+siblings and ancestors stay untouched.
+
+Before this change, a single root watcher per `mount()` walked the
+whole vnode tree top-down on every reactive mutation. The recycler
+made the DOM writes cheap, but the *work* of walking the tree and
+re-invoking every function-component happened on every fire. At
+TodoMVC scale that's microseconds and invisible; at large-list
+scale it was the next thing to come for.
+
+**What changes for users.** Nothing API-shaped — same `mount`, same
+`h`, same data-key convention. The improvement is observable as
+behavior:
+
+- A list of N items where one item's state mutates → only that
+  item's body re-runs (was: all N).
+- A nested component (`<${Outer}>` wrapping `<${Middle}>` wrapping
+  `<${Inner}>`) whose inner reactivity mutates → only `Inner`
+  re-fires (was: all three).
+- A dropped component's watcher is torn down immediately; if its
+  reactive sources later mutate, no ghost render fires against a
+  detached element.
+
+**The implementation.** A new `ComponentInstance` class lives
+inside `mount.js`, one per `(parent, key)`. Each instance owns:
+its component function, last-seen props, current DOM element,
+last-rendered vnode, and a `recaller.watch` scope. The
+`parentTriggered` flag distinguishes the two re-fire paths —
+parent reconcile vs async recaller flush — so the work happens
+exactly once either way (parent-triggered: build pass terraforms;
+async: watcher terraforms itself in place).
+
+Per-parent instance registries (`WeakMap<parent, Map<key,
+ComponentInstance>>`) handle lookup; recursive subtree cleanup
+unwatches nested instances when a DOM subtree is removed.
+
+**Three tests pin the contract.** `h.mount.test.js` adds:
+
+- *sibling isolation* — two components reading separate cells; a
+  mutation of one cell does not re-run the other component.
+- *nested isolation* — Outer/Middle/Inner, mutate Inner's cell,
+  Middle and Outer's bodies don't run.
+- *teardown on drop* — a dropped component's watcher does not fire
+  on subsequent mutations of its old deps.
+
+205 tests passing (203 → 205, plus 12 existing mount tests still
+green).
+
+**Constraint worth knowing.** Function-components in lists must
+declare a `data-key` for instance lookup. Without one, the
+fallback is position-based — fine for a singleton (e.g.
+`mount(h\`<${App}/>\`, …)`), brittle if multiple unkeyed
+components share a parent. This is the same rule that already
+existed for DOM recycling; fine-grained boundaries lean on it
+harder. CLAUDE.md continues to document the convention.
+
+**What this enables.** Real fine-grained updates that scale to
+large workloads; safe per-component memoization (each instance
+has its own dep tracking); closer alignment with the mental
+model newcomers bring from React/Vue. Future explorations
+(memo-with-invalidation, per-instance-keyed memo across lists)
+get cleaner now that the boundary exists.
+
+---
+
 ## 7.5.0 — multi-home serving: every pushed repo is a public URL
 
 **The headline.** Any repo a streamo relay holds is now addressable

@@ -156,7 +156,7 @@ function TodoItem ({ todo }) {
         <form onsubmit=${handle(e => saveEdit(e, todo.id))}>
           <input class="edit" name="text" value=${todo.text}
                  onblur=${handle(cancelEdit)}
-                 onkeydown=${handle(e => e.key === 'Escape' && cancelEdit())}
+                 onkeydown=${handle(e => { if (e.key === 'Escape') cancelEdit() })}
                  autofocus>
         </form>
       ` : null}

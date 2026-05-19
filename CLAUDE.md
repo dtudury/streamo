@@ -105,6 +105,17 @@ lands without tests passing, you have failed the contract.
   Browser side-effects of "fresh insertion" (autofocus, password
   manager attribution) don't fire. **Add `data-key` whenever two
   semantically distinct elements share a tag in the same slot.**
+- **Returning `false` from an `on*` handler is silent `preventDefault`.**
+  Mount assigns event handlers as DOM Level 0 properties
+  (`el.onkeydown = fn`). Per HTML spec, if such a handler returns
+  `false`, the browser treats it as `event.preventDefault()`. The
+  trap surfaces when you write a short-circuit expression body like
+  `e => e.key === 'Escape' && cancelEdit()` — for any non-Escape
+  key, the expression evaluates to `false` and the handler returns
+  it. On a `<input>`'s `onkeydown`, that prevents the character
+  from being inserted; typing silently does nothing. **Always use a
+  block body that returns `undefined` for conditional handlers:**
+  `e => { if (e.key === 'Escape') cancelEdit() }`.
 
 ## architecture notes
 

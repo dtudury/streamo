@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { bytesToHex } from '../../streamo/utils.js'
+import { buildTarotData } from '../../../scripts/tarot-data.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
 if (envFile) config({ path: envFile })
@@ -72,6 +73,22 @@ if (server.signer) {
   const historyRepo = await server.registry.open(historyKeyHex)
   const historyCommits = [...historyRepo.history()].length
   console.log(`[chat] history key: ${historyKeyHex} (${historyCommits} commits)`)
+
+  // The tarot demo: a non-Repo Streamo. Deterministic key from the same
+  // credentials, opened so the registry serves it like any other repo —
+  // but seeded via repo.set() WITHOUT commit() or sign(). The byte stream
+  // contains data chunks (Duples, OBJECTs, STRINGs, ARRAYs) but no
+  // commit/signature records. Surfaces the explorer's no-head case
+  // (at-view.js:104) and exercises the storage tab on real nested data.
+  // Idempotent: only seeds if byteLength is 0.
+  const tarotKey = await server.signer.keysFor('tarot')
+  const tarotKeyHex = bytesToHex(tarotKey.publicKey)
+  const tarotRepo = await server.registry.open(tarotKeyHex)
+  if (tarotRepo.byteLength === 0) {
+    tarotRepo.set(buildTarotData())
+    console.log(`[chat] tarot demo seeded: ${tarotRepo.byteLength} bytes, no commits`)
+  }
+  console.log(`[chat] tarot key: ${tarotKeyHex} (${tarotRepo.byteLength} bytes, ${[...tarotRepo.history()].length} commits)`)
 
   // Seed the primary repo with the journal — the home repo doubles as the
   // homepage's content source. Each future journal entry is a new commit on

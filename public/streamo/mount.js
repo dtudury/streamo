@@ -148,12 +148,47 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
   const resolved = []
   const resolvedInstances = []   // parallel array; null for non-component vnodes
   const keptInstanceKeys = new Set()
+  // Track the first unkeyed function-component encountered at this parent.
+  // A second unkeyed one is a footgun: the position-based fallback key
+  // (__pos:N) drifts if upstream shape changes, leading to silent instance
+  // churn. Fail loudly instead. Singletons (one unkeyed FC at a parent)
+  // stay supported — that's the natural shape for `mount(h\`<${App}/>\`, …)`.
+  let unkeyedFn = null
   const resolve = (v) => {
     if (v == null || v === false) return
     if (Array.isArray(v)) { v.forEach(resolve); return }
     if (typeof v === 'function') { resolve(v(parent)); return }
     if (v instanceof HElement && typeof v.tag === 'function') {
       const wrapperKey = staticAttrValue(v, 'data-key')
+      if (wrapperKey == null) {
+        if (unkeyedFn) {
+          const a = unkeyedFn.name || 'anonymous'
+          const b = v.tag.name || 'anonymous'
+          throw new Error(
+            `mount: more than one function-component without data-key at the same parent ` +
+            `(${a} and ${b}). Each function-component in a group of siblings needs a unique ` +
+            `data-key for stable instance lookup across re-renders. Add data-key="…" to both.`
+          )
+        }
+        unkeyedFn = v.tag
+      }
+      if (!recaller) {
+        // No reactivity in this mount → no watcher to register against,
+        // so skip the instance machinery and invoke the component inline.
+        // Same shape as the legacy non-isolated path: call fn(props),
+        // unwrap to a single HElement, inherit wrapper data-key.
+        const inner = v.tag(buildProps(v))
+        const arr = Array.isArray(inner) ? inner : [inner]
+        const elements = arr.filter(x => x instanceof HElement)
+        if (elements.length !== 1) return
+        const child = elements[0]
+        if (wrapperKey != null && staticAttrValue(child, 'data-key') == null) {
+          child.attrs = [...child.attrs, { name: 'data-key', value: wrapperKey }]
+        }
+        resolved.push(child)
+        resolvedInstances.push(null)
+        return
+      }
       const key = wrapperKey != null ? String(wrapperKey) : `__pos:${resolved.length}`
       const parentMap = getOrCreateInstanceMap(parent)
       let instance = parentMap.get(key)

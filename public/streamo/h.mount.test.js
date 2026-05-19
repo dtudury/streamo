@@ -450,6 +450,135 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(innerRuns, 2, 'inner re-ran (its dep changed)')
   })
 
+  test('nested cleanup: dropping a subtree tears down nested component watchers (recursive walk)', async ({ assert }) => {
+    // The teardown test below covers single-level: drop a function-component,
+    // verify its watcher is unregistered. This test extends to depth: Outer
+    // wraps Middle wraps Inner, drop the whole subtree, verify Inner's
+    // watcher is also torn down. The recursive walk in
+    // cleanupSubtreeInstances is the load-bearing piece — the parent
+    // reconcile only knows about ITS direct instances; deeper ones live
+    // under THEIR parents and only get cleaned by the recursive subtree walk.
+    const recaller = new Recaller('nested-cleanup')
+    const show = liveValue(true, { recaller, name: 'show' })
+    const innerCell = liveValue('inner-1', { recaller, name: 'innerCell' })
+
+    let innerRuns = 0
+    function Inner () { innerRuns++; return h`<span>${innerCell.get()}</span>` }
+    function Middle () { return h`<em><${Inner} data-key="i"/></em>` }
+    function Outer () { return h`<section><${Middle} data-key="m"/></section>` }
+
+    const container = document.createElement('div')
+    mount(h`${() => show.get() ? h`<${Outer} data-key="o"/>` : null}`, container, recaller)
+
+    assert.equal(innerRuns, 1, 'inner ran once initially')
+
+    // Confirm inner watcher is live before dropping
+    innerCell.set('inner-2')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(innerRuns, 2, 'inner re-ran on cell mutation (watcher is active)')
+
+    // Drop the whole three-deep subtree
+    show.set(false)
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(container.childNodes.length, 0, 'subtree removed')
+    const runsAfterDrop = innerRuns
+
+    // Mutate inner's cell. If cleanup didn't recurse, Inner's watcher
+    // is still registered and would fire (terraform on a detached
+    // element — silent failure or surprising side effect).
+    innerCell.set('inner-3')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(innerRuns, runsAfterDrop, 'inner watcher did NOT fire after subtree drop (nested cleanup walked deep enough)')
+  })
+
+  test('component swap on same key: different function tears down old, creates new', async ({ assert }) => {
+    // When the same data-key is bound to a different component function
+    // across renders, mount tears the old instance down and creates a fresh
+    // one. The old element may still get tag-matched/recycled into the new
+    // instance, but the watcher identity flips: old watcher unregistered,
+    // new watcher registered. This guards the resolve-pass branch:
+    //   if (instance && instance.fn !== v.tag) { teardown; create fresh }
+    const recaller = new Recaller('swap')
+    const which = liveValue('A', { recaller, name: 'which' })
+    const cellA = liveValue('a-1', { recaller, name: 'cellA' })
+    const cellB = liveValue('b-1', { recaller, name: 'cellB' })
+
+    let runsA = 0
+    let runsB = 0
+    function CompA () { runsA++; return h`<li>${cellA.get()}</li>` }
+    function CompB () { runsB++; return h`<li>${cellB.get()}</li>` }
+
+    const container = document.createElement('div')
+    mount(h`<ul>${() => which.get() === 'A'
+      ? h`<${CompA} data-key="x"/>`
+      : h`<${CompB} data-key="x"/>`
+    }</ul>`, container, recaller)
+
+    const ul = container.childNodes[0]
+    assert.equal(ul.childNodes[0].textContent, 'a-1', 'A rendered initially')
+    assert.equal(runsA, 1)
+    assert.equal(runsB, 0, 'B never ran')
+
+    // Sanity: A's watcher is live on cellA
+    cellA.set('a-2')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(runsA, 2, 'A re-ran on its own cell mutation')
+    assert.equal(runsB, 0)
+
+    // Swap: same data-key, different fn
+    which.set('B')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(ul.childNodes[0].textContent, 'b-1', 'B rendered after swap')
+    assert.equal(runsB, 1, 'B ran once on initial mount')
+    const runsAAfterSwap = runsA
+
+    // The old A watcher must be unregistered — mutating cellA must NOT
+    // re-run A (ghost render against the swapped-away component).
+    cellA.set('a-3')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(runsA, runsAAfterSwap, 'old A watcher torn down — no ghost fire on cellA')
+    assert.equal(runsB, 1, 'B not re-fired by cellA mutation either')
+
+    // And B's watcher must be live on cellB
+    cellB.set('b-2')
+    await new Promise(r => setTimeout(r, 20))
+    assert.equal(runsB, 2, 'B re-ran on its own cell mutation')
+    assert.equal(ul.childNodes[0].textContent, 'b-2', 'DOM reflects B\'s new value')
+  })
+
+  test('multiple unkeyed function-components at one parent throw a clear error', ({ assert }) => {
+    // The position-based fallback key (__pos:N) is stable for singletons but
+    // brittle when more than one unkeyed function-component shares a parent
+    // and upstream shape changes (a conditional emits null, a list shrinks,
+    // etc.) — positions drift, instances churn on every render. Better to
+    // fail loudly than silently leak watchers + re-create DOM. Mount throws
+    // on the second unkeyed function-component at the same parent.
+    function A () { return h`<span>a</span>` }
+    function B () { return h`<span>b</span>` }
+    const container = document.createElement('div')
+
+    // Mount without a recaller so the throw propagates to the test rather
+    // than getting swallowed by Recaller's watch try/catch. Same code path
+    // either way; the recaller'd version logs the error to console.
+    assert.throws(
+      () => mount(h`<div><${A}/><${B}/></div>`, container),
+      /data-key/,
+      'two unkeyed function-components at one parent must throw mentioning data-key'
+    )
+  })
+
+  test('a single unkeyed function-component (singleton) renders fine', ({ assert }) => {
+    // The complement to the previous test: singletons WITHOUT data-key
+    // still work — position-based key __pos:0 is stable when there's only
+    // one to position. This is the natural shape for `mount(h\`<${App}/>\`,
+    // …)` and we don't want to demand a key on the top-level component
+    // just to satisfy the multi-unkeyed guard.
+    function App () { return h`<div>hello</div>` }
+    const container = document.createElement('div')
+    mount(h`<${App}/>`, container)
+    assert.equal(container.childNodes[0].textContent, 'hello', 'singleton unkeyed App rendered')
+  })
+
   test('component teardown: dropping a function-component unwatches its watcher', async ({ assert }) => {
     // When a function-component invocation disappears from the parent's
     // resolved set, its watcher must be unregistered from the recaller —

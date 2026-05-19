@@ -78,8 +78,37 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
   vnodes.forEach(resolve)
 
   // ── Three-pass best-fit match ──
+  // Each pass uses a precomputed index over oldChildren — O(N) to build, O(1)
+  // per lookup. Total reconcile work stays O(N) in the child count rather
+  // than the O(N²) of the naive findIndex-per-vnode shape we started with.
   const oldChildren = [...parent.childNodes]
   const newChildren = new Array(resolved.length).fill(null)
+
+  // Build all three indexes in a single oldChildren walk:
+  //   keyMap : data-key → idx        (for keyed elements)
+  //   idMap  : id       → idx        (for elements with an id)
+  //   tagPool: tag      → [idx, …]   (for UNKEYED elements only, in
+  //                                    document order so first-claim wins)
+  const keyMap = new Map()
+  const idMap = new Map()
+  const tagPool = new Map()
+  for (let j = 0; j < oldChildren.length; j++) {
+    const n = oldChildren[j]
+    if (!n || n.nodeType !== 1) continue
+    const k = n.getAttribute('data-key')
+    const id = n.getAttribute('id')
+    if (k != null && !keyMap.has(k)) keyMap.set(k, j)
+    if (id != null && !idMap.has(id)) idMap.set(id, j)
+    // Tag-pool only includes unkeyed elements — keyed elements have
+    // identity claims that mustn't be stolen by an unkeyed tag-match.
+    if (k == null && id == null) {
+      const tag = n.tagName?.toLowerCase()
+      if (tag) {
+        if (!tagPool.has(tag)) tagPool.set(tag, [])
+        tagPool.get(tag).push(j)
+      }
+    }
+  }
 
   // Pass 1: match HElement vnodes by data-key
   for (let i = 0; i < resolved.length; i++) {
@@ -87,11 +116,12 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
     if (!(v instanceof HElement)) continue
     const key = staticAttrValue(v, 'data-key')
     if (key == null) continue
-    const idx = oldChildren.findIndex(n =>
-      n && n.nodeType === 1 && n.getAttribute('data-key') === String(key))
-    if (idx >= 0) {
+    const k = String(key)
+    const idx = keyMap.get(k)
+    if (idx != null) {
       newChildren[i] = oldChildren[idx]
       oldChildren[idx] = null
+      keyMap.delete(k) // don't re-match the same element
     }
   }
 
@@ -102,11 +132,12 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
     if (!(v instanceof HElement)) continue
     const id = staticAttrValue(v, 'id')
     if (id == null) continue
-    const idx = oldChildren.findIndex(n =>
-      n && n.nodeType === 1 && n.getAttribute('id') === String(id))
-    if (idx >= 0) {
+    const k = String(id)
+    const idx = idMap.get(k)
+    if (idx != null) {
       newChildren[i] = oldChildren[idx]
       oldChildren[idx] = null
+      idMap.delete(k)
     }
   }
 
@@ -114,23 +145,20 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
   // Keys (data-key, id) are identity claims; a vnode that declared an
   // identity in pass 1 or 2 and didn't find its match should fresh-mount,
   // not steal a tag-pool element. Symmetrically, an old element with an
-  // identity claim shouldn't be claimed by an unkeyed tag-match — that
-  // identity is *its*, not "first available tag." Keeping the keyed and
-  // unkeyed pools separate is the rule the original mount.js had and
-  // the laid-bare rewrite silently dropped. Without it, `<input
-  // data-key="username">` would tag-match `<input data-key="new-todo">`
-  // (the login-name-leak symptom David caught).
+  // identity claim isn't in the tag-pool at all (filtered out during
+  // index construction above) — its identity is *its*, not "first
+  // available tag." Without this separation, `<input data-key="username">`
+  // would tag-match `<input data-key="new-todo">` (the login-name-leak
+  // symptom David caught).
   for (let i = 0; i < resolved.length; i++) {
     if (newChildren[i]) continue
     const v = resolved[i]
     if (!(v instanceof HElement) || typeof v.tag !== 'string') continue
     if (staticAttrValue(v, 'data-key') != null) continue
     if (staticAttrValue(v, 'id') != null) continue
-    const tag = v.tag.toLowerCase()
-    const idx = oldChildren.findIndex(n =>
-      n && n.nodeType === 1 && n.tagName?.toLowerCase() === tag &&
-      n.getAttribute('data-key') == null && n.getAttribute('id') == null)
-    if (idx >= 0) {
+    const pool = tagPool.get(v.tag.toLowerCase())
+    if (pool && pool.length > 0) {
+      const idx = pool.shift()
       newChildren[i] = oldChildren[idx]
       oldChildren[idx] = null
     }

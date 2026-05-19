@@ -685,6 +685,65 @@ demands reconnection logic, brings in browser-storage budgeting,
 and requires the URL-pattern → Repo-content resolver. Most of the
 pieces are already in flight; this is where they meet.
 
+### Fine-grained watcher boundaries — function-components as their own watch points
+
+The lay-bare mount uses a single root watcher per `mount()` call: any
+reactive change re-evaluates the whole vnode tree top-down. The recycler
+keeps DOM mutations cheap, but the *work* of walking the tree still
+happens. At todomvc scale this is microseconds and invisible. At
+"thousand items, dozens of components, frequent state changes" scale
+it stops being free.
+
+The architectural follow-up: each function-component invocation becomes
+a watch boundary. Reads inside `TodoItem` register only on `TodoItem`'s
+watcher — not on the root's. When `editingId` mutates, only the affected
+`TodoItem` re-evaluates; siblings and ancestors are untouched. Real
+fine-grained updates.
+
+What this requires:
+
+- **Per-invocation component instances.** Each invocation gets an
+  identity (data-key or position), a watcher, a tracked DOM element,
+  and last-seen props. Mount's parent reconcile looks up the
+  existing instance rather than re-creating one.
+- **Per-instance watchers.** Each instance's `fn(props)` runs inside
+  its own `recaller.watch`. Reads scope to that watcher. The mount
+  already enforces single-element returns from function-components,
+  so each instance has one DOM element to terraform against when
+  its watcher fires.
+- **Nested watch support in Recaller.** Need to verify the recaller
+  cleanly supports nested watch scopes (stack-of-current-watcher
+  pattern). Probably already works; might need a small extension.
+- **Lifecycle management.** When a parent reconcile drops an
+  instance, tear down its watcher before its DOM element is removed.
+  Ordering matters — a watcher firing on a disconnected element is
+  the failure mode to avoid.
+- **Two triggers for re-invocation.** A function-component can
+  re-run because the parent passed new props OR because its own
+  reactive deps mutated. Both need to converge on the same DOM
+  without racing.
+
+What this unlocks:
+
+- True fine-grained updates that scale to large workloads.
+- *Safe* per-component memoization (each instance has its own
+  dep tracking, so a memo cache can be invalidated correctly).
+- Closer alignment with React/Vue's mental model, which is what
+  newcomers expect.
+
+What it costs:
+
+- ~150–250 lines of mount.js (instance registry, lifecycle).
+- Possibly ~10–30 lines of Recaller (verify or extend nested watches).
+- ~75–100 lines of new tests for isolation and lifecycle.
+- The lay-bare-mount narrative ("one watcher, simple") gets a
+  footnote — fine-grained is the layer up. Worth documenting as such.
+
+**When this pulls.** When a real workload feels slow — a thousand-item
+list lagging on edits, an explorer view that should feel instant but
+doesn't, demands for memoization that need to be safe. Until then the
+single-watcher-plus-recycler model carries today's scales cleanly.
+
 ### StreamoComponent demos — shared components as content
 
 `StreamoComponent` makes most sense as a post-1.0 story, after chat signing

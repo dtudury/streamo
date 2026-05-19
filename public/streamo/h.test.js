@@ -1,5 +1,5 @@
 import { describe } from './utils/testing.js'
-import { h, HElement, HText } from './h.js'
+import { h, HElement, HText, memo } from './h.js'
 
 describe(import.meta.url, ({ test }) => {
   test('plain element', ({ assert }) => {
@@ -8,6 +8,35 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(div.tag, 'div')
     assert.deepEqual(div.attrs, [])
     assert.deepEqual(div.children, [])
+  })
+
+  test('memo: shallowly-equal props returns cached output; differing props re-invokes', ({ assert }) => {
+    // Single-instance memoization — caches the last (props, output) pair
+    // and returns the cached output when called with shallowly-equal props.
+    // Safe only for components that don't read reactive state in their
+    // own body; this test exercises a pure component.
+    let callCount = 0
+    const Header = memo(({ title }) => {
+      callCount++
+      return h`<h1>${title}</h1>`
+    })
+
+    const out1 = Header({ title: 'hello' })
+    assert.equal(callCount, 1, 'first call invokes the wrapped function')
+
+    const out2 = Header({ title: 'hello' })
+    assert.equal(callCount, 1, 'shallowly-equal props: skip re-invocation')
+    assert.equal(out2, out1, 'same output reference returned from cache')
+
+    const out3 = Header({ title: 'world' })
+    assert.equal(callCount, 2, 'different prop value: re-invoke')
+    assert.notEqual(out3, out1, 'fresh output for different props')
+
+    // Falls back to re-invoke when the props OBJECT differs but values match
+    // (shallow equality, not identity)
+    const out4 = Header({ title: 'world' })
+    assert.equal(callCount, 2, 'shallowly-equal even with fresh props object')
+    assert.equal(out4, out3, 'still cached output')
   })
 
   test('skeleton cache: same template, different slot values, distinct trees with correct values', ({ assert }) => {

@@ -119,19 +119,18 @@ function saveEdit (e, id) {
   editingId.set(null)
 }
 
-// Set editingId then focus the freshly-mounted .edit input on the next
-// reactive tick. `autofocus` doesn't reliably fire on dynamic inserts (and
-// gets ignored entirely if mount recycles an existing input element), so we
-// focus explicitly once the DOM has caught up. Only one todo can be editing
-// at a time, so document.querySelector('.edit') unambiguously finds it.
+// Set editingId, then move the cursor to the end of existing text on the
+// next frame. Focus itself is handled by mount honoring the `autofocus`
+// attribute on the freshly-mounted .edit input — but autofocus brings the
+// cursor to position 0, which is jarring for non-empty text. Standard
+// TodoMVC behavior places the cursor at the end so the user can append
+// immediately. Only one todo can be editing at a time, so the selector
+// unambiguously finds it.
 function startEdit (id) {
   editingId.set(id)
   requestAnimationFrame(() => {
     const input = document.querySelector('.edit')
-    if (input) {
-      input.focus()
-      input.setSelectionRange(input.value.length, input.value.length)
-    }
+    if (input) input.setSelectionRange(input.value.length, input.value.length)
   })
 }
 

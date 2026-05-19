@@ -88,6 +88,11 @@ class MockNode {
     child.#parent = null
     return child
   }
+
+  // Mock isConnected: real DOM walks to the document; tests don't have a
+  // document, so "has a parent" stands in. This is true for any node mount
+  // attached to a container (since mount appends to the container).
+  get isConnected () { return this.#parent != null }
 }
 
 class MockElement extends MockNode {
@@ -105,12 +110,15 @@ class MockElement extends MockNode {
 
   setAttribute (name, val) { this.#attrs[name] = String(val) }
   getAttribute (name) { return this.#attrs[name] ?? null }
+  hasAttribute (name) { return name in this.#attrs }
   removeAttribute (name) { delete this.#attrs[name] }
   toggleAttribute (name, force) {
     if (force) this.#attrs[name] = ''
     else delete this.#attrs[name]
   }
   addEventListener () {}
+  // Stub: tests inspect el.focused if they want to verify focus was called.
+  focus () { this.focused = (this.focused ?? 0) + 1 }
 }
 
 class MockText extends MockNode {

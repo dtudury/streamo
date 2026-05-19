@@ -35,6 +35,69 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(span.textContent, 'world', 'updated after set')
   })
 
+  test('keyed vnode that does not match by key fresh-mounts (no tag-pool steal)', async ({ assert }) => {
+    // Regression: pass-3 used to tag-match any vnode to any element,
+    // ignoring data-key identity. A keyed vnode whose key didn't match
+    // could steal an old element that previously had a *different* key
+    // — bringing along any DOM state (input value, focus, etc.) the new
+    // vnode didn't reset. The visible symptom David caught: typing your
+    // username into the login form, then logging in, and seeing the
+    // username text persist into the new-todo input field. Fix: pass-3
+    // only matches *unkeyed* vnodes to *unkeyed* elements; keyed
+    // vnodes that miss in pass 1 fresh-mount instead of falling through.
+    const stream = new Streamo()
+    stream.set({ which: 'a' })
+    const container = document.createElement('div')
+    mount(h`${() => stream.get('which') === 'a'
+      ? h`<input data-key="a" name="a">`
+      : h`<input data-key="b" name="b">`}`, container, stream.recaller)
+
+    const inputA = container.childNodes[0]
+    assert.equal(inputA.getAttribute('data-key'), 'a', 'initial input has data-key=a')
+    assert.equal(inputA.getAttribute('name'), 'a')
+    // Simulate user state on the element that should NOT carry over
+    inputA.userTypedValue = 'leaked-state'
+
+    stream.set('which', 'b')
+    await new Promise(r => setTimeout(r, 20))
+
+    const inputB = container.childNodes[0]
+    assert.equal(inputB.getAttribute('data-key'), 'b', 'now data-key=b')
+    assert.equal(inputB.getAttribute('name'), 'b')
+    assert.notEqual(inputB, inputA, 'fresh DOM instance — not the recycled inputA')
+    assert.equal(inputB.userTypedValue, undefined, 'user state from inputA did NOT leak into inputB')
+  })
+
+  test('autofocus on a freshly-mounted element triggers focus()', async ({ assert }) => {
+    // Regression: browsers respect `autofocus` on initial page load but
+    // quietly skip it on dynamic inserts when anything else has focus.
+    // mount restores the declarative intent by calling .focus() on
+    // freshly-mounted elements with the autofocus attribute. The focus
+    // call is deferred to a microtask so the element is attached before
+    // it fires.
+    const stream = new Streamo()
+    stream.set({ show: false })
+    // Synthetic parent so container.isConnected resolves correctly through
+    // the mock's parent-chain check (and so .focus() inside the microtask
+    // sees the input as attached to the document tree).
+    const root = document.createElement('div')
+    const container = document.createElement('div')
+    root.appendChild(container)
+    mount(
+      h`${() => stream.get('show') ? h`<input autofocus name="x">` : null}`,
+      container, stream.recaller
+    )
+    assert.equal(container.childNodes.length, 0, 'not shown yet')
+
+    stream.set('show', true)
+    await new Promise(r => setTimeout(r, 20))
+
+    const input = container.childNodes[0]
+    assert.ok(input, 'input mounted')
+    assert.equal(input.parentNode, container, 'input is attached')
+    assert.ok((input.focused ?? 0) > 0, 'focus() was called on the autofocus input')
+  })
+
   test('text nodes are recycled positionally across re-render (nodeValue updates in place)', async ({ assert }) => {
     // Regression: text nodes used to be re-created on every reactive re-
     // render (fresh document.createTextNode + old one cleaned up). That

@@ -110,14 +110,26 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
     }
   }
 
-  // Pass 3: match HElement vnodes by tag
+  // Pass 3: match UNKEYED HElement vnodes to UNKEYED elements by tag.
+  // Keys (data-key, id) are identity claims; a vnode that declared an
+  // identity in pass 1 or 2 and didn't find its match should fresh-mount,
+  // not steal a tag-pool element. Symmetrically, an old element with an
+  // identity claim shouldn't be claimed by an unkeyed tag-match — that
+  // identity is *its*, not "first available tag." Keeping the keyed and
+  // unkeyed pools separate is the rule the original mount.js had and
+  // the laid-bare rewrite silently dropped. Without it, `<input
+  // data-key="username">` would tag-match `<input data-key="new-todo">`
+  // (the login-name-leak symptom David caught).
   for (let i = 0; i < resolved.length; i++) {
     if (newChildren[i]) continue
     const v = resolved[i]
     if (!(v instanceof HElement) || typeof v.tag !== 'string') continue
+    if (staticAttrValue(v, 'data-key') != null) continue
+    if (staticAttrValue(v, 'id') != null) continue
     const tag = v.tag.toLowerCase()
     const idx = oldChildren.findIndex(n =>
-      n && n.nodeType === 1 && n.tagName?.toLowerCase() === tag)
+      n && n.nodeType === 1 && n.tagName?.toLowerCase() === tag &&
+      n.getAttribute('data-key') == null && n.getAttribute('id') == null)
     if (idx >= 0) {
       newChildren[i] = oldChildren[idx]
       oldChildren[idx] = null
@@ -166,11 +178,25 @@ function reconcileChildren (parent, vnodes, recaller, ns) {
         newChildren[i].nodeValue = v.value
       }
     } else if (v instanceof HElement) {
-      if (!newChildren[i]) {
+      const fresh = !newChildren[i]
+      if (fresh) {
         const elemNs = resolveNs(v, ns)
         newChildren[i] = document.createElementNS(elemNs, v.tag)
       }
-      terraform(newChildren[i], v, recaller, resolveNs(v, ns))
+      const el = newChildren[i]
+      terraform(el, v, recaller, resolveNs(v, ns))
+      // Honor `autofocus` on freshly-mounted elements. Browsers respect the
+      // attribute on initial page load but quietly skip it on dynamic
+      // inserts when anything else has focus — so an input that *declared*
+      // it wanted focus doesn't get it. We restore the declarative intent
+      // by calling .focus() ourselves. Deferred to a microtask so the
+      // element is attached to the document by the time focus fires
+      // (during build the parent chain may not be in the DOM yet); the
+      // isConnected guard skips focus if a later reactive render replaced
+      // the element before the microtask drained.
+      if (fresh && typeof el.hasAttribute === 'function' && el.hasAttribute('autofocus') && typeof el.focus === 'function') {
+        queueMicrotask(() => { if (el.isConnected) el.focus() })
+      }
     } else if (typeof Node !== 'undefined' && v instanceof Node) {
       newChildren[i] = v
     } else if (typeof v === 'string' || typeof v === 'number') {

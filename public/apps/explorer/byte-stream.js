@@ -105,25 +105,13 @@ export function makeByteStreamSection () {
     // about the repo's state (no reuse yet, or all chunks are unique).
     const reuse = repoReuseStats(repo)
     const leverageTxt = ` · ${reuse.leverage.toFixed(2)}× via reuse`
-    // Per-type rollup: for each codec type, sum (chunks, bytes, naive
-    // bytes-if-no-dedup). Chunks not reachable from any commit's data
-    // tree (the graph roots — commit + signature chunks) have leverage
-    // of zero by construction; rendered as "—" rather than "0×" so the
-    // distinction is visible.
-    const byType = new Map()
-    let scanAddr = repo.byteLength - 1
-    while (scanAddr >= 0) {
-      const code = repo.resolve(scanAddr)
-      if (!code || !code.length) break
-      const type = repo.footerToCodec[code.at(-1)]?.type || '?'
-      if (!byType.has(type)) byType.set(type, { type, chunks: 0, bytes: 0, naive: 0 })
-      const e = byType.get(type)
-      e.chunks += 1
-      e.bytes += code.length
-      e.naive += code.length * (reuse.uses.get(scanAddr) ?? 0)
-      scanAddr -= code.length
-    }
-    const typeRows = [...byType.values()].sort((a, b) => b.bytes - a.bytes)
+    // Per-type rollup: REMOVED 2026-05-19 as part of the bytestream-
+    // interface-rethink thread (see ROADMAP). At 286+ commits this walk
+    // re-decoded ~2000+ chunks on every navigation and was a real
+    // unusability cost. The `<details>` element below also went —
+    // collapsing it visually didn't skip the work; the rows were still
+    // built into the DOM. Re-introduce as a click-to-load lazy panel
+    // when the bytestream interface gets its rethink.
     return h`
       <h3>byte stream <span class="dim">(${total} bytes · ${chunks.length} chunks${leverageTxt})</span></h3>
       <div class="byte-strip-container" data-key=${`strip-${keyHex}`} data-strip-w=${stripW}>
@@ -192,27 +180,6 @@ export function makeByteStreamSection () {
         return h`<div class=${['chunk-inspector', isPeekActive ? 'active' : null]}
                       data-key=${`inspector-${keyHex}`}>${inspectorContent}</div>`
       }}
-      <details class="reuse-breakdown">
-        <summary>by-codec breakdown <span class="dim">— chunks, bytes, dedup leverage per codec type</span></summary>
-        <table class="reuse-by-type">
-          <thead><tr><th>type</th><th>chunks</th><th>bytes</th><th>via reuse</th></tr></thead>
-          <tbody>
-            ${typeRows.map(e => {
-              const cat = e.type === 'OBJECT' ? 'composite' : codecCategory(e.type)
-              const isRoot = e.naive === 0
-              const leverage = isRoot ? null : e.naive / e.bytes
-              return h`
-                <tr data-key=${e.type}>
-                  <td><span class=${['codec-chip', `cat-${cat}`]}>${e.type}</span></td>
-                  <td class="mono">${e.chunks}</td>
-                  <td class="mono">${e.bytes}</td>
-                  <td class="mono">${isRoot ? h`<span class="dim">—</span>` : `${leverage.toFixed(2)}×`}</td>
-                </tr>
-              `
-            })}
-          </tbody>
-        </table>
-      </details>
     `
   }
 }

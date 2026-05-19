@@ -31,29 +31,63 @@ here.
 
 ## what's next
 
-### explorer value-view performance *(the next active thread)*
+### explorer value-view + bytestream performance *(active thread)*
 
-Now that the `streamo-history` repo is loaded by `npm run dev`, the
-explorer is the first place the value tab encounters genuinely big
-data: 231 commits, each with a `{ sha, tree, parents, author, body }`
-value plus the commit-record envelope around it. Opening a commit
-feels slow. Reported 2026-05-16.
+Now that the `streamo-history` repo is loaded by `npm run dev` and
+has 286+ commits seeded, the explorer is the first place the value
+tab encounters genuinely big data: each commit is a `{ sha, tree,
+parents, author, body }` value plus the commit-record envelope.
+Originally reported 2026-05-16; re-validated 2026-05-19 with the
+seeded history live in the browser.
 
-Likely culprits, in rough order of suspected weight:
+**What's landed (2026-05-19):**
 
-- The `safeJSON` rehydrated `<pre>` stringifies the *whole* decoded
+- `repoExtras` removed from the commit view — it was rendering
+  ~200+ chunk rows on every navigation, redundant with the storage
+  tab. Kept in the no-head case for future trust-me mode.
+- The by-codec breakdown table below the byte strip removed (lines
+  113-126 + the `<details>` element). The per-type walk decoded
+  every chunk in the stream on every render — ~2000+ chunks at
+  286 commits, run on every commit-dropdown navigation. Collapsing
+  the `<details>` visually didn't skip the work; the rows were
+  always built. Re-introduce as a click-to-load lazy panel.
+- Fine-grained watcher boundaries (7.6.0) — sibling components
+  don't re-render on a dep change. Lower bound on the cost.
+
+**Still suspected (in rough order of remaining weight):**
+
+- *Inspect-bytes-via-strip is a known killer.* David tried to
+  inspect the bytestream interactively at 286 commits and the
+  browser locked up. Suggests the chunk inspector or the strip's
+  hover handler is doing per-byte work it shouldn't. The
+  `xForByte` linear search through chunks (byte-stream.js:92) is
+  one suspect — it walks chunks for every byte position queried.
+- *`safeJSON` rehydrated `<pre>`* stringifies the whole decoded
   value on every render, even when most of it isn't visible.
-- The kv-table walk descends the full tree eagerly at render time.
-- The HEAD-N commit dropdown lists every commit (no virtualization,
-  no filter); the list keeps growing with chain length.
-- Slot re-renders may be wider than needed (a hover near the strip
-  shouldn't trigger a value-tab re-render).
+  Less suspected than initially feared — kv-table is the main
+  view and is one-level-only — but the stringify is still real
+  work per render. Lazy-render-on-expand would handle it.
+- *HEAD-N commit dropdown* lists every commit (no virtualization,
+  no filter). At 286 it's still usable; at thousands the dropdown
+  itself becomes the bottleneck. David's proposed shape: a
+  scroll-wheel picker (momentum-flick + editable jump-to-N
+  number) over the chain, with the rest of the page updating
+  live. Depends on per-commit render being cheap.
+- *kv-table is fine.* Initial worry about full-tree-eager walk
+  was overstated; it's one level + preview decode per child.
+  Scales with field count, not depth.
 
-Goals for this thread: open a commit feels instant; deep nesting
-expands on click rather than rendering eagerly; the dropdown stays
-usable at 200+ commits. Probably touches `at-view.js`, `render.js`,
-and the typed-value composite renderers from the
-streamo-typed-value-displays thread in `THREADS.md`.
+**The bytestream interface deserves its own rethink.** The strip is
+beautiful at small scales and visibly strained at large ones. The
+chunk inspector, the hover overlay, and the (now-removed) by-codec
+breakdown all share the strip's coordinate system. A redesign that
+considers virtualization (chunks far off-screen need not be in the
+DOM), lazy-load panels (breakdown stays as a click-to-load), and the
+scroll-wheel-picker shape above could land as one focused effort.
+
+Goals for this thread: open a commit feels instant; the bytestream
+strip stays responsive at thousands of chunks; the dropdown stays
+usable at 1000+ commits.
 
 ### FIRST_STEPS step 5 — visit your fork on the public relay *(post-publish)*
 

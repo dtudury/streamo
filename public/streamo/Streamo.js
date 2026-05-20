@@ -1,17 +1,28 @@
 /**
- * @file Streamo — reactive content-addressed signed byte store.
+ * @file Streamo — reactive content-addressable codec.
  *
- * Layers Recaller-driven path-level reactivity on top of CodecRegistry,
- * plus a sign/verify API for secp256k1 attestations over a hash-chain
- * accumulator. Each non-signature chunk folds into the accumulator as
+ * **The shape**: `set(value)` returns an address; `get(address)` returns
+ * the value; the same value always encodes to the same address (dedup is
+ * automatic). Streamo decomposes JS values into smaller chunks that are
+ * reusable across encodings — every nested object/array gets its own
+ * address, and parent chunks reference children by address. This is
+ * Streamo's defining property: it's a codec where address IS identity.
+ *
+ * **Reactivity**: a Recaller tracks per-path reads and writes, so a UI
+ * watcher that reads `streamo.get('settings', 'theme')` only re-fires when
+ * that specific path changes — not on every chunk that lands.
+ *
+ * **The chain**: appended chunks fold into a running hash accumulator
  *   acc_{n+1} = sha256(acc_n || sha256(chunk_n))
- * so a SIGNATURE commits to a single 32-byte value that summarizes the
- * entire prefix; a stateless relay can verify the next append knowing
- * only the latest committed accumulator. `valueAddress` skips trailing
- * SIGNATURE chunks so reading the latest value works whether or not it
- * has been auto-signed yet.
+ * so a SIGNATURE chunk (97 bytes: accumulator + signature + footer)
+ * commits to a 32-byte value summarizing the entire prefix. Each next
+ * sig builds on the previous sig's accumulator — a hash chain. Streamo
+ * itself isn't identity-aware (sign/verify take a signer/pubkey as
+ * arguments); identity-bound verification of incoming bytes lives on
+ * Repo via makeVerifiedWritableStream.
  *
- * Exports: Streamo (the class), ConflictError, changedPaths.
+ * Exports: Streamo (the class), ConflictError, changedPaths,
+ * GENESIS_ACCUMULATOR, foldChunk, arraysEqual.
  *
  * See design.md §5.
  */

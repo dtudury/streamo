@@ -408,38 +408,46 @@ Neither blocks anything; both are quality-of-presence-display polish.
 
 Streamo streams are byte arrays addressed by **absolute offset**. This makes a
 repo effectively single-writer: if the same keypair commits from two devices
-while offline from each other, their streams diverge at the fork point.  Each
-commit's `dataAddress` is an offset that is only valid in the stream that
+while offline from each other, their streams diverge at the divergence point.
+Each commit's `dataAddress` is an offset that is only valid in the stream that
 produced it — the streams cannot be structurally merged.
 
-**Detection (landed 2026-05-20):** `makeVerifiedWritableStream` *does* catch a
-fork at the byte-stream level — the hash-chain accumulator fails to match when
-a SIG arrives covering content the receiver hasn't folded.  Streamo now raises
-two reactive flags before the throw fires:
-- `forkDetected` — accumulator mismatch (honest signer, conflicting history)
+**Detection (landed 2026-05-20):** `Repo.makeVerifiedWritableStream` catches
+the divergence at the byte-stream level — the hash-chain accumulator fails to
+match when a SIG arrives covering content the receiver hasn't folded, OR the
+alignment check fires when staged chunks would land at addresses where their
+internal refs resolve to wrong bytes. Repo raises two reactive flags before
+the throw fires:
+- `conflictDetected` — chain divergence (honest signer, incompatible history)
 - `verificationFailed` — crypto-verify failure (attack or corruption)
 
-The throw still propagates, so default-uncaught code crashes its connection and
-resets cleanly (`registrySync` closes the WS via `handleWriteError`).  Code that
-wants to be smarter can watch the flags and react.  Repo inherits the flags
-through extension; app code can read `repo.forkDetected` directly.
+The throw still propagates, so default-uncaught code crashes its connection
+and resets cleanly (`registrySync` closes the WS via `handleWriteError`). Code
+that wants to be smarter can watch the flags and react. Both flags live on
+Repo, not Streamo — Streamo is intentionally identity-blind.
 
-**Where detection happens vs. doesn't:** clients detect the fork when they
-receive the other side's reflected stream through a verifying writer.  The
-**relay** does not detect — each peer's writer has independent `pendingAcc`
-state, so a relay accepting divergent streams from two peers ends up with both
-chains in its store (valueAddress resolves to whichever SIG is last in the
-bytestream).  Clients catch the fork on the reflection back.  Fixing relay-side
-detection would require sharing `pendingAcc` across writers for the same repo —
-a bigger architectural move; not blocking the chat demo.
+**Vocabulary note:** what's detected here is a *conflict*, not a *fork*. In
+streamo's model:
+- *fork* = a new Repo with a lineage note (deliberate, recorded)
+- *branch* = an addressed-but-non-head value within a Repo
+- *conflict* = the runtime "these bytes can't be appended" failure (what this
+  entry is about)
+- *merge* = a commit referencing prior values from anywhere
 
-**Still to do (session 3):** surface the flags in the chat client UI — banner
-when `repo.forkDetected` is true, optional "discard local divergent commits and
-re-sync" recovery button.  Currently the flag is set but nothing watches it.
+**Where detection happens vs. doesn't:** clients detect the conflict when
+they receive the other side's reflected stream through a verifying writer.
+The **relay** does not detect — each peer's writer has independent
+`pendingAcc` state, so a relay accepting divergent streams from two peers
+ends up with both chains in its store (valueAddress resolves to whichever
+SIG is last in the bytestream). Clients catch the conflict on the reflection
+back. Fixing relay-side detection would require sharing `pendingAcc` across
+writers for the same repo — a bigger architectural move; not blocking the
+chat demo.
 
-**The deeper fix** (post-demo) is chunk-level content addressing (à la git
-objects) so streams can be merged structurally rather than by concatenation.
-Architectural change; documented as the long-term direction.
+**Recovery UX** is the remaining post-demo thread. Today: refresh takes the
+server's view; local divergent commits are orphaned bytes in the store but
+no longer reachable via valueAddress. A real recovery flow would let the
+user pick which side wins, or attempt a value-level merge into a new commit.
 
 ### repo size — practical caps and lifecycle
 

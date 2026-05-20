@@ -119,8 +119,17 @@ lands without tests passing, you have failed the contract.
 
 ## architecture notes
 
-- `Streamo` — content-addressed, append-only byte store with self-describing codec
-- `Repo` — wraps Streamo; every `set()` is a signed commit (message, date, address, parent)
+- `Streamo` — content-addressable codec. `set(value)→address`, `get(address)→value`,
+  same value → same address. Decomposes structured values into reusable chunks; chunks
+  reference each other by byte-offset address. Hash-chain accumulator over the byte
+  stream; SIG chunks anchor it. Identity-blind — sign/verify take signer/pubkey as args.
+- `Repo` — extends Streamo; every `set()` is a signed commit (message, date, dataAddress,
+  parent, remoteParent?). Owns the identity-aware verified writer
+  (`makeVerifiedWritableStream`) that gates incoming wire chunks, plus the reactive
+  `conflictDetected` and `verificationFailed` flags it raises. Vocabulary:
+  *fork* = new Repo with a lineage note; *branch* = an addressed-but-non-head value
+  inside a Repo; *conflict* = the runtime "these bytes can't be appended" failure;
+  *merge* = a commit citing prior values
 - `Signer` — deterministic secp256k1 keypairs via PBKDF2-SHA256 (256 bits, `deriveBits`)
   from username + password. KAT in `Signer.test.js` pins the bytes — do not change the
   derivation without updating the KAT and acknowledging it as a breaking change.

@@ -1,22 +1,39 @@
 /**
- * @file Repo — a Streamo whose every set() becomes a signed commit.
+ * @file Repo — Streamo + signed commits + the verified writer.
  *
- * Each commit is a record { message, date, dataAddress, parent,
- * remoteParent? }. The commit log is what flows over the wire during
- * sync. attachSigner makes commits sign automatically, with concurrent
- * commits batched into one signature.
+ * **Repo extends Streamo** with two layers of "smarts" Streamo intentionally
+ * doesn't have:
  *
- * The optional `remoteParent` field cites another author's value at a
- * specific content address — `{ host, repo, dataAddress }`. It's a
- * cryptographic footnote: anyone with the cited stream can verify the
- * value really was at that address. The chain stays single-author-
- * signed; remote citations don't break the invariant.
+ * 1. **Commit semantics.** Every `set()` becomes a signed commit — a
+ *    record `{ message, date, dataAddress, parent, remoteParent? }`. The
+ *    commit log is what flows over the wire during sync. `attachSigner`
+ *    makes commits sign automatically, with concurrent commits batched
+ *    into one signature.
  *
- * Two natural shapes emerge:
- *   - pure-copy commit  (no local parent, remoteParent set) — the
- *     start of a fork: "I'm beginning my chain from their value"
- *   - mixed commit      (both parent and remoteParent set) — "I'm
- *     continuing my chain while pulling this in from over there"
+ * 2. **The verified writer** (`makeVerifiedWritableStream`) and its
+ *    reactive flags (`conflictDetected`, `verificationFailed`). Streamo
+ *    can't tell whether incoming bytes "fit" — that's identity-aware
+ *    work (it requires a pubkey and chain-alignment state). Repo gates
+ *    incoming wire chunks: a SIG must crypto-verify under the expected
+ *    pubkey, its accumulator must chain from our current chain, AND the
+ *    staged chunks must land at addresses where their internal refs
+ *    will resolve correctly. Any failure throws AND raises the
+ *    appropriate reactive flag for UI to surface.
+ *
+ * **`remoteParent`** cites another author's value at a specific content
+ * address — `{ host, repo, dataAddress }`. It's informational (a soft
+ * cryptographic footnote), not a sync dependency. Two natural shapes:
+ *   - *Fork commit*  (no local parent, remoteParent set) — start of a
+ *     new Repo from someone else's value
+ *   - *Merge commit* (both parent and remoteParent set) — combine values
+ *     from this Repo and somewhere else; the new commit doesn't depend
+ *     on the source from then on
+ *
+ * **Conflicts** are not states the Repo carries by design — they're
+ * runtime "these bytes can't be appended" failures detected at the
+ * verified writer. The `conflictDetected` flag is the reactive surfacing
+ * of that failure for UI; the chain itself stays clean (rejected batches
+ * never land).
  *
  * See design.md §8.
  */

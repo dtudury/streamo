@@ -524,6 +524,10 @@ export class Streamo extends CodecRegistry {
     // author's chain) but don't re-append.
     let pendingAcc = new Uint8Array(GENESIS_ACCUMULATOR)
     let staged = [] // new (not-already-present) non-sig chunks awaiting a covering SIG
+    // Cumulative bytes consumed from the wire. Used to check that staged
+    // chunks would land at addresses matching the wire's expected positions
+    // before we append them — see the alignment check at sig commit.
+    let wireByteLength = 0
     return new WritableStream({
       async write (incoming) {
         const next = new Uint8Array(buf.length + incoming.length)
@@ -561,6 +565,27 @@ export class Streamo extends CodecRegistry {
               self.#recaller.reportKeyMutation(self, 'verificationFailed')
               throw new Error('signature verification failed')
             }
+            // Alignment check: staged chunks were encoded with internal
+            // references (e.g. COMMIT.dataAddress) pointing to byte positions
+            // in the SENDER's chain. We can only safely append them if our
+            // local byteLength equals the wire's position right before them
+            // — otherwise the staged chunks land at addresses where their
+            // references resolve to the wrong bytes, corrupting decodes.
+            // This catches the "local has unsigned-or-locally-signed content
+            // past the last shared sig" case (multi-tab offline writes),
+            // which the accumulator check alone cannot see.
+            if (staged.length > 0) {
+              const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
+              const expectedLocalByteLength = wireByteLength - stagedTotal
+              if (self.byteLength !== expectedLocalByteLength) {
+                self.#forkDetected = true
+                self.#recaller.reportKeyMutation(self, 'forkDetected')
+                throw new Error(
+                  `local store diverged from wire: wire expects byteLength ${expectedLocalByteLength} ` +
+                  `for staged chunks but local is at ${self.byteLength}`
+                )
+              }
+            }
             // Commit batch: append staged chunks (all new), then the SIG itself.
             for (const c of staged) self.append(c)
             staged = []
@@ -570,6 +595,7 @@ export class Streamo extends CodecRegistry {
             pendingAcc = await foldChunk(pendingAcc, code)
             if (!alreadyHave) staged.push(code)
           }
+          wireByteLength += code.length
         }
       }
     })

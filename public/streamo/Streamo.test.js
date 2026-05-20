@@ -481,6 +481,87 @@ describe(import.meta.url, ({ test }) => {
       `fork-watcher must observe forkDetected becoming true; observed: ${JSON.stringify(observed)}`)
   })
 
+  test('verifier rejects wire chunks that would land at corrupted addresses (local has content past last shared sig)', async ({ assert }) => {
+    // The bug shape from the chat client: tab B writes locally while offline,
+    // its bytestream grows past the last shared sig. When tab B reconnects
+    // and receives tab A's writes via the wire, the wire's chunks reference
+    // byte positions that ASSUME the wire's view of history. Tab B's local
+    // content past sig_one sits in those positions, so the wire's chunks
+    // would resolve their internal references (COMMIT.dataAddress etc.) to
+    // wrong bytes — the watcher fires after append and decode crashes.
+    //
+    // The accumulator check alone doesn't catch this: the wire's chain is
+    // internally consistent (sig.accumulator matches a fold from genesis
+    // through the wire's chunks), so the wire would pass that check until
+    // some LATER sig diverges. By then, bad chunks have already landed.
+    //
+    // The alignment check inside the sig-commit path verifies that staged
+    // chunks would land at the wire's expected positions. If self.byteLength
+    // doesn't match, we have local-only content occupying the addresses the
+    // wire's chunks reference. forkDetected fires without committing the
+    // corrupting batch.
+
+    const signer = new Signer('alice', 'hunter2', 1)
+    const name = 'diverged-merge'
+    const { publicKey } = await signer.keysFor(name)
+
+    const readChunks = s => {
+      const out = []
+      let addr = s.byteLength - 1
+      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
+      return out
+    }
+    const frame = code => {
+      const f = new Uint8Array(4 + code.length)
+      new DataView(f.buffer).setUint32(0, code.length, true)
+      f.set(code, 4)
+      return f
+    }
+
+    // Shared signed history both tabs start from
+    const shared = new Streamo()
+    shared.set({ v: 'one' })
+    await shared.sign(signer, name)
+    const sharedChunks = readChunks(shared)
+
+    // Tab A diverges from shared with its own write
+    const tabA = new Streamo()
+    const writerA = tabA.makeVerifiedWritableStream(publicKey).getWriter()
+    for (const c of sharedChunks) await writerA.write(frame(c))
+    tabA.set({ v: 'apple' })
+    await tabA.sign(signer, name)
+
+    // Tab B replays shared then writes its own divergent content (locally,
+    // simulating "offline scribble after last sync")
+    const tabB = new Streamo()
+    const writerB = tabB.makeVerifiedWritableStream(publicKey).getWriter()
+    for (const c of sharedChunks) await writerB.write(frame(c))
+    tabB.set({ v: 'banana' })
+    await tabB.sign(signer, name)
+    const tabBByteLengthBeforeMerge = tabB.byteLength
+
+    // Tab B reconnects — receives tab A's full chain (which extends shared
+    // past sig_one). A new writer reflects a fresh connection (fresh
+    // pendingAcc, fresh wireByteLength).
+    const writerB2 = tabB.makeVerifiedWritableStream(publicKey).getWriter()
+    let caught = null
+    try {
+      for (const c of readChunks(tabA)) await writerB2.write(frame(c))
+    } catch (e) { caught = e }
+
+    assert.ok(caught,
+      'merging a remote chain past the local divergence point must throw')
+    assert.equal(tabB.forkDetected, true,
+      'forkDetected must be raised for the alignment failure')
+    assert.equal(tabB.byteLength, tabBByteLengthBeforeMerge,
+      'no remote chunks land in tab B — local store stays decode-safe')
+    // Sanity: tabB.get('messages') would crash if any wire chunks had been
+    // appended at corrupted addresses. After the fix, the local store is
+    // intact and tabB can still be read without crashing.
+    assert.equal(tabB.get('v'), 'banana',
+      'tab B can still read its local divergent value after the rejected merge')
+  })
+
   test('verificationFailed fires when a bad sig arrives — separate flag from forkDetected', async ({ assert }) => {
     // Bad sig is a different threat from a fork: the signer didn't actually
     // sign these bytes (or the bytes got corrupted in transit). The chain

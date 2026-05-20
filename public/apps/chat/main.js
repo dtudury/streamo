@@ -147,6 +147,10 @@ async function login (e) {
 
     // Flip the login signal — the mount template's `when(loggedIn, …)`
     // clauses fire, the login form unmounts, the chat panel takes over.
+    // Blur first so the username input doesn't linger as the document's
+    // focused element after detach — without this, the chat's text input
+    // autofocus gets blocked ("a document already has a focused element").
+    document.activeElement?.blur?.()
     loggedIn.set(true)
   } catch (err) {
     loginStatus.set(`error: ${err.message}`)

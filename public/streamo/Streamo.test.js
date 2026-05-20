@@ -187,7 +187,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('sign and verify', async ({ assert }) => {
-    const s = new Streamo()
+    const s = new Repo()
     s.set({ hello: 'world' })
     s.set('hello', 'signed')
 
@@ -309,7 +309,7 @@ describe(import.meta.url, ({ test }) => {
     // chunk carries that chainHash + a signature over it. This test
     // independently reconstructs the chainHash chunk-by-chunk and
     // proves the SIG signs exactly that 32-byte commitment.
-    const s = new Streamo()
+    const s = new Repo()
     const signer = new Signer('alice', 'hunter2', 1)
     s.set({ msg: 'hello, world' })
     const beforeSig = s.byteLength
@@ -339,7 +339,7 @@ describe(import.meta.url, ({ test }) => {
     // The historical attack: a peer sends [commit_chunk, bad_sig]. The
     // commit lands in the store before the sig fails verification. With
     // staging, the commit never lands — verified write is all-or-nothing.
-    const author = new Streamo()
+    const author = new Repo()
     const signer = new Signer('alice', 'hunter2', 1)
     author.set({ a: 1 })
     await author.sign(signer, 'attack-test')
@@ -389,11 +389,11 @@ describe(import.meta.url, ({ test }) => {
     const name = 'conflict'
     const { publicKey } = await signer.keysFor(name)
 
-    const device1 = new Streamo()
+    const device1 = new Repo()
     device1.set({ v: 'apple' })
     await device1.sign(signer, name)
 
-    const device2 = new Streamo()
+    const device2 = new Repo()
     device2.set({ v: 'banana' })
     await device2.sign(signer, name)
 
@@ -445,10 +445,10 @@ describe(import.meta.url, ({ test }) => {
     const name = 'conflict-reactive'
     const { publicKey } = await signer.keysFor(name)
 
-    const device1 = new Streamo()
+    const device1 = new Repo()
     device1.set({ v: 1 })
     await device1.sign(signer, name)
-    const device2 = new Streamo()
+    const device2 = new Repo()
     device2.set({ v: 2 })
     await device2.sign(signer, name)
 
@@ -521,7 +521,7 @@ describe(import.meta.url, ({ test }) => {
     }
 
     // Shared signed history both tabs start from
-    const shared = new Streamo()
+    const shared = new Repo()
     shared.set({ v: 'one' })
     await shared.sign(signer, name)
     const sharedChunks = readChunks(shared)
@@ -569,7 +569,7 @@ describe(import.meta.url, ({ test }) => {
     // sign these bytes (or the bytes got corrupted in transit). The chain
     // would have to match for the crypto check to fire — so we craft a stream
     // where the chainHash IS valid but the signature bytes are tampered.
-    const author = new Streamo()
+    const author = new Repo()
     const signer = new Signer('alice', 'hunter2', 1)
     author.set({ a: 1 })
     await author.sign(signer, 'badsig-test')
@@ -614,7 +614,7 @@ describe(import.meta.url, ({ test }) => {
     const name = 'load-resumes-signed-cursor'
     const keys = await signer.keysFor(name)
 
-    const original = new Streamo()
+    const original = new Repo()
     original.set({ a: 1 })
     await original.sign(signer, name)
     const cursorAfterFirstSig = original.signedLength

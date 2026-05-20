@@ -38,6 +38,7 @@
  * See design.md §8.
  */
 import { Streamo, changedPaths, foldChunk, arraysEqual } from './Streamo.js'
+import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
 
 /**
@@ -459,13 +460,57 @@ export class Repo extends Streamo {
     return this.commit(working, message ?? defaultMessage, { remoteParent: citation })
   }
 
-  // ── The verifier (identity-aware; lives on Repo, not Streamo) ──────────
-  // Streamo has a stateless `verify(sig, publicKey)` helper for one-shot
-  // crypto checks. The stateful, identity-bound verified writer below —
-  // including the conflictDetected / verificationFailed reactive flags —
-  // belongs at the Repo layer: it consumes a wire stream, holds session
-  // state (pendingAcc, staged, wireByteLength), and surfaces failures to
-  // application UI.
+  // ── Signing / verification (identity-aware; lives on Repo, not Streamo) ──
+  // Streamo is the codec; it doesn't know about keys, sigs, or who signed.
+  // Everything that takes a Signer / Signature / pubkey lives here.
+
+  /**
+   * Sign every chunk appended since the last SIG (or from the start).
+   * Folds the chain forward from `committedChainHash` over each new chunk,
+   * signs the resulting chainHash, and appends a SIGNATURE chunk carrying
+   * the chainHash + the signature bytes.
+   *
+   * @param {import('./Signer.js').Signer} signer
+   * @param {string} streamoName
+   * @returns {Promise.<Signature>}
+   */
+  async sign (signer, streamoName) {
+    const before = this.byteLength
+    // Walk back over chunks since the last sig, then fold them forward.
+    const chunks = []
+    let addr = this.byteLength - 1
+    while (addr >= this.signedLength) {
+      const code = this.resolve(addr)
+      chunks.unshift(code)
+      addr -= code.length
+    }
+    let chainHash = this.committedChainHash
+    for (const chunk of chunks) chainHash = await foldChunk(chainHash, chunk)
+    const compactRawBytes = await signer.sign(streamoName, chainHash)
+    if (this.byteLength !== before) throw new Error('repo was modified while signing')
+    const sig = new Signature(chainHash, compactRawBytes)
+    this.append(this.encode(sig))
+    return sig
+  }
+
+  /**
+   * Stateless crypto-check: is `sig` a valid signature over `sig.chainHash`
+   * by `publicKey`? Doesn't re-verify chain consistency — that's what
+   * makeVerifiedWritableStream does at write time.
+   *
+   * @param {Signature} sig
+   * @param {Uint8Array} publicKey
+   * @returns {Promise.<boolean>}
+   */
+  async verify (sig, publicKey) {
+    return verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
+  }
+
+  // ── The verified writer ────────────────────────────────────────────────
+  // Stateful, identity-bound: consumes a wire stream, holds session state
+  // (pendingChainHash, staged, wireByteLength), surfaces failures to
+  // application UI via the conflictDetected / verificationFailed reactive
+  // flags.
 
   /**
    * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose

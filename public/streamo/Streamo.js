@@ -14,12 +14,11 @@
  *
  * **The chain**: appended chunks fold into a running chain hash
  *   chainHash_{n+1} = sha256(chainHash_n || sha256(chunk_n))
- * so a SIGNATURE chunk (97 bytes: chainHash + signature + footer)
- * commits to a 32-byte value summarizing the entire prefix. Each next
- * sig builds on the previous sig's chainHash — a hash chain. Streamo
- * itself isn't identity-aware (sign/verify take a signer/pubkey as
- * arguments); identity-bound verification of incoming bytes lives on
- * Repo via makeVerifiedWritableStream.
+ * Streamo tracks the chain state passively — when a SIGNATURE chunk lands
+ * via `append()`, it records the new `committedChainHash` and advances
+ * `signedLength`. Streamo doesn't sign, verify, or hold a signer; all
+ * identity-aware work (sign, verify, makeVerifiedWritableStream + its
+ * reactive flags) lives on Repo.
  *
  * Exports: Streamo (the class), ConflictError, changedPaths, foldChunk,
  * arraysEqual.
@@ -28,8 +27,6 @@
  */
 import { Recaller } from './utils/Recaller.js'
 import { CodecRegistry } from './CodecRegistry.js'
-import { Signature } from './Signature.js'
-import { verifySignature } from './Signer.js'
 
 const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
 async function sha256 (bytes) {
@@ -415,58 +412,4 @@ export class Streamo extends CodecRegistry {
     this.#valueAddress = -1
   }
 
-  /**
-   * Compute the chainHash over every chunk appended since the last
-   * SIGNATURE (or from the 32-zero seed if there is none). Walks chunks
-   * newest-first by footer-derived width, then folds them in append order.
-   *
-   * @returns {Promise.<Uint8Array>} 32-byte chainHash
-   */
-  async #pendingChainHash () {
-    const chunks = []
-    let addr = super.byteLength - 1
-    while (addr >= this.#signedLength) {
-      const code = this.resolve(addr)
-      chunks.unshift(code)
-      addr -= code.length
-    }
-    let chainHash = this.#committedChainHash
-    for (const chunk of chunks) chainHash = await foldChunk(chainHash, chunk)
-    return chainHash
-  }
-
-  /**
-   * Sign the chunks appended since the last signature (or from the start).
-   * Computes the chainHash, signs it, and appends a SIGNATURE chunk
-   * carrying both the chainHash and the signature bytes.
-   *
-   * @param {import('./Signer.js').Signer} signer
-   * @param {string} streamoName
-   * @returns {Promise.<Signature>}
-   */
-  async sign (signer, streamoName) {
-    const before = super.byteLength
-    const chainHash = await this.#pendingChainHash()
-    const compactRawBytes = await signer.sign(streamoName, chainHash)
-    if (super.byteLength !== before) throw new Error('streamo was modified while signing')
-    const sig = new Signature(chainHash, compactRawBytes)
-    this.append(this.encode(sig))
-    return sig
-  }
-
-  /**
-   * Verify a signature's cryptographic authenticity against `publicKey`.
-   * Stateless — just a wrapper around verifySignature for the common case
-   * of asking "is this sig good under this key?" Lives on Streamo (not Repo)
-   * because it doesn't require identity to be *attached* — the pubkey is an
-   * argument. Repo's makeVerifiedWritableStream uses verifySignature directly
-   * for the identity-bound, stateful verification.
-   *
-   * @param {Signature} sig
-   * @param {Uint8Array} publicKey
-   * @returns {Promise.<boolean>}
-   */
-  async verify (sig, publicKey) {
-    return verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
-  }
 }

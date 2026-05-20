@@ -12,17 +12,17 @@
  * watcher that reads `streamo.get('settings', 'theme')` only re-fires when
  * that specific path changes — not on every chunk that lands.
  *
- * **The chain**: appended chunks fold into a running hash accumulator
- *   acc_{n+1} = sha256(acc_n || sha256(chunk_n))
- * so a SIGNATURE chunk (97 bytes: accumulator + signature + footer)
+ * **The chain**: appended chunks fold into a running chain hash
+ *   chainHash_{n+1} = sha256(chainHash_n || sha256(chunk_n))
+ * so a SIGNATURE chunk (97 bytes: chainHash + signature + footer)
  * commits to a 32-byte value summarizing the entire prefix. Each next
- * sig builds on the previous sig's accumulator — a hash chain. Streamo
+ * sig builds on the previous sig's chainHash — a hash chain. Streamo
  * itself isn't identity-aware (sign/verify take a signer/pubkey as
  * arguments); identity-bound verification of incoming bytes lives on
  * Repo via makeVerifiedWritableStream.
  *
- * Exports: Streamo (the class), ConflictError, changedPaths,
- * GENESIS_ACCUMULATOR, foldChunk, arraysEqual.
+ * Exports: Streamo (the class), ConflictError, changedPaths, foldChunk,
+ * arraysEqual.
  *
  * See design.md §5.
  */
@@ -35,23 +35,21 @@ const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await impo
 async function sha256 (bytes) {
   return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
 }
-// 32 zero bytes; the chain seed. Exported so Repo (which owns the verified
-// writer and its identity-aware check) can reference the same starting value.
-export const GENESIS_ACCUMULATOR = new Uint8Array(32)
 export function arraysEqual (a, b) {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
   return true
 }
 /**
- * Fold one chunk into a running accumulator using the chain-hash scheme.
- *   next = sha256(acc || sha256(chunk))
+ * Fold one chunk into a running chain hash:
+ *   next = sha256(prev || sha256(chunk))
  * Pure helper; no streamo state touched. Exported for Repo's verifier.
+ * The chain seed for a fresh streamo is `new Uint8Array(32)` (32 zeros).
  */
-export async function foldChunk (acc, chunk) {
+export async function foldChunk (prev, chunk) {
   const chunkHash = await sha256(chunk)
   const combined = new Uint8Array(64)
-  combined.set(acc, 0)
+  combined.set(prev, 0)
   combined.set(chunkHash, 32)
   return await sha256(combined)
 }
@@ -128,7 +126,7 @@ export function * changedPaths (streamo, addrA, addrB, path = []) {
 export class Streamo extends CodecRegistry {
   #recaller
   #signedLength = 0
-  #committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
+  #committedChainHash = new Uint8Array(32)
   // Address of the current top value. Tracks explicitly so it stays correct
   // even when set() encodes a value whose outermost subcode already exists
   // in the content map (dedup) — in that case super.append() returns the
@@ -155,11 +153,11 @@ export class Streamo extends CodecRegistry {
   /**
    * Append code and notify reactive watchers.
    *
-   * When the appended chunk is a SIGNATURE, adopt its accumulator as the new
+   * When the appended chunk is a SIGNATURE, adopt its chainHash as the new
    * committed value and advance the signed cursor. The chain integrity of
-   * that accumulator is the upstream caller's responsibility: `sign()`
+   * that chainHash is the upstream caller's responsibility: `sign()`
    * computes it correctly by construction, and `makeVerifiedWritableStream`
-   * gates appends so an untrusted peer cannot insert a SIG whose accumulator
+   * gates appends so an untrusted peer cannot insert a SIG whose chainHash
    * does not match the byte sequence we received. `makeWritableStream`
    * (the unverified path, e.g. local archive replay) trusts its source.
    *
@@ -171,7 +169,7 @@ export class Streamo extends CodecRegistry {
     if (this.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') {
       const sig = this.decode(code)
       this.#signedLength = super.byteLength
-      this.#committedAccumulator = sig.accumulator
+      this.#committedChainHash = sig.chainHash
     } else {
       this.#valueAddress = address
     }
@@ -405,26 +403,26 @@ export class Streamo extends CodecRegistry {
   /** Byte length that has been covered by a signature. */
   get signedLength () { return this.#signedLength }
 
-  /** The 32-byte accumulator committed by the most recent SIGNATURE chunk
-   * (or the 32-byte genesis seed if no signature has been appended yet). */
-  get committedAccumulator () { return this.#committedAccumulator }
+  /** The 32-byte chainHash committed by the most recent SIGNATURE chunk
+   * (or 32 zero bytes if no signature has been appended yet). */
+  get committedChainHash () { return this.#committedChainHash }
 
   /** @override Also resets the chain state. */
   _reset () {
     super._reset()
     this.#signedLength = 0
-    this.#committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
+    this.#committedChainHash = new Uint8Array(32)
     this.#valueAddress = -1
   }
 
   /**
-   * Compute the running accumulator over every chunk appended since the
-   * last SIGNATURE (or from genesis if there is none). Walks chunks
+   * Compute the chainHash over every chunk appended since the last
+   * SIGNATURE (or from the 32-zero seed if there is none). Walks chunks
    * newest-first by footer-derived width, then folds them in append order.
    *
-   * @returns {Promise.<Uint8Array>} 32-byte accumulator
+   * @returns {Promise.<Uint8Array>} 32-byte chainHash
    */
-  async #pendingAccumulator () {
+  async #pendingChainHash () {
     const chunks = []
     let addr = super.byteLength - 1
     while (addr >= this.#signedLength) {
@@ -432,15 +430,15 @@ export class Streamo extends CodecRegistry {
       chunks.unshift(code)
       addr -= code.length
     }
-    let acc = this.#committedAccumulator
-    for (const chunk of chunks) acc = await foldChunk(acc, chunk)
-    return acc
+    let chainHash = this.#committedChainHash
+    for (const chunk of chunks) chainHash = await foldChunk(chainHash, chunk)
+    return chainHash
   }
 
   /**
    * Sign the chunks appended since the last signature (or from the start).
-   * Computes the running accumulator, signs it, and appends a SIGNATURE
-   * chunk carrying both the accumulator and the signature bytes.
+   * Computes the chainHash, signs it, and appends a SIGNATURE chunk
+   * carrying both the chainHash and the signature bytes.
    *
    * @param {import('./Signer.js').Signer} signer
    * @param {string} streamoName
@@ -448,10 +446,10 @@ export class Streamo extends CodecRegistry {
    */
   async sign (signer, streamoName) {
     const before = super.byteLength
-    const accumulator = await this.#pendingAccumulator()
-    const compactRawBytes = await signer.sign(streamoName, accumulator)
+    const chainHash = await this.#pendingChainHash()
+    const compactRawBytes = await signer.sign(streamoName, chainHash)
     if (super.byteLength !== before) throw new Error('streamo was modified while signing')
-    const sig = new Signature(accumulator, compactRawBytes)
+    const sig = new Signature(chainHash, compactRawBytes)
     this.append(this.encode(sig))
     return sig
   }
@@ -469,6 +467,6 @@ export class Streamo extends CodecRegistry {
    * @returns {Promise.<boolean>}
    */
   async verify (sig, publicKey) {
-    return verifySignature(publicKey, sig.accumulator, sig.compactRawBytes)
+    return verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
   }
 }

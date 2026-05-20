@@ -152,14 +152,14 @@ commit, moving `valueAddress` past it and breaking `Repo.lastCommit`.)
 
 ### Signing (hash chain)
 
-Each Streamo carries a 32-byte running accumulator. Every appended
+Each Streamo carries a 32-byte running chainHash. Every appended
 chunk folds in as `acc' = sha256(acc || sha256(chunk))`, starting from
 a 32-byte zero seed and re-seeded to the most recent signature's
-accumulator after every SIGNATURE chunk lands. `sign(signer, name)`
-signs the *current* accumulator value and appends a fixed-format
-97-byte SIGNATURE chunk: `[accumulator(32) | signature(64) |
+chainHash after every SIGNATURE chunk lands. `sign(signer, name)`
+signs the *current* chainHash value and appends a fixed-format
+97-byte SIGNATURE chunk: `[chainHash(32) | signature(64) |
 footer(1)]`. `verify(sig, publicKey)` is now pure crypto — it does not
-need to walk the byte stream because the accumulator is carried
+need to walk the byte stream because the chainHash is carried
 inside the chunk.
 
 `valueAddress` skips trailing SIGNATURE chunks so `get`-style reads
@@ -167,10 +167,10 @@ always operate on user data even when the streamo just got auto-signed.
 
 `makeVerifiedWritableStream(publicKey)` is the receive side of sync,
 and the only path through which an untrusted peer can deliver bytes.
-Every non-sig chunk is *staged* (folded into a tentative accumulator
+Every non-sig chunk is *staged* (folded into a tentative chainHash
 but not yet appended). When a SIGNATURE arrives, two checks fire:
-the chain check (`sig.accumulator` equals the staged accumulator) and
-the crypto check (the signature verifies against `sig.accumulator`
+the chain check (`sig.chainHash` equals the staged chainHash) and
+the crypto check (the signature verifies against `sig.chainHash`
 under `publicKey`). If both pass, the staged chunks and the SIG are
 appended in one batch; if either fails the stream errors and the
 staged batch is discarded. The store is never polluted with bytes
@@ -179,7 +179,7 @@ corruption hole.
 
 The chain is what makes the relay stateless across restarts: a peer
 that wants to verify the next append only needs the most-recent
-32-byte accumulator (carried on every SIGNATURE), not the full prior
+32-byte chainHash (carried on every SIGNATURE), not the full prior
 byte stream.
 
 ## 6. `Recaller` — the reactivity primitive
@@ -212,7 +212,7 @@ produce the same keypair — there are no key files. The KAT in
 in WebCrypto can't silently shift identities.
 
 `Signature` is the value-class that gets encoded as a SIGNATURE chunk:
-`{ accumulator, compactRawBytes }` where `accumulator` is the 32-byte
+`{ chainHash, compactRawBytes }` where `chainHash` is the 32-byte
 hash-chain value at the moment of signing and `compactRawBytes` is
 the 64-byte ECDSA signature over it.
 

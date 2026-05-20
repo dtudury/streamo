@@ -15,7 +15,7 @@
  *    can't tell whether incoming bytes "fit" — that's identity-aware
  *    work (it requires a pubkey and chain-alignment state). Repo gates
  *    incoming wire chunks: a SIG must crypto-verify under the expected
- *    pubkey, its accumulator must chain from our current chain, AND the
+ *    pubkey, its chainHash must extend our current chain, AND the
  *    staged chunks must land at addresses where their internal refs
  *    will resolve correctly. Any failure throws AND raises the
  *    appropriate reactive flag for UI to surface.
@@ -37,7 +37,7 @@
  *
  * See design.md §8.
  */
-import { Streamo, changedPaths, GENESIS_ACCUMULATOR, foldChunk, arraysEqual } from './Streamo.js'
+import { Streamo, changedPaths, foldChunk, arraysEqual } from './Streamo.js'
 import { verifySignature } from './Signer.js'
 
 /**
@@ -469,7 +469,7 @@ export class Repo extends Streamo {
 
   /**
    * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
-   * accumulator didn't match the locally-folded chain, OR whose staged
+   * chainHash didn't match the locally-folded chain, OR whose staged
    * chunks would land at addresses where their references resolve wrong.
    *
    * This is a *conflict*, not a fork in streamo's vocabulary — a fork is
@@ -495,11 +495,11 @@ export class Repo extends Streamo {
 
   /**
    * Like Streamo.makeWritableStream(), but gates every chunk against the
-   * author's accumulator chain before it can corrupt the store.
+   * author's chain before it can corrupt the store.
    *
-   * Non-signature chunks are *staged* (folded into a tentative accumulator
+   * Non-signature chunks are *staged* (folded into a tentative chainHash
    * but not appended). When a SIGNATURE arrives, three checks fire:
-   *   1. chain        — sig.accumulator must equal the tentative accumulator
+   *   1. chain        — sig.chainHash must equal the tentative chainHash
    *   2. crypto       — sig.compactRawBytes must verify under `publicKey`
    *   3. alignment    — local byteLength must match the wire's pre-staged
    *                     position so staged chunks land where their internal
@@ -515,13 +515,13 @@ export class Repo extends Streamo {
   makeVerifiedWritableStream (publicKey, maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
-    // Anchor on genesis because the wire today replays from byte 0 — the
-    // sender's makeReadableStream emits from offset 0, so we have to fold
-    // matching chunks from the same point. A future cleanup could change
-    // the wire to send "anchored batches" (sender skips bytes the receiver
-    // already has, verifier starts from committedAccumulator), but that's
-    // a wire-protocol change not yet done.
-    let pendingAcc = new Uint8Array(GENESIS_ACCUMULATOR)
+    // Start from the 32-zero seed because the wire today replays from byte 0
+    // — the sender's makeReadableStream emits from offset 0, so we have to
+    // fold matching chunks from the same point. A future cleanup could
+    // change the wire to send "anchored batches" (sender skips bytes the
+    // receiver already has, verifier starts from committedChainHash), but
+    // that's a wire-protocol change not yet done.
+    let pendingChainHash = new Uint8Array(32)
     let staged = [] // new (not-already-present) non-sig chunks awaiting a covering SIG
     // Cumulative bytes consumed from the wire. Used by the alignment check
     // at sig commit so staged chunks land at addresses matching the wire's
@@ -545,16 +545,16 @@ export class Repo extends Streamo {
 
           if (codec?.type === 'SIGNATURE') {
             const sig = self.decode(code)
-            if (!arraysEqual(sig.accumulator, pendingAcc)) {
+            if (!arraysEqual(sig.chainHash, pendingChainHash)) {
               // Chain conflict: honest signer, conflicting history. The
               // signer's other device signed over a chunk sequence we don't
               // share. Raise the reactive flag *before* throwing so watchers
               // see it even when the throw kills the connection.
               self.#conflictDetected = true
               self.recaller.reportKeyMutation(self, 'conflictDetected')
-              throw new Error('signature accumulator does not match chain')
+              throw new Error('signature chainHash does not match the local chain')
             }
-            const valid = await verifySignature(publicKey, sig.accumulator, sig.compactRawBytes)
+            const valid = await verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
             if (!valid) {
               // Crypto failure: signature doesn't verify under expected
               // pubkey. Different threat from a conflict — separate flag
@@ -587,9 +587,9 @@ export class Repo extends Streamo {
             for (const c of staged) self.append(c)
             staged = []
             if (!alreadyHave) self.append(code)
-            // pendingAcc stays at sig.accumulator; next non-sig chunks fold from here.
+            // pendingChainHash stays at sig.chainHash; next non-sig chunks fold from here.
           } else {
-            pendingAcc = await foldChunk(pendingAcc, code)
+            pendingChainHash = await foldChunk(pendingChainHash, code)
             if (!alreadyHave) staged.push(code)
           }
           wireByteLength += code.length

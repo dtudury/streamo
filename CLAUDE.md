@@ -121,7 +121,7 @@ lands without tests passing, you have failed the contract.
 
 - `Streamo` — content-addressable codec. `set(value)→address`, `get(address)→value`,
   same value → same address. Decomposes structured values into reusable chunks; chunks
-  reference each other by byte-offset address. Hash-chain accumulator over the byte
+  reference each other by byte-offset address. Hash-chain (chainHash) folds over the byte
   stream; SIG chunks anchor it. Identity-blind — sign/verify take signer/pubkey as args.
 - `Repo` — extends Streamo; every `set()` is a signed commit (message, date, dataAddress,
   parent, remoteParent?). Owns the identity-aware verified writer

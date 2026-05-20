@@ -19,7 +19,7 @@ no-recaller static-rendering mode. Underneath, 7.5 multi-home
 serving (every pushed repo is a public URL at
 `/streams/<keyhex>/`), 7.4 dumb-pipe relay (the relay can drop
 its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
-Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain accumulator are
+Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
 unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, and the
 `streamo-history` repo on one port. 209 tests passing.
@@ -413,7 +413,7 @@ Each commit's `dataAddress` is an offset that is only valid in the stream that
 produced it — the streams cannot be structurally merged.
 
 **Detection (landed 2026-05-20):** `Repo.makeVerifiedWritableStream` catches
-the divergence at the byte-stream level — the hash-chain accumulator fails to
+the divergence at the byte-stream level — the chainHash fails to
 match when a SIG arrives covering content the receiver hasn't folded, OR the
 alignment check fires when staged chunks would land at addresses where their
 internal refs resolve to wrong bytes. Repo raises two reactive flags before
@@ -573,8 +573,8 @@ Verification lets us cut them off. Three ways to do that detection:
    when it doesn't. Cheap and bounded, but spotty — dormant repos
    getting a fresh write fall back to trust.
 2. **Stream-commitment crypto** (next entry) — sign a running
-   accumulator over the byte stream. Verification needs only the
-   accumulator + the new chunks + the signature, no cached history.
+   chainHash over the byte stream. Verification needs only the
+   chainHash + the new chunks + the signature, no cached history.
    Cleaner and uniformly available.
 3. **Upstream-signaled rejection** — upstream verifies signatures (it
    would reject invalid writes anyway) and tells the proxy "the write
@@ -647,10 +647,10 @@ whole surface.
 The opportunistic-verification fallback in the caching relay above
 exists because verifying a streamo signature requires the bytes the
 signature covers — which the proxy might have evicted. A natural way
-out: maintain a small (logarithmic-or-constant-size) **accumulator**
-over the byte stream, and have signatures sign the accumulator rather
+out: maintain a small (logarithmic-or-constant-size) **chainHash**
+over the byte stream, and have signatures sign the chainHash rather
 than a raw byte range. Then verifying a new signed write needs only
-the accumulator + the new chunks + the signature — no historical
+the chainHash + the new chunks + the signature — no historical
 bytes, ever.
 
 This is well-trodden cryptographic territory — Merkle Mountain Ranges,
@@ -662,7 +662,7 @@ small constant work.
 
 Effect on the caching relay: write verification becomes fully stateless,
 no cache caveat. Effect on regular clients: a slightly different sig
-chunk format, with the accumulator state baked in. Effect on streamo's
+chunk format, with the chainHash state baked in. Effect on streamo's
 data model: additive, not breaking — existing streams could carry the
 new commitment alongside the existing signature, with a codec version
 bump.

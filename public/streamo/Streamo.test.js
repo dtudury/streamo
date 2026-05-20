@@ -305,9 +305,9 @@ describe(import.meta.url, ({ test }) => {
 
   test('sign commits to the full chain — every appended chunk covered', async ({ assert }) => {
     // Under the chain-hash scheme each non-sig chunk folds into a running
-    // accumulator as `acc' = sha256(acc || sha256(chunk))`, and the SIG
-    // chunk carries that accumulator + a signature over it. This test
-    // independently reconstructs the accumulator chunk-by-chunk and
+    // chainHash as `acc' = sha256(acc || sha256(chunk))`, and the SIG
+    // chunk carries that chainHash + a signature over it. This test
+    // independently reconstructs the chainHash chunk-by-chunk and
     // proves the SIG signs exactly that 32-byte commitment.
     const s = new Streamo()
     const signer = new Signer('alice', 'hunter2', 1)
@@ -315,20 +315,20 @@ describe(import.meta.url, ({ test }) => {
     const beforeSig = s.byteLength
     const sig = await s.sign(signer, 'test')
 
-    // Walk every chunk we just wrote and fold the accumulator manually.
+    // Walk every chunk we just wrote and fold the chainHash manually.
     const cryptoSubtle = (await import('crypto')).webcrypto.subtle
     const sha = async b => new Uint8Array(await cryptoSubtle.digest('SHA-256', b))
     const chunks = []
     let addr = beforeSig - 1
     while (addr >= 0) { const c = s.resolve(addr); chunks.unshift(c); addr -= c.length }
-    let expectedAcc = new Uint8Array(32)
+    let expectedChainHash = new Uint8Array(32)
     for (const c of chunks) {
       const combined = new Uint8Array(64)
-      combined.set(expectedAcc, 0); combined.set(await sha(c), 32)
-      expectedAcc = await sha(combined)
+      combined.set(expectedChainHash, 0); combined.set(await sha(c), 32)
+      expectedChainHash = await sha(combined)
     }
-    assert.deepEqual([...sig.accumulator], [...expectedAcc],
-      'sig.accumulator must equal independently-folded chain over every pre-sig chunk')
+    assert.deepEqual([...sig.chainHash], [...expectedChainHash],
+      'sig.chainHash must equal independently-folded chain over every pre-sig chunk')
 
     // Verify must accept the sig.
     const { publicKey } = await signer.keysFor('test')
@@ -380,7 +380,7 @@ describe(import.meta.url, ({ test }) => {
     // divergent commits independently. Each device's stream is internally
     // self-consistent and crypto-valid — the conflict is only visible when
     // both streams meet at a third peer. The verifier-gate catches it:
-    // device 2's SIG carries an accumulator computed from device 2's chain
+    // device 2's SIG carries an chainHash computed from device 2's chain
     // (starting from genesis through device 2's content only), which cannot
     // equal the verifier's pendingAcc after it has already folded device 1's
     // divergent chunks. This is the byte-stream signal that the chain has
@@ -418,7 +418,7 @@ describe(import.meta.url, ({ test }) => {
     const tipAfterDevice1 = target.byteLength
     assert.ok(tipAfterDevice1 > 0, 'sanity: device 1 actually wrote bytes')
 
-    // Now device 2's stream arrives. Its sig will carry an accumulator that
+    // Now device 2's stream arrives. Its sig will carry an chainHash that
     // was computed independently — pendingAcc has device 1's chunks folded
     // into it, so the mismatch fires before any of device 2's bytes commit.
     let caught = null
@@ -427,8 +427,8 @@ describe(import.meta.url, ({ test }) => {
     } catch (e) { caught = e }
 
     assert.ok(caught, 'merging a divergent chain must throw at the verifying writer')
-    assert.ok(/accumulator/i.test(caught.message),
-      `error should name the accumulator chain mismatch; got: ${caught.message}`)
+    assert.ok(/chainHash/i.test(caught.message),
+      `error should name the chainHash chain mismatch; got: ${caught.message}`)
     assert.equal(target.byteLength, tipAfterDevice1,
       'staging discards the rejected batch — no divergent bytes land in the target')
     assert.equal(target.conflictDetected, true,
@@ -492,8 +492,8 @@ describe(import.meta.url, ({ test }) => {
     // would resolve their internal references (COMMIT.dataAddress etc.) to
     // wrong bytes — the watcher fires after append and decode crashes.
     //
-    // The accumulator check alone doesn't catch this: the wire's chain is
-    // internally consistent (sig.accumulator matches a fold from genesis
+    // The chainHash check alone doesn't catch this: the wire's chain is
+    // internally consistent (sig.chainHash matches a fold from genesis
     // through the wire's chunks), so the wire would pass that check until
     // some LATER sig diverges. By then, bad chunks have already landed.
     //
@@ -568,7 +568,7 @@ describe(import.meta.url, ({ test }) => {
     // Bad sig is a different threat from a fork: the signer didn't actually
     // sign these bytes (or the bytes got corrupted in transit). The chain
     // would have to match for the crypto check to fire — so we craft a stream
-    // where the accumulator IS valid but the signature bytes are tampered.
+    // where the chainHash IS valid but the signature bytes are tampered.
     const author = new Streamo()
     const signer = new Signer('alice', 'hunter2', 1)
     author.set({ a: 1 })
@@ -602,7 +602,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(peer.verificationFailed, true,
       'verificationFailed must be raised for the crypto-verify path')
     assert.equal(peer.conflictDetected, false,
-      'conflictDetected stays false — the accumulator matched; only the signature bytes were bad')
+      'conflictDetected stays false — the chainHash matched; only the signature bytes were bad')
   })
 
   test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {

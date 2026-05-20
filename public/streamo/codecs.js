@@ -307,19 +307,19 @@ export function makeCodecs () {
     }
   }
 
-  // Fixed-format 97-byte chunk: [accumulator(32) | signature(64) | footer(1)].
+  // Fixed-format 97-byte chunk: [chainHash(32) | signature(64) | footer(1)].
   //
   // No partReaders → single footer slot, fixed width. The fixed footer +
-  // fixed length lets a verifier read the latest accumulator with a single
+  // fixed length lets a verifier read the latest chainHash with a single
   // slice of the last 97 bytes of HEAD — no chunk-graph walk required.
   // `directReferences` returns [] for SIGNATURE (no chunk references; the
-  // accumulator + sig bytes are data, not pointers).
+  // chainHash + sig bytes are data, not pointers).
   const SIGNATURE = {
     getWidth: () => 97,
     encode (r, v) {
       if (v instanceof Signature) {
         const out = new Uint8Array(97)
-        out.set(v.accumulator, 0)
+        out.set(v.chainHash, 0)
         out.set(v.compactRawBytes, 32)
         out[96] = SIGNATURE.baseFooter
         return out

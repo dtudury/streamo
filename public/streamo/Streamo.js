@@ -19,29 +19,12 @@
  * extends Streamo and overrides `append` + `valueAddress` to thread the
  * chain through.
  *
- * Exports: Streamo (the class), ConflictError, changedPaths.
+ * Exports: Streamo (the class), changedPaths.
  *
  * See design.md §5.
  */
 import { Recaller } from './utils/Recaller.js'
 import { CodecRegistry } from './CodecRegistry.js'
-
-/**
- * Thrown by conditionalSet() when the streamo has advanced past the expected tip.
- * Catch this to detect write conflicts and retry with a fresh read.
- */
-export class ConflictError extends Error {
-  /**
-   * @param {number} expectedTip  byteLength the caller observed
-   * @param {number} actualTip    byteLength at the moment of the attempted write
-   */
-  constructor (expectedTip, actualTip) {
-    super(`conflict: expected tip ${expectedTip} but streamo is at ${actualTip}`)
-    this.name = 'ConflictError'
-    this.expectedTip = expectedTip
-    this.actualTip = actualTip
-  }
-}
 
 /**
  * Yield every path where addrA and addrB differ, including the root.
@@ -301,23 +284,6 @@ export class Streamo extends CodecRegistry {
       this.#recaller.reportKeyMutation(this, JSON.stringify(changed))
     }
     return newAddress
-  }
-
-  /**
-   * Like set(), but only succeeds if the streamo's current byteLength equals
-   * `expectedTip` — i.e., nothing has been written since the caller last read.
-   *
-   * Throws ConflictError when the precondition fails. Callers should catch it,
-   * re-read the latest state, re-apply their change, and retry.
-   *
-   * @param {number} expectedTip  byteLength observed when the change was prepared
-   * @param {...(string|any)} args  same arguments as set()
-   * @returns {number} address of the newly appended code
-   */
-  conditionalSet (expectedTip, ...args) {
-    const actual = super.byteLength
-    if (actual !== expectedTip) throw new ConflictError(expectedTip, actual)
-    return this.set(...args)
   }
 
   /**

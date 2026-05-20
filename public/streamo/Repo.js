@@ -148,11 +148,6 @@ export class Repo extends Streamo {
   #signerName  = null
   #signing     = false
   #signPending = false
-  // Chain bookkeeping — advanced by the SIG branch of `append()`. signedLength
-  // is the byteLength immediately after the most recent SIG; committedChainHash
-  // is that SIG's chainHash (or 32 zeros if no SIG has been seen yet).
-  #signedLength       = 0
-  #committedChainHash = new Uint8Array(32)
   // Reactive error flags raised by makeVerifiedWritableStream. The verifier
   // *also* throws, so default-uncaught code crashes its connection — these
   // flags exist for code that wants to be smarter (UI banner, recovery flow,
@@ -162,18 +157,19 @@ export class Repo extends Streamo {
   #verificationFailed = false
 
   /**
-   * @override Track chain state when a SIGNATURE chunk lands: record the
-   * new committedChainHash and advance signedLength. Streamo's append is
-   * SIG-blind; this override adds the bookkeeping at the Repo layer.
+   * Walk back from the tail to the most recent SIGNATURE chunk. Returns
+   * its starting address (the byte at which it begins), or -1 if there
+   * is no SIG in the store. SIGs are fixed-format 97-byte chunks; the
+   * first 32 bytes are the chainHash and the next 64 are the signature.
    */
-  append (code) {
-    const address = super.append(code)
-    if (this.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') {
-      const sig = this.decode(code)
-      this.#signedLength = this.byteLength
-      this.#committedChainHash = sig.chainHash
+  #lastSigAddress () {
+    let addr = this.byteLength - 1
+    while (addr >= 0) {
+      const code = this.resolve(addr)
+      if (this.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') return addr - code.length + 1
+      addr -= code.length
     }
-    return address
+    return -1
   }
 
   /**
@@ -191,12 +187,27 @@ export class Repo extends Streamo {
     return address
   }
 
-  /** Byte length that has been covered by a signature. */
-  get signedLength () { return this.#signedLength }
+  /**
+   * Byte length covered by the most recent SIGNATURE chunk. Derived from
+   * the bytes — no cached state. Returns 0 if no SIG has been appended.
+   */
+  get signedLength () {
+    const sigStart = this.#lastSigAddress()
+    return sigStart < 0 ? 0 : sigStart + 97
+  }
 
-  /** The 32-byte chainHash committed by the most recent SIGNATURE chunk
-   * (or 32 zero bytes if no signature has been appended yet). */
-  get committedChainHash () { return this.#committedChainHash }
+  /**
+   * The 32-byte chainHash committed by the most recent SIGNATURE chunk.
+   * Derived from the bytes: the first 32 bytes of that 97-byte chunk.
+   * Returns 32 zeros (the chain seed) if no SIG has been appended.
+   */
+  get committedChainHash () {
+    const sigStart = this.#lastSigAddress()
+    if (sigStart < 0) return new Uint8Array(32)
+    // The SIG chunk runs from sigStart to sigStart+96 (inclusive). Its first
+    // 32 bytes are the chainHash. Slice with end exclusive.
+    return this.slice(sigStart, sigStart + 32)
+  }
 
   /**
    * Default commit message attached to every commit made via set() / setRefs().

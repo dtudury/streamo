@@ -130,6 +130,13 @@ async function login (e) {
     myRepo = await registry.open(myKey)
     myRepo.attachSigner(signer, 'chat')
     myRepo.defaultMessage = `joined as ${username} (web)`
+    // Expose for manual archive surgery — the relay stores per-key as
+    // `.streamo/<myKey>.bin`. Logged at INFO so it's visible without
+    // turning on verbose channels.
+    console.log(`[chat] my key: ${myKey}`)
+    console.log(`[chat] archive file: .streamo/${myKey}.bin`)
+    window.streamoMyKey = myKey
+    window.streamoMyRepo = myRepo
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)

@@ -374,6 +374,63 @@ describe(import.meta.url, ({ test }) => {
       'no bytes may land in the peer store when the covering sig fails verification')
   })
 
+  test('makeVerifiedWritableStream detects a fork between two devices using the same signer', async ({ assert }) => {
+    // The multi-device fork: same identity (one signer), two devices write
+    // divergent commits independently. Each device's stream is internally
+    // self-consistent and crypto-valid — the fork is only visible when both
+    // streams meet at a third peer. The verifier-gate catches it: device 2's
+    // SIG carries an accumulator computed from device 2's chain (starting
+    // from genesis through device 2's content only), which cannot equal the
+    // verifier's pendingAcc after it has already folded device 1's divergent
+    // chunks. This is the byte-stream signal that a fork has occurred.
+    const signer = new Signer('alice', 'hunter2', 1)
+    const name = 'fork'
+    const { publicKey } = await signer.keysFor(name)
+
+    const device1 = new Streamo()
+    device1.set({ v: 'apple' })
+    await device1.sign(signer, name)
+
+    const device2 = new Streamo()
+    device2.set({ v: 'banana' })
+    await device2.sign(signer, name)
+
+    const readChunks = s => {
+      const out = []
+      let addr = s.byteLength - 1
+      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
+      return out
+    }
+    const frame = code => {
+      const f = new Uint8Array(4 + code.length)
+      new DataView(f.buffer).setUint32(0, code.length, true)
+      f.set(code, 4)
+      return f
+    }
+
+    const target = new Streamo()
+    const writer = target.makeVerifiedWritableStream(publicKey).getWriter()
+
+    // Device 1's full stream lands cleanly — its sig matches its own chain.
+    for (const c of readChunks(device1)) await writer.write(frame(c))
+    const tipAfterDevice1 = target.byteLength
+    assert.ok(tipAfterDevice1 > 0, 'sanity: device 1 actually wrote bytes')
+
+    // Now device 2's stream arrives. Its sig will carry an accumulator that
+    // was computed independently — pendingAcc has device 1's chunks folded
+    // into it, so the mismatch fires before any of device 2's bytes commit.
+    let caught = null
+    try {
+      for (const c of readChunks(device2)) await writer.write(frame(c))
+    } catch (e) { caught = e }
+
+    assert.ok(caught, 'merging a divergent fork must throw at the verifying writer')
+    assert.ok(/accumulator/i.test(caught.message),
+      `error should name the accumulator chain mismatch (Streamo.js:512); got: ${caught.message}`)
+    assert.equal(target.byteLength, tipAfterDevice1,
+      'staging discards the rejected batch — no fork bytes land in the target')
+  })
+
   test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {
     // Before this fix, loading a streamo from bytes left signedLength=0 even
     // though the loaded data already contained signatures. The next sign()

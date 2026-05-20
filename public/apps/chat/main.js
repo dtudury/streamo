@@ -306,6 +306,33 @@ mount(h`
     .empty-state { margin: auto; text-align: center; color: #888; font-size: .85rem; padding: 2rem; line-height: 1.6 }
     .empty-state strong { color: #555 }
 
+    /* Sync warning — appears when a repo's verifier-gate has rejected
+       incoming chunks. forkDetected (multi-device write conflict) and
+       verificationFailed (attack/corruption) get visually distinct
+       palettes so the user can tell the two threats apart at a glance. */
+    .sync-warning {
+      padding: .6rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: .8rem;
+      line-height: 1.4;
+      display: flex;
+      gap: .5rem;
+      align-items: flex-start;
+    }
+    .sync-warning.fork {
+      background: #fff3cd;   /* warm yellow — "you forked, here's what to do" */
+      color: #664d03;
+      border-bottom-color: #ffe69c;
+    }
+    .sync-warning.attack {
+      background: #f8d7da;   /* alarm red — "something is wrong, drop the peer" */
+      color: #58151c;
+      border-bottom-color: #f1aeb5;
+    }
+    .sync-warning .icon { flex: 0 0 auto; font-weight: 700 }
+    .sync-warning .body { flex: 1 }
+    .sync-warning .body strong { font-weight: 600 }
+
     .input-row { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--border) }
     .input-row input {
       flex: 1;
@@ -355,6 +382,41 @@ mount(h`
         <span class="my-name">(${() => myName})</span>
         <span class="my-swatch" title="your color — derived from your key"></span>
       </div>
+      ${() => {
+        // Sync warning slot — re-fires when any open repo raises a verifier
+        // flag. The two flags are surfaced separately because the right
+        // response differs: forkDetected wants a merge (or at minimum a
+        // reload to re-sync), verificationFailed wants the peer dropped.
+        let forkedMine = false
+        let forkedOther = 0
+        let badSig = 0
+        for (const [keyHex, repo] of registry) {
+          if (repo.forkDetected) {
+            if (keyHex === myKey) forkedMine = true
+            else forkedOther++
+          }
+          if (repo.verificationFailed) badSig++
+        }
+        if (!forkedMine && !forkedOther && !badSig) return null
+        if (badSig) {
+          return h`<div class="sync-warning attack" data-key="warn-attack">
+            <span class="icon">⚠</span>
+            <div class="body">
+              <strong>bad signature received.</strong>
+              ${badSig === 1 ? 'a peer sent bytes that did not crypto-verify.' : `${badSig} peers sent bytes that did not crypto-verify.`}
+              the connection has been dropped — refresh if this persists.
+            </div>
+          </div>`
+        }
+        return h`<div class="sync-warning fork" data-key="warn-fork">
+          <span class="icon">⑂</span>
+          <div class="body">
+            ${forkedMine
+              ? h`<strong>you've written from two places at once.</strong> another tab or device signed in with these credentials wrote while this one did — the histories have diverged. refresh to load the merged state.`
+              : h`<strong>a peer has forked.</strong> ${forkedOther === 1 ? 'one other repo' : `${forkedOther} other repos`} in this room ${forkedOther === 1 ? 'has' : 'have'} diverged across devices.`}
+          </div>
+        </div>`
+      }}
       <div id="messages">${() => {
         const all = []
         for (const [keyHex, repo] of registry) {

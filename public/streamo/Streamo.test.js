@@ -374,17 +374,18 @@ describe(import.meta.url, ({ test }) => {
       'no bytes may land in the peer store when the covering sig fails verification')
   })
 
-  test('makeVerifiedWritableStream detects a fork between two devices using the same signer', async ({ assert }) => {
-    // The multi-device fork: same identity (one signer), two devices write
+  test('makeVerifiedWritableStream detects a conflict between two devices using the same signer', async ({ assert }) => {
+    // The multi-device conflict: same identity (one signer), two devices write
     // divergent commits independently. Each device's stream is internally
-    // self-consistent and crypto-valid — the fork is only visible when both
-    // streams meet at a third peer. The verifier-gate catches it: device 2's
-    // SIG carries an accumulator computed from device 2's chain (starting
-    // from genesis through device 2's content only), which cannot equal the
-    // verifier's pendingAcc after it has already folded device 1's divergent
-    // chunks. This is the byte-stream signal that a fork has occurred.
+    // self-consistent and crypto-valid — the conflict is only visible when
+    // both streams meet at a third peer. The verifier-gate catches it:
+    // device 2's SIG carries an accumulator computed from device 2's chain
+    // (starting from genesis through device 2's content only), which cannot
+    // equal the verifier's pendingAcc after it has already folded device 1's
+    // divergent chunks. This is the byte-stream signal that the chain has
+    // diverged across devices.
     const signer = new Signer('alice', 'hunter2', 1)
-    const name = 'fork'
+    const name = 'conflict'
     const { publicKey } = await signer.keysFor(name)
 
     const device1 = new Streamo()
@@ -424,23 +425,23 @@ describe(import.meta.url, ({ test }) => {
       for (const c of readChunks(device2)) await writer.write(frame(c))
     } catch (e) { caught = e }
 
-    assert.ok(caught, 'merging a divergent fork must throw at the verifying writer')
+    assert.ok(caught, 'merging a divergent chain must throw at the verifying writer')
     assert.ok(/accumulator/i.test(caught.message),
-      `error should name the accumulator chain mismatch (Streamo.js:512); got: ${caught.message}`)
+      `error should name the accumulator chain mismatch; got: ${caught.message}`)
     assert.equal(target.byteLength, tipAfterDevice1,
-      'staging discards the rejected batch — no fork bytes land in the target')
-    assert.equal(target.forkDetected, true,
-      'forkDetected must be raised so watchers can see the fork even when the throw kills the connection')
+      'staging discards the rejected batch — no divergent bytes land in the target')
+    assert.equal(target.conflictDetected, true,
+      'conflictDetected must be raised so watchers can see the conflict even when the throw kills the connection')
     assert.equal(target.verificationFailed, false,
       'verificationFailed should stay false — the signature itself was crypto-valid; the chain mismatch is what failed')
   })
 
-  test('forkDetected fires reactively — watchers see the fork before/without catching the throw', async ({ assert }) => {
+  test('conflictDetected fires reactively — watchers see the conflict before/without catching the throw', async ({ assert }) => {
     // The whole point of the flag: app code that holds a Repo doesn't have
-    // to wrap every writer.write() in a try/catch. It just watches forkDetected
+    // to wrap every writer.write() in a try/catch. It just watches conflictDetected
     // and reacts. This test proves the recaller actually fires for that path.
     const signer = new Signer('alice', 'hunter2', 1)
-    const name = 'fork-reactive'
+    const name = 'conflict-reactive'
     const { publicKey } = await signer.keysFor(name)
 
     const device1 = new Streamo()
@@ -465,12 +466,12 @@ describe(import.meta.url, ({ test }) => {
 
     const target = new Streamo()
     let observed = []
-    target.recaller.watch('fork-watcher', () => observed.push(target.forkDetected))
+    target.recaller.watch('conflict-watcher', () => observed.push(target.conflictDetected))
 
     const writer = target.makeVerifiedWritableStream(publicKey).getWriter()
     for (const c of readChunks(device1)) await writer.write(frame(c))
-    // device1 stream is clean — no fork yet.
-    assert.equal(target.forkDetected, false, 'no fork until divergent chain arrives')
+    // device1 stream is clean — no conflict yet.
+    assert.equal(target.conflictDetected, false, 'no conflict until divergent chain arrives')
 
     // Now device2's stream — the throw will fire AND the flag will fire.
     try { for (const c of readChunks(device2)) await writer.write(frame(c)) } catch {}
@@ -478,7 +479,7 @@ describe(import.meta.url, ({ test }) => {
     // Allow the recaller's microtask flush to land
     await new Promise(r => setTimeout(r, 0))
     assert.ok(observed.includes(true),
-      `fork-watcher must observe forkDetected becoming true; observed: ${JSON.stringify(observed)}`)
+      `conflict-watcher must observe conflictDetected becoming true; observed: ${JSON.stringify(observed)}`)
   })
 
   test('verifier rejects wire chunks that would land at corrupted addresses (local has content past last shared sig)', async ({ assert }) => {
@@ -498,7 +499,7 @@ describe(import.meta.url, ({ test }) => {
     // The alignment check inside the sig-commit path verifies that staged
     // chunks would land at the wire's expected positions. If self.byteLength
     // doesn't match, we have local-only content occupying the addresses the
-    // wire's chunks reference. forkDetected fires without committing the
+    // wire's chunks reference. conflictDetected fires without committing the
     // corrupting batch.
 
     const signer = new Signer('alice', 'hunter2', 1)
@@ -551,8 +552,8 @@ describe(import.meta.url, ({ test }) => {
 
     assert.ok(caught,
       'merging a remote chain past the local divergence point must throw')
-    assert.equal(tabB.forkDetected, true,
-      'forkDetected must be raised for the alignment failure')
+    assert.equal(tabB.conflictDetected, true,
+      'conflictDetected must be raised for the alignment failure')
     assert.equal(tabB.byteLength, tabBByteLengthBeforeMerge,
       'no remote chunks land in tab B — local store stays decode-safe')
     // Sanity: tabB.get('messages') would crash if any wire chunks had been
@@ -562,7 +563,7 @@ describe(import.meta.url, ({ test }) => {
       'tab B can still read its local divergent value after the rejected merge')
   })
 
-  test('verificationFailed fires when a bad sig arrives — separate flag from forkDetected', async ({ assert }) => {
+  test('verificationFailed fires when a bad sig arrives — separate flag from conflictDetected', async ({ assert }) => {
     // Bad sig is a different threat from a fork: the signer didn't actually
     // sign these bytes (or the bytes got corrupted in transit). The chain
     // would have to match for the crypto check to fire — so we craft a stream
@@ -599,8 +600,8 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(caught, 'corrupted signature must still throw')
     assert.equal(peer.verificationFailed, true,
       'verificationFailed must be raised for the crypto-verify path')
-    assert.equal(peer.forkDetected, false,
-      'forkDetected stays false — the accumulator matched; only the signature bytes were bad')
+    assert.equal(peer.conflictDetected, false,
+      'conflictDetected stays false — the accumulator matched; only the signature bytes were bad')
   })
 
   test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {

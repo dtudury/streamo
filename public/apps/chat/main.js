@@ -318,9 +318,10 @@ mount(h`
     .empty-state strong { color: #555 }
 
     /* Sync warning — appears when a repo's verifier-gate has rejected
-       incoming chunks. forkDetected (multi-device write conflict) and
-       verificationFailed (attack/corruption) get visually distinct
-       palettes so the user can tell the two threats apart at a glance. */
+       incoming chunks. conflictDetected (chain divergence between two
+       devices using the same identity) and verificationFailed (attack
+       or byte corruption) get visually distinct palettes so the user
+       can tell the two threats apart at a glance. */
     .sync-warning {
       padding: .6rem 1rem;
       border-bottom: 1px solid var(--border);
@@ -330,8 +331,8 @@ mount(h`
       gap: .5rem;
       align-items: flex-start;
     }
-    .sync-warning.fork {
-      background: #fff3cd;   /* warm yellow — "you forked, here's what to do" */
+    .sync-warning.conflict {
+      background: #fff3cd;   /* warm yellow — "your chains diverged, here's what to do" */
       color: #664d03;
       border-bottom-color: #ffe69c;
     }
@@ -396,19 +397,19 @@ mount(h`
       ${() => {
         // Sync warning slot — re-fires when any open repo raises a verifier
         // flag. The two flags are surfaced separately because the right
-        // response differs: forkDetected wants a merge (or at minimum a
-        // reload to re-sync), verificationFailed wants the peer dropped.
-        let forkedMine = false
-        let forkedOther = 0
+        // response differs: conflictDetected wants a recovery (or at minimum
+        // a reload to re-sync), verificationFailed wants the peer dropped.
+        let conflictMine = false
+        let conflictOther = 0
         let badSig = 0
         for (const [keyHex, repo] of registry) {
-          if (repo.forkDetected) {
-            if (keyHex === myKey) forkedMine = true
-            else forkedOther++
+          if (repo.conflictDetected) {
+            if (keyHex === myKey) conflictMine = true
+            else conflictOther++
           }
           if (repo.verificationFailed) badSig++
         }
-        if (!forkedMine && !forkedOther && !badSig) return null
+        if (!conflictMine && !conflictOther && !badSig) return null
         if (badSig) {
           return h`<div class="sync-warning attack" data-key="warn-attack">
             <span class="icon">⚠</span>
@@ -419,12 +420,12 @@ mount(h`
             </div>
           </div>`
         }
-        return h`<div class="sync-warning fork" data-key="warn-fork">
+        return h`<div class="sync-warning conflict" data-key="warn-conflict">
           <span class="icon">⑂</span>
           <div class="body">
-            ${forkedMine
-              ? h`<strong>you've written from two places at once.</strong> another tab or device signed in with these credentials wrote while this one did — the histories have diverged. refresh to load the merged state.`
-              : h`<strong>a peer has forked.</strong> ${forkedOther === 1 ? 'one other repo' : `${forkedOther} other repos`} in this room ${forkedOther === 1 ? 'has' : 'have'} diverged across devices.`}
+            ${conflictMine
+              ? h`<strong>you've written from two places at once.</strong> another tab or device signed in with these credentials wrote while this one did — the chains have diverged and can no longer be merged automatically. refresh to take the server's view.`
+              : h`<strong>a peer's chain has diverged.</strong> ${conflictOther === 1 ? 'one other repo' : `${conflictOther} other repos`} in this room ${conflictOther === 1 ? 'has' : 'have'} conflicting writes across devices.`}
           </div>
         </div>`
       }}

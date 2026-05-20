@@ -128,7 +128,7 @@ export class Streamo extends CodecRegistry {
   // flags exist for code that wants to be smarter (UI banner, merge recovery,
   // dropping the offending peer). Never auto-cleared: a fork is a fact about
   // the local store until something deliberate resolves it.
-  #forkDetected = false
+  #conflictDetected = false
   #verificationFailed = false
 
   /**
@@ -405,13 +405,16 @@ export class Streamo extends CodecRegistry {
 
   /**
    * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
-   * accumulator didn't match the locally-folded chain. The store is forked —
-   * an instance with the same signing key signed over a different chunk
-   * sequence. Application code should watch this to surface a merge UX.
+   * accumulator didn't match the locally-folded chain. Two devices with the
+   * same signing key signed over different chunk sequences — the chain can't
+   * be appended without corruption. (This is a *conflict*, not a fork: a
+   * fork in streamo's vocabulary is a deliberate new Repo with a lineage
+   * note. A conflict is the runtime "these bytes can't be appended" failure.)
+   * Application code should watch this to surface a recovery UX.
    */
-  get forkDetected () {
-    this.#recaller.reportKeyAccess(this, 'forkDetected')
-    return this.#forkDetected
+  get conflictDetected () {
+    this.#recaller.reportKeyAccess(this, 'conflictDetected')
+    return this.#conflictDetected
   }
 
   /**
@@ -431,9 +434,9 @@ export class Streamo extends CodecRegistry {
     this.#signedLength = 0
     this.#committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
     this.#valueAddress = -1
-    this.#forkDetected = false
+    this.#conflictDetected = false
     this.#verificationFailed = false
-    this.#recaller.reportKeyMutation(this, 'forkDetected')
+    this.#recaller.reportKeyMutation(this, 'conflictDetected')
     this.#recaller.reportKeyMutation(this, 'verificationFailed')
   }
 
@@ -518,10 +521,12 @@ export class Streamo extends CodecRegistry {
   makeVerifiedWritableStream (publicKey, maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
-    // Wire starts from genesis — the relay streams the full chain on connect,
-    // so re-folding from zero is correct even if the receiver already has
-    // some chunks. Dedup-skipped chunks still fold (they're part of the
-    // author's chain) but don't re-append.
+    // Anchor on genesis because the wire today replays from byte 0 — the
+    // sender's makeReadableStream emits from offset 0, so we have to fold
+    // matching chunks from the same point. A future cleanup could change
+    // the wire to send "anchored batches" (sender skips bytes the receiver
+    // already has, verifier starts from committedAccumulator), but that's
+    // a wire-protocol change not yet done.
     let pendingAcc = new Uint8Array(GENESIS_ACCUMULATOR)
     let staged = [] // new (not-already-present) non-sig chunks awaiting a covering SIG
     // Cumulative bytes consumed from the wire. Used to check that staged
@@ -551,8 +556,8 @@ export class Streamo extends CodecRegistry {
               // device signed over a chunk sequence we don't share. Raise the
               // reactive flag *before* throwing so watchers see it even when
               // the throw kills the connection.
-              self.#forkDetected = true
-              self.#recaller.reportKeyMutation(self, 'forkDetected')
+              self.#conflictDetected = true
+              self.#recaller.reportKeyMutation(self, 'conflictDetected')
               throw new Error('signature accumulator does not match chain')
             }
             const valid = await verifySignature(publicKey, sig.accumulator, sig.compactRawBytes)
@@ -578,8 +583,8 @@ export class Streamo extends CodecRegistry {
               const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
               const expectedLocalByteLength = wireByteLength - stagedTotal
               if (self.byteLength !== expectedLocalByteLength) {
-                self.#forkDetected = true
-                self.#recaller.reportKeyMutation(self, 'forkDetected')
+                self.#conflictDetected = true
+                self.#recaller.reportKeyMutation(self, 'conflictDetected')
                 throw new Error(
                   `local store diverged from wire: wire expects byteLength ${expectedLocalByteLength} ` +
                   `for staged chunks but local is at ${self.byteLength}`

@@ -37,9 +37,33 @@
  *
  * See design.md §8.
  */
-import { Streamo, changedPaths, foldChunk, arraysEqual } from './Streamo.js'
+import { Streamo, changedPaths } from './Streamo.js'
 import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
+
+// Chain-hash helpers — Repo-internal, since Streamo is identity-blind and
+// doesn't know about signatures.
+const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
+async function sha256 (bytes) {
+  return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
+}
+function arraysEqual (a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+/**
+ * Fold one chunk into a running chain hash:
+ *   next = sha256(prev || sha256(chunk))
+ * The chain seed is `new Uint8Array(32)` (32 zeros).
+ */
+async function foldChunk (prev, chunk) {
+  const chunkHash = await sha256(chunk)
+  const combined = new Uint8Array(64)
+  combined.set(prev, 0)
+  combined.set(chunkHash, 32)
+  return await sha256(combined)
+}
 
 /**
  * Fetch a Repo snapshot from an HTTP source URL or host shorthand.
@@ -124,6 +148,11 @@ export class Repo extends Streamo {
   #signerName  = null
   #signing     = false
   #signPending = false
+  // Chain bookkeeping — advanced by the SIG branch of `append()`. signedLength
+  // is the byteLength immediately after the most recent SIG; committedChainHash
+  // is that SIG's chainHash (or 32 zeros if no SIG has been seen yet).
+  #signedLength       = 0
+  #committedChainHash = new Uint8Array(32)
   // Reactive error flags raised by makeVerifiedWritableStream. The verifier
   // *also* throws, so default-uncaught code crashes its connection — these
   // flags exist for code that wants to be smarter (UI banner, recovery flow,
@@ -131,6 +160,43 @@ export class Repo extends Streamo {
   // about the local store until something deliberate resolves it.
   #conflictDetected   = false
   #verificationFailed = false
+
+  /**
+   * @override Track chain state when a SIGNATURE chunk lands: record the
+   * new committedChainHash and advance signedLength. Streamo's append is
+   * SIG-blind; this override adds the bookkeeping at the Repo layer.
+   */
+  append (code) {
+    const address = super.append(code)
+    if (this.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') {
+      const sig = this.decode(code)
+      this.#signedLength = this.byteLength
+      this.#committedChainHash = sig.chainHash
+    }
+    return address
+  }
+
+  /**
+   * @override After a sign(), byteLength-1 points at the SIGNATURE chunk
+   * rather than the user data. Walk back past any trailing SIGs so get()
+   * and set() operate on the most recent non-SIG chunk (typically a COMMIT).
+   */
+  get valueAddress () {
+    let address = super.valueAddress
+    while (address >= 0) {
+      const code = this.resolve(address)
+      if (this.footerToCodec[code.at(-1)]?.type !== 'SIGNATURE') break
+      address -= code.length
+    }
+    return address
+  }
+
+  /** Byte length that has been covered by a signature. */
+  get signedLength () { return this.#signedLength }
+
+  /** The 32-byte chainHash committed by the most recent SIGNATURE chunk
+   * (or 32 zero bytes if no signature has been appended yet). */
+  get committedChainHash () { return this.#committedChainHash }
 
   /**
    * Default commit message attached to every commit made via set() / setRefs().
@@ -178,10 +244,10 @@ export class Repo extends Streamo {
    */
   get lastCommit () {
     this.recaller.reportKeyAccess(this, 'length')
-    // Use super.valueAddress (Streamo impl) to bypass our get() override and
-    // avoid a circular dependency: our get() calls lastCommit, lastCommit
-    // must not call our get().
-    const address = super.valueAddress
+    // this.valueAddress walks past trailing SIGNATURE chunks (our override),
+    // so address lands on the most recent COMMIT (or earlier). We use this
+    // rather than this.get() to avoid recursion: get() calls lastCommit.
+    const address = this.valueAddress
     if (address < 0) return null
     const value = this.decode(address)
     if (!value || typeof value.message !== 'string' || !(value.date instanceof Date)) return null

@@ -12,44 +12,19 @@
  * watcher that reads `streamo.get('settings', 'theme')` only re-fires when
  * that specific path changes — not on every chunk that lands.
  *
- * **The chain**: appended chunks fold into a running chain hash
- *   chainHash_{n+1} = sha256(chainHash_n || sha256(chunk_n))
- * Streamo tracks the chain state passively — when a SIGNATURE chunk lands
- * via `append()`, it records the new `committedChainHash` and advances
- * `signedLength`. Streamo doesn't sign, verify, or hold a signer; all
- * identity-aware work (sign, verify, makeVerifiedWritableStream + its
- * reactive flags) lives on Repo.
+ * **Streamo is identity-blind.** It doesn't sign, verify, track chain
+ * state, or hold a signer. Everything signed-chain-related — the
+ * `signedLength` / `committedChainHash` bookkeeping, sign(), verify(),
+ * makeVerifiedWritableStream + its reactive flags — lives on Repo, which
+ * extends Streamo and overrides `append` + `valueAddress` to thread the
+ * chain through.
  *
- * Exports: Streamo (the class), ConflictError, changedPaths, foldChunk,
- * arraysEqual.
+ * Exports: Streamo (the class), ConflictError, changedPaths.
  *
  * See design.md §5.
  */
 import { Recaller } from './utils/Recaller.js'
 import { CodecRegistry } from './CodecRegistry.js'
-
-const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
-async function sha256 (bytes) {
-  return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
-}
-export function arraysEqual (a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
-/**
- * Fold one chunk into a running chain hash:
- *   next = sha256(prev || sha256(chunk))
- * Pure helper; no streamo state touched. Exported for Repo's verifier.
- * The chain seed for a fresh streamo is `new Uint8Array(32)` (32 zeros).
- */
-export async function foldChunk (prev, chunk) {
-  const chunkHash = await sha256(chunk)
-  const combined = new Uint8Array(64)
-  combined.set(prev, 0)
-  combined.set(chunkHash, 32)
-  return await sha256(combined)
-}
 
 /**
  * Thrown by conditionalSet() when the streamo has advanced past the expected tip.
@@ -110,26 +85,23 @@ export function * changedPaths (streamo, addrA, addrB, path = []) {
 }
 
 /**
- * A Streamo is a reactive, signed, append-only data store.
+ * A Streamo is a reactive, content-addressable codec.
  *
  * It combines:
  *   - CodecRegistry: encode/decode any JS value to/from bytes
  *   - Recaller: fine-grained reactive dependency tracking (watch/get/set)
- *   - secp256k1 signing: sign the streamo contents, verify signatures
  *
- * This is the primary user-facing class. The layers below it
- * (Addressifier, CodecRegistry) exist to serve it.
+ * Signing, verification, and chain bookkeeping live on Repo — Streamo
+ * is intentionally identity-blind.
  */
 export class Streamo extends CodecRegistry {
   #recaller
-  #signedLength = 0
-  #committedChainHash = new Uint8Array(32)
   // Address of the current top value. Tracks explicitly so it stays correct
   // even when set() encodes a value whose outermost subcode already exists
   // in the content map (dedup) — in that case super.append() returns the
   // existing address but byteLength doesn't grow. Falling back to
   // byteLength-1 would land on the previous top, NOT on the value just set.
-  // -1 means "uninitialized; fall back to chunk-walk in the getter."
+  // -1 means "uninitialized; fall back to byteLength-1 in the getter."
   #valueAddress = -1
 
   /**
@@ -148,28 +120,15 @@ export class Streamo extends CodecRegistry {
   }
 
   /**
-   * Append code and notify reactive watchers.
-   *
-   * When the appended chunk is a SIGNATURE, adopt its chainHash as the new
-   * committed value and advance the signed cursor. The chain integrity of
-   * that chainHash is the upstream caller's responsibility: `sign()`
-   * computes it correctly by construction, and `makeVerifiedWritableStream`
-   * gates appends so an untrusted peer cannot insert a SIG whose chainHash
-   * does not match the byte sequence we received. `makeWritableStream`
-   * (the unverified path, e.g. local archive replay) trusts its source.
+   * Append code and notify reactive watchers. The new chunk's address
+   * becomes valueAddress.
    *
    * @param {Uint8Array} code
    * @returns {number}
    */
   append (code) {
     const address = super.append(code)
-    if (this.footerToCodec[code.at(-1)]?.type === 'SIGNATURE') {
-      const sig = this.decode(code)
-      this.#signedLength = super.byteLength
-      this.#committedChainHash = sig.chainHash
-    } else {
-      this.#valueAddress = address
-    }
+    this.#valueAddress = address
     this.#recaller.reportKeyMutation(this, 'length')
     return address
   }
@@ -372,44 +331,23 @@ export class Streamo extends CodecRegistry {
     return this._applyClone(new Streamo({ recaller, name }), address)
   }
 
-  // ── Signing ──────────────────────────────────────────────────────────────
-
   /**
-   * Address of the most-recently-appended non-signature chunk.
-   * After streamo.sign() appends a SIGNATURE chunk, byteLength - 1 points to the
-   * signature rather than the user data. This getter skips backward past any
-   * trailing SIGNATURE chunks so get() and set() always operate on real data.
+   * Address of the most-recently-appended chunk (the "top value"). The
+   * explicit pointer is set by set/setRefs/append; if uninitialized (a
+   * fresh or cloned streamo), falls back to byteLength-1.
+   *
+   * Streamo is SIG-blind — if the last chunk happens to be a SIGNATURE,
+   * valueAddress points at it. Subclasses (Repo) that track signed chains
+   * override this to walk past trailing SIGs.
    */
   get valueAddress () {
-    // Prefer the explicit pointer (updated by set/setRefs/append for the
-    // current top value). It stays correct even when set() deduplicates to
-    // an existing address — byteLength-1 would lie in that case.
     if (this.#valueAddress >= 0) return this.#valueAddress
-    // Fallback for fresh / cloned streams that haven't seen an explicit
-    // set or append yet: walk back from byteLength-1 past any SIGNATURE
-    // chunks. Same as the original behavior.
-    let address = super.byteLength - 1
-    while (address >= 0) {
-      const code = this.resolve(address)
-      if (this.footerToCodec[code.at(-1)]?.type !== 'SIGNATURE') break
-      address -= code.length
-    }
-    return address
+    return super.byteLength - 1
   }
 
-  /** Byte length that has been covered by a signature. */
-  get signedLength () { return this.#signedLength }
-
-  /** The 32-byte chainHash committed by the most recent SIGNATURE chunk
-   * (or 32 zero bytes if no signature has been appended yet). */
-  get committedChainHash () { return this.#committedChainHash }
-
-  /** @override Also resets the chain state. */
+  /** @override Also resets the valueAddress pointer. */
   _reset () {
     super._reset()
-    this.#signedLength = 0
-    this.#committedChainHash = new Uint8Array(32)
     this.#valueAddress = -1
   }
-
 }

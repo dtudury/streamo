@@ -123,6 +123,13 @@ export class Streamo extends CodecRegistry {
   // byteLength-1 would land on the previous top, NOT on the value just set.
   // -1 means "uninitialized; fall back to chunk-walk in the getter."
   #valueAddress = -1
+  // Reactive error flags raised by makeVerifiedWritableStream. The verifier
+  // *also* throws, so default-uncaught code crashes its connection — these
+  // flags exist for code that wants to be smarter (UI banner, merge recovery,
+  // dropping the offending peer). Never auto-cleared: a fork is a fact about
+  // the local store until something deliberate resolves it.
+  #forkDetected = false
+  #verificationFailed = false
 
   /**
    * @param {Recaller} [recaller]
@@ -396,12 +403,38 @@ export class Streamo extends CodecRegistry {
    * (or the 32-byte genesis seed if no signature has been appended yet). */
   get committedAccumulator () { return this.#committedAccumulator }
 
+  /**
+   * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
+   * accumulator didn't match the locally-folded chain. The store is forked —
+   * an instance with the same signing key signed over a different chunk
+   * sequence. Application code should watch this to surface a merge UX.
+   */
+  get forkDetected () {
+    this.#recaller.reportKeyAccess(this, 'forkDetected')
+    return this.#forkDetected
+  }
+
+  /**
+   * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
+   * crypto signature didn't verify under the expected pubkey. Indicates an
+   * attack or corruption, not a fork — the appropriate response is to drop
+   * the offending peer, not to merge.
+   */
+  get verificationFailed () {
+    this.#recaller.reportKeyAccess(this, 'verificationFailed')
+    return this.#verificationFailed
+  }
+
   /** @override Also resets the chain state. */
   _reset () {
     super._reset()
     this.#signedLength = 0
     this.#committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
     this.#valueAddress = -1
+    this.#forkDetected = false
+    this.#verificationFailed = false
+    this.#recaller.reportKeyMutation(this, 'forkDetected')
+    this.#recaller.reportKeyMutation(this, 'verificationFailed')
   }
 
   /**
@@ -510,10 +543,24 @@ export class Streamo extends CodecRegistry {
           if (codec?.type === 'SIGNATURE') {
             const sig = self.decode(code)
             if (!arraysEqual(sig.accumulator, pendingAcc)) {
+              // Fork: honest signer, conflicting history. The signer's other
+              // device signed over a chunk sequence we don't share. Raise the
+              // reactive flag *before* throwing so watchers see it even when
+              // the throw kills the connection.
+              self.#forkDetected = true
+              self.#recaller.reportKeyMutation(self, 'forkDetected')
               throw new Error('signature accumulator does not match chain')
             }
             const valid = await verifySignature(publicKey, sig.accumulator, sig.compactRawBytes)
-            if (!valid) throw new Error('signature verification failed')
+            if (!valid) {
+              // Attack or corruption: the signature doesn't crypto-verify
+              // under the expected pubkey. Different threat from a fork —
+              // separate flag so UX can respond differently (drop the peer
+              // rather than offer a merge).
+              self.#verificationFailed = true
+              self.#recaller.reportKeyMutation(self, 'verificationFailed')
+              throw new Error('signature verification failed')
+            }
             // Commit batch: append staged chunks (all new), then the SIG itself.
             for (const c of staged) self.append(c)
             staged = []

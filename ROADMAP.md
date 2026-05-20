@@ -412,25 +412,34 @@ while offline from each other, their streams diverge at the fork point.  Each
 commit's `dataAddress` is an offset that is only valid in the stream that
 produced it — the streams cannot be structurally merged.
 
-When the two devices reconnect, `makeVerifiedWritableStream` deduplicates shared
-chunks by content (correctly) but silently appends the conflicting commit from
-the second device at its new offset.  That commit's `dataAddress` now points to
-the wrong location in the merged stream.  No error is thrown; the second
-writer's data is silently corrupt.
+**Detection (landed 2026-05-20):** `makeVerifiedWritableStream` *does* catch a
+fork at the byte-stream level — the hash-chain accumulator fails to match when
+a SIG arrives covering content the receiver hasn't folded.  Streamo now raises
+two reactive flags before the throw fires:
+- `forkDetected` — accumulator mismatch (honest signer, conflicting history)
+- `verificationFailed` — crypto-verify failure (attack or corruption)
 
-**What is safe today:** relays never call `commit()` so they are unaffected —
-they accumulate and re-serve bytes without introducing their own addresses.  The
-chat app is also unaffected because each user writes to their own repo from a
-single session.  The danger zone is one keypair writing from two places
-simultaneously (two browser tabs, phone + laptop while offline).
+The throw still propagates, so default-uncaught code crashes its connection and
+resets cleanly (`registrySync` closes the WS via `handleWriteError`).  Code that
+wants to be smarter can watch the flags and react.  Repo inherits the flags
+through extension; app code can read `repo.forkDetected` directly.
 
-**The fix** requires either (a) detecting the fork and throwing a clear error so
-the user can choose which version to keep, or (b) switching to chunk-level
-content addressing (à la git objects) so streams can be merged structurally
-rather than by concatenation.  Option (a) is a targeted addition to the sync
-layer; option (b) is an architectural change.  Not required for 1.0 but should
-be resolved before marketing streamo as a general-purpose multi-device sync
-library.
+**Where detection happens vs. doesn't:** clients detect the fork when they
+receive the other side's reflected stream through a verifying writer.  The
+**relay** does not detect — each peer's writer has independent `pendingAcc`
+state, so a relay accepting divergent streams from two peers ends up with both
+chains in its store (valueAddress resolves to whichever SIG is last in the
+bytestream).  Clients catch the fork on the reflection back.  Fixing relay-side
+detection would require sharing `pendingAcc` across writers for the same repo —
+a bigger architectural move; not blocking the chat demo.
+
+**Still to do (session 3):** surface the flags in the chat client UI — banner
+when `repo.forkDetected` is true, optional "discard local divergent commits and
+re-sync" recovery button.  Currently the flag is set but nothing watches it.
+
+**The deeper fix** (post-demo) is chunk-level content addressing (à la git
+objects) so streams can be merged structurally rather than by concatenation.
+Architectural change; documented as the long-term direction.
 
 ### repo size — practical caps and lifecycle
 

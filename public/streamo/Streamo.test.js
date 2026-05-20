@@ -429,6 +429,97 @@ describe(import.meta.url, ({ test }) => {
       `error should name the accumulator chain mismatch (Streamo.js:512); got: ${caught.message}`)
     assert.equal(target.byteLength, tipAfterDevice1,
       'staging discards the rejected batch — no fork bytes land in the target')
+    assert.equal(target.forkDetected, true,
+      'forkDetected must be raised so watchers can see the fork even when the throw kills the connection')
+    assert.equal(target.verificationFailed, false,
+      'verificationFailed should stay false — the signature itself was crypto-valid; the chain mismatch is what failed')
+  })
+
+  test('forkDetected fires reactively — watchers see the fork before/without catching the throw', async ({ assert }) => {
+    // The whole point of the flag: app code that holds a Repo doesn't have
+    // to wrap every writer.write() in a try/catch. It just watches forkDetected
+    // and reacts. This test proves the recaller actually fires for that path.
+    const signer = new Signer('alice', 'hunter2', 1)
+    const name = 'fork-reactive'
+    const { publicKey } = await signer.keysFor(name)
+
+    const device1 = new Streamo()
+    device1.set({ v: 1 })
+    await device1.sign(signer, name)
+    const device2 = new Streamo()
+    device2.set({ v: 2 })
+    await device2.sign(signer, name)
+
+    const readChunks = s => {
+      const out = []
+      let addr = s.byteLength - 1
+      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
+      return out
+    }
+    const frame = code => {
+      const f = new Uint8Array(4 + code.length)
+      new DataView(f.buffer).setUint32(0, code.length, true)
+      f.set(code, 4)
+      return f
+    }
+
+    const target = new Streamo()
+    let observed = []
+    target.recaller.watch('fork-watcher', () => observed.push(target.forkDetected))
+
+    const writer = target.makeVerifiedWritableStream(publicKey).getWriter()
+    for (const c of readChunks(device1)) await writer.write(frame(c))
+    // device1 stream is clean — no fork yet.
+    assert.equal(target.forkDetected, false, 'no fork until divergent chain arrives')
+
+    // Now device2's stream — the throw will fire AND the flag will fire.
+    try { for (const c of readChunks(device2)) await writer.write(frame(c)) } catch {}
+
+    // Allow the recaller's microtask flush to land
+    await new Promise(r => setTimeout(r, 0))
+    assert.ok(observed.includes(true),
+      `fork-watcher must observe forkDetected becoming true; observed: ${JSON.stringify(observed)}`)
+  })
+
+  test('verificationFailed fires when a bad sig arrives — separate flag from forkDetected', async ({ assert }) => {
+    // Bad sig is a different threat from a fork: the signer didn't actually
+    // sign these bytes (or the bytes got corrupted in transit). The chain
+    // would have to match for the crypto check to fire — so we craft a stream
+    // where the accumulator IS valid but the signature bytes are tampered.
+    const author = new Streamo()
+    const signer = new Signer('alice', 'hunter2', 1)
+    author.set({ a: 1 })
+    await author.sign(signer, 'badsig-test')
+    const { publicKey } = await signer.keysFor('badsig-test')
+
+    const chunks = []
+    let addr = author.byteLength - 1
+    while (addr >= 0) { const c = author.resolve(addr); chunks.unshift(c); addr -= c.length }
+    const sigChunk = chunks[chunks.length - 1]
+    const badSig = new Uint8Array(sigChunk)
+    badSig[40] ^= 0xff // flip a byte inside the signature region (offset 32..96)
+
+    const peer = new Streamo()
+    const writer = peer.makeVerifiedWritableStream(publicKey).getWriter()
+    let caught = null
+    try {
+      for (const code of chunks.slice(0, -1)) {
+        const frame = new Uint8Array(4 + code.length)
+        new DataView(frame.buffer).setUint32(0, code.length, true)
+        frame.set(code, 4)
+        await writer.write(frame)
+      }
+      const badFrame = new Uint8Array(4 + badSig.length)
+      new DataView(badFrame.buffer).setUint32(0, badSig.length, true)
+      badFrame.set(badSig, 4)
+      await writer.write(badFrame)
+    } catch (e) { caught = e }
+
+    assert.ok(caught, 'corrupted signature must still throw')
+    assert.equal(peer.verificationFailed, true,
+      'verificationFailed must be raised for the crypto-verify path')
+    assert.equal(peer.forkDetected, false,
+      'forkDetected stays false — the accumulator matched; only the signature bytes were bad')
   })
 
   test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {

@@ -444,10 +444,10 @@ mount(h`
           const d = new Date(+m.at)
           const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
           if (dayKey !== lastDay) {
-            nodes.push(h`<${DateSep} label=${dateLabel(d)} dayKey=${dayKey}/>`)
+            nodes.push(h`<${DateSep} data-key=${`date-${dayKey}`} label=${dateLabel(d)} dayKey=${dayKey}/>`)
             lastDay = dayKey
           }
-          nodes.push(h`<${Msg} name=${m.name} text=${m.text} at=${m.at} mine=${m.mine} hue=${m.hue}/>`)
+          nodes.push(h`<${Msg} data-key=${`msg-${+m.at}-${m.mine ? 'me' : m.name}`} name=${m.name} text=${m.text} at=${m.at} mine=${m.mine} hue=${m.hue}/>`)
         }
         return nodes
       }}</div>

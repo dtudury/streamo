@@ -1,5 +1,6 @@
 import { describe } from './utils/testing.js'
 import { Streamo, ConflictError, changedPaths } from './Streamo.js'
+import { Repo } from './Repo.js'
 import { Signer } from './Signer.js'
 import { Signature } from './Signature.js'
 
@@ -354,7 +355,7 @@ describe(import.meta.url, ({ test }) => {
     const badSig = new Uint8Array(sigChunk)
     badSig[40] ^= 0xff // flip a byte inside the signature region
 
-    const peer = new Streamo()
+    const peer = new Repo()
     const writer = peer.makeVerifiedWritableStream(publicKey).getWriter()
     let caught = null
     try {
@@ -409,7 +410,7 @@ describe(import.meta.url, ({ test }) => {
       return f
     }
 
-    const target = new Streamo()
+    const target = new Repo()
     const writer = target.makeVerifiedWritableStream(publicKey).getWriter()
 
     // Device 1's full stream lands cleanly — its sig matches its own chain.
@@ -464,7 +465,7 @@ describe(import.meta.url, ({ test }) => {
       return f
     }
 
-    const target = new Streamo()
+    const target = new Repo()
     let observed = []
     target.recaller.watch('conflict-watcher', () => observed.push(target.conflictDetected))
 
@@ -526,7 +527,7 @@ describe(import.meta.url, ({ test }) => {
     const sharedChunks = readChunks(shared)
 
     // Tab A diverges from shared with its own write
-    const tabA = new Streamo()
+    const tabA = new Repo()
     const writerA = tabA.makeVerifiedWritableStream(publicKey).getWriter()
     for (const c of sharedChunks) await writerA.write(frame(c))
     tabA.set({ v: 'apple' })
@@ -534,7 +535,7 @@ describe(import.meta.url, ({ test }) => {
 
     // Tab B replays shared then writes its own divergent content (locally,
     // simulating "offline scribble after last sync")
-    const tabB = new Streamo()
+    const tabB = new Repo()
     const writerB = tabB.makeVerifiedWritableStream(publicKey).getWriter()
     for (const c of sharedChunks) await writerB.write(frame(c))
     tabB.set({ v: 'banana' })
@@ -581,7 +582,7 @@ describe(import.meta.url, ({ test }) => {
     const badSig = new Uint8Array(sigChunk)
     badSig[40] ^= 0xff // flip a byte inside the signature region (offset 32..96)
 
-    const peer = new Streamo()
+    const peer = new Repo()
     const writer = peer.makeVerifiedWritableStream(publicKey).getWriter()
     let caught = null
     try {
@@ -623,7 +624,7 @@ describe(import.meta.url, ({ test }) => {
 
     // Replay the bytes into a fresh Streamo via the public writable stream —
     // mirrors how archiveSync/registrySync deliver data on load.
-    const replay = new Streamo()
+    const replay = new Repo()
     const writer = replay.makeVerifiedWritableStream(keys.publicKey).getWriter()
     const bytes = original.slice(0, original.byteLength)
     const framed = new Uint8Array(4 + bytes.length)

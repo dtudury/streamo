@@ -24,8 +24,10 @@ const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await impo
 async function sha256 (bytes) {
   return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
 }
-const GENESIS_ACCUMULATOR = new Uint8Array(32) // 32 zero bytes; the chain seed
-function arraysEqual (a, b) {
+// 32 zero bytes; the chain seed. Exported so Repo (which owns the verified
+// writer and its identity-aware check) can reference the same starting value.
+export const GENESIS_ACCUMULATOR = new Uint8Array(32)
+export function arraysEqual (a, b) {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
   return true
@@ -33,9 +35,9 @@ function arraysEqual (a, b) {
 /**
  * Fold one chunk into a running accumulator using the chain-hash scheme.
  *   next = sha256(acc || sha256(chunk))
- * Pure helper; no streamo state touched.
+ * Pure helper; no streamo state touched. Exported for Repo's verifier.
  */
-async function foldChunk (acc, chunk) {
+export async function foldChunk (acc, chunk) {
   const chunkHash = await sha256(chunk)
   const combined = new Uint8Array(64)
   combined.set(acc, 0)
@@ -123,13 +125,6 @@ export class Streamo extends CodecRegistry {
   // byteLength-1 would land on the previous top, NOT on the value just set.
   // -1 means "uninitialized; fall back to chunk-walk in the getter."
   #valueAddress = -1
-  // Reactive error flags raised by makeVerifiedWritableStream. The verifier
-  // *also* throws, so default-uncaught code crashes its connection — these
-  // flags exist for code that wants to be smarter (UI banner, merge recovery,
-  // dropping the offending peer). Never auto-cleared: a fork is a fact about
-  // the local store until something deliberate resolves it.
-  #conflictDetected = false
-  #verificationFailed = false
 
   /**
    * @param {Recaller} [recaller]
@@ -403,41 +398,12 @@ export class Streamo extends CodecRegistry {
    * (or the 32-byte genesis seed if no signature has been appended yet). */
   get committedAccumulator () { return this.#committedAccumulator }
 
-  /**
-   * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
-   * accumulator didn't match the locally-folded chain. Two devices with the
-   * same signing key signed over different chunk sequences — the chain can't
-   * be appended without corruption. (This is a *conflict*, not a fork: a
-   * fork in streamo's vocabulary is a deliberate new Repo with a lineage
-   * note. A conflict is the runtime "these bytes can't be appended" failure.)
-   * Application code should watch this to surface a recovery UX.
-   */
-  get conflictDetected () {
-    this.#recaller.reportKeyAccess(this, 'conflictDetected')
-    return this.#conflictDetected
-  }
-
-  /**
-   * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
-   * crypto signature didn't verify under the expected pubkey. Indicates an
-   * attack or corruption, not a fork — the appropriate response is to drop
-   * the offending peer, not to merge.
-   */
-  get verificationFailed () {
-    this.#recaller.reportKeyAccess(this, 'verificationFailed')
-    return this.#verificationFailed
-  }
-
   /** @override Also resets the chain state. */
   _reset () {
     super._reset()
     this.#signedLength = 0
     this.#committedAccumulator = new Uint8Array(GENESIS_ACCUMULATOR)
     this.#valueAddress = -1
-    this.#conflictDetected = false
-    this.#verificationFailed = false
-    this.#recaller.reportKeyMutation(this, 'conflictDetected')
-    this.#recaller.reportKeyMutation(this, 'verificationFailed')
   }
 
   /**
@@ -481,13 +447,11 @@ export class Streamo extends CodecRegistry {
 
   /**
    * Verify a signature's cryptographic authenticity against `publicKey`.
-   * Returns true iff `sig.compactRawBytes` is a valid signature over
-   * `sig.accumulator` by `publicKey`.
-   *
-   * This does NOT re-verify that `sig.accumulator` is consistent with the
-   * streamo's bytes — that check happens at write time (see
-   * `makeVerifiedWritableStream`). Once a SIG is in the store, the chain
-   * was already validated when it was accepted.
+   * Stateless — just a wrapper around verifySignature for the common case
+   * of asking "is this sig good under this key?" Lives on Streamo (not Repo)
+   * because it doesn't require identity to be *attached* — the pubkey is an
+   * argument. Repo's makeVerifiedWritableStream uses verifySignature directly
+   * for the identity-bound, stateful verification.
    *
    * @param {Signature} sig
    * @param {Uint8Array} publicKey
@@ -495,114 +459,5 @@ export class Streamo extends CodecRegistry {
    */
   async verify (sig, publicKey) {
     return verifySignature(publicKey, sig.accumulator, sig.compactRawBytes)
-  }
-
-  /**
-   * Like makeWritableStream(), but gates every chunk against the author's
-   * accumulator chain before it can corrupt the store.
-   *
-   * Non-signature chunks are *staged* (folded into a tentative accumulator
-   * but not appended). When a SIGNATURE arrives, two checks fire:
-   *   1. chain — sig.accumulator must equal the tentative accumulator
-   *   2. crypto — sig.compactRawBytes must verify against sig.accumulator
-   *      under `publicKey`.
-   * If both pass, the staged chunks and the SIG are appended in order. If
-   * either fails, the stream errors and the staged batch is discarded —
-   * the store is never polluted with chunks that no SIG covers.
-   *
-   * This closes the historical [commit, bad_sig] corruption: an attacker
-   * with no signing key cannot make us write *any* bytes without producing
-   * a SIG that crypto-verifies under the author's public key.
-   *
-   * @param {Uint8Array} publicKey
-   * @param {number} [maxFrameSize]
-   * @returns {WritableStream}
-   */
-  makeVerifiedWritableStream (publicKey, maxFrameSize = 64 * 1024 * 1024) {
-    const self = this
-    let buf = new Uint8Array(0)
-    // Anchor on genesis because the wire today replays from byte 0 — the
-    // sender's makeReadableStream emits from offset 0, so we have to fold
-    // matching chunks from the same point. A future cleanup could change
-    // the wire to send "anchored batches" (sender skips bytes the receiver
-    // already has, verifier starts from committedAccumulator), but that's
-    // a wire-protocol change not yet done.
-    let pendingAcc = new Uint8Array(GENESIS_ACCUMULATOR)
-    let staged = [] // new (not-already-present) non-sig chunks awaiting a covering SIG
-    // Cumulative bytes consumed from the wire. Used to check that staged
-    // chunks would land at addresses matching the wire's expected positions
-    // before we append them — see the alignment check at sig commit.
-    let wireByteLength = 0
-    return new WritableStream({
-      async write (incoming) {
-        const next = new Uint8Array(buf.length + incoming.length)
-        next.set(buf); next.set(incoming, buf.length)
-        buf = next
-        while (buf.length >= 4) {
-          const len = new Uint32Array(buf.slice(0, 4).buffer)[0]
-          if (len === 0) throw new Error('malformed frame: zero-length chunk')
-          if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
-          if (buf.length < 4 + len) break
-          const code = buf.slice(4, 4 + len)
-          buf = buf.slice(4 + len)
-
-          const alreadyHave = self.addressOf(code) !== undefined
-          const codec = self.footerToCodec[code.at(-1)]
-
-          if (codec?.type === 'SIGNATURE') {
-            const sig = self.decode(code)
-            if (!arraysEqual(sig.accumulator, pendingAcc)) {
-              // Fork: honest signer, conflicting history. The signer's other
-              // device signed over a chunk sequence we don't share. Raise the
-              // reactive flag *before* throwing so watchers see it even when
-              // the throw kills the connection.
-              self.#conflictDetected = true
-              self.#recaller.reportKeyMutation(self, 'conflictDetected')
-              throw new Error('signature accumulator does not match chain')
-            }
-            const valid = await verifySignature(publicKey, sig.accumulator, sig.compactRawBytes)
-            if (!valid) {
-              // Attack or corruption: the signature doesn't crypto-verify
-              // under the expected pubkey. Different threat from a fork —
-              // separate flag so UX can respond differently (drop the peer
-              // rather than offer a merge).
-              self.#verificationFailed = true
-              self.#recaller.reportKeyMutation(self, 'verificationFailed')
-              throw new Error('signature verification failed')
-            }
-            // Alignment check: staged chunks were encoded with internal
-            // references (e.g. COMMIT.dataAddress) pointing to byte positions
-            // in the SENDER's chain. We can only safely append them if our
-            // local byteLength equals the wire's position right before them
-            // — otherwise the staged chunks land at addresses where their
-            // references resolve to the wrong bytes, corrupting decodes.
-            // This catches the "local has unsigned-or-locally-signed content
-            // past the last shared sig" case (multi-tab offline writes),
-            // which the accumulator check alone cannot see.
-            if (staged.length > 0) {
-              const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
-              const expectedLocalByteLength = wireByteLength - stagedTotal
-              if (self.byteLength !== expectedLocalByteLength) {
-                self.#conflictDetected = true
-                self.#recaller.reportKeyMutation(self, 'conflictDetected')
-                throw new Error(
-                  `local store diverged from wire: wire expects byteLength ${expectedLocalByteLength} ` +
-                  `for staged chunks but local is at ${self.byteLength}`
-                )
-              }
-            }
-            // Commit batch: append staged chunks (all new), then the SIG itself.
-            for (const c of staged) self.append(c)
-            staged = []
-            if (!alreadyHave) self.append(code)
-            // pendingAcc stays at sig.accumulator; next non-sig chunks fold from here.
-          } else {
-            pendingAcc = await foldChunk(pendingAcc, code)
-            if (!alreadyHave) staged.push(code)
-          }
-          wireByteLength += code.length
-        }
-      }
-    })
   }
 }

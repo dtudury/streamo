@@ -62,11 +62,16 @@ describe(import.meta.url, ({ test }) => {
 
   test('WebSocket syncs existing chunks to a connecting client', async ({ assert }) => {
     const { publicKeyHex } = await makeKey()
-    const stream = new Streamo()
+    // Server-side stream needs Repo because outletSync's verified writer
+    // (which gates incoming peer chunks) now lives on Repo, not Streamo.
+    const stream = new Repo()
     stream.set({ synced: true })
     const { port, close } = await startServer(publicKeyHex, stream)
     try {
-      const client = new Streamo()
+      // Client is also a Repo so .get() returns the committed value rather
+      // than the raw top chunk (the server-side stream auto-commits, so the
+      // top chunk on the wire is now a COMMIT record wrapping {synced:true}).
+      const client = new Repo()
       const writer = client.makeWritableStream().getWriter()
       const ws = new WebSocket(`ws://localhost:${port}`)
 

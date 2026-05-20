@@ -395,21 +395,27 @@ mount(h`
         <span class="my-swatch" title="your color — derived from your key"></span>
       </div>
       ${() => {
-        // Sync warning slot — re-fires when any open repo raises a verifier
-        // flag. The two flags are surfaced separately because the right
-        // response differs: conflictDetected wants a recovery (or at minimum
-        // a reload to re-sync), verificationFailed wants the peer dropped.
+        // Sync warning slot — re-fires when any open repo raises a flag.
+        // Three signals, surfaced in priority order:
+        //   pushRejected         — the relay explicitly refused our push
+        //                          (most reliable signal; relay said no)
+        //   conflictDetected     — local receiver caught a divergence on
+        //                          incoming bytes (push-in-flight race)
+        //   verificationFailed   — incoming bytes didn't crypto-verify
+        //                          (attack/corruption; legacy path)
+        let pushRejectedMine = false
         let conflictMine = false
         let conflictOther = 0
         let badSig = 0
         for (const [keyHex, repo] of registry) {
+          if (repo.pushRejected && keyHex === myKey) pushRejectedMine = true
           if (repo.conflictDetected) {
             if (keyHex === myKey) conflictMine = true
             else conflictOther++
           }
           if (repo.verificationFailed) badSig++
         }
-        if (!conflictMine && !conflictOther && !badSig) return null
+        if (!pushRejectedMine && !conflictMine && !conflictOther && !badSig) return null
         if (badSig) {
           return h`<div class="sync-warning attack" data-key="warn-attack">
             <span class="icon">⚠</span>
@@ -423,9 +429,11 @@ mount(h`
         return h`<div class="sync-warning conflict" data-key="warn-conflict">
           <span class="icon">⑂</span>
           <div class="body">
-            ${conflictMine
-              ? h`<strong>you've written from two places at once.</strong> another tab or device signed in with these credentials wrote while this one did — the chains have diverged and can no longer be merged automatically. refresh to take the server's view.`
-              : h`<strong>a peer's chain has diverged.</strong> ${conflictOther === 1 ? 'one other repo' : `${conflictOther} other repos`} in this room ${conflictOther === 1 ? 'has' : 'have'} conflicting writes across devices.`}
+            ${pushRejectedMine
+              ? h`<strong>the relay refused your last write.</strong> another tab or device pushed to this repo while you were writing — the relay's top has moved past where your write was anchored. refresh to take the relay's view; your local edits will be lost.`
+              : conflictMine
+                ? h`<strong>you've written from two places at once.</strong> another tab or device signed in with these credentials wrote while this one did — the chains have diverged and can no longer be merged automatically. refresh to take the server's view.`
+                : h`<strong>a peer's chain has diverged.</strong> ${conflictOther === 1 ? 'one other repo' : `${conflictOther} other repos`} in this room ${conflictOther === 1 ? 'has' : 'have'} conflicting writes across devices.`}
           </div>
         </div>`
       }}

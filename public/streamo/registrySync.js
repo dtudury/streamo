@@ -187,9 +187,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     //     `{type: 'reject', key, reason}` control message back to the
     //     submitting peer instead of just closing.
     //   - default (client-side): incoming chunks are *from the relay* —
-    //     authoritative by invariant. Use the existing verified writer
-    //     as defense-in-depth (Phase 1B-lite keeps this; Phase 1C will
-    //     remove it in favor of trust+append).
+    //     authoritative by invariant. Trust-and-append via the lightweight
+    //     makeRelayInboundStream: no chain or crypto check (the relay
+    //     already did those), only an alignment check to catch the
+    //     push-in-flight race (incoming bytes don't fit because we have
+    //     un-accepted local commits).
     if (!writers.has(keyHex)) {
       let writer
       if (isAuthority) {
@@ -205,8 +207,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           }
         })
       } else {
-        const publicKey = hexToBytes(keyHex)
-        writer = repo.makeVerifiedWritableStream(publicKey).getWriter()
+        writer = repo.makeRelayInboundStream().getWriter()
       }
       writers.set(keyHex, writer)
       const pending = pendingChunks.get(keyHex) ?? []

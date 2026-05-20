@@ -539,6 +539,71 @@ describe(import.meta.url, ({ test }) => {
       'tab B can still read its local divergent value after the rejected merge')
   })
 
+  test('makeRelayInboundStream: alignment check catches the push-in-flight race', async ({ assert }) => {
+    // The client-side receive path: "what comes down is always from the
+    // top, always correct" — no chain or crypto check (relay validated),
+    // but the alignment check stays. It fires when the client has local
+    // content past the last shared sig (typically: a push in flight,
+    // unaccepted by the relay yet) and incoming relay bytes would land
+    // past that local content with their refs pointing at positions the
+    // local content occupies → would corrupt decodes.
+
+    const signer = new Signer('alice', 'hunter2', 1)
+    const name = 'inbound-alignment'
+    const { publicKey: _ } = await signer.keysFor(name)
+
+    const readChunks = s => {
+      const out = []
+      let addr = s.byteLength - 1
+      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
+      return out
+    }
+    const frame = code => {
+      const f = new Uint8Array(4 + code.length)
+      new DataView(f.buffer).setUint32(0, code.length, true)
+      f.set(code, 4)
+      return f
+    }
+
+    // Set up a "shared" history: both sides agree on this prefix.
+    const shared = new Repo()
+    shared.set({ v: 'one' })
+    await shared.sign(signer, name)
+    const sharedChunks = readChunks(shared)
+
+    // Client: has shared + local-pending (banana, signed locally, not yet
+    // accepted by any relay)
+    const client = new Repo()
+    const inA = client.makeRelayInboundStream().getWriter()
+    for (const c of sharedChunks) await inA.write(frame(c))
+    client.set({ v: 'banana' })
+    await client.sign(signer, name)
+    const clientByteLengthBeforeMerge = client.byteLength
+
+    // "Relay" view: extends shared with cherry (a divergent commit). The
+    // wire would send cherry's chunks; the client receiver should detect
+    // that its local position doesn't match the wire's expected position
+    // and refuse to append (set conflictDetected, throw).
+    const relay = new Repo()
+    relay.set({ v: 'one' })
+    await relay.sign(signer, name)
+    relay.set({ v: 'cherry' })
+    await relay.sign(signer, name)
+
+    // New writer (the "second connection" simulating reconnect / new sync)
+    const inB = client.makeRelayInboundStream().getWriter()
+    let caught = null
+    try {
+      for (const c of readChunks(relay)) await inB.write(frame(c))
+    } catch (e) { caught = e }
+
+    assert.ok(caught, 'alignment failure must throw')
+    assert.equal(client.conflictDetected, true, 'conflictDetected flag fires')
+    assert.equal(client.byteLength, clientByteLengthBeforeMerge,
+      'no remote chunks land — local store stays decode-safe')
+    assert.equal(client.get('v'), 'banana', 'client can still read its local-pending value')
+  })
+
   test('verificationFailed fires when a bad sig arrives — separate flag from conflictDetected', async ({ assert }) => {
     // Bad sig is a different threat from a fork: the signer didn't actually
     // sign these bytes (or the bytes got corrupted in transit). The chain

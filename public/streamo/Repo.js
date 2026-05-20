@@ -637,6 +637,80 @@ export class Repo extends Streamo {
   }
 
   /**
+   * Like Streamo.makeWritableStream(), for the client-side receive path
+   * from a trusted relay.
+   *
+   * "What comes down is always from the top, and always correct" — the
+   * relay's RepoSerializer has already validated the chain and the
+   * signatures, so we don't repeat that work here. The only thing the
+   * client *can't* know without local context is whether the incoming
+   * batch will land at the right byte position: if the client has
+   * locally-signed content past the last shared sig (e.g. a push in
+   * flight), the incoming chunks would land at a position the wire's
+   * references don't expect, corrupting decodes.
+   *
+   * So this stream parses framing, detects SIGs by codec, and at SIG
+   * arrival checks alignment: local byteLength must equal the wire's
+   * position right before the staged batch. If yes, append batch + sig.
+   * If no, raise `conflictDetected` (a push-in-flight race lost) and
+   * throw — the connection will be torn down by handleWriteError, and
+   * the app can recover via the `pushRejected` flag (typically arriving
+   * over the JSON control channel shortly after).
+   *
+   * @param {number} [maxFrameSize]
+   * @returns {WritableStream}
+   */
+  makeRelayInboundStream (maxFrameSize = 64 * 1024 * 1024) {
+    const self = this
+    let buf = new Uint8Array(0)
+    let staged = []        // not-already-present chunks awaiting a covering SIG
+    let wireByteLength = 0 // cumulative wire bytes consumed (for alignment check)
+    return new WritableStream({
+      async write (incoming) {
+        const next = new Uint8Array(buf.length + incoming.length)
+        next.set(buf); next.set(incoming, buf.length)
+        buf = next
+        while (buf.length >= 4) {
+          const len = new Uint32Array(buf.slice(0, 4).buffer)[0]
+          if (len === 0) throw new Error('malformed frame: zero-length chunk')
+          if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
+          if (buf.length < 4 + len) break
+          const code = buf.slice(4, 4 + len)
+          buf = buf.slice(4 + len)
+
+          const alreadyHave = self.addressOf(code) !== undefined
+          const codec = self.footerToCodec[code.at(-1)]
+
+          if (codec?.type === 'SIGNATURE') {
+            // Alignment check: only matters when we'd actually append new
+            // chunks. If staged is empty, this sig closes a batch where
+            // every chunk was alreadyHave (a resync echo) — safe by
+            // construction, nothing to align.
+            if (staged.length > 0) {
+              const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
+              const expectedLocalByteLength = wireByteLength - stagedTotal
+              if (self.byteLength !== expectedLocalByteLength) {
+                self.#conflictDetected = true
+                self.recaller.reportKeyMutation(self, 'conflictDetected')
+                throw new Error(
+                  `local store diverged from incoming chain: wire expects byteLength ${expectedLocalByteLength} ` +
+                  `for staged chunks but local is at ${self.byteLength}`
+                )
+              }
+            }
+            for (const c of staged) self.append(c)
+            staged = []
+            if (!alreadyHave) self.append(code)
+          } else if (!alreadyHave) {
+            staged.push(code)
+          }
+          wireByteLength += code.length
+        }
+      }
+    })
+  }
+
+  /**
    * Like Streamo.makeWritableStream(), but gates every chunk against the
    * author's chain before it can corrupt the store.
    *

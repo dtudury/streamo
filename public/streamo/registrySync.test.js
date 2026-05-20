@@ -521,4 +521,79 @@ describe(import.meta.url, ({ test }) => {
     sessionB.close()
     await new Promise(r => wss.close(r))
   })
+
+  test('relay refuses a divergent push: server top unchanged; bad client signals the divergence', async ({ assert }) => {
+    // Relay has apple committed. A bad client opens a *fresh* repo with the
+    // same key and writes banana locally — signed against the empty chain,
+    // not against apple. When the bad client connects and the wire flows in
+    // both directions, the relay's per-repo serializer must reject the
+    // banana batch (chain-mismatch). Two things matter:
+    //   (a) the relay's top is unchanged (banana didn't sneak in)
+    //   (b) the bad client knows its chain is incompatible — either via
+    //       `pushRejected` (the relay's explicit reject control message)
+    //       or `conflictDetected` (the local verifier catching the
+    //       diverged apple-bytes flowing back). Either flag is acceptable;
+    //       both arrive asynchronously and racing them in tests is brittle.
+
+    const serverRegistry = new RepoRegistry()
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 60)
+    serverRepo.set({ v: 'apple' })
+    await waitFor(() => serverRepo.signedLength === serverRepo.byteLength, 1000)
+    const tipAfterApple = serverRepo.byteLength
+
+    const badRegistry = new RepoRegistry()
+    const { repo: badRepo } = await openWriter(badRegistry, 60)
+    badRepo.set({ v: 'banana' })
+    await waitFor(() => badRepo.signedLength === badRepo.byteLength, 1000)
+
+    const { wss, port } = await startServer(serverRegistry, keyHex)
+    const session = await registrySync(badRegistry, 'localhost', port)
+
+    await waitFor(
+      () => badRepo.pushRejected != null || badRepo.conflictDetected,
+      2000
+    )
+
+    // The bad client knows something is wrong with its chain.
+    assert.ok(badRepo.pushRejected || badRepo.conflictDetected,
+      'bad client must surface either pushRejected (relay said no) or conflictDetected (local verifier caught it)')
+
+    // The relay's top is unchanged — banana never landed.
+    assert.equal(serverRepo.byteLength, tipAfterApple,
+      "relay's top unchanged by the rejected divergent push")
+    assert.equal(serverRepo.get('v'), 'apple',
+      'apple is still the canonical value at the relay')
+
+    session.ws.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('relay accepts a clean push from an already-synced client', async ({ assert }) => {
+    // The non-conflict case: a client syncs to the relay's top, then writes
+    // locally and pushes. The push chains correctly off the relay's top, so
+    // the serializer accepts and broadcasts.
+
+    const serverRegistry = new RepoRegistry()
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 61)
+    serverRepo.set({ v: 'apple' })
+    await waitFor(() => serverRepo.signedLength === serverRepo.byteLength, 1000)
+
+    const { wss, port } = await startServer(serverRegistry, keyHex)
+    const clientRegistry = new RepoRegistry()
+    const { repo: clientRepo } = await openWriter(clientRegistry, 61)
+    const session = await registrySync(clientRegistry, 'localhost', port)
+
+    // Wait for sync to complete (client sees apple)
+    await waitFor(() => clientRepo.get('v') === 'apple', 2000)
+    // Now client writes banana — signed against apple, so it should chain cleanly
+    clientRepo.set({ v: 'banana' })
+    await waitFor(() => clientRepo.get('v') === 'banana')
+    // And the relay should accept it
+    await waitFor(() => serverRepo.get('v') === 'banana', 2000)
+    assert.equal(serverRepo.get('v'), 'banana', 'relay accepted the chained push')
+    assert.equal(clientRepo.pushRejected, null, 'no rejection on a clean push')
+
+    session.ws.close()
+    await new Promise(r => wss.close(r))
+  })
 })

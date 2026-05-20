@@ -15,6 +15,7 @@
 const WS = globalThis.WebSocket ?? (await import('ws')).default
 
 import { hexToBytes, bytesToHex } from './utils.js'
+import { RepoSerializer, ConnectionAccumulator } from './RepoSerializer.js'
 
 /**
  * Normalize a browser-native WebSocket to the Node `ws` EventEmitter interface.
@@ -133,7 +134,7 @@ const KEEPALIVE_INTERVAL_MS = 20000
  * @param {string} [label]  prefix for log messages
  */
 export function handleRegistryPeer (ws, registry, options = {}, label = 'registry', routing = null) {
-  const { follow = null, onAnnounce = null, onHello = null, home = null } = options
+  const { follow = null, onAnnounce = null, onHello = null, home = null, isAuthority = false } = options
 
   const readers = new Map()        // keyHex → ReadableStreamDefaultReader (we → peer)
   const writers = new Map()        // keyHex → WritableStreamDefaultWriter (peer → us)
@@ -177,10 +178,36 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       })()
     }
 
-    // Peer → us: accept verified chunks; drain anything buffered during setup
+    // Peer → us: accept incoming chunks; drain anything buffered during setup.
+    //
+    // Two modes:
+    //   - isAuthority (relay-side): incoming chunks are *pushes* from a
+    //     client. Route through the per-repo RepoSerializer via a
+    //     per-connection ConnectionAccumulator. On reject, send a
+    //     `{type: 'reject', key, reason}` control message back to the
+    //     submitting peer instead of just closing.
+    //   - default (client-side): incoming chunks are *from the relay* —
+    //     authoritative by invariant. Use the existing verified writer
+    //     as defense-in-depth (Phase 1B-lite keeps this; Phase 1C will
+    //     remove it in favor of trust+append).
     if (!writers.has(keyHex)) {
-      const publicKey = hexToBytes(keyHex)
-      const writer = repo.makeVerifiedWritableStream(publicKey).getWriter()
+      let writer
+      if (isAuthority) {
+        const publicKey = hexToBytes(keyHex)
+        let serializer = routing?.serializers?.get(keyHex)
+        if (!serializer) {
+          serializer = new RepoSerializer(repo, publicKey)
+          routing?.serializers?.set(keyHex, serializer)
+        }
+        writer = new ConnectionAccumulator(serializer, (result) => {
+          if (!result.accepted) {
+            sendJson({ type: 'reject', key: keyHex, reason: result.reason })
+          }
+        })
+      } else {
+        const publicKey = hexToBytes(keyHex)
+        writer = repo.makeVerifiedWritableStream(publicKey).getWriter()
+      }
       writers.set(keyHex, writer)
       const pending = pendingChunks.get(keyHex) ?? []
       pendingChunks.delete(keyHex)
@@ -255,6 +282,13 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
               }
             }
           }
+        } else if (msg.type === 'reject') {
+          // The peer (authority) refused our push for this repo. Surface
+          // it via the repo's reactive pushRejected flag so the app UI
+          // can react. The bytes we tried to push are still in our local
+          // store; recovery is the app's concern.
+          const repo = registry.get(msg.key)
+          if (repo) repo._setPushRejected({ reason: msg.reason })
         } else if (msg.type === 'announce') {
           // Fan out to all subscribers of this topic (server-side routing)
           if (routing) {

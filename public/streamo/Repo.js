@@ -157,6 +157,7 @@ export class Repo extends Streamo {
   // about the local store until something deliberate resolves it.
   #conflictDetected   = false
   #verificationFailed = false
+  #pushRejected       = null  // null | { reason: string } — set by the registry-sync layer on a 'reject' control message
 
   /**
    * Walk back from the tail to the most recent SIGNATURE chunk. Returns
@@ -608,6 +609,31 @@ export class Repo extends Streamo {
   get verificationFailed () {
     this.recaller.reportKeyAccess(this, 'verificationFailed')
     return this.#verificationFailed
+  }
+
+  /**
+   * Reactive: `null` until a push from this client to the relay is rejected;
+   * then `{ reason }` describing why. Set by the registry-sync layer when a
+   * `{type: 'reject', key, reason}` control message arrives from the relay.
+   *
+   * Separate from `conflictDetected` (which fires when the *local* verifier
+   * catches divergence on incoming bytes). `pushRejected` is the
+   * authoritative "the relay said no" signal — the most reliable indicator
+   * a client's local commits won't make it to the top without intervention.
+   */
+  get pushRejected () {
+    this.recaller.reportKeyAccess(this, 'pushRejected')
+    return this.#pushRejected
+  }
+
+  /**
+   * Setter for the registry-sync layer to call when a reject message lands.
+   * Not part of the user-facing Repo API; named with a leading underscore
+   * by convention. Pass `null` to clear (e.g. after a successful recovery).
+   */
+  _setPushRejected (value) {
+    this.#pushRejected = value
+    this.recaller.reportKeyMutation(this, 'pushRejected')
   }
 
   /**

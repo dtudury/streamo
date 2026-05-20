@@ -26,7 +26,15 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
   // (replayed to peers who express interest after the fact, so a newcomer
   // discovers existing announcers without anyone heartbeating). Entries are
   // cleaned up on disconnect — "live" = "by a currently-connected peer."
-  const routing = { interestMap: new Map(), announcementMap: new Map() }
+  // serializers: keyHex → RepoSerializer, one per repo across all connections
+  // to this WSS. The relay is the chain authority; all incoming pushes for
+  // a given repo queue against the same serializer regardless of which
+  // client sent them.
+  const routing = { interestMap: new Map(), announcementMap: new Map(), serializers: new Map() }
+  // The relay is the authority — pass through to handleRegistryPeer so its
+  // incoming-chunk path routes through the serializer instead of doing
+  // per-connection chain verification.
+  const authorityOptions = { ...peerOptions, isAuthority: true }
 
   wss.on('connection', ws => {
     let reader = null
@@ -35,7 +43,7 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
       const handshake = rawHandshake.toString().trim()
 
       if (handshake === 'registry') {
-        handleRegistryPeer(ws, registry, peerOptions, label, routing)
+        handleRegistryPeer(ws, registry, authorityOptions, label, routing)
         return
       }
 

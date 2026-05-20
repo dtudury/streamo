@@ -150,7 +150,15 @@ export class ConnectionAccumulator {
 
       const codec = this.repo.footerToCodec[code.at(-1)]
       if (codec?.type === 'SIGNATURE') {
-        // Batch complete — submit and reset.
+        // Batch complete. If the SIG is already in the repo's content map,
+        // this is an echo (the connecting peer is replaying bytes we
+        // already accepted) — skip submission, drop the staged chunks,
+        // don't fire the result callback. The serializer's queue stays
+        // unburdened, and no spurious reject ever leaves the relay.
+        if (this.repo.addressOf(code) !== undefined) {
+          this.chunks = []
+          continue
+        }
         const batch = { chunks: this.chunks, sig: code }
         this.chunks = []
         const result = await this.serializer.submit(batch)

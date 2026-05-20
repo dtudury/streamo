@@ -152,30 +152,46 @@ commit, moving `valueAddress` past it and breaking `Repo.lastCommit`.)
 
 ### Signing (hash chain)
 
-Each Streamo carries a 32-byte running chainHash. Every appended
-chunk folds in as `acc' = sha256(acc || sha256(chunk))`, starting from
-a 32-byte zero seed and re-seeded to the most recent signature's
-chainHash after every SIGNATURE chunk lands. `sign(signer, name)`
-signs the *current* chainHash value and appends a fixed-format
-97-byte SIGNATURE chunk: `[chainHash(32) | signature(64) |
-footer(1)]`. `verify(sig, publicKey)` is now pure crypto — it does not
-need to walk the byte stream because the chainHash is carried
-inside the chunk.
+Signing and verification live on Repo, not Streamo — Streamo is
+identity-blind. Each SIGNATURE chunk carries a 32-byte chainHash:
 
-`valueAddress` skips trailing SIGNATURE chunks so `get`-style reads
-always operate on user data even when the streamo just got auto-signed.
+```
+chainHash_n = sha256(chainHash_{n-1} || sha256(newBytes))
+```
+
+where `newBytes` is everything appended since the previous SIGNATURE
+(or from a 32-byte zero seed if there is none). Two sha256 calls per
+sig — independent of how many chunks `newBytes` contains.
+
+`sign(signer, name)` slices the new bytes range, computes the
+chainHash, signs it, and appends a fixed-format 97-byte SIGNATURE
+chunk: `[chainHash(32) | signature(64) | footer(1)]`. The
+`committedChainHash` and `signedLength` getters derive their values
+directly from the bytes — the most recent SIGNATURE's first 32 bytes
+are the chainHash, and its end position is the signedLength.
+
+`valueAddress` (overridden on Repo) skips trailing SIGNATURE chunks so
+`get`-style reads always operate on user data even when the repo just
+got auto-signed.
 
 `makeVerifiedWritableStream(publicKey)` is the receive side of sync,
 and the only path through which an untrusted peer can deliver bytes.
-Every non-sig chunk is *staged* (folded into a tentative chainHash
-but not yet appended). When a SIGNATURE arrives, two checks fire:
-the chain check (`sig.chainHash` equals the staged chainHash) and
-the crypto check (the signature verifies against `sig.chainHash`
-under `publicKey`). If both pass, the staged chunks and the SIG are
-appended in one batch; if either fails the stream errors and the
-staged batch is discarded. The store is never polluted with bytes
-that no SIG covers — closing the historical `[commit, bad_sig]`
-corruption hole.
+Non-sig chunks accumulate into a `pendingBytes` buffer (and into
+`staged` if not already present). When a SIGNATURE arrives, three
+checks fire:
+
+1. **chain** — `sha256(pendingChainHash || sha256(pendingBytes))` must
+   equal `sig.chainHash`
+2. **crypto** — the signature must verify against `sig.chainHash`
+   under `publicKey`
+3. **alignment** — `self.byteLength` must equal `wireByteLength -
+   stagedTotal` (the wire's expected position for staged chunks); if
+   it doesn't, the local store has content past the last shared sig
+   that conflicts with what the wire's references expect
+
+If all three pass, staged chunks + SIG append in one batch; if any
+fails the stream errors and the staged batch is discarded. The store
+is never polluted with bytes that no SIG covers.
 
 The chain is what makes the relay stateless across restarts: a peer
 that wants to verify the next append only needs the most-recent

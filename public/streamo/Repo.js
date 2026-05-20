@@ -53,15 +53,17 @@ function arraysEqual (a, b) {
   return true
 }
 /**
- * Fold one chunk into a running chain hash:
- *   next = sha256(prev || sha256(chunk))
- * The chain seed is `new Uint8Array(32)` (32 zeros).
+ * Compute the next chain hash from the previous one + the new bytes
+ * appended since:
+ *   next = sha256(prev || sha256(newBytes))
+ * Two sha256 calls, independent of how many chunks newBytes contains.
+ * The chain seed is `new Uint8Array(32)` (32 zeros) for an empty Repo.
  */
-async function foldChunk (prev, chunk) {
-  const chunkHash = await sha256(chunk)
+async function chainHashOf (prev, newBytes) {
+  const newBytesHash = await sha256(newBytes)
   const combined = new Uint8Array(64)
   combined.set(prev, 0)
-  combined.set(chunkHash, 32)
+  combined.set(newBytesHash, 32)
   return await sha256(combined)
 }
 
@@ -542,10 +544,11 @@ export class Repo extends Streamo {
   // Everything that takes a Signer / Signature / pubkey lives here.
 
   /**
-   * Sign every chunk appended since the last SIG (or from the start).
-   * Folds the chain forward from `committedChainHash` over each new chunk,
-   * signs the resulting chainHash, and appends a SIGNATURE chunk carrying
-   * the chainHash + the signature bytes.
+   * Sign every byte appended since the last SIG (or from the start).
+   * Computes `chainHash = sha256(committedChainHash || sha256(newBytes))`,
+   * signs it, and appends a SIGNATURE chunk carrying the chainHash + the
+   * signature bytes. Two sha256 calls regardless of how many chunks were
+   * appended since the last sig.
    *
    * @param {import('./Signer.js').Signer} signer
    * @param {string} streamoName
@@ -553,16 +556,8 @@ export class Repo extends Streamo {
    */
   async sign (signer, streamoName) {
     const before = this.byteLength
-    // Walk back over chunks since the last sig, then fold them forward.
-    const chunks = []
-    let addr = this.byteLength - 1
-    while (addr >= this.signedLength) {
-      const code = this.resolve(addr)
-      chunks.unshift(code)
-      addr -= code.length
-    }
-    let chainHash = this.committedChainHash
-    for (const chunk of chunks) chainHash = await foldChunk(chainHash, chunk)
+    const newBytes = this.slice(this.signedLength, this.byteLength)
+    const chainHash = await chainHashOf(this.committedChainHash, newBytes)
     const compactRawBytes = await signer.sign(streamoName, chainHash)
     if (this.byteLength !== before) throw new Error('repo was modified while signing')
     const sig = new Signature(chainHash, compactRawBytes)
@@ -637,18 +632,14 @@ export class Repo extends Streamo {
   makeVerifiedWritableStream (publicKey, maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
-    // Start from the 32-zero seed because the wire today replays from byte 0
-    // — the sender's makeReadableStream emits from offset 0, so we have to
-    // fold matching chunks from the same point. A future cleanup could
-    // change the wire to send "anchored batches" (sender skips bytes the
-    // receiver already has, verifier starts from committedChainHash), but
-    // that's a wire-protocol change not yet done.
+    // Start from the 32-zero seed because the wire today replays from byte 0.
+    // A future cleanup could anchor on the receiver's committedChainHash
+    // (sender skips bytes the receiver already has) — that's a wire-protocol
+    // change not yet done.
     let pendingChainHash = new Uint8Array(32)
-    let staged = [] // new (not-already-present) non-sig chunks awaiting a covering SIG
-    // Cumulative bytes consumed from the wire. Used by the alignment check
-    // at sig commit so staged chunks land at addresses matching the wire's
-    // expected positions.
-    let wireByteLength = 0
+    let staged = []                       // not-already-present chunks awaiting a covering SIG
+    let pendingBytes = new Uint8Array(0)  // ALL bytes since the last accepted SIG — hashed once at SIG arrival
+    let wireByteLength = 0                // cumulative wire bytes consumed (for alignment check)
     return new WritableStream({
       async write (incoming) {
         const next = new Uint8Array(buf.length + incoming.length)
@@ -667,7 +658,8 @@ export class Repo extends Streamo {
 
           if (codec?.type === 'SIGNATURE') {
             const sig = self.decode(code)
-            if (!arraysEqual(sig.chainHash, pendingChainHash)) {
+            const expected = await chainHashOf(pendingChainHash, pendingBytes)
+            if (!arraysEqual(sig.chainHash, expected)) {
               // Chain conflict: honest signer, conflicting history. The
               // signer's other device signed over a chunk sequence we don't
               // share. Raise the reactive flag *before* throwing so watchers
@@ -686,13 +678,13 @@ export class Repo extends Streamo {
               throw new Error('signature verification failed')
             }
             // Alignment check: staged chunks were encoded with internal
-            // references (e.g. COMMIT.dataAddress) pointing to byte
-            // positions in the SENDER's chain. We can only safely append
-            // them if our local byteLength equals the wire's position right
-            // before them — otherwise the staged chunks land at addresses
-            // where their references resolve to the wrong bytes, corrupting
-            // decodes. Catches the "local has signed content past the last
-            // shared sig" case (multi-tab offline writes).
+            // references (e.g. COMMIT.dataAddress) pointing to byte positions
+            // in the SENDER's chain. We can only safely append them if our
+            // local byteLength equals the wire's position right before them
+            // — otherwise the staged chunks land at addresses where their
+            // references resolve to the wrong bytes, corrupting decodes.
+            // Catches the "local has signed content past the last shared
+            // sig" case (multi-tab offline writes).
             if (staged.length > 0) {
               const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
               const expectedLocalByteLength = wireByteLength - stagedTotal
@@ -709,9 +701,15 @@ export class Repo extends Streamo {
             for (const c of staged) self.append(c)
             staged = []
             if (!alreadyHave) self.append(code)
-            // pendingChainHash stays at sig.chainHash; next non-sig chunks fold from here.
+            // Chain advances; next batch starts fresh from this sig.
+            pendingChainHash = sig.chainHash
+            pendingBytes = new Uint8Array(0)
           } else {
-            pendingChainHash = await foldChunk(pendingChainHash, code)
+            // Accumulate ALL between-sig bytes (regardless of alreadyHave) —
+            // the chain commits to every byte, not just the new ones.
+            const merged = new Uint8Array(pendingBytes.length + code.length)
+            merged.set(pendingBytes, 0); merged.set(code, pendingBytes.length)
+            pendingBytes = merged
             if (!alreadyHave) staged.push(code)
           }
           wireByteLength += code.length

@@ -281,32 +281,29 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(peer.byteLength, before, 'asRefs walk must not change byteLength on the peer')
   })
 
-  test('sign commits to the full chain — every appended chunk covered', async ({ assert }) => {
-    // Under the chain-hash scheme each non-sig chunk folds into a running
-    // chainHash as `acc' = sha256(acc || sha256(chunk))`, and the SIG
-    // chunk carries that chainHash + a signature over it. This test
-    // independently reconstructs the chainHash chunk-by-chunk and
-    // proves the SIG signs exactly that 32-byte commitment.
+  test('sign commits to the full chain — every appended byte covered', async ({ assert }) => {
+    // The chain-hash formula:
+    //   chainHash = sha256(prevChainHash || sha256(newBytes))
+    // Two sha256 calls per sig regardless of chunk count. This test
+    // independently reconstructs the chainHash and proves the SIG signs
+    // exactly that 32-byte commitment.
     const s = new Repo()
     const signer = new Signer('alice', 'hunter2', 1)
     s.set({ msg: 'hello, world' })
     const beforeSig = s.byteLength
     const sig = await s.sign(signer, 'test')
 
-    // Walk every chunk we just wrote and fold the chainHash manually.
     const cryptoSubtle = (await import('crypto')).webcrypto.subtle
     const sha = async b => new Uint8Array(await cryptoSubtle.digest('SHA-256', b))
-    const chunks = []
-    let addr = beforeSig - 1
-    while (addr >= 0) { const c = s.resolve(addr); chunks.unshift(c); addr -= c.length }
-    let expectedChainHash = new Uint8Array(32)
-    for (const c of chunks) {
-      const combined = new Uint8Array(64)
-      combined.set(expectedChainHash, 0); combined.set(await sha(c), 32)
-      expectedChainHash = await sha(combined)
-    }
+    // All bytes signed by this first sig = bytes 0..beforeSig.
+    const newBytes = s.slice(0, beforeSig)
+    const newBytesHash = await sha(newBytes)
+    const combined = new Uint8Array(64)
+    combined.set(new Uint8Array(32), 0)   // prev = 32 zeros (first sig)
+    combined.set(newBytesHash, 32)
+    const expectedChainHash = await sha(combined)
     assert.deepEqual([...sig.chainHash], [...expectedChainHash],
-      'sig.chainHash must equal independently-folded chain over every pre-sig chunk')
+      'sig.chainHash must equal sha256(prevChainHash || sha256(newBytes))')
 
     // Verify must accept the sig.
     const { publicKey } = await signer.keysFor('test')

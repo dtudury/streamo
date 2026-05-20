@@ -112,3 +112,52 @@ export class RepoSerializer {
     return { accepted: true }
   }
 }
+
+/**
+ * Per-(connection, repo) batch accumulator. Parses length-prefixed wire
+ * frames into chunks; accumulates until a SIGNATURE chunk arrives; submits
+ * the completed batch (chunks + sig) to the repo's serializer.
+ *
+ * Used at the relay only. Each WS connection has its own accumulator per
+ * subscribed repo; all of those accumulators feed the same serializer for
+ * a given repo.
+ */
+export class ConnectionAccumulator {
+  /** @param {RepoSerializer} serializer
+   *  @param {(result: { accepted: boolean, reason?: string }) => void} onBatchResult
+   *    callback invoked with the serializer's result after each batch submit;
+   *    use it to send accept/reject control messages back to the connection. */
+  constructor (serializer, onBatchResult = () => {}) {
+    this.serializer = serializer
+    this.onBatchResult = onBatchResult
+    this.repo = serializer.repo
+    this.buf = new Uint8Array(0)
+    this.chunks = []
+    this.maxFrameSize = 64 * 1024 * 1024
+  }
+
+  async write (incoming) {
+    const next = new Uint8Array(this.buf.length + incoming.length)
+    next.set(this.buf); next.set(incoming, this.buf.length)
+    this.buf = next
+    while (this.buf.length >= 4) {
+      const len = new Uint32Array(this.buf.slice(0, 4).buffer)[0]
+      if (len === 0) throw new Error('malformed frame: zero-length chunk')
+      if (len > this.maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${this.maxFrameSize}`)
+      if (this.buf.length < 4 + len) break
+      const code = this.buf.slice(4, 4 + len)
+      this.buf = this.buf.slice(4 + len)
+
+      const codec = this.repo.footerToCodec[code.at(-1)]
+      if (codec?.type === 'SIGNATURE') {
+        // Batch complete — submit and reset.
+        const batch = { chunks: this.chunks, sig: code }
+        this.chunks = []
+        const result = await this.serializer.submit(batch)
+        this.onBatchResult(result)
+      } else {
+        this.chunks.push(code)
+      }
+    }
+  }
+}

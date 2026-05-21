@@ -20,7 +20,7 @@ import { mount } from '../../streamo/mount.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { liveValue } from '../../streamo/LiveSource.js'
 import { truncKey, fmtDate } from './format.js'
-import { recaller, registry, state, homeKey, loc, getKeyHex, go } from './context.js'
+import { recaller, registry, state, homeKey, loc, getKeyHex, go, isSyncing } from './context.js'
 import { setupInteractions } from './interactions.js'
 import { AtView, handleAtViewAction } from './at-view.js'
 
@@ -69,6 +69,11 @@ registrySync(registry, location.hostname, port, {
   .then(s => {
     session = s
     state.set('connection', { status: 'ok',  text: `connected · ${location.hostname}:${port}` })
+    // Reactive connection-pill: stay honest about WS state. Without
+    // these, the pill says "connected" forever even after the server
+    // restarts and the WS closes (we hit exactly this earlier today).
+    s.ws.on('close', () => state.set('connection', { status: 'err', text: 'disconnected — refresh to reconnect' }))
+    s.ws.on('error', () => state.set('connection', { status: 'err', text: 'connection error — refresh' }))
     // Express interest in the home topic once it's known. The watch
     // re-fires when homeKey arrives from `hello`; idempotent on the
     // server side, so the once-it-arrives behavior is what we want.
@@ -111,21 +116,26 @@ function repoCard (keyHex, repo, extraClass = null) {
         <span class="row-label">
           <span class="mono dim">${truncKey(keyHex)}</span>
         </span>
-        <span class="when dim">…</span>
-        <span class="msg dim">syncing…</span>
+        <span class="bytes dim">syncing…</span>
+        <span class="when dim">—</span>
+        <span class="msg dim"></span>
       </div>
     `
   }
   const last = repo.lastCommit
-  const when = last ? fmtDate(last.date) : `${repo.byteLength} b`
   const name = repo.get('name')
+  // Bytes column is always visible; "syncing…" only during the
+  // grace window after registry.open, then falls back to "0 b" /
+  // "N b" so 0-byte-but-loaded repos read as truly empty.
+  const pendingSync = repo.byteLength === 0 && isSyncing(keyHex)
   return h`
     <div class=${['row', extraClass]} data-key=${keyHex} data-action="open-repo">
       <span class="row-label">
         ${name ? h`<span class="row-name">${name}</span> ` : null}
         <span class="mono dim">${truncKey(keyHex)}</span>
       </span>
-      <span class=${['when', last ? null : 'dim']}>${when}</span>
+      <span class=${['bytes', pendingSync ? 'dim' : null]}>${pendingSync ? 'syncing…' : `${repo.byteLength} b`}</span>
+      <span class=${['when', last ? null : 'dim']}>${last ? fmtDate(last.date) : '—'}</span>
       <span class="msg dim">${last?.message || ''}</span>
     </div>
   `
@@ -173,6 +183,23 @@ mount(h`
     const keyHex = getKeyHex()
     if (!keyHex) return h`
       <section class="view" data-key="view-registry">
+        <div class="registry-stats">
+          <strong>Repo Registry</strong>
+          <span class="dim">·</span>
+          ${() => {
+            // Iterating registry registers (registry, 'keys') for new-repo
+            // opens. Each repo.byteLength registers (repo, 'length') for
+            // chunk arrivals. So this cell wakes on either, keeping the
+            // counts live.
+            let open = 0
+            let synced = 0
+            for (const [, repo] of registry) {
+              open++
+              if (repo.byteLength > 0) synced++
+            }
+            return h`<span><strong>${open}</strong> open</span> <span class="dim">·</span> <span><strong>${synced}</strong> synced</span>`
+          }}
+        </div>
         <h2>home <span class="dim">the relay's public face</span></h2>
         ${() => {
           // Home card — the repo delivered by `hello`. Reads homeKey,

@@ -46,6 +46,27 @@ export const hovered = liveValue(null, { recaller, name: 'hovered' })
 
 export const loc = liveLocation({ recaller, name: 'location' })
 
+// Per-repo "recently opened" tracker — drives repoCard's
+// "syncing… vs 0 b" distinction. When registry.open fires for a
+// key, mark it; clear after a grace window. Imperfect (the wire has
+// no "I'm done sending existing bytes" signal), but human-invisible:
+// by the time a user's gaze lands on a row, 1100ms has passed and
+// the display has settled to the actual byte count.
+const _openedAt = new Map()
+export function isSyncing (keyHex) {
+  recaller.reportKeyAccess(_openedAt, keyHex)
+  const opened = _openedAt.get(keyHex)
+  return opened !== undefined && (Date.now() - opened) < 1000
+}
+registry.onOpen(keyHex => {
+  _openedAt.set(keyHex, Date.now())
+  recaller.reportKeyMutation(_openedAt, keyHex)
+  setTimeout(() => {
+    _openedAt.delete(keyHex)
+    recaller.reportKeyMutation(_openedAt, keyHex)
+  }, 1100)
+})
+
 export const getKeyHex = () => {
   if (loc.get('hashParts', 1) !== 'repo') return null
   return loc.get('hashParts', 2) || null

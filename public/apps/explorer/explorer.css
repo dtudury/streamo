@@ -26,16 +26,19 @@
     }
     .page-title::before { content: '· '; opacity: 0.5; }
     .crumbs  { font-size: 0.85rem; color: var(--ink-dim); }
-    /* Back link from at-view → registry. Matches the registry-stats
-       header's typography (font-size, margins, weight on the title)
-       so navigating in from the registry page leaves "Repo Registry"
-       at the same vertical position — only shifting right to make
-       room for the arrow. */
+    /* Back link from at-view → registry. Structurally mirrors
+       .registry-stats (display: flex, same margin, same font-size,
+       same baseline) so the "Repo Registry" text lands at exactly
+       the same vertical position across the two views — only the
+       arrow shifts the text right. */
     .back {
       cursor: pointer;
-      display: inline-block;
       font-size: 0.95rem;
       margin: 0.75rem 0 1.25rem;
+      display: flex;
+      gap: 0.45rem;
+      align-items: baseline;
+      width: fit-content;
       color: var(--ink);
       text-decoration: none;
     }

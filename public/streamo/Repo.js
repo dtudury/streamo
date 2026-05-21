@@ -150,15 +150,22 @@ export class Repo extends Streamo {
   #signerName  = null
   #signing     = false
   #signPending = false
-  // Reactive error flag raised by makeRelayInboundStream on alignment
-  // failure (the push-in-flight race: local content past the last shared
-  // sig conflicts with incoming bytes whose references assume otherwise).
-  // The throw kills the connection; this flag lets watchers see it.
-  // Never auto-cleared: a conflict is a fact about the local store until
-  // something deliberate resolves it.
-  #conflictDetected = false
-  // Reactive: null until the relay rejects one of our pushes via a
-  // `{type:'reject',key,reason}` control message; then `{ reason }`.
+  // Reactive divergence flags. Both are `null` when healthy; otherwise an
+  // object carrying `dataAddress` (where the rejected commit's value lives
+  // in the local store) so apps can decode and offer recovery UX:
+  //
+  //   conflictDetected — set by makeRelayInboundStream when the local
+  //                      alignment check catches a push-in-flight race.
+  //                      Shape: { dataAddress }.
+  //   pushRejected     — set by the registry-sync layer when the relay
+  //                      rejects a push via {type:'reject', ...}.
+  //                      Shape: { reason, dataAddress }.
+  //
+  // Both flags surface the value the user tried to write (typically
+  // `repo.lastCommit.dataAddress` at the moment of rejection) so the app
+  // can quote it back to the user and offer Send-merged / Discard.
+  // Neither is auto-cleared.
+  #conflictDetected = null
   #pushRejected     = null
 
   /**
@@ -629,6 +636,21 @@ export class Repo extends Streamo {
   }
 
   /**
+   * @override Wipes local bytes (via Streamo._reset) AND clears the
+   * divergence flags. Used by recovery-UX orchestration: an app stashes
+   * `repo.decode(repo.{push,conflict}.dataAddress)` first, then calls
+   * `_reset()` to drop the local-only state, then re-subscribes to take
+   * the relay's view, then re-applies the stashed value via `set()`.
+   */
+  _reset () {
+    super._reset()
+    this.#conflictDetected = null
+    this.#pushRejected = null
+    this.recaller.reportKeyMutation(this, 'conflictDetected')
+    this.recaller.reportKeyMutation(this, 'pushRejected')
+  }
+
+  /**
    * Like Streamo.makeWritableStream(), for the client-side receive path
    * from a trusted relay.
    *
@@ -691,7 +713,7 @@ export class Repo extends Streamo {
             // would land on top of them at wrong addresses.
             if (staged.length > 0) {
               if (!arraysEqual(pendingChainHash, self.committedChainHash)) {
-                self.#conflictDetected = true
+                self.#conflictDetected = { dataAddress: self.lastCommit?.dataAddress }
                 self.recaller.reportKeyMutation(self, 'conflictDetected')
                 throw new Error(
                   'local store diverged from incoming chain: ' +

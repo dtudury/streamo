@@ -36,6 +36,34 @@ const loginStatus = liveValue('',    { recaller, name: 'loginStatus' })
 // the slots that read them are only created when loggedIn flips to
 // true, so closure capture is fine.
 let myKey, myName, myRepo, registry, session
+// Recovery orchestration handle — set inside login(), called by the
+// banner's [Send it now] / [Discard] buttons when the user wants to
+// reconcile pushRejected or conflictDetected.
+let onRecover = null
+
+// Merge function for chat's value shape: concatenate two message lists
+// (current relay state + the rejected local writes), dedupe by `at`
+// timestamp, return a clean { name, messages: [...] } value. Other apps
+// would write their own merge for their value shape.
+function mergeChatValue (current, rejected) {
+  const seen = new Map()
+  for (const m of (current?.messages ?? [])) {
+    if (m?.at != null) seen.set(+m.at, m)
+  }
+  for (const m of (rejected?.messages ?? [])) {
+    if (m?.at != null && !seen.has(+m.at)) seen.set(+m.at, m)
+  }
+  return {
+    name: current?.name ?? rejected?.name ?? myName,
+    messages: [...seen.values()].sort((a, b) => +a.at - +b.at)
+  }
+}
+
+// Handler wrappers used by the banner buttons. They route through the
+// `onRecover` closure which login() populates — that's where the
+// session + registry + myRepo are all in scope.
+const handleSend    = () => onRecover?.('merge')
+const handleDiscard = () => onRecover?.('discard')
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -144,6 +172,47 @@ async function login (e) {
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)
+
+    // Recovery orchestration — invoked by the banner buttons when the
+    // user wants to reconcile pushRejected or conflictDetected. The
+    // closure captures `session` (let — replaceable) and the connection
+    // params + signer so we can stand up a fresh session from scratch.
+    onRecover = async (mode) => {
+      const flag = myRepo.pushRejected ?? myRepo.conflictDetected
+      let rejectedValue = null
+      if (flag?.dataAddress != null) {
+        try { rejectedValue = myRepo.decode(flag.dataAddress) } catch {}
+      }
+      // Wipe local state (bytes + flags) and tear down the old WS so the
+      // fresh sync starts from a clean empty Repo.
+      myRepo._reset()
+      session.ws.close()
+      const freshAnnouncedTo = new Set()
+      session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
+        follow: (keyHex, repo, subscribe) => {
+          for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
+        },
+        onAnnounce: key => {
+          session.subscribe(key)
+          if (!freshAnnouncedTo.has(key)) {
+            freshAnnouncedTo.add(key)
+            session.announce(myKey, rootKey)
+          }
+        }
+      })
+      await session.subscribe(myKey)
+      session.interest(rootKey)
+      session.announce(myKey, rootKey)
+      // Brief settle window for the relay's bytes to land. If it's not
+      // enough (and our merge races with another peer's push), the push
+      // gets rejected again and the banner re-appears — click again,
+      // same flow. No exponential retry loop here on purpose.
+      await new Promise(r => setTimeout(r, 400))
+      if (mode === 'merge' && rejectedValue) {
+        const currentValue = myRepo.get() ?? { name: myName, messages: [] }
+        myRepo.set(mergeChatValue(currentValue, rejectedValue))
+      }
+    }
 
     // Auto-scroll to the bottom whenever a message arrives. The watcher
     // wakes on new-repo opens (iteration) and each repo's chunk
@@ -341,6 +410,20 @@ mount(h`
     .sync-warning .icon { flex: 0 0 auto; font-weight: 700 }
     .sync-warning .body { flex: 1 }
     .sync-warning .body strong { font-weight: 600 }
+    .banner-actions { display: flex; gap: .5rem; margin-top: .5rem }
+    .banner-actions button {
+      background: transparent;
+      border: 1px solid #664d03;
+      color: #664d03;
+      border-radius: 4px;
+      padding: .25rem .6rem;
+      font-size: .78rem;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .banner-actions button:hover { background: rgba(102, 77, 3, 0.1) }
+    .banner-actions button.discard { opacity: .7 }
+    .banner-actions button.discard:hover { opacity: 1 }
 
     .input-row { display: flex; gap: .5rem; padding: .75rem; border-top: 1px solid var(--border) }
     .input-row input {
@@ -408,15 +491,21 @@ mount(h`
             else conflictOther++
           }
         }
-        if (!pushRejectedMine && !conflictMine && !conflictOther) return null
+        const myConflict = pushRejectedMine || conflictMine
+        if (!myConflict && !conflictOther) return null
         return h`<div class="sync-warning conflict" data-key="warn-conflict">
           <span class="icon">⑂</span>
           <div class="body">
-            ${pushRejectedMine
-              ? h`<strong>the relay refused your last write.</strong> another tab or device pushed to this repo while you were writing — the relay's top has moved past where your write was anchored. refresh to take the relay's view; your local edits will be lost.`
-              : conflictMine
-                ? h`<strong>you've written from two places at once.</strong> another tab or device signed in with these credentials wrote while this one did — the chains have diverged and can no longer be merged automatically. refresh to take the server's view.`
-                : h`<strong>a peer's chain has diverged.</strong> ${conflictOther === 1 ? 'one other repo' : `${conflictOther} other repos`} in this room ${conflictOther === 1 ? 'has' : 'have'} conflicting writes across devices.`}
+            ${myConflict
+              ? h`<strong>your last write didn't reach the room.</strong>
+                ${pushRejectedMine
+                  ? ' the relay refused it — another tab or device pushed in first.'
+                  : ' another tab or device signed in with these credentials wrote at the same time.'}
+                <div class="banner-actions">
+                  <button onclick=${() => handleSend}>send it now</button>
+                  <button class="discard" onclick=${() => handleDiscard}>discard</button>
+                </div>`
+              : h`<strong>a peer's chain has diverged.</strong> ${conflictOther === 1 ? 'one other repo' : `${conflictOther} other repos`} in this room ${conflictOther === 1 ? 'has' : 'have'} conflicting writes across devices.`}
           </div>
         </div>`
       }}

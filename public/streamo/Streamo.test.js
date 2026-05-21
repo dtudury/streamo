@@ -370,7 +370,11 @@ describe(import.meta.url, ({ test }) => {
     } catch (e) { caught = e }
 
     assert.ok(caught, 'alignment failure must throw')
-    assert.equal(client.conflictDetected, true, 'conflictDetected flag fires')
+    assert.ok(client.conflictDetected, 'conflictDetected flag fires')
+    assert.ok(client.conflictDetected.dataAddress != null,
+      'conflictDetected carries the local rejected commit\'s dataAddress for recovery UX')
+    assert.deepEqual(client.decode(client.conflictDetected.dataAddress), { v: 'banana' },
+      'the dataAddress decodes to the value the user tried to write')
     assert.equal(client.byteLength, clientByteLengthBeforeMerge,
       'no remote chunks land — local store stays decode-safe')
     assert.equal(client.get('v'), 'banana', 'client can still read its local-pending value')

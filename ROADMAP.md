@@ -480,25 +480,51 @@ streamo's model:
 - *merge* = a commit referencing prior values from anywhere (via
   `Repo.merge(source, { remoteParent })`)
 
-**What's still open: recovery UX.** Today: when a client is rejected, the
-chat banner shows "the relay declined this push" (or "you've written from
-two places at once" for the local alignment case); a refresh takes the
-server's view; local divergent commits become orphan bytes in the store,
-unreachable via valueAddress. That's correct behavior but a coarse UX. A
-real recovery flow would let the user:
+**What's still open: recovery UX (v1 designed; implementation next).**
+Today: when a push is rejected or the local alignment check catches a
+race, the chat banner shows a generic message; the user's only path is
+refresh, which silently abandons whatever they tried to write.
 
-- pick which side wins, or
-- attempt a value-level merge into a new commit anchored at the relay's
-  current top, or
-- save the rejected commits as a *branch* (an addressed-but-non-head
-  value inside the same Repo) and reference them from a new merge commit.
+**Design floor (landed 2026-05-21).** Both signals — `pushRejected`
+from the relay's reject control message, and `conflictDetected` from
+the local alignment check — describe the *same* local Repo shape:
+shared chain + local-only commits past the last shared sig. Recovery
+is identical for both. Both flags become `null | { reason?, dataAddress }`
+(symmetric), with `dataAddress` pointing at the rejected commit's
+value so apps can decode and display it.
 
-The third shape is the most streamo-native — branches are already the
-slot for "I have a value I want to keep around but it's not the head." A
-small commit-shape addition (a `mergedFrom: [branch_addr, ...]` field,
-shape-compatible with the existing `remoteParent` slot for cross-Repo
-citations) is probably the load-bearing primitive. Implement it
-post-demo; the existing detection + refresh path is a clean fallback.
+Library scope is small (~20 LOC + tests): thread `dataAddress` into
+the flag payload at the moment each fires. Recovery orchestration
+lives in the app:
+
+1. Stash the rejected value via `repo.decode(flag.dataAddress)`
+2. `repo._reset()` to wipe local Repo state
+3. Close + re-open the WS so the new sync sees the empty Repo
+4. Re-subscribe; wait for the relay's state to land
+5. Apply `mergeWith(currentValue, rejectedValue) → newValue`
+6. `repo.set(newValue)` — auto-commits and pushes
+
+Chat's `mergeWith` concatenates the two message lists and dedupes by
+`at` timestamp. Other apps register their own merge logic for their
+value shape; promote to a library primitive if a second app needs
+the same orchestration.
+
+**v1 NOT doing**: automatic retry loops (banner click twice is fine
+— exponential backoff has well-known self-DDoS failure modes),
+library-side WS orchestration (apps already hold the session;
+revisit if reused), branch-as-non-head-value (own thread, below).
+
+### branch-as-non-head-value *(future, deferred from recovery UX v1)*
+
+The most streamo-native recovery shape: save rejected commits as
+addressed-but-non-head values inside the same Repo (the *branch*
+primitive from the vocabulary — `fork` = new Repo with lineage,
+*branch* = addressed-but-non-head value inside a Repo). Nothing
+lost, both timelines preserved, UI can surface "you have N alternate
+versions to review/merge later." A small commit-shape addition
+(`mergedFrom: [branch_addr, ...]`, shape-compatible with
+`remoteParent` for cross-Repo citations) is the load-bearing
+primitive. Its own session+; not blocking the demo.
 
 **Future-direction worth keeping in mind**: the chunk-level content
 addressing exploration was killed during the 8.0 work — the size cost

@@ -357,9 +357,16 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // The peer (authority) refused our push for this repo. Surface
           // it via the repo's reactive pushRejected flag so the app UI
           // can react. The bytes we tried to push are still in our local
-          // store; recovery is the app's concern.
+          // store; `dataAddress` points at the rejected commit's value so
+          // the app can decode it for "your write didn't make it" UX and
+          // offer Send-merged / Discard recovery.
           const repo = registry.get(msg.key)
-          if (repo) repo._setPushRejected({ reason: msg.reason })
+          if (repo) {
+            repo._setPushRejected({
+              reason: msg.reason,
+              dataAddress: repo.lastCommit?.dataAddress
+            })
+          }
         } else if (msg.type === 'announce') {
           // Fan out to all subscribers of this topic (server-side routing)
           if (routing) {

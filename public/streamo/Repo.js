@@ -47,6 +47,11 @@ const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await impo
 async function sha256 (bytes) {
   return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
 }
+function arraysEqual (a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
 /**
  * Compute the next chain hash from the previous one + the new bytes
  * appended since:
@@ -650,8 +655,8 @@ export class Repo extends Streamo {
   makeRelayInboundStream (maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
-    let staged = []        // not-already-present chunks awaiting a covering SIG
-    let wireByteLength = 0 // cumulative wire bytes consumed (for alignment check)
+    let staged = []                            // not-already-present chunks awaiting a covering SIG
+    let pendingChainHash = new Uint8Array(32)  // chain hash through the most-recently-seen wire sig (or genesis)
     return new WritableStream({
       async write (incoming) {
         const next = new Uint8Array(buf.length + incoming.length)
@@ -669,29 +674,35 @@ export class Repo extends Streamo {
           const codec = self.footerToCodec[code.at(-1)]
 
           if (codec?.type === 'SIGNATURE') {
-            // Alignment check: only matters when we'd actually append new
-            // chunks. If staged is empty, this sig closes a batch where
-            // every chunk was alreadyHave (a resync echo) — safe by
-            // construction, nothing to align.
+            // Alignment check (chain-hash equality): only matters when we'd
+            // actually append new chunks. If staged is empty, this sig
+            // closes an alreadyHave batch (a resync echo) — safe to skip.
+            //
+            // When the wire is about to extend the chain past pendingChainHash
+            // (its previous sig's chainHash), our local committedChainHash
+            // must equal pendingChainHash too — otherwise we have local
+            // commits the wire doesn't know about and the staged chunks
+            // would land on top of them at wrong addresses.
             if (staged.length > 0) {
-              const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
-              const expectedLocalByteLength = wireByteLength - stagedTotal
-              if (self.byteLength !== expectedLocalByteLength) {
+              if (!arraysEqual(pendingChainHash, self.committedChainHash)) {
                 self.#conflictDetected = true
                 self.recaller.reportKeyMutation(self, 'conflictDetected')
                 throw new Error(
-                  `local store diverged from incoming chain: wire expects byteLength ${expectedLocalByteLength} ` +
-                  `for staged chunks but local is at ${self.byteLength}`
+                  'local store diverged from incoming chain: ' +
+                  'our most recent sig\'s chainHash does not equal the wire\'s previous sig\'s chainHash ' +
+                  '(local content past the last shared sig — push in flight or push got beaten)'
                 )
               }
             }
             for (const c of staged) self.append(c)
             staged = []
             if (!alreadyHave) self.append(code)
+            // Advance: the SIG chunk's first 32 bytes are its chainHash.
+            // No decode needed — read the bytes directly.
+            pendingChainHash = code.slice(0, 32)
           } else if (!alreadyHave) {
             staged.push(code)
           }
-          wireByteLength += code.length
         }
       }
     })

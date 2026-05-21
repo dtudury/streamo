@@ -219,6 +219,76 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('subscribe: self-heals when client has pre-wipe state the server lost (wipe recovery)', async ({ assert }) => {
+    // Wipe-recovery scenario: server was wiped (--reset deploy); client
+    // reconnects carrying locally-persisted state from before the wipe.
+    // The client's fromOffset is past the server's byteLength, so the
+    // chain anchor cannot be directly validated. Rather than rejecting,
+    // the server accepts and the upward push restores the chain.
+    // Real divergence (chains diverge at a shared offset) would still be
+    // caught — by the serializer when the SIG arrives.
+    const clientRegistry = new RepoRegistry()
+    const { repo: clientRepo, hex: key } = await openWriter(clientRegistry, 30)
+    clientRepo.set({ value: 'i was here before the wipe' })
+    await waitFor(() => clientRepo.signedLength > 0)
+
+    // Server has nothing for this key — fresh post-wipe state.
+    const serverRegistry = new RepoRegistry()
+
+    const { wss, port } = await startServer(serverRegistry)
+    const session = await registrySync(clientRegistry, 'localhost', port)
+    await session.subscribe(key)
+
+    // The client's bytes flow up; the server reconstructs the chain.
+    await waitFor(() => serverRegistry.get(key)?.get('value') === 'i was here before the wipe')
+    assert.equal(serverRegistry.get(key).get('value'), 'i was here before the wipe',
+      'server self-heals from the client\'s push')
+    assert.ok(!clientRepo.pushRejected,
+      'no rejection: server accepted the unvalidated anchor and let the upward push proceed')
+
+    session.ws.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('subscribe: server accepts valid anchor and streams only post-anchor bytes', async ({ assert }) => {
+    // The reconnect optimization: server has a longer chain than the client;
+    // the client claims its current signedLength + chainHash; server validates
+    // (chain at that offset matches) and streams only the new tail. Verified
+    // by checking the client ends up with the full server state.
+    const serverRegistry = new RepoRegistry()
+    const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 31)
+    serverRepo.set({ stage: 1 })
+    await waitFor(() => serverRepo.signedLength > 0)
+
+    // Phase 1: client connects fresh and syncs the initial state
+    const clientRegistry = new RepoRegistry()
+    const { wss, port } = await startServer(serverRegistry)
+    const session1 = await registrySync(clientRegistry, 'localhost', port)
+    const clientRepo = await session1.subscribe(key)
+    await waitFor(() => clientRepo.get('stage') === 1)
+    const anchorOffset = clientRepo.signedLength
+    session1.ws.close()
+    await new Promise(r => setTimeout(r, 30))
+
+    // Phase 2: server extends the chain while client is disconnected
+    serverRepo.set({ stage: 2 })
+    await waitFor(() => serverRepo.signedLength > anchorOffset)
+
+    // Phase 3: client reconnects with its state — subscribe carries
+    // (anchorOffset, anchorChainHash); server validates and streams only the
+    // stage-2 bytes (not the full history).
+    const session2 = await registrySync(clientRegistry, 'localhost', port)
+    await session2.subscribe(key)
+    await waitFor(() => clientRepo.get('stage') === 2)
+    assert.equal(clientRepo.get('stage'), 2,
+      'client picked up the server\'s post-anchor extension')
+    assert.ok(!clientRepo.pushRejected,
+      'no rejection: the anchor validated against the server\'s chain')
+
+    session2.ws.close()
+    await new Promise(r => wss.close(r))
+  })
+
   test('session.subscribe returns the live Repo (open + wire-plumb in one verb)', async ({ assert }) => {
     // The everyday "I want this key live" pattern: subscribe opens locally,
     // sets up the wire, and hands you the Repo. Idempotent — calling twice

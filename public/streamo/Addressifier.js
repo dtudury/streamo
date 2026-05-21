@@ -137,13 +137,27 @@ export class Addressifier {
   }
 
   /**
-   * ReadableStream that emits all chunks, then waits for new ones.
-   * Wire format: 4-byte LE length prefix followed by chunk bytes.
+   * ReadableStream that emits chunks at or after `fromOffset`, then waits
+   * for new ones. Wire format: 4-byte LE length prefix followed by chunk
+   * bytes.
+   *
+   * `fromOffset` lets the wire skip bytes the receiver already has — e.g.
+   * a client reconnecting carries its `repo.signedLength` in the subscribe
+   * message, the server validates the handshake, then starts emitting
+   * from there. If `fromOffset` is past the end, the stream waits for new
+   * chunks past that position (rare; valid only if the receiver claims
+   * to be ahead, which the subscribe handshake usually rejects).
+   *
+   * @param {{ fromOffset?: number }} [options]
    * @returns {ReadableStream}
    */
-  makeReadableStream () {
+  makeReadableStream ({ fromOffset = 0 } = {}) {
     const self = this
+    // Linear scan to find the first chunk at or past fromOffset. SIGs are
+    // fixed-format 97-byte chunks and signedLength always lands on a chunk
+    // boundary, so this is exact when called with `fromOffset = signedLength`.
     let index = 0
+    while (index < self.#chunks.length && self.#chunks[index].offset < fromOffset) index++
     return new ReadableStream({
       async start (controller) {
         while (true) {

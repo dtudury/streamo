@@ -655,8 +655,14 @@ export class Repo extends Streamo {
   makeRelayInboundStream (maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
-    let staged = []                            // not-already-present chunks awaiting a covering SIG
-    let pendingChainHash = new Uint8Array(32)  // chain hash through the most-recently-seen wire sig (or genesis)
+    let staged = []                                  // not-already-present chunks awaiting a covering SIG
+    // Anchor on local state — the sender (relay) knows our offset/chainHash from
+    // the subscribe handshake and is sending bytes from there. So our wire-side
+    // pendingChainHash starts equal to our local committedChainHash; each sig
+    // arriving from the wire advances both in lockstep. Local writes (e.g. the
+    // user signs a commit) advance committedChainHash without touching
+    // pendingChainHash, which is exactly when the alignment check should fire.
+    let pendingChainHash = self.committedChainHash
     return new WritableStream({
       async write (incoming) {
         const next = new Uint8Array(buf.length + incoming.length)

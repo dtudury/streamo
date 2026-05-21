@@ -8,14 +8,18 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 ## current state
 
 Streamo is at 8.1.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. **8.1
-collapses `registry.open` + `session.subscribe` into one verb** —
-`await session.subscribe(key)` now opens the Repo locally, plumbs
-the wire, and returns the Repo. Came out of driving 8.0.0 in two
-browser tabs and noticing the chat client could fall into "online
-WebSocket, unsynced Repo" if the user didn't manually pair the two
-calls. **8.0 makes the relay the single chain authority per repo**
-— a per-repo `RepoSerializer` at the relay atomically accepts or
+live on streamo.dev as the canonical reference deployment.
+**8.2-pending in `main`: the subscribe handshake now carries the
+client's chain anchor** — the `subscribe` JSON includes
+`(fromOffset, fromChainHash)`; the server validates and streams
+only post-anchor bytes, saving the genesis-replay on every
+reconnect. Wipe-recovery is self-healing as a side effect: a
+client with pre-wipe state pushes its history back up through the
+serializer's chain check. **8.1 collapses `registry.open` +
+`session.subscribe` into one verb** — `await session.subscribe(key)`
+opens the Repo locally, plumbs the wire, and returns the Repo.
+**8.0 makes the relay the single chain authority per repo** — a
+per-repo `RepoSerializer` at the relay atomically accepts or
 rejects incoming pushes against the current top; clients receiving
 the authoritative stream trust + append. Conflict detection that used
 to happen by accident at every client now happens deliberately at
@@ -34,7 +38,7 @@ its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
 Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
 unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, and the
-`streamo-history` repo on one port. 216 tests passing.
+`streamo-history` repo on one port. 219 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.
@@ -101,46 +105,31 @@ Goals for this thread: open a commit feels instant; the bytestream
 strip stays responsive at thousands of chunks; the dropdown stays
 usable at 1000+ commits.
 
-### wire-protocol cleanup — anchor on receiver's signedLength *(next-up after 8.0)*
+### wire-protocol upward-path optimization + sender-side echo-skip *(small follow-ups to 8.2)*
 
-8.0 made the relay the chain authority but kept the wire's "replay
-from byte 0" handshake. Two artifacts remain:
+8.2 (in progress / about to ship) landed the downward-path optimization:
+the subscribe message carries `(fromOffset, fromChainHash)`; the server
+validates and streams only post-anchor bytes; the receiver's
+`makeRelayInboundStream` anchors `pendingChainHash` to the local
+`committedChainHash`. Two smaller cleanups remain:
 
-- `makeRelayInboundStream` tracks `pendingChainHash` starting from
-  `new Uint8Array(32)` (genesis) because the sender always streams
-  from offset 0. It folds bytes the receiver already has just to
-  arrive at the chainHash it could have started from.
-- The receiver alignment check still expresses "is the wire's
-  position right before this batch equal to my last-shared sig?"
-  in a way that's correct but indirect — chain-hash equality is
-  the actual check, but it sits inside a stream that's still
-  replaying from genesis.
+- **Upward path** still replays from byte 0. The relay-side
+  `ConnectionAccumulator` dedupes via the SIG-already-in-content-map
+  check, so it's not a correctness issue, just wasted bandwidth on
+  reconnect. Symmetric handshake would let the client also start from
+  `serverState.fromOffset`, but the server doesn't currently announce
+  its state to the client — would require a `subscribed` reply message
+  or a piggyback on the server's first downward frames.
+- **Sender-side echo-skip** at the relay. Today the relay broadcasts
+  every accepted chunk to all subscribers including the original
+  pusher; the receiver dedupes via `alreadyHave`. Cleaner shape:
+  relay tags each push with the submitting WS, and the broadcast loop
+  skips that WS. Then `makeRelayInboundStream` no longer needs the
+  `alreadyHave` defensive check. Small bookkeeping at the sender for
+  a one-line removal at the receiver.
 
-The proposed shape: extend the `subscribe` message to carry
-`(fromOffset, fromChainHash)` — `repo.signedLength` and
-`repo.committedChainHash` respectively. Sender validates the
-handshake (does the SIG at that offset carry that chainHash?), then
-streams from `fromOffset` rather than `0`. Receiver anchors
-`pendingChainHash = committedChainHash` and only sees bytes it
-doesn't have.
-
-Effects:
-- Bandwidth: clients reconnecting (or arriving with partial state)
-  skip what they already have. The biggest savings are on cold
-  reconnects after long disconnects.
-- Code: `makeRelayInboundStream` simplifies — no more "did we
-  already have this chunk" dedup on every incoming chunk, no more
-  fold-from-genesis math, just trust+append the bytes the sender
-  decided to send.
-- Errors: "your client is ahead of where I think you are" gets
-  caught at handshake (sender's check), not buried in a verifier
-  fold loop.
-
-The alignment check survives but the math is simpler — it's just
-"are we still anchored at the same sig the sender thought we were."
-
-Breaks wire-compat: old clients won't understand the new subscribe
-shape. Fine at our scale; can be done in one focused session.
+Neither is blocking. They're "low-glamour cleanup" candidates for
+between-arcs days.
 
 ### FIRST_STEPS step 5 — visit your fork on the public relay *(post-publish)*
 

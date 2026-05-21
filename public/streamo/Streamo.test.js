@@ -351,13 +351,14 @@ describe(import.meta.url, ({ test }) => {
     await client.sign(signer, name)
     const clientByteLengthBeforeMerge = client.byteLength
 
-    // "Relay" view: extends shared with cherry (a divergent commit). The
-    // wire would send cherry's chunks; the client receiver should detect
-    // that its local position doesn't match the wire's expected position
-    // and refuse to append (set conflictDetected, throw).
+    // "Relay" view: extends the SAME shared base with cherry (a divergent
+    // commit). To make the base truly shared at the byte level (commit
+    // chunks include a date; reconstructing via set() would produce
+    // different bytes), copy shared's actual chunks into the relay via the
+    // unverified writer, then extend with cherry on top.
     const relay = new Repo()
-    relay.set({ v: 'one' })
-    await relay.sign(signer, name)
+    const relayLoader = relay.makeWritableStream().getWriter()
+    for (const c of sharedChunks) await relayLoader.write(frame(c))
     relay.set({ v: 'cherry' })
     await relay.sign(signer, name)
 
@@ -373,6 +374,49 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(client.byteLength, clientByteLengthBeforeMerge,
       'no remote chunks land — local store stays decode-safe')
     assert.equal(client.get('v'), 'banana', 'client can still read its local-pending value')
+  })
+
+  test('makeReadableStream({ fromOffset }) skips bytes the receiver already has', async ({ assert }) => {
+    // The wire-protocol cleanup lets the receiver carry its signedLength in
+    // the subscribe handshake; the sender starts from there rather than from
+    // byte 0. Verifies the source-side mechanic: a reader with fromOffset = N
+    // emits only chunks whose offset is >= N.
+    const signer = new Signer('alice', 'hunter2', 1)
+    const name = 'from-offset-reader'
+    const { publicKey: _ } = await signer.keysFor(name)
+
+    const repo = new Repo()
+    repo.set({ v: 'one' })
+    await repo.sign(signer, name)
+    const offsetAfterFirstSig = repo.signedLength
+    repo.set({ v: 'two' })
+    await repo.sign(signer, name)
+    const totalBytes = repo.byteLength
+
+    // From-0 reader emits all chunks; total bytes equal repo.byteLength.
+    let fromZero = 0
+    const r0 = repo.makeReadableStream({ fromOffset: 0 }).getReader()
+    while (fromZero < totalBytes) {
+      const { value, done } = await r0.read()
+      if (done) break
+      // Wire format is [4-byte length][chunk bytes] — the chunk's length
+      // (not including the prefix) advances the byte cursor.
+      fromZero += value.length - 4
+    }
+    assert.equal(fromZero, totalBytes, 'from-0 reader covers everything')
+    r0.cancel()
+
+    // From-after-first-sig reader skips the first commit's worth of bytes.
+    let fromAfterFirst = 0
+    const r1 = repo.makeReadableStream({ fromOffset: offsetAfterFirstSig }).getReader()
+    while (fromAfterFirst < totalBytes - offsetAfterFirstSig) {
+      const { value, done } = await r1.read()
+      if (done) break
+      fromAfterFirst += value.length - 4
+    }
+    assert.equal(fromAfterFirst, totalBytes - offsetAfterFirstSig,
+      'from-offset reader emits only the post-offset bytes')
+    r1.cancel()
   })
 
   test('signedLength is derived from the bytes — survives load via the unverified writer (archive replay)', async ({ assert }) => {

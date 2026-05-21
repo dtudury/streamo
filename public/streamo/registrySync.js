@@ -17,6 +17,12 @@ const WS = globalThis.WebSocket ?? (await import('ws')).default
 import { hexToBytes, bytesToHex } from './utils.js'
 import { RepoSerializer, ConnectionAccumulator } from './RepoSerializer.js'
 
+function arraysEqual (a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
 /**
  * Normalize a browser-native WebSocket to the Node `ws` EventEmitter interface.
  * If the socket already has `.on()` (Node ws package) it is returned unchanged.
@@ -159,14 +165,21 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   /**
    * Ensure full bidirectional sync is active for keyHex.
    * Idempotent — safe to call multiple times for the same key.
+   *
+   * `readerFromOffset` lets the we → peer reader skip bytes the peer
+   * already has. Used by the server-side handler when a client's
+   * subscribe message carries a validated `(fromOffset, fromChainHash)`
+   * anchor. Defaults to 0 (full replay from the start) for the
+   * client-side path, where we always push our whole local repo up and
+   * the relay's accumulator dedupes echoes via `alreadyHave`.
    */
-  async function syncKey (keyHex) {
+  async function syncKey (keyHex, readerFromOffset = 0) {
     const repo = await registry.open(keyHex)
 
     // We → peer: replay all existing chunks then stream new ones
     if (!readers.has(keyHex)) {
       const keyBytes = hexToBytes(keyHex)
-      const reader = repo.makeReadableStream().getReader()
+      const reader = repo.makeReadableStream({ fromOffset: readerFromOffset }).getReader()
       readers.set(keyHex, reader)
       ;(async () => {
         try {
@@ -239,12 +252,21 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
    * Repo — this is the canonical "I want this key live" verb, collapsing
    * `registry.open` (storage layer) and wire setup in one call.
    *
+   * The subscribe message carries `{ fromOffset, fromChainHash }` — the local
+   * Repo's `signedLength` and `committedChainHash` — so the peer can skip
+   * bytes we already have. The peer validates the anchor: if our claimed
+   * `fromChainHash` matches the SIG ending at `fromOffset` on their chain, they
+   * stream from there. If not, they `reject` with `chain-mismatch`.
+   *
    * Idempotent: safe to call repeatedly for the same key. The "subscribe"
    * JSON is sent before any chunks stream so the peer has its writer ready.
    */
   async function subscribeToKey (keyHex) {
     if (!writers.has(keyHex)) {
-      sendJson({ type: 'subscribe', key: keyHex })
+      const repo = await registry.open(keyHex)
+      const fromOffset = repo.signedLength ?? 0
+      const fromChainHash = bytesToHex(repo.committedChainHash ?? new Uint8Array(32))
+      sendJson({ type: 'subscribe', key: keyHex, fromOffset, fromChainHash })
       await syncKey(keyHex)
     }
     return await registry.open(keyHex)
@@ -277,7 +299,43 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           if (msg.home) await subscribeToKey(msg.home)
           onHello?.(msg)
         } else if (msg.type === 'subscribe') {
-          await syncKey(msg.key)
+          // Validate the peer's claimed anchor. The validation is *only*
+          // performed when we can actually check it — i.e. our chain
+          // reaches fromOffset. Cases:
+          //   - fromOffset === 0: trivially valid iff chainHash is zeros.
+          //   - fromOffset > 0 and our byteLength >= fromOffset: read the
+          //     chainHash at our chain's SIG ending at fromOffset; compare.
+          //   - fromOffset > 0 and our byteLength < fromOffset: we can't
+          //     validate; accept and stream from our end (byteLength).
+          //     This covers p2p (we don't have this key yet, peer's pushing
+          //     up) AND the wipe-recovery case (we lost data, the peer's
+          //     data flows back up through the serializer, which still
+          //     chain-checks at the SIG arrival).
+          // Missing fields (older clients) default to (0, 32-zeros).
+          const repo = await registry.open(msg.key)
+          const fromOffset = msg.fromOffset ?? 0
+          const fromChainHash = msg.fromChainHash ? hexToBytes(msg.fromChainHash) : new Uint8Array(32)
+          let valid = true
+          let readerOffset = fromOffset
+          if (fromOffset === 0) {
+            valid = arraysEqual(fromChainHash, new Uint8Array(32))
+          } else if (fromOffset < 97) {
+            // No room for a SIG ending at fromOffset → claim is malformed.
+            valid = false
+          } else if (repo.byteLength < fromOffset) {
+            // Can't validate at the claimed offset; accept and start from
+            // our end. Serializer's chain check on incoming pushes catches
+            // any real divergence at SIG arrival.
+            readerOffset = repo.byteLength
+          } else {
+            const sigChainHashOnOurChain = repo.slice(fromOffset - 97, fromOffset - 65)
+            valid = arraysEqual(fromChainHash, sigChainHashOnOurChain)
+          }
+          if (!valid) {
+            sendJson({ type: 'reject', key: msg.key, reason: 'chain-mismatch' })
+          } else {
+            await syncKey(msg.key, readerOffset)
+          }
         } else if (msg.type === 'interest') {
           if (routing) {
             const { interestMap, announcementMap } = routing

@@ -108,10 +108,14 @@ if (server.signer) {
   const seed = { ...current }
   let needsCommit = false
   if (!Array.isArray(seed.journalists)) { seed.journalists = []; needsCommit = true }
-  const wantJournalists = [server.publicKeyHex, historyKeyHex, ...extraJournalists]
-  const missingJournalists = wantJournalists.filter(k => !seed.journalists.includes(k))
-  if (missingJournalists.length) {
-    seed.journalists = [...seed.journalists, ...missingJournalists]
+  const wantSet = new Set([server.publicKeyHex, historyKeyHex, ...extraJournalists])
+  const missingJournalists = [...wantSet].filter(k => !seed.journalists.includes(k))
+  const staleJournalists = seed.journalists.filter(k => !wantSet.has(k))
+  if (missingJournalists.length || staleJournalists.length) {
+    // Add anything in want-but-not-present; drop anything present-but-not-wanted.
+    // Without the prune, removing a journalist from the env required manual
+    // archive surgery — the seed logic only added, never removed.
+    seed.journalists = [...seed.journalists.filter(k => wantSet.has(k)), ...missingJournalists]
     needsCommit = true
   }
   if (!Array.isArray(seed.entries) || seed.entries.length === 0) {

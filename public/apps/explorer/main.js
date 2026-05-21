@@ -212,7 +212,7 @@ mount(h`
           const repo = registry.get(home)
           return repoCard(home, repo, 'home-card')
         }}
-        <h2>members <span class="dim">${() => `(${currentMembers.get().length})`}</span></h2>
+        <h2>online <span class="dim">chat — currently announcing ${() => `(${currentMembers.get().length})`}</span></h2>
         ${() => {
           // Currently-announcing peers on the home topic — the live, ephemeral
           // version of "who's in the room right now." Populated by the
@@ -222,7 +222,7 @@ mount(h`
           if (members.length === 0) return h`<div class="empty">no one is here right now</div>`
           return members.map(memberKey => repoCard(memberKey, registry.get(memberKey)))
         }}
-        <h2>journalists <span class="dim">${() => {
+        <h2>journalists <span class="dim">journal — contributing peers ${() => {
           const home = homeKey.get()
           if (!home) return ''
           const list = (registry.get(home)?.get('journalists') ?? []).filter(k => k !== home)

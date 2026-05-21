@@ -5,6 +5,83 @@ for what's next.
 
 ---
 
+## 8.2.0 — the subscribe handshake carries the client's chain anchor
+
+**The headline.** Reconnecting clients no longer pay for a full
+genesis-replay. The `subscribe` JSON now carries
+`(fromOffset, fromChainHash)` — the client's `signedLength` and
+`committedChainHash`. The server validates the anchor against its
+own chain and streams only post-anchor bytes. Three effects:
+
+- *Bandwidth.* A client with archive state that reconnects after
+  a long disconnect picks up at its `signedLength` instead of
+  byte zero. Browser tabs aren't affected (no archive → empty
+  state → same as before); the win is for Node clients with
+  `archiveSync` or peer-to-peer setups.
+- *Receiver simplification.* `makeRelayInboundStream`'s
+  `pendingChainHash` anchors to the local `committedChainHash` at
+  writer creation, so each sig from the wire just extends from
+  where we already were rather than from genesis. Same correctness;
+  cleaner mental model.
+- *Wipe self-healing.* If the server has no chain at the claimed
+  offset (post-`--reset` deploy, or a peer-to-peer relay that
+  never had this key), it accepts without validation. The
+  client's bytes flow up through the serializer's chain check,
+  which still catches real divergence at SIG arrival. The data
+  gets restored automatically — what used to require manual
+  `--reset` coordination now self-heals on the next reconnect.
+
+**Backward-compatible.** Old clients without the new fields default
+to `(fromOffset: 0, fromChainHash: 32 zeros)` — identical behavior
+to 8.1.x. Wire-compat preserved across the version boundary.
+
+**Validation rules** at the server's subscribe handler:
+
+- `fromOffset === 0` → require `fromChainHash` to be 32 zeros (else
+  the claim is malformed; reject with `chain-mismatch`).
+- `fromOffset > 0` and our `byteLength ≥ fromOffset` → read the
+  chainHash at the SIG ending at `fromOffset`; if it matches the
+  claim, stream from `fromOffset`; otherwise reject with
+  `chain-mismatch`.
+- `fromOffset > 0` and our `byteLength < fromOffset` → accept;
+  stream from our end (`byteLength`). We can't validate, but the
+  serializer's chain check on incoming pushes catches real
+  divergence. The wipe-recovery case silently flows the client's
+  bytes back up.
+
+**What didn't change.** The receiver's `alreadyHave` defensive check
+stays. The relay still broadcasts every accepted chunk to all
+subscribers including the original submitter; the echo dedupes via
+`alreadyHave`. A future cleanup could skip echoes at the sender
+(then remove the check entirely), but it's not blocking and lives
+in the "low-glamour cleanups" lane.
+
+**Tests.** 216 → 219:
+
+- `makeReadableStream({ fromOffset })` emits only post-offset chunks.
+- The wire's wipe-recovery scenario: server has nothing for a key,
+  client carries pre-wipe state, the upward push restores the chain.
+- The reconnect-anchored optimization: server validates the anchor,
+  streams only the post-anchor tail; the client picks up the
+  server's extension transparently.
+
+Plus one existing test (`alignment check catches the push-in-flight
+race`) updated to construct truly-shared base bytes — the old test
+was implicitly relying on the genesis-start behavior that the
+anchor-to-committedChainHash change correctly removed.
+
+**Driver story.** 8.0's relay-as-authority refactor left the wire
+still replaying from byte zero — the genesis-fold made the
+receiver's pending state implicit and tangled with the sender's
+stream position. 8.2 makes the anchor explicit: the client says
+where it is; the server validates and serves from there. The
+alignment check stays as a defense against the push-in-flight race
+(local writes during stream processing), but the math is now
+straightforward chain-hash equality on values both sides agree
+to anchor at.
+
+---
+
 ## 8.1.0 — `session.subscribe` returns the Repo
 
 **The headline.** The everyday "I want this key live" intent now

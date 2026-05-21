@@ -7,21 +7,21 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.1.0, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.2.0, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
-**8.2-pending in `main`: the subscribe handshake now carries the
-client's chain anchor** — the `subscribe` JSON includes
-`(fromOffset, fromChainHash)`; the server validates and streams
-only post-anchor bytes, saving the genesis-replay on every
-reconnect. Wipe-recovery is self-healing as a side effect: a
-client with pre-wipe state pushes its history back up through the
-serializer's chain check. **8.1 collapses `registry.open` +
-`session.subscribe` into one verb** — `await session.subscribe(key)`
-opens the Repo locally, plumbs the wire, and returns the Repo.
-**8.0 makes the relay the single chain authority per repo** — a
-per-repo `RepoSerializer` at the relay atomically accepts or
-rejects incoming pushes against the current top; clients receiving
-the authoritative stream trust + append. Conflict detection that used
+**8.2 makes the subscribe handshake carry the client's chain
+anchor** — the `subscribe` JSON includes `(fromOffset,
+fromChainHash)`; the server validates and streams only post-anchor
+bytes, saving the genesis-replay on every reconnect. Wipe-recovery
+self-heals as a side effect: a client with pre-wipe state pushes
+its history back up through the serializer's chain check.
+**8.1 collapses `registry.open` + `session.subscribe` into one
+verb** — `await session.subscribe(key)` opens the Repo locally,
+plumbs the wire, and returns the Repo. **8.0 makes the relay the
+single chain authority per repo** — a per-repo `RepoSerializer`
+at the relay atomically accepts or rejects incoming pushes against
+the current top; clients receiving the authoritative stream
+trust + append. Conflict detection that used
 to happen by accident at every client now happens deliberately at
 one point, and rejections come back to the client as a real
 reactive signal (`repo.pushRejected`). 8.0 also lands a layering

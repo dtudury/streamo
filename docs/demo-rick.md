@@ -1,0 +1,374 @@
+# demo script — Rick
+
+_~2026-05-28 (adjust to actual date). Rick = early Microsoft + Adobe
+engineer; senior, taste-driven, not currently shopping for tools, not
+on the AI hype train. This is also practice for tougher future audiences;
+the goal is "honest engineer-to-engineer tour of what streamo is and
+why it's small on purpose," not a sales pitch._
+
+---
+
+## cheatsheet
+
+| # | Phase | ~Min | Concrete move | Anchor phrase |
+|---|-------|------|---------------|---------------|
+| 1 | **substrate** | 3 | edit a file in `public/homepage/`, refresh, find the commit in the explorer | _"this page IS a Repo"_ |
+| 2 | **fork** | 5 | `npx @dtudury/streamo --merge-from streamo.dev ...` | _"no clone, no signup, no key file"_ |
+| 3 | **collaboration** | 5 | two-tab chat → throttle one offline → write in both → bring online → recovery banner → send | _"recovery uses the same primitives as everything else"_ |
+| 4 | **the story** | 2 | PHILOSOPHY.md trades, ~2k LOC, dumb-pipe relay | _"a primitive that lets a thousand platforms grow"_ |
+| 5 | **Q&A** | — | listen + see prep below | (be honest about trades) |
+
+**If you lose your place:** the demo is "you can read what I built, fork
+it in one command, collaborate on it, recover from conflicts" — in that
+order. Whichever phase is next, return to it. Skip phase 4 if running
+long; it's optional and lives in PHILOSOPHY.md anyway.
+
+**If something breaks live:** see [if it breaks](#if-it-breaks) at the
+bottom. Default move: open a fresh incognito tab; second-default: switch
+to localhost (your machine is reliable in a way live relays aren't).
+
+---
+
+## setup — before Rick arrives
+
+**Tabs to pre-open in one browser window:**
+
+1. `https://streamo.dev/` — homepage
+2. `https://streamo.dev/apps/explorer/` — explorer
+3. `https://streamo.dev/apps/chat/` — chat (one)
+4. (Second window or new tab when needed) chat again — for phase 3
+
+**Terminal panes ready:**
+
+1. Local streamo checkout (`~/Documents/repos/streamo`), on `main`, clean
+   working tree, dev server NOT running (so we can show the prod site)
+2. A second pane in `~/Desktop/rick-demo-site/` or similar — empty
+   directory ready for the `npx` fork. Pre-make it so you don't fumble
+   `mkdir` live: `mkdir -p ~/Desktop/rick-demo-site`
+
+**Pre-check (5 min before):**
+
+```bash
+curl -sf https://streamo.dev/api/info        # confirms relay is up
+curl -sf https://streamo.dev/                # confirms homepage serves
+```
+
+If either fails, see [if it breaks](#if-it-breaks).
+
+**Mental warmup:** read Phase 4 once. The numbers stick easier as a recall
+cue than as a memorize.
+
+---
+
+## phase 1 — the substrate (~3 min)
+
+**The point:** "This isn't a website with a backend. It's a Repo on disk,
+served as bytes, signed by my keypair. The relay doesn't even know how to
+write to it — it just serves what's there."
+
+### the moves
+
+1. **Pull up streamo.dev in the browser.** Let Rick see the homepage for
+   a beat. _"This is the project's homepage. Everything you see — text,
+   links, the journal entries below — lives in a single signed
+   append-only log."_
+2. **In your terminal, edit `public/homepage/index.html`.** Tiny visible
+   change (a typo fix, a sentence tweak — pre-pick one so you don't
+   freeze). Save.
+3. **Refresh the browser.** Show the change live.
+   _"I just wrote some bytes. The relay archived them. You're reading the
+   new bytes now. No build step, no CDN cache to bust, no deploy."_
+4. **Switch to the explorer tab. Find your commit.** It'll be at the top
+   of the home repo's commit list. Click it.
+   _"Here's the byte-level reality. That's a SIGNATURE chunk — 97 bytes,
+   secp256k1. That's the COMMIT envelope. That's the data."_
+
+### if Rick interrupts
+
+- **"Wait, you can just edit it?"** — Yes. The relay is mirroring my
+  local `public/homepage/` directory to the home Repo's `files` key via
+  fileSync. Any save becomes a signed commit. Live.
+- **"What stops anyone else from editing it?"** — They can't sign as me.
+  My credentials → my keypair → my signatures. Anyone else's edit fails
+  the relay's chain check.
+
+### exit cue
+
+When Rick has seen one commit in the explorer, move to Phase 2.
+
+---
+
+## phase 2 — the fork (~5 min)
+
+**The point:** "Identity is derived from credentials. Forking is one
+command. There's no signup flow."
+
+### the moves
+
+1. **Switch to your second terminal pane** (in `~/Desktop/rick-demo-site/`
+   or wherever).
+2. **Run the all-`npx` fork command.** Type it out so Rick sees it:
+
+   ```bash
+   npx @dtudury/streamo \
+     --name homepage \
+     --username rick \
+     --merge-from streamo.dev \
+     --merge-from-key files \
+     --files ./mysite \
+     --files-key files \
+     --web 8081
+   ```
+
+   It'll prompt for a password — type anything memorable (Rick can pick
+   one if he wants).
+
+3. **What happens, narrated:**
+   _"PBKDF2 just derived a keypair from 'rick' plus the password. That's
+   Rick's streamo identity, deterministic, no key file. Now it's fetching
+   a snapshot of streamo.dev's home repo via HTTP. Now it's committing a
+   pure copy to Rick's local chain with `remoteParent` set to my key —
+   that's the lineage citation. Now it's writing the merged files to
+   `./mysite/`."_
+
+4. **Open `http://localhost:8081/` in a new browser tab.**
+   _"That's Rick's fork. Same homepage, served from his Repo, signed by
+   his keypair."_
+
+5. **Edit a file in `./mysite/` from your terminal** (e.g. the headline
+   text). Refresh `localhost:8081`. Show it changed.
+   _"Rick is the author of his fork. His edits are signed by his key,
+   not mine. The relationship between his fork and mine is the
+   `remoteParent` citation — informational, not a sync dependency. He
+   could disconnect from streamo.dev forever and his fork still works."_
+
+### if Rick asks
+
+- **"How is `username` not already taken?"** — No central registry. The
+  keypair IS the identity. Two different passwords give two different
+  keypairs even with the same username; collision risk is the
+  cryptographic floor.
+- **"What if I pick a weak password?"** — Your keypair is as good as
+  your password. We don't store it; we don't enforce strength; the user
+  has the agency a strong password buys them.
+- **"Where are the bytes?"** — Local: `./.streamo/<keyhex>.bin`. Just
+  bytes; you can `wc -c` it, you can `scp` it to another machine and
+  resume. The relay (streamo.dev) doesn't have Rick's fork until he
+  pushes via `--origin streamo.dev`. (Show that command optionally
+  but maybe not — keeps the demo focused.)
+
+### exit cue
+
+When Rick's `localhost:8081` shows an edit, move to Phase 3.
+
+---
+
+## phase 3 — the collaboration (~5 min)
+
+**The point:** "Multi-device sync is built in. When it goes wrong — two
+devices write at once — there's a real recovery flow, not just data
+loss."
+
+### the moves
+
+1. **Two browser tabs on `https://streamo.dev/apps/chat/`.** Log in to
+   both as the same user (e.g. `alice` / a memorable password).
+2. **Type a message in tab A.** Show it appears in both tabs.
+   _"Each participant owns their own signed message stream. Both tabs
+   are alice; they're writing to the same Repo via the same keypair."_
+3. **DevTools → Network → set Tab B to Offline (or Throttling: Offline).**
+   _"Tab B is now disconnected. The relay can't see Tab B's writes."_
+4. **Type a message in Tab A** — call it "apple". Show it appears in Tab A
+   only. Tab B is still showing the old state.
+5. **Type a message in Tab B** — call it "banana". Tab B shows it locally
+   (it's signed and stored in browser memory), but the relay doesn't know.
+6. **Throttle Tab B back to Online.**
+   _"Now Tab B reconnects. The relay has 'apple' on its authoritative
+   chain. Tab B has 'banana' as a local-only commit. The chains have
+   diverged."_
+7. **The recovery banner appears on Tab B:**
+   `your last write didn't reach the room. [send it now] [discard]`
+   _"This is recovery UX v1, shipped today. Without it, the only option
+   would be 'refresh and lose what you wrote.'"_
+8. **Click [send it now].** Show both tabs converge — the message list now
+   contains both `apple` and `banana`, in timestamp order.
+   _"The merge is app-specific — chat concatenates message lists and
+   dedupes by timestamp. The library exposes the rejected-data address;
+   the app decides what to do with it."_
+
+### if Rick asks
+
+- **"What if both write the same key while offline?"** — Same flow.
+  Tab B's recovery sees Tab A's accepted state, merges B's writes on
+  top. If the merge produces duplicates (impossible here because of the
+  `at` timestamp), the app's merge function decides.
+- **"What about three devices?"** — Same shape. The relay's serializer
+  is the single chain authority per repo; first arriver extends the top,
+  later arrivers' pushes get rejected and recover.
+- **"What if I want a real CRDT?"** — One author per stream sidesteps
+  CRDT complexity by design. Multi-author values live in CRDTs we don't
+  re-implement; if you need them, build them on top of streamo as a
+  separate layer.
+
+### exit cue
+
+When both tabs show both messages and Rick has seen the recovery work,
+move to Phase 4 (or to Q&A if running long).
+
+---
+
+## phase 4 — the story (~2 min, conversational)
+
+**The point:** "Streamo is small on purpose. It's a primitive, not a
+platform."
+
+### what to surface
+
+- **~2k LOC core, readable in a sitting.** `design.md` walks the modules.
+- **Identity from credentials.** No accounts table. No signup. No
+  password reset (because there's nothing to reset against — your
+  credentials derive your key directly).
+- **Dumb-pipe relay.** The public-port process *cannot write* to the
+  Repos it serves. Signing keys live with authors, never with the relay.
+- **One author per stream.** Sidesteps CRDT complexity by design.
+- **Honest trades documented.** PHILOSOPHY.md is the welcome-the-skeptics
+  doc: small core, no build step, no type system, no editor support
+  yet, idiosyncratic style. We name what you pay.
+
+### the line
+
+_"It's not trying to be a platform. It's trying to be the primitive that
+lets a thousand platforms grow."_
+
+That's your closer. Use it if you can; skip if you can't.
+
+---
+
+## Q&A prep
+
+Anticipated questions, with honest answers (and pointers to the docs
+that go deeper):
+
+### "How does this compare to git / IPFS / Hyperdrive / Dat?"
+
+- **Git**: streamo is git-shaped in spirit (signed, append-only,
+  content-addressed) but isn't trying to be a source-control system.
+  It's a sync substrate. The "one author per stream" assumption is the
+  thing git doesn't make.
+- **IPFS / Hyperdrive / Dat**: those projects share the
+  content-addressed instinct. Streamo's trade is to be small enough to
+  re-implement in a weekend, and to NOT try to solve multi-author
+  values via CRDTs at the substrate layer.
+
+### "What about the CAP theorem?"
+
+We choose C+A within a single chain (the relay is the single chain
+authority; writes are atomic; partition tolerance is bounded by the
+client experience — partitioned clients see local state, can't push,
+get rejection-and-recovery on rejoin). The "one author per stream"
+constraint is what makes this clean.
+
+### "What's the attack model?"
+
+- A relay can refuse to serve, but can't lie undetectably (signed
+  commits; clients verify on receipt, or trust the relay's chain check
+  for the upward path).
+- A peer without the private key can't forge signatures. Recovery from
+  a compromised key is a hard problem we don't solve at the substrate
+  — the user's credentials are the trust anchor.
+- PBKDF2-SHA256 with 100k iterations is the key derivation. Standard
+  floor; not novel; pinned by KAT in `Signer.test.js`.
+
+### "How big can a Repo get?"
+
+Practical caps live in ROADMAP "known limitations":
+- ~2 MB feels instant; right default for chat-shaped apps
+- ~5–10 MB is comfortable for journal/notes
+- ~50 MB+ wants different infrastructure
+Lifecycle (not yet implemented): when a Repo approaches its cap, the
+author starts a successor Repo with the same keypair, signs a
+`successor` pointer at the end of the old one. Bounded per-Repo,
+unbounded total.
+
+### "How would I deploy this?"
+
+`npm install @dtudury/streamo`, write a small `chat-server.js`-shaped
+binary, point a domain at it (Caddy or whatever TLS terminator you
+like). Streamo.dev runs on a single Hetzner box, ~50MB RAM idle.
+
+### "Is this AI-generated?"
+
+Honest answer: built with significant Claude collaboration; not
+autonomously generated. The code is small enough that both of us read
+it. AGPL-licensed; co-author noted in commits. (Skip if Rick doesn't
+ask — don't lead with it.)
+
+### "What's the business model?"
+
+There isn't one. It's a primitive, AGPL-licensed, intended to be the
+substrate other things build on. Hosting your own relay is the "self-
+deploy" answer; you don't need streamo.dev to use streamo.
+
+### "Why isn't there an editor / type system / linter?"
+
+Working on it; PHILOSOPHY.md has the welcome-the-skeptics list with
+specific bounded thing-you-could-build contributions. The current
+project is small enough that the absence is annoying but bounded.
+
+---
+
+## if it breaks
+
+The demo gods are real. Have these escape hatches ready.
+
+### "streamo.dev returns 500 / connection refused"
+
+- Pull up the relay log via your terminal:
+  `ssh streamo@streamo.dev "sudo journalctl -u streamo -n 30"`
+- If it's down, the demo can pivot to **localhost-only mode**: start
+  `npm run dev` in your local checkout, run the demo against
+  `http://localhost:8080` instead. Phase 1's "edit, save, refresh"
+  works identically locally.
+
+### "browser shows stale JS after a deploy"
+
+- Open the demo tabs in **Incognito / Private Browsing**. Guaranteed
+  fresh fetch. Do this proactively for the demo — no cache surprises.
+
+### "the recovery banner doesn't appear / takes too long"
+
+- The 400ms settle window is crude. If the banner is slow, *wait* —
+  don't panic-click. Narrate the wait: _"the client is re-syncing with
+  the relay; this is one of the rough edges still on the road map."_
+- Honesty beats theater.
+
+### "the `npx` command fails / npm registry slowness"
+
+- Have the streamo CLI pre-installed globally too:
+  `npm install -g @dtudury/streamo`. If npx is slow, fall back to
+  `streamo --name homepage ...`.
+
+### "two-tab conflict doesn't show the banner"
+
+- Maybe the throttle didn't actually take effect. Check Network panel:
+  the "online" state should say "Offline" when throttled.
+- If it still doesn't work, **switch to a manual disconnect**:
+  `wifi off` for ~10s, type, `wifi on`. Slower but reliable.
+
+### "Rick has a question I don't know the answer to"
+
+- _"Honest answer — I don't know off the top of my head. Let me check
+  after."_ Then actually check after.
+- Don't bluff. Rick will catch it; the demo will lose more credibility
+  from one bluff than from three "let me check"s.
+
+---
+
+## post-demo notes (fill in after)
+
+- What landed well:
+- What confused Rick:
+- What questions you couldn't answer cleanly:
+- What you'd do differently next time:
+
+_(this section is the spaced-repetition fuel for future demos)_

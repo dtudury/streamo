@@ -7,14 +7,19 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.4.0, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.4.1, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
-**8.4 batches the wire reader's frames** — `makeReadableStream`
-now packs all ready chunks into one frame (capped at 256KB)
-instead of one-frame-per-chunk; a 21KB repo goes from ~10,000 WS
-sends to 1. Surfaced a latent `seed-history` archive flush race
-that the old slow path had been masking (now papered over by the
-same batching; proper fix filed). **8.3 lands recovery UX v1** —
+**8.4.1 fixes the wire parsers' O(N²)** — `buf = buf.slice(rest)`
+per-chunk became `buf.subarray(...)` + `bufOffset` pointer.
+archiveSync startup of streamo-history went from 22.7s of
+event-loop block to subsecond; recurring 1-7s steady-state lag
+events from WS echo handling vanished. **8.4 batches the wire
+reader's frames** — `makeReadableStream` now packs all ready
+chunks into one frame (capped at 256KB) instead of
+one-frame-per-chunk; a 21KB repo goes from ~10,000 WS sends to 1.
+Surfaced a latent `seed-history` archive flush race that the old
+slow path had been masking (now papered over by the same
+batching; proper fix filed). **8.3 lands recovery UX v1** —
 both divergence flags (`pushRejected`, `conflictDetected`) carry
 the rejected commit's `dataAddress`, and the chat banner has
 Send/Discard buttons that re-sync from the relay and (on Send)

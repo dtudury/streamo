@@ -5,6 +5,54 @@ for what's next.
 
 ---
 
+## 8.4.1 — wire parser O(N²) → O(N): fixes intermittent multi-second event-loop blocks
+
+**The headline.** All three wire-byte parsers (`makeWritableStream`,
+`makeRelayInboundStream`, `ConnectionAccumulator.write`) replaced their
+`buf = buf.slice(remaining)` per-chunk allocation with a `bufOffset`
+pointer + `buf.subarray(...)` views. Each chunk extraction goes from
+O(remaining_bytes) to O(1); each frame from O(N²) to O(N).
+
+**Why this matters now.** 8.4.0's batching (256KB frames containing
+~17K chunks each, vs the previous one-chunk-per-frame) made the
+parser's inner loop run 17K times per incoming frame instead of
+once. The quadratic became visible immediately:
+
+- archiveSync's startup load of streamo-history (1.2MB / 322 commits)
+  went from **22.7 seconds blocking the event loop** to **subsecond**.
+- WebSocket echo handling (the client's outgoing reader echoes
+  received bytes back to the relay) was producing recurring **1–7
+  second event-loop blocks every few seconds in steady state**,
+  manifesting as intermittent **9.2-second page loads** when an HTTP
+  request landed during a block window.
+
+After the fix: startup loads in milliseconds; steady-state lag events
+disappear; page loads are *consistently faster than the fastest
+previous load* (per real measurement against streamo.dev).
+
+**No API change. No wire format change.** Bytes on the wire are
+byte-identical to 8.4.0; the parser just walks them O(N) instead of
+O(N²). Patch bump because nothing public changed — just got
+dramatically faster.
+
+**Diagnostic note worth keeping.** We landed this via temporary
+`[lag] event loop blocked for N ms` + `[req] N ms METHOD path`
+instrumentation in `webSync.js` — the lag heartbeat caught recurring
+multi-second blocks correlated with WS activity rather than HTTP
+requests, which pointed at the parsers. Instrumentation removed in
+this release; deploying it again is a small temp-edit any time we
+want to chase another perf symptom.
+
+**Discovery story.** 8.4.0's CHANGELOG noted that batching "didn't
+fix the explorer directly — fixed it indirectly by exposing a latent
+bug." 8.4.1 reveals another layer of the same arc: the batching also
+exposed the O(N²) parsers, and *that* fix turned out to be the
+load-bearing perf change. Same chain of cause: batching made the
+slow path visible; fixing the slow path made everything quietly
+excellent.
+
+---
+
 ## 8.4.0 — wire reader batches ready chunks into one frame
 
 **The headline.** `Addressifier.makeReadableStream` now bundles all

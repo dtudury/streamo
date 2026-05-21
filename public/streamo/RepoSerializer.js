@@ -132,21 +132,35 @@ export class ConnectionAccumulator {
     this.onBatchResult = onBatchResult
     this.repo = serializer.repo
     this.buf = new Uint8Array(0)
+    this.bufOffset = 0
     this.chunks = []
     this.maxFrameSize = 64 * 1024 * 1024
   }
 
   async write (incoming) {
-    const next = new Uint8Array(this.buf.length + incoming.length)
-    next.set(this.buf); next.set(incoming, this.buf.length)
-    this.buf = next
-    while (this.buf.length >= 4) {
-      const len = new Uint32Array(this.buf.slice(0, 4).buffer)[0]
+    // Compact leftover + incoming into a fresh buf, reset offset. Hot
+    // loop uses subarray (a view, not a copy) so each chunk extraction
+    // is O(1) — the previous `buf = buf.slice(rest)` pattern was O(N)
+    // per chunk, O(N²) per batched frame. With 8.4's 256KB batched
+    // frames containing ~17K chunks each, that quadratic blocked the
+    // event loop for multiple seconds per WS push.
+    const leftover = this.buf.length - this.bufOffset
+    if (leftover === 0) this.buf = incoming
+    else {
+      const next = new Uint8Array(leftover + incoming.length)
+      next.set(this.buf.subarray(this.bufOffset), 0)
+      next.set(incoming, leftover)
+      this.buf = next
+    }
+    this.bufOffset = 0
+    while (this.buf.length - this.bufOffset >= 4) {
+      const view = new DataView(this.buf.buffer, this.buf.byteOffset + this.bufOffset, 4)
+      const len = view.getUint32(0, true)
       if (len === 0) throw new Error('malformed frame: zero-length chunk')
       if (len > this.maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${this.maxFrameSize}`)
-      if (this.buf.length < 4 + len) break
-      const code = this.buf.slice(4, 4 + len)
-      this.buf = this.buf.slice(4 + len)
+      if (this.buf.length - this.bufOffset < 4 + len) break
+      const code = this.buf.subarray(this.bufOffset + 4, this.bufOffset + 4 + len)
+      this.bufOffset += 4 + len
 
       const codec = this.repo.footerToCodec[code.at(-1)]
       if (codec?.type === 'SIGNATURE') {

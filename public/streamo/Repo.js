@@ -677,6 +677,7 @@ export class Repo extends Streamo {
   makeRelayInboundStream (maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
+    let bufOffset = 0
     let staged = []                                  // not-already-present chunks awaiting a covering SIG
     // Anchor on local state — the sender (relay) knows our offset/chainHash from
     // the subscribe handshake and is sending bytes from there. So our wire-side
@@ -687,16 +688,27 @@ export class Repo extends Streamo {
     let pendingChainHash = self.committedChainHash
     return new WritableStream({
       async write (incoming) {
-        const next = new Uint8Array(buf.length + incoming.length)
-        next.set(buf); next.set(incoming, buf.length)
-        buf = next
-        while (buf.length >= 4) {
-          const len = new Uint32Array(buf.slice(0, 4).buffer)[0]
+        // Compact leftover + incoming into a fresh buf, reset offset.
+        // Hot loop uses subarray (a view, not a copy) so each chunk
+        // extraction is O(1) — the previous `buf = buf.slice(rest)`
+        // pattern was O(N) per chunk, O(N²) per batched frame.
+        const leftover = buf.length - bufOffset
+        if (leftover === 0) buf = incoming
+        else {
+          const next = new Uint8Array(leftover + incoming.length)
+          next.set(buf.subarray(bufOffset), 0)
+          next.set(incoming, leftover)
+          buf = next
+        }
+        bufOffset = 0
+        while (buf.length - bufOffset >= 4) {
+          const view = new DataView(buf.buffer, buf.byteOffset + bufOffset, 4)
+          const len = view.getUint32(0, true)
           if (len === 0) throw new Error('malformed frame: zero-length chunk')
           if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
-          if (buf.length < 4 + len) break
-          const code = buf.slice(4, 4 + len)
-          buf = buf.slice(4 + len)
+          if (buf.length - bufOffset < 4 + len) break
+          const code = buf.subarray(bufOffset + 4, bufOffset + 4 + len)
+          bufOffset += 4 + len
 
           const alreadyHave = self.addressOf(code) !== undefined
           const codec = self.footerToCodec[code.at(-1)]

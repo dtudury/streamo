@@ -213,19 +213,31 @@ export class Addressifier {
   makeWritableStream (maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
+    let bufOffset = 0
     return new WritableStream({
       write (incoming) {
-        const next = new Uint8Array(buf.length + incoming.length)
-        next.set(buf); next.set(incoming, buf.length)
-        buf = next
-        while (buf.length >= 4) {
-          const len = new Uint32Array(buf.slice(0, 4).buffer)[0]
+        // Compact leftover + incoming into a fresh buf, reset offset.
+        // The hot inner loop uses subarray (a view, not a copy) so each
+        // chunk extraction is O(1) — the previous `buf = buf.slice(rest)`
+        // pattern was O(N) per chunk, O(N²) per frame.
+        const leftover = buf.length - bufOffset
+        if (leftover === 0) buf = incoming
+        else {
+          const next = new Uint8Array(leftover + incoming.length)
+          next.set(buf.subarray(bufOffset), 0)
+          next.set(incoming, leftover)
+          buf = next
+        }
+        bufOffset = 0
+        while (buf.length - bufOffset >= 4) {
+          const view = new DataView(buf.buffer, buf.byteOffset + bufOffset, 4)
+          const len = view.getUint32(0, true)
           if (len === 0) throw new Error('malformed frame: zero-length chunk')
           if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
-          if (buf.length < 4 + len) break
-          const code = buf.slice(4, 4 + len)
+          if (buf.length - bufOffset < 4 + len) break
+          const code = buf.subarray(bufOffset + 4, bufOffset + 4 + len)
           if (self.addressOf(code) === undefined) self.append(code)
-          buf = buf.slice(4 + len)
+          bufOffset += 4 + len
         }
       }
     })

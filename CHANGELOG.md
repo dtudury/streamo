@@ -5,6 +5,95 @@ for what's next.
 
 ---
 
+## 8.4.0 — wire reader batches ready chunks into one frame
+
+**The headline.** `Addressifier.makeReadableStream` now bundles all
+currently-ready chunks into a single batched frame (capped at 256KB)
+instead of emitting one frame per chunk. The wire format inside the
+frame is unchanged — `[length][chunk][length][chunk]…` — so every
+existing parser (`makeRelayInboundStream`, `makeWritableStream`,
+`ConnectionAccumulator`) handles multi-chunk-per-frame transparently
+without any client-side change.
+
+**Why this exists.** Streamo decomposes structured values into many
+tiny chunks (WORD, DUPLE, STRING, OBJECT, …) — averaging ~2 bytes
+each after content-dedup eats repeated atoms across commits. The old
+one-frame-per-chunk behavior meant a 21KB repo became ~10,000 WS
+messages on the wire. That saturated the browser's event loop on
+initial sync replay: the explorer would appear to "hang" on any
+seeded streamo with hundreds of commits.
+
+**The change**:
+
+```js
+makeReadableStream({ fromOffset = 0, maxBatch = 256 * 1024 } = {})
+```
+
+Each emitted frame now packs as many ready chunks as fit under
+`maxBatch` (starting at `fromOffset`). The cap keeps any single WS
+message bounded so very large repos still ship as multiple sends
+rather than one giant one.
+
+**Effect on real data**: 21KB streamo-history goes from ~10,000 WS
+frames to 1. A 1.2MB repo goes to ~5 frames. Browser `onmessage`
+overhead, WebSocket protocol overhead per message, and DevTools
+"Messages" tab rendering all stop being load-bearing for sync time.
+
+### The bonus bug we accidentally papered over (and didn't fully fix)
+
+While diagnosing a separate symptom (explorer showed 0b for
+streamo-history despite the relay holding 21KB), we discovered that
+`scripts/seed-history.js` had been silently losing writes for some
+time. The mechanism:
+
+- `archiveSync` runs a fire-and-forget writer loop that drains
+  `makeReadableStream`'s frames into `<key>.bin` via `fileHandle.write`.
+- `seed-history` does `process.exit(0)` after a 500ms settle.
+- With the old one-chunk-per-frame behavior, ~10,000 `fileHandle.write`
+  calls per seed couldn't drain in 500ms.
+- The latest chunks (the SIGNATURE chunks appended last by auto-sign)
+  never reached disk.
+- On next startup, archiveSync's read phase loaded a `.bin` that
+  looked complete (21KB!) but contained only value chunks — no
+  COMMITs past commit ~18, no SIGs at all.
+- Clients subscribing saw chunks flow through their inbound writer,
+  but nothing ever appeared in the local Repo because the parser
+  stages chunks until a covering SIG arrives — and no SIG was ever
+  coming.
+
+Batching reduces the same 10K writes to ~5 large writes (each
+draining synchronously at the OS level in microseconds), so the
+500ms window is now comically sufficient. **The race is masked,
+not fixed.** A bigger seed (10K+ commits) or a sustained-write
+workload could still drop tail chunks. The proper fix is a
+deterministic `archiveSync.flush()` / awaitable drain before exit
+— filed as a follow-up in ROADMAP. The existing seed workflows
+work reliably at our current scale plus the batching that just
+landed.
+
+### Tests
+
+219, all green. The existing `makeReadableStream({ fromOffset })`
+test extended to assert batching behavior: for a populated repo at
+stream start, at least 2 chunks per frame on average. (The old
+assertion of "one chunk per frame" was the inverse of this
+property; rewrote to verify the new contract.)
+
+### Driver story
+
+A bug-hunt arc this afternoon: the explorer showed streamo-history
+as 0b. Hard-refresh didn't help, WS was alive with frames flowing,
+console clean. Suspected stale state, connection issues, browser
+cache — all eliminated. Noticed thousands of small WS messages in
+DevTools, batched the wire, re-seeded prod, explorer worked. Then
+diagnosed the actual root cause (archive flush race) under the
+now-fast wire and understood why the symptom had appeared in the
+first place. Today's CHANGELOG arc spans 8.0 detection → 8.1 API
+verb → 8.2 anchor → 8.3 recovery UX → 8.4 wire batching, with this
+entry being the only one where the user-visible fix was *indirect*.
+
+---
+
 ## 8.3.0 — recovery UX v1: rejected commits surface their data; apps can offer Send/Discard
 
 **The headline.** When a push is rejected or a local alignment check

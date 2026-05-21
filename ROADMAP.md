@@ -7,17 +7,22 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.3.0, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.4.0, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
-**8.3 lands recovery UX v1** — both divergence flags
-(`pushRejected`, `conflictDetected`) now carry the rejected
-commit's `dataAddress`, and the chat banner has Send/Discard
-buttons that re-sync from the relay and (on Send) merge the
-local-only writes back in. **8.2 makes the subscribe handshake
-carry the client's chain anchor** — the `subscribe` JSON includes
-`(fromOffset, fromChainHash)`; the server validates and streams
-only post-anchor bytes, saving the genesis-replay on every
-reconnect. Wipe-recovery self-heals as a side effect. **8.1
+**8.4 batches the wire reader's frames** — `makeReadableStream`
+now packs all ready chunks into one frame (capped at 256KB)
+instead of one-frame-per-chunk; a 21KB repo goes from ~10,000 WS
+sends to 1. Surfaced a latent `seed-history` archive flush race
+that the old slow path had been masking (now papered over by the
+same batching; proper fix filed). **8.3 lands recovery UX v1** —
+both divergence flags (`pushRejected`, `conflictDetected`) carry
+the rejected commit's `dataAddress`, and the chat banner has
+Send/Discard buttons that re-sync from the relay and (on Send)
+merge the local-only writes back in. **8.2 makes the subscribe
+handshake carry the client's chain anchor** — the `subscribe`
+JSON includes `(fromOffset, fromChainHash)`; the server validates
+and streams only post-anchor bytes, saving the genesis-replay on
+every reconnect. Wipe-recovery self-heals as a side effect. **8.1
 collapses `registry.open` + `session.subscribe` into one verb** —
 `await session.subscribe(key)` opens the Repo locally, plumbs the
 wire, and returns the Repo. **8.0 makes the relay the single
@@ -107,6 +112,24 @@ scroll-wheel-picker shape above could land as one focused effort.
 Goals for this thread: open a commit feels instant; the bytestream
 strip stays responsive at thousands of chunks; the dropdown stays
 usable at 1000+ commits.
+
+### archiveSync flush race — `seed-history` can lose tail writes under load *(small fix, important)*
+
+`scripts/seed-history.js` does `process.exit(0)` after a 500ms
+settle window. archiveSync's writer loop is fire-and-forget — when
+the process exits, in-flight `fileHandle.write` calls and queued
+ReadableStream values are dropped. With 8.4's batching this drains
+fast enough that small seeds (a few thousand commits) flush
+cleanly, but a bigger seed (10K+ commits) or a sustained-write
+workload could still lose tail chunks — typically the SIGNATURE
+chunks appended last by auto-sign, which is exactly the case that
+makes the loaded `.bin` look complete but actually be staged-
+forever-no-SIG on the client side.
+
+The proper fix is an awaitable `archiveSync.flush()` (or a
+deterministic drain) so seed-history can wait for the writer loop
+to catch up before exiting. ~30 LOC change. Filed here as a
+reminder; not blocking at our current scale.
 
 ### wire-protocol upward-path optimization + sender-side echo-skip *(small follow-ups to 8.2)*
 

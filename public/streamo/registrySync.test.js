@@ -219,6 +219,33 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('session.subscribe returns the live Repo (open + wire-plumb in one verb)', async ({ assert }) => {
+    // The everyday "I want this key live" pattern: subscribe opens locally,
+    // sets up the wire, and hands you the Repo. Idempotent — calling twice
+    // returns the same Repo, no double-subscription side effects.
+    const serverRegistry = new RepoRegistry()
+    const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 20)
+    serverRepo.set({ greeting: 'hi from the server' })
+
+    const { wss, port } = await startServer(serverRegistry)
+    const clientRegistry = new RepoRegistry()
+    const session = await registrySync(clientRegistry, 'localhost', port)
+
+    const repo = await session.subscribe(key)
+    assert.ok(repo, 'subscribe should resolve to a Repo')
+    assert.ok(repo === clientRegistry.get(key), 'returned Repo is the same instance the registry holds')
+
+    await waitFor(() => repo.get('greeting') === 'hi from the server')
+    assert.equal(repo.get('greeting'), 'hi from the server')
+
+    // Idempotent: a second subscribe returns the same Repo without churn.
+    const repo2 = await session.subscribe(key)
+    assert.ok(repo === repo2, 'second subscribe returns the same Repo instance')
+
+    session.ws.close()
+    await new Promise(r => wss.close(r))
+  })
+
   test('follow: auto-subscribes to repos referenced in the home repo\'s value', async ({ assert }) => {
     // Simulates a chat app: rootRepo lists participant keys; client connects,
     // auto-subscribes to root (via hello), follow callback walks members,

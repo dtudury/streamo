@@ -127,7 +127,11 @@ async function login (e) {
       }
     })
 
-    myRepo = await registry.open(myKey)
+    // session.subscribe opens the Repo locally AND plumbs it to the wire,
+    // so the relay starts streaming our own history down to this tab.
+    // Without going through session.subscribe (or having it tripped via
+    // another tab's announce), our own bytes would sit unsynced.
+    myRepo = await session.subscribe(myKey)
     myRepo.attachSigner(signer, 'chat')
     myRepo.defaultMessage = `joined as ${username} (web)`
     // Expose for manual archive surgery — the relay stores per-key as
@@ -140,11 +144,6 @@ async function login (e) {
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)
-    // Subscribe to our own key so the relay streams our own history back to
-    // this tab. Without this, our `announce` only reaches OTHER peers (the
-    // server's fan-out skips the sender), and we'd never get our prior bytes
-    // until another tab's announce trips our `onAnnounce` → subscribe path.
-    session.subscribe(myKey)
 
     // Auto-scroll to the bottom whenever a message arrives. The watcher
     // wakes on new-repo opens (iteration) and each repo's chunk

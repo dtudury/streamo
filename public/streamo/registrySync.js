@@ -234,14 +234,20 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   }
 
   /**
-   * Subscribe to keyHex from the peer: set up local sync then announce intent.
-   * Sending "subscribe" before streaming ensures the peer has its writer ready
-   * before our chunks arrive.
+   * Subscribe to keyHex from the peer: open the local Repo if not yet opened,
+   * announce intent over the wire, and set up bidirectional sync. Returns the
+   * Repo — this is the canonical "I want this key live" verb, collapsing
+   * `registry.open` (storage layer) and wire setup in one call.
+   *
+   * Idempotent: safe to call repeatedly for the same key. The "subscribe"
+   * JSON is sent before any chunks stream so the peer has its writer ready.
    */
   async function subscribeToKey (keyHex) {
-    if (writers.has(keyHex)) return  // already subscribed
-    sendJson({ type: 'subscribe', key: keyHex })
-    await syncKey(keyHex)
+    if (!writers.has(keyHex)) {
+      sendJson({ type: 'subscribe', key: keyHex })
+      await syncKey(keyHex)
+    }
+    return await registry.open(keyHex)
   }
 
   // Identity announcement. The remote side auto-subscribes to `home` when
@@ -356,7 +362,12 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     interest (key) { sendJson({ type: 'interest', key }) },
     /** Announce `key` as related to `topic` — routed to all peers interested in that topic. */
     announce (key, topic) { sendJson({ type: 'announce', key, topic }) },
-    /** Subscribe to a specific repo key explicitly. */
+    /**
+     * Subscribe to a specific repo key. Opens the Repo locally if not yet
+     * opened, sets up bidirectional wire sync, and returns the Repo.
+     * The everyday "I want this key live" verb.
+     * @returns {Promise<import('./Repo.js').Repo>}
+     */
     subscribe (key) { return subscribeToKey(key) }
   }
 }
@@ -372,6 +383,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *   Announce a repository as related to `topic`.  The server fans this out to
  *   all other connected peers that have called `interest(topic)`.  Ephemeral —
  *   no persistence, only routes to currently-connected interested peers.
+ * @property {(key: string) => Promise<import('./Repo.js').Repo>} subscribe
+ *   Open the Repo for `key` if not yet opened, set up bidirectional wire
+ *   sync, and return the Repo. The everyday "I want this key live" verb —
+ *   collapses `registry.open` + wire setup into one call.
  */
 
 /**

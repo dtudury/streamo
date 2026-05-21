@@ -281,6 +281,10 @@ const session = await registrySync(registry, 'localhost', 8080, {
 
 session.interest(rootKey)        // receive announcements for this topic
 session.announce(myKey, rootKey) // tell interested peers about your repo
+
+// The everyday "I want this key live" verb — opens the Repo locally if
+// not yet opened, plumbs it to the wire, returns the Repo:
+const myRepo = await session.subscribe(myKey)
 ```
 
 ### h + mount — reactive UI

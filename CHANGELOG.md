@@ -5,6 +5,73 @@ for what's next.
 
 ---
 
+## 8.1.0 — `session.subscribe` returns the Repo
+
+**The headline.** The everyday "I want this key live" intent now
+fits in one call. `session.subscribe(key)` was previously fire-and-
+forget (`void`); it now resolves to the opened Repo, doing both the
+local `registry.open(key)` AND the wire plumbing in one verb:
+
+```js
+const myRepo = await session.subscribe(myKey)
+myRepo.attachSigner(signer, 'name')
+```
+
+Idempotent: calling again with the same key returns the same Repo
+instance, no double-subscription side effects.
+
+**Why this exists.** While driving 8.0.0 in two browser tabs we hit
+a real gap: the chat client opened the user's own Repo via
+`registry.open(myKey)` and announced themselves to the room, but
+never explicitly subscribed to their own key. The server's announce
+fan-out skips the sender (`if (sub !== ws)`), so a lone tab's
+history never flowed back from the relay — it only arrived when a
+second tab logged in, because that tab's announce tripped the first
+tab's `onAnnounce` → `subscribe` path. *"Online" wasn't the same as
+"synced."* The chat tab's WebSocket was open, but the user's own
+Repo wasn't actually plumbed to the wire.
+
+The fix could have stayed at the chat-app layer (and briefly did —
+one line, "also subscribe to your own key after announce") but it
+surfaced a broader truth: opening a Repo and asking the wire to
+sync it are nearly always the same intent. Splitting them across
+two verbs creates a foot-gun anyone writing a streamo app can step
+on.
+
+**API change.** `session.subscribe` used to return `void`. It now:
+
+1. Opens the Repo in the registry if not yet open
+2. Sets up bidirectional wire sync (sends the subscribe control
+   message, attaches the reader and the inbound writer)
+3. Returns the Repo
+
+Strictly additive — callers ignoring the return value still work
+unchanged. The underlying primitives are untouched:
+`registry.open(key)` for storage-only contexts (archive-only,
+tests, offline tools); the internal `syncKey` for wire setup.
+
+**Migration.** Nothing required. The new everyday pattern collapses
+two calls into one:
+
+```js
+// Before:
+const myRepo = await registry.open(myKey)
+// ... later, easy to miss ...
+session.subscribe(myKey)
+
+// After:
+const myRepo = await session.subscribe(myKey)
+```
+
+The chat app itself now reads this way. README + JSDoc updated.
+
+**Tests.** 215 → 216: one new test in `registrySync.test.js`
+confirming the return value + idempotency. Existing tests still
+cover all the side-effect paths (subscribe messages, wire setup,
+follow-callback cascade, two-peer mutual subscribe).
+
+---
+
 ## 8.0.0 — the relay is the chain authority
 
 **The headline.** Conflict detection moved from "every client gates

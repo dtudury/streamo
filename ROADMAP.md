@@ -7,12 +7,17 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.0.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. **8.0
-makes the relay the single chain authority per repo** — a per-repo
-`RepoSerializer` at the relay atomically accepts or rejects
-incoming pushes against the current top; clients receiving the
-authoritative stream trust + append. Conflict detection that used
+Streamo is at 8.1.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. **8.1
+collapses `registry.open` + `session.subscribe` into one verb** —
+`await session.subscribe(key)` now opens the Repo locally, plumbs
+the wire, and returns the Repo. Came out of driving 8.0.0 in two
+browser tabs and noticing the chat client could fall into "online
+WebSocket, unsynced Repo" if the user didn't manually pair the two
+calls. **8.0 makes the relay the single chain authority per repo**
+— a per-repo `RepoSerializer` at the relay atomically accepts or
+rejects incoming pushes against the current top; clients receiving
+the authoritative stream trust + append. Conflict detection that used
 to happen by accident at every client now happens deliberately at
 one point, and rejections come back to the client as a real
 reactive signal (`repo.pushRejected`). 8.0 also lands a layering
@@ -29,7 +34,7 @@ its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
 Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
 unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, and the
-`streamo-history` repo on one port. 215 tests passing.
+`streamo-history` repo on one port. 216 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.

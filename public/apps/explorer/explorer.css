@@ -26,8 +26,21 @@
     }
     .page-title::before { content: '· '; opacity: 0.5; }
     .crumbs  { font-size: 0.85rem; color: var(--ink-dim); }
-    .back    { cursor: pointer; color: var(--ink-dim); font-size: 0.85rem; display: inline-block; margin-bottom: 1rem; }
-    .back:hover { color: var(--ink); }
+    /* Back link from at-view → registry. Matches the registry-stats
+       header's typography (font-size, margins, weight on the title)
+       so navigating in from the registry page leaves "Repo Registry"
+       at the same vertical position — only shifting right to make
+       room for the arrow. */
+    .back {
+      cursor: pointer;
+      display: inline-block;
+      font-size: 0.95rem;
+      margin: 0.75rem 0 1.25rem;
+      color: var(--ink);
+      text-decoration: none;
+    }
+    .back strong { font-weight: 600; }
+    .back:hover  { opacity: 0.7; }
 
     h2 { font-size: 1.05rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
     h2 .dim { font-weight: 400; font-size: 0.9rem; }

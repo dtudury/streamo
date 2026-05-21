@@ -59,7 +59,7 @@ export function AtView ({ keyHex }) {
     }
 
     return h`
-      <a class="back" data-action="back-registry">← all repos</a>
+      <a class="back" data-action="back-registry">← <strong>Repo Registry</strong></a>
       <div class="keyfull">
         <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
         <span class="dim"> @ ${() => getAddress()}</span>

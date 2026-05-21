@@ -60,10 +60,11 @@ export function AtView ({ keyHex }) {
 
     return h`
       <a class="back" data-action="back-registry">← <strong>Repo Registry</strong></a>
-      <div class="keyfull">
+      <h2>Repo</h2>
+      <p class="subtext">
         <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
         <span class="dim"> @ ${() => getAddress()}</span>
-      </div>
+      </p>
 
       ${() => {
         // HEADER slot — auto-subscribes via the reads inside:

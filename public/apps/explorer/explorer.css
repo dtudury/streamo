@@ -343,8 +343,11 @@
     .conn.ok  { color: #16a34a; }
     .conn.err { color: #dc2626; }
 
-    .keyfull { font-size: 0.78rem; color: var(--ink-dim); word-break: break-all; }
-    .keyfull .mono { font-family: monospace; }
+    /* `.keyfull` was the old at-view header line; `.subtext` now does
+       that job. `.keyfull` declarations removed; the .subtext rule
+       elsewhere in this stylesheet covers font-size + dim color +
+       margins. The repo-link inside still gets monospace via its
+       own .repo-link rule. */
     .repo-link {
       font-family: monospace;
       color: var(--accent);

@@ -32,6 +32,16 @@
     h2 { font-size: 1.05rem; font-weight: 600; margin: 1.25rem 0 0.5rem; }
     h2 .dim { font-weight: 400; font-size: 0.9rem; }
 
+    /* Section subtext — explorer-side description of what each
+       section is + which app's data it surfaces. Sits under the
+       h2 (with its inline counter) at a smaller dim weight. */
+    .subtext {
+      font-size: 0.78rem;
+      color: var(--ink-dim);
+      margin: -0.5rem 0 0.6rem;
+      font-weight: 400;
+    }
+
     .row {
       display: grid;
       grid-template-columns: 1fr 5rem 11rem 14rem;

@@ -200,7 +200,8 @@ mount(h`
             return h`<span><strong>${open}</strong> open</span> <span class="dim">·</span> <span><strong>${synced}</strong> synced</span>`
           }}
         </div>
-        <h2>home <span class="dim">the relay's public face</span></h2>
+        <h2>home</h2>
+        <p class="subtext">the relay's public face</p>
         ${() => {
           // Home card — the repo delivered by `hello`. Reads homeKey,
           // looks it up in the registry, renders the same row shape as
@@ -212,7 +213,8 @@ mount(h`
           const repo = registry.get(home)
           return repoCard(home, repo, 'home-card')
         }}
-        <h2>online <span class="dim">chat — currently announcing ${() => `(${currentMembers.get().length})`}</span></h2>
+        <h2>online <span class="dim">${() => `(${currentMembers.get().length})`}</span></h2>
+        <p class="subtext">chat — currently announcing</p>
         ${() => {
           // Currently-announcing peers on the home topic — the live, ephemeral
           // version of "who's in the room right now." Populated by the
@@ -222,12 +224,13 @@ mount(h`
           if (members.length === 0) return h`<div class="empty">no one is here right now</div>`
           return members.map(memberKey => repoCard(memberKey, registry.get(memberKey)))
         }}
-        <h2>journalists <span class="dim">journal — contributing peers ${() => {
+        <h2>journalists <span class="dim">${() => {
           const home = homeKey.get()
           if (!home) return ''
           const list = (registry.get(home)?.get('journalists') ?? []).filter(k => k !== home)
           return `(${list.length})`
         }}</span></h2>
+        <p class="subtext">journal — contributing peers</p>
         ${() => {
           // Journalists cascade — repos contributing named slices (entries,
           // the project's git-history streamo, future contributors). The

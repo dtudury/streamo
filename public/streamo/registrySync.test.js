@@ -6,8 +6,8 @@ import { registrySync } from './registrySync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-// Under the hash-chain model, makeVerifiedWritableStream stages chunks until
-// a covering SIG verifies — fake keys can no longer carry data. Each "slot"
+// Under the relay-as-authority model, the RepoSerializer at the relay gates
+// every incoming batch — fake keys can no longer carry data. Each "slot"
 // that flows data gets a real keypair derived deterministically from the
 // shared Signer and a stable name; `openWriter(registry, N)` opens the repo
 // and attaches the signer so writes auto-sign.

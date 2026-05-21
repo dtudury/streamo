@@ -1,14 +1,14 @@
 import WebSocket from 'ws'
-import { hexToBytes } from './utils.js'
 
 /**
  * Connect to a remote outlet and begin full-duplex sync for `stream`.
  *
  * Sends a handshake (the hex public key), then:
- *   local → remote: all existing chunks, then new ones as they arrive
- *   remote → local: chunks verified against the stream's public key
+ *   local → remote: replay all chunks, then stream new ones
+ *   remote → local: trust+append (the upstream relay is the chain
+ *                   authority for this repo's canonical chain)
  *
- * @param {import('./Stream.js').Stream} stream
+ * @param {import('./Repo.js').Repo} stream
  * @param {string} publicKeyHex  hex-encoded public key identifying this stream
  * @param {string} host
  * @param {number} port
@@ -40,9 +40,11 @@ export function originSync (stream, publicKeyHex, host, port, { protocol = 'ws' 
         } catch {}
       })()
 
-      // Remote → local: verify signature chunks before accepting
-      const publicKey = hexToBytes(publicKeyHex)
-      const writer = stream.makeVerifiedWritableStream(publicKey).getWriter()
+      // Remote → local: the upstream is the chain authority — trust+append
+      // via makeRelayInboundStream. Alignment check still catches push-in-
+      // flight races (we wrote locally and the upstream hasn't accepted yet
+      // when it sends down other content).
+      const writer = stream.makeRelayInboundStream().getWriter()
 
       ws.on('message', data => {
         writer.write(new Uint8Array(data)).catch(e => {

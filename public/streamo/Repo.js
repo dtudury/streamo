@@ -10,15 +10,15 @@
  *    makes commits sign automatically, with concurrent commits batched
  *    into one signature.
  *
- * 2. **The verified writer** (`makeVerifiedWritableStream`) and its
- *    reactive flags (`conflictDetected`, `verificationFailed`). Streamo
- *    can't tell whether incoming bytes "fit" — that's identity-aware
- *    work (it requires a pubkey and chain-alignment state). Repo gates
- *    incoming wire chunks: a SIG must crypto-verify under the expected
- *    pubkey, its chainHash must extend our current chain, AND the
- *    staged chunks must land at addresses where their internal refs
- *    will resolve correctly. Any failure throws AND raises the
- *    appropriate reactive flag for UI to surface.
+ * 2. **The relay-inbound writer** (`makeRelayInboundStream`) and the
+ *    reactive flags it raises (`conflictDetected`, `pushRejected`).
+ *    "What comes down is always from the top, always correct" — the
+ *    relay's RepoSerializer (see RepoSerializer.js) is the chain
+ *    authority; clients receiving wire bytes trust them and append.
+ *    The only thing the receiver still has to catch is the push-in-
+ *    flight race (local content past last shared sig conflicts with
+ *    incoming references); the alignment check inside
+ *    makeRelayInboundStream handles it.
  *
  * **`remoteParent`** cites another author's value at a specific content
  * address — `{ host, repo, dataAddress }`. It's informational (a soft
@@ -46,11 +46,6 @@ import { verifySignature } from './Signer.js'
 const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
 async function sha256 (bytes) {
   return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
-}
-function arraysEqual (a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
 }
 /**
  * Compute the next chain hash from the previous one + the new bytes
@@ -150,14 +145,16 @@ export class Repo extends Streamo {
   #signerName  = null
   #signing     = false
   #signPending = false
-  // Reactive error flags raised by makeVerifiedWritableStream. The verifier
-  // *also* throws, so default-uncaught code crashes its connection — these
-  // flags exist for code that wants to be smarter (UI banner, recovery flow,
-  // dropping the offending peer). Never auto-cleared: a conflict is a fact
-  // about the local store until something deliberate resolves it.
-  #conflictDetected   = false
-  #verificationFailed = false
-  #pushRejected       = null  // null | { reason: string } — set by the registry-sync layer on a 'reject' control message
+  // Reactive error flag raised by makeRelayInboundStream on alignment
+  // failure (the push-in-flight race: local content past the last shared
+  // sig conflicts with incoming bytes whose references assume otherwise).
+  // The throw kills the connection; this flag lets watchers see it.
+  // Never auto-cleared: a conflict is a fact about the local store until
+  // something deliberate resolves it.
+  #conflictDetected = false
+  // Reactive: null until the relay rejects one of our pushes via a
+  // `{type:'reject',key,reason}` control message; then `{ reason }`.
+  #pushRejected     = null
 
   /**
    * Walk back from the tail to the most recent SIGNATURE chunk. Returns
@@ -568,8 +565,9 @@ export class Repo extends Streamo {
 
   /**
    * Stateless crypto-check: is `sig` a valid signature over `sig.chainHash`
-   * by `publicKey`? Doesn't re-verify chain consistency — that's what
-   * makeVerifiedWritableStream does at write time.
+   * by `publicKey`? Doesn't re-verify chain consistency — that's the
+   * RepoSerializer's job at the relay (chain check happens there before
+   * any incoming batch lands).
    *
    * @param {Signature} sig
    * @param {Uint8Array} publicKey
@@ -579,36 +577,25 @@ export class Repo extends Streamo {
     return verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
   }
 
-  // ── The verified writer ────────────────────────────────────────────────
-  // Stateful, identity-bound: consumes a wire stream, holds session state
-  // (pendingChainHash, staged, wireByteLength), surfaces failures to
-  // application UI via the conflictDetected / verificationFailed reactive
-  // flags.
+  // ── The relay-inbound writer ───────────────────────────────────────────
+  // Receives wire bytes from a trusted relay. The relay's RepoSerializer
+  // has already chain-verified and crypto-verified, so this writer skips
+  // those checks. The only thing it catches is the push-in-flight race
+  // (local content past last shared sig + incoming bytes whose refs
+  // assume otherwise) — handled by the alignment check at SIG arrival.
 
   /**
-   * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
-   * chainHash didn't match the locally-folded chain, OR whose staged
-   * chunks would land at addresses where their references resolve wrong.
-   *
-   * This is a *conflict*, not a fork in streamo's vocabulary — a fork is
-   * a deliberate new Repo with a lineage note; a conflict is the runtime
-   * "these bytes can't be appended" failure when two devices using the same
-   * signing key have produced incompatible chains.
+   * Reactive: true once makeRelayInboundStream has rejected an incoming
+   * batch because our local store has content past the last shared sig
+   * (a push-in-flight race: we wrote locally, the relay sent down other
+   * bytes before knowing about our push, our push will likely be
+   * rejected). This is a *conflict*, not a fork — a fork is a deliberate
+   * new Repo with a lineage note; a conflict is the runtime "these bytes
+   * can't be appended" failure.
    */
   get conflictDetected () {
     this.recaller.reportKeyAccess(this, 'conflictDetected')
     return this.#conflictDetected
-  }
-
-  /**
-   * Reactive: true once makeVerifiedWritableStream has rejected a SIG whose
-   * crypto signature didn't verify under the expected pubkey. Indicates an
-   * attack or corruption — the appropriate response is to drop the peer,
-   * not to merge.
-   */
-  get verificationFailed () {
-    this.recaller.reportKeyAccess(this, 'verificationFailed')
-    return this.#verificationFailed
   }
 
   /**
@@ -710,111 +697,4 @@ export class Repo extends Streamo {
     })
   }
 
-  /**
-   * Like Streamo.makeWritableStream(), but gates every chunk against the
-   * author's chain before it can corrupt the store.
-   *
-   * Non-signature chunks are *staged* (folded into a tentative chainHash
-   * but not appended). When a SIGNATURE arrives, three checks fire:
-   *   1. chain        — sig.chainHash must equal the tentative chainHash
-   *   2. crypto       — sig.compactRawBytes must verify under `publicKey`
-   *   3. alignment    — local byteLength must match the wire's pre-staged
-   *                     position so staged chunks land where their internal
-   *                     references expect (otherwise decodes corrupt)
-   * If all pass, the staged chunks and the SIG are appended in order. If
-   * any fails, the stream errors and the staged batch is discarded — the
-   * store is never polluted with chunks that no SIG covers.
-   *
-   * @param {Uint8Array} publicKey
-   * @param {number} [maxFrameSize]
-   * @returns {WritableStream}
-   */
-  makeVerifiedWritableStream (publicKey, maxFrameSize = 64 * 1024 * 1024) {
-    const self = this
-    let buf = new Uint8Array(0)
-    // Start from the 32-zero seed because the wire today replays from byte 0.
-    // A future cleanup could anchor on the receiver's committedChainHash
-    // (sender skips bytes the receiver already has) — that's a wire-protocol
-    // change not yet done.
-    let pendingChainHash = new Uint8Array(32)
-    let staged = []                       // not-already-present chunks awaiting a covering SIG
-    let pendingBytes = new Uint8Array(0)  // ALL bytes since the last accepted SIG — hashed once at SIG arrival
-    let wireByteLength = 0                // cumulative wire bytes consumed (for alignment check)
-    return new WritableStream({
-      async write (incoming) {
-        const next = new Uint8Array(buf.length + incoming.length)
-        next.set(buf); next.set(incoming, buf.length)
-        buf = next
-        while (buf.length >= 4) {
-          const len = new Uint32Array(buf.slice(0, 4).buffer)[0]
-          if (len === 0) throw new Error('malformed frame: zero-length chunk')
-          if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
-          if (buf.length < 4 + len) break
-          const code = buf.slice(4, 4 + len)
-          buf = buf.slice(4 + len)
-
-          const alreadyHave = self.addressOf(code) !== undefined
-          const codec = self.footerToCodec[code.at(-1)]
-
-          if (codec?.type === 'SIGNATURE') {
-            const sig = self.decode(code)
-            const expected = await chainHashOf(pendingChainHash, pendingBytes)
-            if (!arraysEqual(sig.chainHash, expected)) {
-              // Chain conflict: honest signer, conflicting history. The
-              // signer's other device signed over a chunk sequence we don't
-              // share. Raise the reactive flag *before* throwing so watchers
-              // see it even when the throw kills the connection.
-              self.#conflictDetected = true
-              self.recaller.reportKeyMutation(self, 'conflictDetected')
-              throw new Error('signature chainHash does not match the local chain')
-            }
-            const valid = await verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
-            if (!valid) {
-              // Crypto failure: signature doesn't verify under expected
-              // pubkey. Different threat from a conflict — separate flag
-              // so UX can respond differently (drop the peer, not merge).
-              self.#verificationFailed = true
-              self.recaller.reportKeyMutation(self, 'verificationFailed')
-              throw new Error('signature verification failed')
-            }
-            // Alignment check: staged chunks were encoded with internal
-            // references (e.g. COMMIT.dataAddress) pointing to byte positions
-            // in the SENDER's chain. We can only safely append them if our
-            // local byteLength equals the wire's position right before them
-            // — otherwise the staged chunks land at addresses where their
-            // references resolve to the wrong bytes, corrupting decodes.
-            // Catches the "local has signed content past the last shared
-            // sig" case (multi-tab offline writes).
-            if (staged.length > 0) {
-              const stagedTotal = staged.reduce((sum, c) => sum + c.length, 0)
-              const expectedLocalByteLength = wireByteLength - stagedTotal
-              if (self.byteLength !== expectedLocalByteLength) {
-                self.#conflictDetected = true
-                self.recaller.reportKeyMutation(self, 'conflictDetected')
-                throw new Error(
-                  `local store diverged from wire: wire expects byteLength ${expectedLocalByteLength} ` +
-                  `for staged chunks but local is at ${self.byteLength}`
-                )
-              }
-            }
-            // Commit batch: append staged chunks (all new), then the SIG itself.
-            for (const c of staged) self.append(c)
-            staged = []
-            if (!alreadyHave) self.append(code)
-            // Chain advances; next batch starts fresh from this sig.
-            pendingChainHash = sig.chainHash
-            pendingBytes = new Uint8Array(0)
-          } else {
-            // Accumulate ALL between-sig bytes (regardless of alreadyHave) —
-            // the chain commits to every byte, not just the new ones.
-            const merged = new Uint8Array(pendingBytes.length + code.length)
-            merged.set(pendingBytes, 0); merged.set(code, pendingBytes.length)
-            pendingBytes = merged
-            if (!alreadyHave) staged.push(code)
-          }
-          wireByteLength += code.length
-        }
-      }
-    })
-  }
 }

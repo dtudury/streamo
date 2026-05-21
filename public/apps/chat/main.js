@@ -317,11 +317,9 @@ mount(h`
     .empty-state { margin: auto; text-align: center; color: #888; font-size: .85rem; padding: 2rem; line-height: 1.6 }
     .empty-state strong { color: #555 }
 
-    /* Sync warning — appears when a repo's verifier-gate has rejected
-       incoming chunks. conflictDetected (chain divergence between two
-       devices using the same identity) and verificationFailed (attack
-       or byte corruption) get visually distinct palettes so the user
-       can tell the two threats apart at a glance. */
+    /* Sync warning — appears when a repo's chain has an issue:
+       pushRejected (relay refused our push) or conflictDetected (our
+       local push-in-flight collided with incoming relay bytes). */
     .sync-warning {
       padding: .6rem 1rem;
       border-bottom: 1px solid var(--border);
@@ -335,11 +333,6 @@ mount(h`
       background: #fff3cd;   /* warm yellow — "your chains diverged, here's what to do" */
       color: #664d03;
       border-bottom-color: #ffe69c;
-    }
-    .sync-warning.attack {
-      background: #f8d7da;   /* alarm red — "something is wrong, drop the peer" */
-      color: #58151c;
-      border-bottom-color: #f1aeb5;
     }
     .sync-warning .icon { flex: 0 0 auto; font-weight: 700 }
     .sync-warning .body { flex: 1 }
@@ -396,36 +389,22 @@ mount(h`
       </div>
       ${() => {
         // Sync warning slot — re-fires when any open repo raises a flag.
-        // Three signals, surfaced in priority order:
-        //   pushRejected         — the relay explicitly refused our push
-        //                          (most reliable signal; relay said no)
-        //   conflictDetected     — local receiver caught a divergence on
-        //                          incoming bytes (push-in-flight race)
-        //   verificationFailed   — incoming bytes didn't crypto-verify
-        //                          (attack/corruption; legacy path)
+        // Two signals, surfaced in priority order:
+        //   pushRejected     — the relay explicitly refused our push
+        //                      (most reliable; relay said no)
+        //   conflictDetected — local receiver caught a push-in-flight race
+        //                      (alignment failure on incoming bytes)
         let pushRejectedMine = false
         let conflictMine = false
         let conflictOther = 0
-        let badSig = 0
         for (const [keyHex, repo] of registry) {
           if (repo.pushRejected && keyHex === myKey) pushRejectedMine = true
           if (repo.conflictDetected) {
             if (keyHex === myKey) conflictMine = true
             else conflictOther++
           }
-          if (repo.verificationFailed) badSig++
         }
-        if (!pushRejectedMine && !conflictMine && !conflictOther && !badSig) return null
-        if (badSig) {
-          return h`<div class="sync-warning attack" data-key="warn-attack">
-            <span class="icon">⚠</span>
-            <div class="body">
-              <strong>bad signature received.</strong>
-              ${badSig === 1 ? 'a peer sent bytes that did not crypto-verify.' : `${badSig} peers sent bytes that did not crypto-verify.`}
-              the connection has been dropped — refresh if this persists.
-            </div>
-          </div>`
-        }
+        if (!pushRejectedMine && !conflictMine && !conflictOther) return null
         return h`<div class="sync-warning conflict" data-key="warn-conflict">
           <span class="icon">⑂</span>
           <div class="body">

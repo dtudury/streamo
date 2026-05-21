@@ -15,7 +15,7 @@
  * **Streamo is identity-blind.** It doesn't sign, verify, track chain
  * state, or hold a signer. Everything signed-chain-related — the
  * `signedLength` / `committedChainHash` bookkeeping, sign(), verify(),
- * makeVerifiedWritableStream + its reactive flags — lives on Repo, which
+ * makeRelayInboundStream + its reactive flags — lives on Repo, which
  * extends Streamo and overrides `append` + `valueAddress` to thread the
  * chain through.
  *

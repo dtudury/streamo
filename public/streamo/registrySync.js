@@ -107,8 +107,14 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *   { "type": "subscribe", "key": "hex1" }
  *     Request to sync a repository bidirectionally.  The sender will stream
  *     its copy of the repo to the peer AND expects the peer to stream back.
- *     Both sides set up a makeVerifiedWritableStream for the key so only
- *     correctly-signed chunks are accepted.
+ *     Relay-side (isAuthority): route incoming chunks through a per-repo
+ *     RepoSerializer (chain check + crypto check, atomic accept/reject).
+ *     Client-side: trust+append via makeRelayInboundStream (alignment check
+ *     only — the relay's chain is authoritative).
+ *
+ *   { "type": "reject", "key": "hex1", "reason": "chain-mismatch" }
+ *     Authority → submitter, when the serializer refuses a batch. Lands as
+ *     `repo.pushRejected = { reason }` on the submitting client.
  *
  * ### Data frames — binary
  *
@@ -118,7 +124,7 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *     (secp256k1 keys always start with 0x02 or 0x03; JSON control messages
  *     always start with 0x7B '{', so the two are unambiguous).
  *     The chunk bytes are taken directly from makeReadableStream() and fed
- *     directly into makeVerifiedWritableStream() on the other side.
+ *     directly into the incoming-path writer on the other side.
  *
  * ## Discovery via `follow`
  *

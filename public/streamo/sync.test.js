@@ -5,10 +5,10 @@ import { originSync } from './originSync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-// Under the hash-chain model, makeVerifiedWritableStream stages every chunk
-// until a covering SIG verifies — so these end-to-end sync tests need a real
-// keypair whose hex matches the repo's KEY, and a signer attached so the
-// writer's set() auto-emits a signature that the receiver can verify.
+// Under the relay-as-authority model, the relay's RepoSerializer gates every
+// incoming batch via chain + crypto checks — so these end-to-end sync tests
+// need a real keypair whose hex matches the repo's KEY, and a signer attached
+// so the writer's set() auto-emits a signature that the relay can verify.
 const SIGNER = new Signer('alice', 'hunter2', 1)
 const NAME = 'sync-test'
 let KEY

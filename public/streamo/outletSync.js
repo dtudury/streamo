@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws'
 import { hexToBytes } from './utils.js'
 import { handleRegistryPeer } from './registrySync.js'
+import { RepoSerializer, ConnectionAccumulator } from './RepoSerializer.js'
 
 /**
  * Attach the streamo sync protocol to an existing WebSocketServer.
@@ -79,13 +80,26 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
         } catch {}
       })()
 
-      // Peer → streamo: verify signature chunks before accepting
+      // Peer → streamo: route through the per-repo serializer (the relay is
+      // the chain authority). Share serializers across all connections (incl.
+      // the registry-mode path) via the WSS-level routing.serializers map.
       const publicKey = hexToBytes(publicKeyHex)
-      const writer = streamo.makeVerifiedWritableStream(publicKey).getWriter()
+      let serializer = routing.serializers.get(publicKeyHex)
+      if (!serializer) {
+        serializer = new RepoSerializer(streamo, publicKey)
+        routing.serializers.set(publicKeyHex, serializer)
+      }
+      const accumulator = new ConnectionAccumulator(serializer, (result) => {
+        if (!result.accepted) {
+          // Legacy path has no JSON channel back to the peer; on reject we
+          // just log and let the next bad batch close the connection.
+          console.error(`[${label}] rejected batch from ${publicKeyHex.slice(0, 8)}...: ${result.reason}`)
+        }
+      })
 
       const writeChunk = data => {
-        writer.write(new Uint8Array(data)).catch(e => {
-          console.error(`[${label}] rejected chunk from ${publicKeyHex.slice(0, 8)}...: ${e.message}`)
+        accumulator.write(new Uint8Array(data)).catch(e => {
+          console.error(`[${label}] malformed frame from ${publicKeyHex.slice(0, 8)}...: ${e.message}`)
           ws.close()
         })
       }

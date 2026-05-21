@@ -310,235 +310,6 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(await s.verify(sig, publicKey), 'verify must accept sign\'s output')
   })
 
-  test('makeVerifiedWritableStream rejects bytes not covered by a valid SIG', async ({ assert }) => {
-    // The historical attack: a peer sends [commit_chunk, bad_sig]. The
-    // commit lands in the store before the sig fails verification. With
-    // staging, the commit never lands — verified write is all-or-nothing.
-    const author = new Repo()
-    const signer = new Signer('alice', 'hunter2', 1)
-    author.set({ a: 1 })
-    await author.sign(signer, 'attack-test')
-    const { publicKey } = await signer.keysFor('attack-test')
-
-    // Get the chunks the author wrote
-    const chunks = []
-    let addr = author.byteLength - 1
-    while (addr >= 0) { const c = author.resolve(addr); chunks.unshift(c); addr -= c.length }
-
-    // Corrupt the SIG's signature bytes (offset 32..96 inside the 97-byte chunk)
-    const sigChunk = chunks[chunks.length - 1]
-    const badSig = new Uint8Array(sigChunk)
-    badSig[40] ^= 0xff // flip a byte inside the signature region
-
-    const peer = new Repo()
-    const writer = peer.makeVerifiedWritableStream(publicKey).getWriter()
-    let caught = null
-    try {
-      for (const code of chunks.slice(0, -1)) {
-        const frame = new Uint8Array(4 + code.length)
-        new DataView(frame.buffer).setUint32(0, code.length, true)
-        frame.set(code, 4)
-        await writer.write(frame)
-      }
-      const badFrame = new Uint8Array(4 + badSig.length)
-      new DataView(badFrame.buffer).setUint32(0, badSig.length, true)
-      badFrame.set(badSig, 4)
-      await writer.write(badFrame)
-    } catch (e) { caught = e }
-    assert.ok(caught, 'verified stream must reject a bad sig')
-    assert.equal(peer.byteLength, 0,
-      'no bytes may land in the peer store when the covering sig fails verification')
-  })
-
-  test('makeVerifiedWritableStream detects a conflict between two devices using the same signer', async ({ assert }) => {
-    // The multi-device conflict: same identity (one signer), two devices write
-    // divergent commits independently. Each device's stream is internally
-    // self-consistent and crypto-valid — the conflict is only visible when
-    // both streams meet at a third peer. The verifier-gate catches it:
-    // device 2's SIG carries an chainHash computed from device 2's chain
-    // (starting from genesis through device 2's content only), which cannot
-    // equal the verifier's pendingAcc after it has already folded device 1's
-    // divergent chunks. This is the byte-stream signal that the chain has
-    // diverged across devices.
-    const signer = new Signer('alice', 'hunter2', 1)
-    const name = 'conflict'
-    const { publicKey } = await signer.keysFor(name)
-
-    const device1 = new Repo()
-    device1.set({ v: 'apple' })
-    await device1.sign(signer, name)
-
-    const device2 = new Repo()
-    device2.set({ v: 'banana' })
-    await device2.sign(signer, name)
-
-    const readChunks = s => {
-      const out = []
-      let addr = s.byteLength - 1
-      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
-      return out
-    }
-    const frame = code => {
-      const f = new Uint8Array(4 + code.length)
-      new DataView(f.buffer).setUint32(0, code.length, true)
-      f.set(code, 4)
-      return f
-    }
-
-    const target = new Repo()
-    const writer = target.makeVerifiedWritableStream(publicKey).getWriter()
-
-    // Device 1's full stream lands cleanly — its sig matches its own chain.
-    for (const c of readChunks(device1)) await writer.write(frame(c))
-    const tipAfterDevice1 = target.byteLength
-    assert.ok(tipAfterDevice1 > 0, 'sanity: device 1 actually wrote bytes')
-
-    // Now device 2's stream arrives. Its sig will carry an chainHash that
-    // was computed independently — pendingAcc has device 1's chunks folded
-    // into it, so the mismatch fires before any of device 2's bytes commit.
-    let caught = null
-    try {
-      for (const c of readChunks(device2)) await writer.write(frame(c))
-    } catch (e) { caught = e }
-
-    assert.ok(caught, 'merging a divergent chain must throw at the verifying writer')
-    assert.ok(/chainHash/i.test(caught.message),
-      `error should name the chainHash chain mismatch; got: ${caught.message}`)
-    assert.equal(target.byteLength, tipAfterDevice1,
-      'staging discards the rejected batch — no divergent bytes land in the target')
-    assert.equal(target.conflictDetected, true,
-      'conflictDetected must be raised so watchers can see the conflict even when the throw kills the connection')
-    assert.equal(target.verificationFailed, false,
-      'verificationFailed should stay false — the signature itself was crypto-valid; the chain mismatch is what failed')
-  })
-
-  test('conflictDetected fires reactively — watchers see the conflict before/without catching the throw', async ({ assert }) => {
-    // The whole point of the flag: app code that holds a Repo doesn't have
-    // to wrap every writer.write() in a try/catch. It just watches conflictDetected
-    // and reacts. This test proves the recaller actually fires for that path.
-    const signer = new Signer('alice', 'hunter2', 1)
-    const name = 'conflict-reactive'
-    const { publicKey } = await signer.keysFor(name)
-
-    const device1 = new Repo()
-    device1.set({ v: 1 })
-    await device1.sign(signer, name)
-    const device2 = new Repo()
-    device2.set({ v: 2 })
-    await device2.sign(signer, name)
-
-    const readChunks = s => {
-      const out = []
-      let addr = s.byteLength - 1
-      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
-      return out
-    }
-    const frame = code => {
-      const f = new Uint8Array(4 + code.length)
-      new DataView(f.buffer).setUint32(0, code.length, true)
-      f.set(code, 4)
-      return f
-    }
-
-    const target = new Repo()
-    let observed = []
-    target.recaller.watch('conflict-watcher', () => observed.push(target.conflictDetected))
-
-    const writer = target.makeVerifiedWritableStream(publicKey).getWriter()
-    for (const c of readChunks(device1)) await writer.write(frame(c))
-    // device1 stream is clean — no conflict yet.
-    assert.equal(target.conflictDetected, false, 'no conflict until divergent chain arrives')
-
-    // Now device2's stream — the throw will fire AND the flag will fire.
-    try { for (const c of readChunks(device2)) await writer.write(frame(c)) } catch {}
-
-    // Allow the recaller's microtask flush to land
-    await new Promise(r => setTimeout(r, 0))
-    assert.ok(observed.includes(true),
-      `conflict-watcher must observe conflictDetected becoming true; observed: ${JSON.stringify(observed)}`)
-  })
-
-  test('verifier rejects wire chunks that would land at corrupted addresses (local has content past last shared sig)', async ({ assert }) => {
-    // The bug shape from the chat client: tab B writes locally while offline,
-    // its bytestream grows past the last shared sig. When tab B reconnects
-    // and receives tab A's writes via the wire, the wire's chunks reference
-    // byte positions that ASSUME the wire's view of history. Tab B's local
-    // content past sig_one sits in those positions, so the wire's chunks
-    // would resolve their internal references (COMMIT.dataAddress etc.) to
-    // wrong bytes — the watcher fires after append and decode crashes.
-    //
-    // The chainHash check alone doesn't catch this: the wire's chain is
-    // internally consistent (sig.chainHash matches a fold from genesis
-    // through the wire's chunks), so the wire would pass that check until
-    // some LATER sig diverges. By then, bad chunks have already landed.
-    //
-    // The alignment check inside the sig-commit path verifies that staged
-    // chunks would land at the wire's expected positions. If self.byteLength
-    // doesn't match, we have local-only content occupying the addresses the
-    // wire's chunks reference. conflictDetected fires without committing the
-    // corrupting batch.
-
-    const signer = new Signer('alice', 'hunter2', 1)
-    const name = 'diverged-merge'
-    const { publicKey } = await signer.keysFor(name)
-
-    const readChunks = s => {
-      const out = []
-      let addr = s.byteLength - 1
-      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
-      return out
-    }
-    const frame = code => {
-      const f = new Uint8Array(4 + code.length)
-      new DataView(f.buffer).setUint32(0, code.length, true)
-      f.set(code, 4)
-      return f
-    }
-
-    // Shared signed history both tabs start from
-    const shared = new Repo()
-    shared.set({ v: 'one' })
-    await shared.sign(signer, name)
-    const sharedChunks = readChunks(shared)
-
-    // Tab A diverges from shared with its own write
-    const tabA = new Repo()
-    const writerA = tabA.makeVerifiedWritableStream(publicKey).getWriter()
-    for (const c of sharedChunks) await writerA.write(frame(c))
-    tabA.set({ v: 'apple' })
-    await tabA.sign(signer, name)
-
-    // Tab B replays shared then writes its own divergent content (locally,
-    // simulating "offline scribble after last sync")
-    const tabB = new Repo()
-    const writerB = tabB.makeVerifiedWritableStream(publicKey).getWriter()
-    for (const c of sharedChunks) await writerB.write(frame(c))
-    tabB.set({ v: 'banana' })
-    await tabB.sign(signer, name)
-    const tabBByteLengthBeforeMerge = tabB.byteLength
-
-    // Tab B reconnects — receives tab A's full chain (which extends shared
-    // past sig_one). A new writer reflects a fresh connection (fresh
-    // pendingAcc, fresh wireByteLength).
-    const writerB2 = tabB.makeVerifiedWritableStream(publicKey).getWriter()
-    let caught = null
-    try {
-      for (const c of readChunks(tabA)) await writerB2.write(frame(c))
-    } catch (e) { caught = e }
-
-    assert.ok(caught,
-      'merging a remote chain past the local divergence point must throw')
-    assert.equal(tabB.conflictDetected, true,
-      'conflictDetected must be raised for the alignment failure')
-    assert.equal(tabB.byteLength, tabBByteLengthBeforeMerge,
-      'no remote chunks land in tab B — local store stays decode-safe')
-    // Sanity: tabB.get('messages') would crash if any wire chunks had been
-    // appended at corrupted addresses. After the fix, the local store is
-    // intact and tabB can still be read without crashing.
-    assert.equal(tabB.get('v'), 'banana',
-      'tab B can still read its local divergent value after the rejected merge')
-  })
-
   test('makeRelayInboundStream: alignment check catches the push-in-flight race', async ({ assert }) => {
     // The client-side receive path: "what comes down is always from the
     // top, always correct" — no chain or crypto check (relay validated),
@@ -604,55 +375,14 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(client.get('v'), 'banana', 'client can still read its local-pending value')
   })
 
-  test('verificationFailed fires when a bad sig arrives — separate flag from conflictDetected', async ({ assert }) => {
-    // Bad sig is a different threat from a fork: the signer didn't actually
-    // sign these bytes (or the bytes got corrupted in transit). The chain
-    // would have to match for the crypto check to fire — so we craft a stream
-    // where the chainHash IS valid but the signature bytes are tampered.
-    const author = new Repo()
-    const signer = new Signer('alice', 'hunter2', 1)
-    author.set({ a: 1 })
-    await author.sign(signer, 'badsig-test')
-    const { publicKey } = await signer.keysFor('badsig-test')
-
-    const chunks = []
-    let addr = author.byteLength - 1
-    while (addr >= 0) { const c = author.resolve(addr); chunks.unshift(c); addr -= c.length }
-    const sigChunk = chunks[chunks.length - 1]
-    const badSig = new Uint8Array(sigChunk)
-    badSig[40] ^= 0xff // flip a byte inside the signature region (offset 32..96)
-
-    const peer = new Repo()
-    const writer = peer.makeVerifiedWritableStream(publicKey).getWriter()
-    let caught = null
-    try {
-      for (const code of chunks.slice(0, -1)) {
-        const frame = new Uint8Array(4 + code.length)
-        new DataView(frame.buffer).setUint32(0, code.length, true)
-        frame.set(code, 4)
-        await writer.write(frame)
-      }
-      const badFrame = new Uint8Array(4 + badSig.length)
-      new DataView(badFrame.buffer).setUint32(0, badSig.length, true)
-      badFrame.set(badSig, 4)
-      await writer.write(badFrame)
-    } catch (e) { caught = e }
-
-    assert.ok(caught, 'corrupted signature must still throw')
-    assert.equal(peer.verificationFailed, true,
-      'verificationFailed must be raised for the crypto-verify path')
-    assert.equal(peer.conflictDetected, false,
-      'conflictDetected stays false — the chainHash matched; only the signature bytes were bad')
-  })
-
-  test('signedLength advances when sig chunks are appended via load (not just sign)', async ({ assert }) => {
-    // Before this fix, loading a streamo from bytes left signedLength=0 even
-    // though the loaded data already contained signatures. The next sign()
-    // would then re-sign all of history with signedFrom=0 — wasteful and
-    // visually random in the explorer ("why does every sig start at 0?").
+  test('signedLength is derived from the bytes — survives load via the unverified writer (archive replay)', async ({ assert }) => {
+    // Production archive load uses makeWritableStream (trusted bytes from
+    // disk), not the relay-inbound path. After load, signedLength should
+    // reflect the most recent SIG chunk — it's a dynamic getter that walks
+    // back through the bytes, so this just confirms the walking works
+    // after a bulk replay.
     const signer = new Signer('alice', 'secret')
-    const name = 'load-resumes-signed-cursor'
-    const keys = await signer.keysFor(name)
+    const name = 'load-derives-signedLength'
 
     const original = new Repo()
     original.set({ a: 1 })
@@ -662,16 +392,10 @@ describe(import.meta.url, ({ test }) => {
     await original.sign(signer, name)
     assert.ok(original.signedLength > cursorAfterFirstSig, 'sanity: cursor advances within one session')
 
-    // Replay the bytes into a fresh Streamo via the public writable stream —
-    // mirrors how archiveSync/registrySync deliver data on load.
+    // Replay all bytes into a fresh Repo via the unverified makeWritableStream
+    // (the path archiveSync uses on startup).
     const replay = new Repo()
-    const writer = replay.makeVerifiedWritableStream(keys.publicKey).getWriter()
-    const bytes = original.slice(0, original.byteLength)
-    const framed = new Uint8Array(4 + bytes.length)
-    new DataView(framed.buffer).setUint32(0, bytes.length, true)
-    framed.set(bytes, 4)
-    // Reframe per chunk — makeVerifiedWritableStream parses one frame at a
-    // time. Walk chunks from the source to drive the loader correctly.
+    const writer = replay.makeWritableStream().getWriter()
     let addr = original.byteLength - 1
     const chunks = []
     while (addr >= 0) {
@@ -688,6 +412,6 @@ describe(import.meta.url, ({ test }) => {
     await writer.close()
 
     assert.equal(replay.signedLength, original.signedLength,
-      'signedLength must be reconstructed from the loaded sig chunks')
+      'signedLength is derived correctly from loaded sig chunks')
   })
 })

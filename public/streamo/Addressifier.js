@@ -139,7 +139,12 @@ export class Addressifier {
   /**
    * ReadableStream that emits chunks at or after `fromOffset`, then waits
    * for new ones. Wire format: 4-byte LE length prefix followed by chunk
-   * bytes.
+   * bytes. **All chunks currently ready are bundled into one batched frame**
+   * (capped at `maxBatch` bytes) — Streamo fragments structured values into
+   * many tiny chunks (often ~2 bytes each after dedup), and one-WS-message-
+   * per-chunk would explode the event loop on the receiving side. The
+   * downstream parser handles multi-chunk frames transparently (it reads
+   * `[length][bytes]` in a loop).
    *
    * `fromOffset` lets the wire skip bytes the receiver already has — e.g.
    * a client reconnecting carries its `repo.signedLength` in the subscribe
@@ -148,10 +153,13 @@ export class Addressifier {
    * chunks past that position (rare; valid only if the receiver claims
    * to be ahead, which the subscribe handshake usually rejects).
    *
-   * @param {{ fromOffset?: number }} [options]
+   * `maxBatch` caps the bytes per batched frame so very large repos don't
+   * land as one huge WS message — 256KB is a sensible default for WS hops.
+   *
+   * @param {{ fromOffset?: number, maxBatch?: number }} [options]
    * @returns {ReadableStream}
    */
-  makeReadableStream ({ fromOffset = 0 } = {}) {
+  makeReadableStream ({ fromOffset = 0, maxBatch = 256 * 1024 } = {}) {
     const self = this
     // Linear scan to find the first chunk at or past fromOffset. SIGs are
     // fixed-format 97-byte chunks and signedLength always lands on a chunk
@@ -162,11 +170,28 @@ export class Addressifier {
       async start (controller) {
         while (true) {
           while (index < self.#chunks.length) {
-            const { uint8Array } = self.#chunks[index++]
-            const len = new Uint8Array(new Uint32Array([uint8Array.length]).buffer)
-            const frame = new Uint8Array(len.length + uint8Array.length)
-            frame.set(len)
-            frame.set(uint8Array, len.length)
+            // Plan a batch: collect chunks until we'd exceed maxBatch.
+            // Always include at least one chunk per frame so a chunk
+            // larger than maxBatch still ships (rare; would only happen
+            // if a user encoded a single value bigger than 256KB).
+            const start = index
+            let total = 0
+            while (index < self.#chunks.length) {
+              const len = self.#chunks[index].uint8Array.length
+              if (index > start && total + 4 + len > maxBatch) break
+              total += 4 + len
+              index++
+            }
+            const frame = new Uint8Array(total)
+            const view = new DataView(frame.buffer)
+            let pos = 0
+            for (let i = start; i < index; i++) {
+              const { uint8Array } = self.#chunks[i]
+              view.setUint32(pos, uint8Array.length, true)
+              pos += 4
+              frame.set(uint8Array, pos)
+              pos += uint8Array.length
+            }
             controller.enqueue(frame)
           }
           await self.#nextChunk

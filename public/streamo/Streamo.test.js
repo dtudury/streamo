@@ -380,11 +380,12 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(client.get('v'), 'banana', 'client can still read its local-pending value')
   })
 
-  test('makeReadableStream({ fromOffset }) skips bytes the receiver already has', async ({ assert }) => {
+  test('makeReadableStream({ fromOffset }) skips bytes the receiver already has + batches ready chunks', async ({ assert }) => {
     // The wire-protocol cleanup lets the receiver carry its signedLength in
     // the subscribe handshake; the sender starts from there rather than from
-    // byte 0. Verifies the source-side mechanic: a reader with fromOffset = N
-    // emits only chunks whose offset is >= N.
+    // byte 0. Each emitted frame may bundle multiple length-prefixed chunks
+    // (batching is a perf optimization — streamo fragments into many tiny
+    // chunks and one-WS-message-per-chunk explodes the event loop).
     const signer = new Signer('alice', 'hunter2', 1)
     const name = 'from-offset-reader'
     const { publicKey: _ } = await signer.keysFor(name)
@@ -397,30 +398,44 @@ describe(import.meta.url, ({ test }) => {
     await repo.sign(signer, name)
     const totalBytes = repo.byteLength
 
-    // From-0 reader emits all chunks; total bytes equal repo.byteLength.
-    let fromZero = 0
-    const r0 = repo.makeReadableStream({ fromOffset: 0 }).getReader()
-    while (fromZero < totalBytes) {
-      const { value, done } = await r0.read()
-      if (done) break
-      // Wire format is [4-byte length][chunk bytes] — the chunk's length
-      // (not including the prefix) advances the byte cursor.
-      fromZero += value.length - 4
+    // Sum chunk-content bytes across all batched frames.
+    const sumChunkBytes = async (reader, expectedBytes) => {
+      let sum = 0
+      let frames = 0
+      let chunks = 0
+      while (sum < expectedBytes) {
+        const { value, done } = await reader.read()
+        if (done) break
+        frames++
+        let pos = 0
+        while (pos < value.length) {
+          const len = new DataView(value.buffer, value.byteOffset + pos, 4).getUint32(0, true)
+          sum += len
+          chunks++
+          pos += 4 + len
+        }
+      }
+      return { sum, frames, chunks }
     }
-    assert.equal(fromZero, totalBytes, 'from-0 reader covers everything')
+
+    // From-0 reader covers the whole repo.
+    const r0 = repo.makeReadableStream({ fromOffset: 0 }).getReader()
+    const r0result = await sumChunkBytes(r0, totalBytes)
     r0.cancel()
+    assert.equal(r0result.sum, totalBytes, 'from-0 reader covers everything')
+
+    // Batching: when chunks are all ready at stream start, they bundle into
+    // far fewer frames than chunks. Concrete bound: at least 2 chunks per
+    // frame on average for a populated repo.
+    assert.ok(r0result.chunks > r0result.frames * 2,
+      `batched: ${r0result.chunks} chunks in ${r0result.frames} frame(s)`)
 
     // From-after-first-sig reader skips the first commit's worth of bytes.
-    let fromAfterFirst = 0
     const r1 = repo.makeReadableStream({ fromOffset: offsetAfterFirstSig }).getReader()
-    while (fromAfterFirst < totalBytes - offsetAfterFirstSig) {
-      const { value, done } = await r1.read()
-      if (done) break
-      fromAfterFirst += value.length - 4
-    }
-    assert.equal(fromAfterFirst, totalBytes - offsetAfterFirstSig,
-      'from-offset reader emits only the post-offset bytes')
+    const r1result = await sumChunkBytes(r1, totalBytes - offsetAfterFirstSig)
     r1.cancel()
+    assert.equal(r1result.sum, totalBytes - offsetAfterFirstSig,
+      'from-offset reader emits only the post-offset bytes')
   })
 
   test('signedLength is derived from the bytes — survives load via the unverified writer (archive replay)', async ({ assert }) => {

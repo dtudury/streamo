@@ -112,7 +112,7 @@ async function subscribeToPastedKey (e) {
 function repoCard (keyHex, repo, extraClass = null) {
   if (!repo) {
     return h`
-      <div class=${['row', extraClass]} data-key=${keyHex} data-action="open-repo">
+      <div class=${['row', 'repo-card', extraClass]} data-key=${keyHex} data-action="open-repo">
         <span class="row-label">
           <span class="mono dim">${truncKey(keyHex)}</span>
         </span>
@@ -129,7 +129,7 @@ function repoCard (keyHex, repo, extraClass = null) {
   // "N b" so 0-byte-but-loaded repos read as truly empty.
   const pendingSync = repo.byteLength === 0 && isSyncing(keyHex)
   return h`
-    <div class=${['row', extraClass]} data-key=${keyHex} data-action="open-repo">
+    <div class=${['row', 'repo-card', extraClass]} data-key=${keyHex} data-action="open-repo">
       <span class="row-label">
         ${name ? h`<span class="row-name">${name}</span> ` : null}
         <span class="mono dim">${truncKey(keyHex)}</span>

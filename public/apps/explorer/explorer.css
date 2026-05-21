@@ -56,6 +56,16 @@
     .row + .row { border-top-color: var(--rule); }
     .row:hover + .row { border-top-color: transparent; }
 
+    /* Repo-card rows (home, members, journalists) wear a gray box so
+       each repo reads as its own self-contained card — matching the
+       home card's legibility while keeping its green box reserved as
+       the "important / canonical" signal. The hover-clears-neighbor-top
+       trick above is undone for repo-card pairs since each one is
+       independent (no shared divider). */
+    .row.repo-card { border: 1.5px solid var(--rule); margin-bottom: 0.4rem; }
+    .row.repo-card + .row.repo-card { border-top-color: var(--rule); }
+    .row.repo-card:hover + .row.repo-card { border-top-color: var(--rule); }
+
     /* signed-commit + unsigned-commit + commit + signature rows share the same
        column template so the page doesn't visually jitter as you scan a mixed
        list. cols: kind | message | date | addr. */

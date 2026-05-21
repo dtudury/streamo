@@ -30,8 +30,30 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
  *   in the Repo wins; misses fall through to disk.
  * @returns {Promise<import('http').Server>}
  */
+// ── temp instrumentation (2026-05-21): diagnose intermittent slow requests ──
+// Remove this block once the slow-request investigation is done.
+let _lastTick = Date.now()
+setInterval(() => {
+  const now = Date.now()
+  const lag = now - _lastTick - 1000
+  if (lag > 50) console.log(`[lag] event loop blocked for ${lag}ms`)
+  _lastTick = now
+}, 1000)
+// ── end temp instrumentation ──
+
 export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000, peerOptions = {}) {
   const app = express()
+
+  // ── temp instrumentation: log requests > 100ms ──
+  app.use((req, res, next) => {
+    const start = Date.now()
+    res.on('finish', () => {
+      const elapsed = Date.now() - start
+      if (elapsed > 100) console.log(`[req] ${elapsed}ms ${req.method} ${req.url}`)
+    })
+    next()
+  })
+  // ── end temp instrumentation ──
 
   const { serveRepoFiles, ...peerOpts } = peerOptions
 

@@ -7,22 +7,29 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 7.6.1, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. 7.6 —
-**fine-grained watcher boundaries** — promotes each
-`<${Component}/>` invocation to its own recaller watch scope.
-Reads inside a component register on that component's watcher;
-mutation re-fires only the components that read the mutated dep,
-not the whole tree. 7.6.1 hardens this with a loud throw on
-multiple unkeyed sibling function-components and restores
-no-recaller static-rendering mode. Underneath, 7.5 multi-home
-serving (every pushed repo is a public URL at
+Streamo is at 8.0.0, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. **8.0
+makes the relay the single chain authority per repo** — a per-repo
+`RepoSerializer` at the relay atomically accepts or rejects
+incoming pushes against the current top; clients receiving the
+authoritative stream trust + append. Conflict detection that used
+to happen by accident at every client now happens deliberately at
+one point, and rejections come back to the client as a real
+reactive signal (`repo.pushRejected`). 8.0 also lands a layering
+pass — Streamo is now a pure content-addressable codec, every
+chain-and-signing concern lives on Repo — plus a chain-hash
+simplification (2 sha256 calls per signature instead of 2N) and a
+vocabulary cleanup (fork/branch/conflict/merge per streamo's
+actual model, not git's). All breaking; see CHANGELOG for the
+migration. Underneath, 7.6 fine-grained watcher boundaries (each
+`<${Component}/>` invocation is its own watch scope), 7.5
+multi-home serving (every pushed repo is a public URL at
 `/streams/<keyhex>/`), 7.4 dumb-pipe relay (the relay can drop
 its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
 Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
 unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, and the
-`streamo-history` repo on one port. 209 tests passing.
+`streamo-history` repo on one port. 215 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.
@@ -88,6 +95,47 @@ scroll-wheel-picker shape above could land as one focused effort.
 Goals for this thread: open a commit feels instant; the bytestream
 strip stays responsive at thousands of chunks; the dropdown stays
 usable at 1000+ commits.
+
+### wire-protocol cleanup — anchor on receiver's signedLength *(next-up after 8.0)*
+
+8.0 made the relay the chain authority but kept the wire's "replay
+from byte 0" handshake. Two artifacts remain:
+
+- `makeRelayInboundStream` tracks `pendingChainHash` starting from
+  `new Uint8Array(32)` (genesis) because the sender always streams
+  from offset 0. It folds bytes the receiver already has just to
+  arrive at the chainHash it could have started from.
+- The receiver alignment check still expresses "is the wire's
+  position right before this batch equal to my last-shared sig?"
+  in a way that's correct but indirect — chain-hash equality is
+  the actual check, but it sits inside a stream that's still
+  replaying from genesis.
+
+The proposed shape: extend the `subscribe` message to carry
+`(fromOffset, fromChainHash)` — `repo.signedLength` and
+`repo.committedChainHash` respectively. Sender validates the
+handshake (does the SIG at that offset carry that chainHash?), then
+streams from `fromOffset` rather than `0`. Receiver anchors
+`pendingChainHash = committedChainHash` and only sees bytes it
+doesn't have.
+
+Effects:
+- Bandwidth: clients reconnecting (or arriving with partial state)
+  skip what they already have. The biggest savings are on cold
+  reconnects after long disconnects.
+- Code: `makeRelayInboundStream` simplifies — no more "did we
+  already have this chunk" dedup on every incoming chunk, no more
+  fold-from-genesis math, just trust+append the bytes the sender
+  decided to send.
+- Errors: "your client is ahead of where I think you are" gets
+  caught at handshake (sender's check), not buried in a verifier
+  fold loop.
+
+The alignment check survives but the math is simpler — it's just
+"are we still anchored at the same sig the sender thought we were."
+
+Breaks wire-compat: old clients won't understand the new subscribe
+shape. Fine at our scale; can be done in one focused session.
 
 ### FIRST_STEPS step 5 — visit your fork on the public relay *(post-publish)*
 
@@ -318,17 +366,17 @@ because no one's needed it; the day someone does, we'll create it).
   the homepage when it lands.
 
 - **Trust-me mode — inspect non-Repo Streamos in the explorer.**
-  Today the browser's `makeVerifiedWritableStream` (Streamo.js:485)
-  gates incoming chunks on a covering signature — non-SIG chunks
-  stage indefinitely without it, so `byteLength` stays 0 in the
-  browser and the explorer can't see unsigned data even though the
-  relay holds the bytes (this is a *feature*: the dumb-pipe stays
-  dumb, the smart guard lives at the edge, and untrusted bytes
-  can't enter your local repo). For debugging — "open this binary
+  Today the browser's `Repo.makeRelayInboundStream` stages non-SIG
+  chunks until a covering signature arrives — so `byteLength` stays
+  0 in the browser and the explorer can't see unsigned data even
+  though the relay holds the bytes (this is a *feature*: the
+  client trusts the relay's authoritative stream but still only
+  surfaces SIG-anchored content). For debugging — "open this binary
   as hex in vim" energy, not a polished feature — a server started
-  with `STREAMO_TRUST_ALL=1` would route subscriptions through a
-  new `Streamo.makeWritableStream()` (no staging, no verification,
-  just `append()`). The main relay stays signed-only; you stand up
+  with `STREAMO_TRUST_ALL=1` would route subscriptions through
+  `Streamo.makeWritableStream()` (no staging, just `append()`) on
+  the client side, and skip the `RepoSerializer` gating on the
+  relay side. The main relay stays signed-only; you stand up
   a separate trust-me server when you want to look at unsigned
   bytes and point your browser at it manually. **Scope:** ~50-70
   LOC + one smoke test (new writer ~20, registrySync session-mode
@@ -404,7 +452,7 @@ Neither blocks anything; both are quality-of-presence-display polish.
 
 ## known limitations
 
-### multi-device write conflict detection
+### multi-device write conflict recovery *(detection landed in 8.0; UX is the open thread)*
 
 Streamo streams are byte arrays addressed by **absolute offset**. This makes a
 repo effectively single-writer: if the same keypair commits from two devices
@@ -412,42 +460,59 @@ while offline from each other, their streams diverge at the divergence point.
 Each commit's `dataAddress` is an offset that is only valid in the stream that
 produced it — the streams cannot be structurally merged.
 
-**Detection (landed 2026-05-20):** `Repo.makeVerifiedWritableStream` catches
-the divergence at the byte-stream level — the chainHash fails to
-match when a SIG arrives covering content the receiver hasn't folded, OR the
-alignment check fires when staged chunks would land at addresses where their
-internal refs resolve to wrong bytes. Repo raises two reactive flags before
-the throw fires:
-- `conflictDetected` — chain divergence (honest signer, incompatible history)
-- `verificationFailed` — crypto-verify failure (attack or corruption)
+**Detection is no longer the open question.** 8.0's relay-as-authority refactor
+closed the gap that 7.x flagged as future work. The detection picture today:
 
-The throw still propagates, so default-uncaught code crashes its connection
-and resets cleanly (`registrySync` closes the WS via `handleWriteError`). Code
-that wants to be smarter can watch the flags and react. Both flags live on
-Repo, not Streamo — Streamo is intentionally identity-blind.
+- *At the relay:* a per-repo `RepoSerializer` is the chain authority. Every
+  incoming push is verified atomically against `committedChainHash`. Racing
+  pushes from two clients serialize through the queue; the second arriver
+  (chained off the now-stale top) is rejected with `chain-mismatch`. Forged
+  signatures are rejected with `verification-failed`. The rejection flows
+  back to the submitting client as a `{type:'reject', key, reason}` JSON
+  control message, landing on `repo.pushRejected = { reason }` reactively.
+- *At the client (receiving from the relay):* `makeRelayInboundStream` does
+  a chain-hash equality alignment check on every SIG arrival. If the
+  client has locally-signed content past the last shared sig (a push in
+  flight, or a push that got beaten), the incoming batch is rejected
+  before any corrupted append — raising `repo.conflictDetected` and
+  throwing to close the connection cleanly.
 
 **Vocabulary note:** what's detected here is a *conflict*, not a *fork*. In
 streamo's model:
 - *fork* = a new Repo with a lineage note (deliberate, recorded)
 - *branch* = an addressed-but-non-head value within a Repo
-- *conflict* = the runtime "these bytes can't be appended" failure (what this
-  entry is about)
-- *merge* = a commit referencing prior values from anywhere
+- *conflict* = the runtime "these bytes can't be appended" failure (what
+  the detection above catches)
+- *merge* = a commit referencing prior values from anywhere (via
+  `Repo.merge(source, { remoteParent })`)
 
-**Where detection happens vs. doesn't:** clients detect the conflict when
-they receive the other side's reflected stream through a verifying writer.
-The **relay** does not detect — each peer's writer has independent
-`pendingAcc` state, so a relay accepting divergent streams from two peers
-ends up with both chains in its store (valueAddress resolves to whichever
-SIG is last in the bytestream). Clients catch the conflict on the reflection
-back. Fixing relay-side detection would require sharing `pendingAcc` across
-writers for the same repo — a bigger architectural move; not blocking the
-chat demo.
+**What's still open: recovery UX.** Today: when a client is rejected, the
+chat banner shows "the relay declined this push" (or "you've written from
+two places at once" for the local alignment case); a refresh takes the
+server's view; local divergent commits become orphan bytes in the store,
+unreachable via valueAddress. That's correct behavior but a coarse UX. A
+real recovery flow would let the user:
 
-**Recovery UX** is the remaining post-demo thread. Today: refresh takes the
-server's view; local divergent commits are orphaned bytes in the store but
-no longer reachable via valueAddress. A real recovery flow would let the
-user pick which side wins, or attempt a value-level merge into a new commit.
+- pick which side wins, or
+- attempt a value-level merge into a new commit anchored at the relay's
+  current top, or
+- save the rejected commits as a *branch* (an addressed-but-non-head
+  value inside the same Repo) and reference them from a new merge commit.
+
+The third shape is the most streamo-native — branches are already the
+slot for "I have a value I want to keep around but it's not the head." A
+small commit-shape addition (a `mergedFrom: [branch_addr, ...]` field,
+shape-compatible with the existing `remoteParent` slot for cross-Repo
+citations) is probably the load-bearing primitive. Implement it
+post-demo; the existing detection + refresh path is a clean fallback.
+
+**Future-direction worth keeping in mind**: the chunk-level content
+addressing exploration was killed during the 8.0 work — the size cost
+(1–4 byte UINT offsets → 32-byte content hashes) would be orders of
+magnitude of bloat for a benefit the alignment check already provides.
+Streamo's byte-offset references are load-bearing efficient, not an
+accidental shortcut. Don't reopen this without a concrete use case the
+current design can't carry.
 
 ### repo size — practical caps and lifecycle
 

@@ -174,29 +174,49 @@ are the chainHash, and its end position is the signedLength.
 `get`-style reads always operate on user data even when the repo just
 got auto-signed.
 
-`makeVerifiedWritableStream(publicKey)` is the receive side of sync,
-and the only path through which an untrusted peer can deliver bytes.
-Non-sig chunks accumulate into a `pendingBytes` buffer (and into
-`staged` if not already present). When a SIGNATURE arrives, three
-checks fire:
+In 8.0 the receive path split in two — by direction. *What goes up*
+(a client pushing to the relay) gates through `RepoSerializer`, the
+per-repo chain authority. *What comes down* (a client receiving the
+relay's authoritative stream) goes through `makeRelayInboundStream`
+on Repo, which trusts the bytes and just checks alignment.
 
-1. **chain** — `sha256(pendingChainHash || sha256(pendingBytes))` must
-   equal `sig.chainHash`
-2. **crypto** — the signature must verify against `sig.chainHash`
-   under `publicKey`
-3. **alignment** — `self.byteLength` must equal `wireByteLength -
-   stagedTotal` (the wire's expected position for staged chunks); if
-   it doesn't, the local store has content past the last shared sig
-   that conflicts with what the wire's references expect
+At the relay, each WS connection has a `ConnectionAccumulator` per
+repo it's pushing to. It parses framing into chunks; when a SIG
+arrives, it submits `{ chunks, sig }` to that repo's serializer.
+`RepoSerializer.submit` awaits the previous submit (a single
+Promise-chain lock) and then runs three checks on the batch:
 
-If all three pass, staged chunks + SIG append in one batch; if any
-fails the stream errors and the staged batch is discarded. The store
-is never polluted with bytes that no SIG covers.
+1. **shape** — the sig codec is actually `SIGNATURE`; the bytes
+   decode as a Signature record. If not: `malformed`.
+2. **chain** — `sha256(committedChainHash || sha256(newBytes))` must
+   equal `sig.chainHash`. If not: `chain-mismatch` (most often
+   because another client extended the top first).
+3. **crypto** — the signature must verify against `sig.chainHash`
+   under the repo's public key. If not: `verification-failed`.
 
-The chain is what makes the relay stateless across restarts: a peer
-that wants to verify the next append only needs the most-recent
-32-byte chainHash (carried on every SIGNATURE), not the full prior
-byte stream.
+All three pass → atomic append (chunks + sig). Any one fails →
+`{ accepted: false, reason }` flows back through the accumulator,
+which sends `{type: 'reject', key, reason}` to the submitting
+connection. The client's `repo.pushRejected` flag fires reactively.
+
+At the client receiver, `makeRelayInboundStream` parses framing and
+stages non-SIG chunks until a SIG arrives. At SIG arrival there's
+one check — **alignment**: the wire's `pendingChainHash` (built from
+the last sig the wire delivered) must equal the local
+`committedChainHash`. If they differ, the client has local content
+past the last shared sig (a push in flight, or a push that got
+beaten); the staged batch is discarded, `conflictDetected` fires,
+and the connection tears down via `handleWriteError`.
+
+Why no chain/crypto check at the client receiver: the relay is the
+authority. The bytes that arrive came from the top. The only thing
+the relay couldn't have known when it sent them is whether the
+client's local state advanced in the meantime — that's what the
+alignment check catches.
+
+The chain is what makes the relay stateless across restarts: it can
+recompute everything it needs from `committedChainHash`, derived
+directly from the most recent SIGNATURE chunk's first 32 bytes.
 
 ## 6. `Recaller` — the reactivity primitive
 
@@ -329,9 +349,10 @@ Once a WebSocket is open, this is the protocol:
 4. **Binary frames**:
    `[33-byte compressed-secp256k1-public-key prefix][chunk bytes]`.
    The 33-byte prefix routes the chunk to the right repo. Frames are
-   fed straight from `makeReadableStream` on the sender into
-   `makeVerifiedWritableStream` on the receiver — including signature
-   verification on every SIGNATURE chunk.
+   fed from `makeReadableStream` on the sender into either
+   `ConnectionAccumulator`+`RepoSerializer` (relay-side, gating
+   incoming pushes) or `makeRelayInboundStream` (client-side, trusting
+   the relay's authoritative stream).
 
 5. **Discovery**:
    - `follow(keyHex, repo, subscribe)` — invoked reactively whenever a

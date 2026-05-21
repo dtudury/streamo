@@ -124,9 +124,12 @@ lands without tests passing, you have failed the contract.
   reference each other by byte-offset address. Hash-chain (chainHash) folds over the byte
   stream; SIG chunks anchor it. Identity-blind — sign/verify take signer/pubkey as args.
 - `Repo` — extends Streamo; every `set()` is a signed commit (message, date, dataAddress,
-  parent, remoteParent?). Owns the identity-aware verified writer
-  (`makeVerifiedWritableStream`) that gates incoming wire chunks, plus the reactive
-  `conflictDetected` and `verificationFailed` flags it raises. Vocabulary:
+  parent, remoteParent?). Owns `makeRelayInboundStream` (trust+append for the
+  receive-from-relay path, with a chain-hash-equality alignment check that catches the
+  push-in-flight race), plus the reactive `conflictDetected` (local alignment failed)
+  and `pushRejected` (the relay said no) flags. Paired with `RepoSerializer` on the
+  relay side — the per-repo chain authority that atomically accepts or rejects
+  incoming pushes against the current `committedChainHash`. Vocabulary:
   *fork* = new Repo with a lineage note; *branch* = an addressed-but-non-head value
   inside a Repo; *conflict* = the runtime "these bytes can't be appended" failure;
   *merge* = a commit citing prior values

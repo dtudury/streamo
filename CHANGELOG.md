@@ -5,6 +5,231 @@ for what's next.
 
 ---
 
+## 8.0.0 — the relay is the chain authority
+
+**The headline.** Conflict detection moved from "every client gates
+its own inbound stream" to "the relay is the single chain authority
+per repo." Two short invariants drove the refactor:
+
+> *what comes down: is always from the top, and is always correct.*
+> *what goes up: goes up until it reaches the top.*
+
+Clients receiving the relay's authoritative stream trust + append.
+Clients pushing upward go through a per-repo serializer at the relay
+that atomically accepts (extends the top) or rejects
+(`chain-mismatch` / `verification-failed` / `malformed`). The
+detection that used to happen by accident at every client's verifier
+now happens deliberately at one point per repo — and the rejection
+becomes a real signal the app can recover from.
+
+Alongside the relay refactor, 8.0 lands a layering pass that's been
+overdue: **Streamo is a codec, Repo is Streamo + signed chains**.
+Everything signature-aware moved off Streamo. The chain-hash formula
+got simplified from 2N hashes per signature (a per-chunk fold) to 2
+hashes per signature (a single hash of all new bytes). The vocabulary
+got cleaned up — `fork` was being used for what's actually a runtime
+*conflict*; `accumulator` was a jargon name for a chain hash.
+
+This is a major version because every one of those threads is
+breaking. The migration is mechanical, but it's not zero work.
+
+### Layering — Streamo became a pure content-addressable codec
+
+`Streamo` now does exactly one thing: encode/decode JS values as
+deduplicated, content-addressable byte chunks. `set(value)` returns
+an address; `get(address)` returns the value; same value, same
+address, forever. No signing, no verification, no chain bookkeeping,
+no SIG-awareness in `valueAddress`. ~319 lines.
+
+`Repo` extends Streamo with all the chain machinery:
+`signedLength`, `committedChainHash`, `sign()`, `verify()`,
+`makeRelayInboundStream`, `conflictDetected`, `pushRejected`, the
+SIG-walking `valueAddress` override, the SIG-aware `append`
+behavior, and the chain-hash helpers. ~711 lines.
+
+The line between the two became readable rather than aspirational —
+"is this identity-aware?" splits them cleanly. Anyone wanting just
+the codec (e.g. for inspecting unsigned bytestreams) can use
+`Streamo` directly without inheriting the signing surface.
+
+### Chain hash — two sha256 calls per signature, not 2N
+
+The old per-chunk fold (`fold(prev, chunk)` chained over every chunk
+since the last sig) ran 2 hashes per chunk. Each sig committed to
+both the bytes and the chunk boundaries — but in streamo, chunk
+boundaries are determined by codec footers; you can't merge or split
+chunks without changing their content. The "extra" commitment to
+boundaries wasn't load-bearing.
+
+The new formula is:
+
+```js
+async function chainHashOf (prev, newBytes) {
+  return sha256(concat(prev, sha256(newBytes)))   // 2 hashes total
+}
+```
+
+`Repo.sign()` slices the new-bytes range once and runs two sha256
+calls regardless of chunk count. `RepoSerializer._tryApply` does the
+same on the relay side. The verifier inside `makeRelayInboundStream`
+no longer needs an inner-loop `await foldChunk` — it stages chunks
+and hashes once at SIG arrival.
+
+**Wire format change — breaking.** Any `.bin` archive file written
+by an older version has SIG chunks whose chainHash was computed
+under the old formula. They won't verify after upgrade. Wipe and
+re-sync — see migration below.
+
+### Relay-as-authority — `RepoSerializer` + `ConnectionAccumulator`
+
+At every relay (in-process via `attachStreamSync({ isAuthority:
+true })`), each repo gets a singleton `RepoSerializer` shared across
+all WS connections to that repo:
+
+```
+RELAY:
+  RepoSerializer (per repo, shared across connections)
+    submit(batch) → atomic chain extension or reject
+  ConnectionAccumulator (per WS, per repo)
+    parses framing → builds batches → submits
+
+CLIENT (receive from relay):
+  makeRelayInboundStream — trust + append + alignment check
+    no chain check (relay validated)
+    no crypto check (relay validated)
+    alignment catches push-in-flight race → conflictDetected
+
+CLIENT (push):
+  unchanged — repo.makeReadableStream → WS
+  on relay reject: {type:'reject', key, reason} → repo.pushRejected
+```
+
+The serializer is the "top." Pending = simple: a `submit()` awaits
+the previous submit's promise before running. JS's event loop
+serializes; no separate queue object, no early-rejection state. If
+two clients submit racing batches, both get processed in arrival
+order; the second one (chained off the now-stale top) is rejected
+with `chain-mismatch`. Slow on contention, simple to reason about.
+
+Three new reasons the relay can reject: `chain-mismatch` (sig's
+chainHash doesn't extend the top), `verification-failed` (sig's
+crypto didn't verify), `malformed` (sig wasn't a SIGNATURE codec or
+batch didn't parse). All three flow back to the client as a
+`{type: 'reject', key, reason}` JSON control message, landing on
+`repo.pushRejected = { reason }` reactively.
+
+The receiver alignment check (chain-hash equality between
+`pendingChainHash` and `committedChainHash`) catches the
+push-in-flight race: a client commits locally + pushes; the relay
+sends down other bytes before knowing about the push; the incoming
+bytes would land at addresses our local store already occupies. The
+check rejects the incoming batch before any corrupted append
+happens, raising `repo.conflictDetected`.
+
+This closes the gap noted as future work in 7.x's ROADMAP — relay-side conflict detection is real now, not just per-client.
+
+### Vocabulary — fork/branch/conflict/merge per streamo's actual model
+
+Streamo isn't git. Words drifted toward git semantics; this release
+walks them back:
+
+- **fork** = a new Repo with a lineage note (deliberate, recorded;
+  `Repo.merge(source, { remoteParent })` is the operation)
+- **branch** = an addressed-but-non-head value within a Repo (a tool
+  for clients to save earlier states; not a separate history line)
+- **conflict** = the runtime "these bytes can't be appended" failure
+  (what 7.x had called "forkDetected")
+- **merge** = a commit referencing prior values from anywhere (cites
+  `remoteParent`; the merging Repo doesn't depend on the source after)
+
+API renames following the model:
+- `repo.forkDetected` → `repo.conflictDetected`
+- `Signature.accumulator` → `Signature.chainHash`
+- error message text follows: *"signature chainHash does not match
+  the local chain"*
+
+### Removed: things that weren't used
+
+- `Streamo.makeVerifiedWritableStream()` — superseded by
+  `Repo.makeRelayInboundStream()` for the receive-from-relay path,
+  and by the relay's `RepoSerializer` for the validate-incoming-push
+  path. The old method conflated both concerns.
+- `Streamo.verificationFailed` reactive flag — the relay verifies
+  crypto now; the client doesn't surface verification failures
+  because it doesn't perform the verification.
+- `ConflictError` + `conditionalSet` — the optimistic-concurrency
+  API surface that never found a real caller. Removed; we'll re-add
+  with a real use case behind it.
+- `GENESIS_ACCUMULATOR` constant — `new Uint8Array(32)` inline at
+  the three seed sites is just as clear and saves a named import.
+- Reactive flag `forkDetected` and its setter — renamed (see above).
+
+### Migration
+
+For consumers of `@dtudury/streamo`:
+
+- **Update reactive watchers**:
+  `repo.forkDetected` → `repo.conflictDetected`.
+  Code listening for `repo.verificationFailed` should listen for
+  `repo.pushRejected` instead (the new "the relay said no" signal).
+- **Read sig fields by the new name**: `sig.chainHash` (was
+  `sig.accumulator`).
+- **If you held a Streamo and called sign/verify**: move to Repo.
+  `streamo.sign(signer, name)` → `repo.sign(signer, name)`.
+  Streamo no longer exposes signing.
+- **If you used `makeVerifiedWritableStream`**: for receive-from-relay,
+  use `repo.makeRelayInboundStream()`. For raw archive load (no
+  verification, no signing), `streamo.makeWritableStream()` is fine
+  (it's the same byte-append path with no SIG awareness).
+- **If you caught `ConflictError`**: remove the catch. The error is
+  gone along with `conditionalSet`.
+- **If your relay handles inbound pushes**: pass `isAuthority: true`
+  and a `serializers: Map<keyHex, RepoSerializer>` to
+  `attachStreamSync` / `handleRegistryPeer`. The reject message
+  channel is wired automatically.
+
+For operators of a streamo relay (or anyone with cached `.bin`
+archives):
+
+- **`.bin` files written before 8.0 will not verify after upgrade**
+  because the chainHash formula changed. The migration is "wipe
+  and re-sync": stop the relay, `rm .streamo/<keyHex>.bin`, start
+  the relay back up, let clients re-push. We're not providing a
+  format-conversion tool — the simpler path beats the cleverer one
+  at the scale streamo aims at.
+
+### Tests
+
+209 → 215. New tests:
+
+- `RepoSerializer.test.js` (5) — clean accept, chain-mismatch
+  reject, sequential queue under contention, pipelined commits from
+  one client, forged sig rejected
+- `registrySync.test.js` (2 integration) — relay refuses a divergent
+  push from a second client; relay accepts a clean push and replays
+  to other subscribers
+- `Repo.test.js` (1) — `makeRelayInboundStream` chain-hash-equality
+  alignment check rejects the push-in-flight race before any
+  corrupted append
+- Plus tests renamed for vocabulary + tests updated to use Repo
+  where they previously used Streamo for verifier flows.
+
+`Streamo.test.js` lost the obsolete `makeVerifiedWritableStream` /
+`forkDetected` / `verificationFailed` tests (5 obsolete) — net
+delta is +6 tests covering more meaningful surface.
+
+### Acknowledgments
+
+This release lands a thread that's been open through multiple
+sessions — vocabulary drift was first noticed weeks ago, the
+relay-authority gap was filed as future work in 7.0's ROADMAP,
+and the chain-hash simplification was the original intent of the
+6.0 hash-chain work that got obscured by a per-chunk fold. The
+8.0 commit sequence is one focused day's worth of "all these
+threads converge here."
+
+---
+
 ## 7.6.1 — mount hardening: louder failure for unkeyed siblings; no-recaller mode works again
 
 Two protective changes on top of 7.6.0's fine-grained watcher boundaries:

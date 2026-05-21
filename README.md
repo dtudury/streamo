@@ -200,7 +200,7 @@ repo.lastCommit       // { message: '', date: Date, dataAddress: n, parent: n|un
 [...repo.history()]   // newest-first iterator over commits
 ```
 
-Signature chunks travel in the byte stream automatically — peers running `registrySync` or `originSync` verify every signature on receipt and reject data that doesn't match the repo's public key.
+Signature chunks travel in the byte stream automatically. At the relay, a per-repo serializer is the chain authority — it verifies every incoming push against the repo's public key and rejects forged signatures or stale-chained writes atomically. Clients receiving the relay's authoritative stream trust + append.
 
 ### Signer — deterministic identity
 

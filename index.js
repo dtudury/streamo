@@ -12,7 +12,7 @@
 //
 //   import { StreamoComponent, defineComponent } from '@dtudury/streamo/StreamoComponent.js'
 
-export { Streamo, ConflictError, changedPaths } from './public/streamo/Streamo.js'
+export { Streamo, changedPaths } from './public/streamo/Streamo.js'
 export { Repo } from './public/streamo/Repo.js'
 export { Signer, verifySignature } from './public/streamo/Signer.js'
 export { Signature } from './public/streamo/Signature.js'

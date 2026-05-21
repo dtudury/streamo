@@ -140,6 +140,11 @@ async function login (e) {
 
     session.interest(rootKey)
     session.announce(myKey, rootKey)
+    // Subscribe to our own key so the relay streams our own history back to
+    // this tab. Without this, our `announce` only reaches OTHER peers (the
+    // server's fan-out skips the sender), and we'd never get our prior bytes
+    // until another tab's announce trips our `onAnnounce` → subscribe path.
+    session.subscribe(myKey)
 
     // Auto-scroll to the bottom whenever a message arrives. The watcher
     // wakes on new-repo opens (iteration) and each repo's chunk

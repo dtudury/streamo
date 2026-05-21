@@ -66,6 +66,24 @@
     .row.repo-card + .row.repo-card { border-top-color: var(--rule); }
     .row.repo-card:hover + .row.repo-card { border-top-color: var(--rule); }
 
+    /* Empty-state placeholders match the boxed-card geometry so
+       sections that have no content still occupy a visible slot,
+       but read pre-attentively as "this is a placeholder, not
+       content" via italic dim text and centered alignment. */
+    .empty {
+      border: 1.5px solid var(--rule);
+      border-radius: var(--radius);
+      padding: 0.55rem 0.75rem;
+      min-height: 2.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--ink-dim);
+      font-style: italic;
+      font-size: 0.85rem;
+      margin-bottom: 0.4rem;
+    }
+
     /* signed-commit + unsigned-commit + commit + signature rows share the same
        column template so the page doesn't visually jitter as you scan a mixed
        list. cols: kind | message | date | addr. */

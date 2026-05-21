@@ -7,21 +7,24 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.2.0, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.3.0, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
-**8.2 makes the subscribe handshake carry the client's chain
-anchor** — the `subscribe` JSON includes `(fromOffset,
-fromChainHash)`; the server validates and streams only post-anchor
-bytes, saving the genesis-replay on every reconnect. Wipe-recovery
-self-heals as a side effect: a client with pre-wipe state pushes
-its history back up through the serializer's chain check.
-**8.1 collapses `registry.open` + `session.subscribe` into one
-verb** — `await session.subscribe(key)` opens the Repo locally,
-plumbs the wire, and returns the Repo. **8.0 makes the relay the
-single chain authority per repo** — a per-repo `RepoSerializer`
-at the relay atomically accepts or rejects incoming pushes against
-the current top; clients receiving the authoritative stream
-trust + append. Conflict detection that used
+**8.3 lands recovery UX v1** — both divergence flags
+(`pushRejected`, `conflictDetected`) now carry the rejected
+commit's `dataAddress`, and the chat banner has Send/Discard
+buttons that re-sync from the relay and (on Send) merge the
+local-only writes back in. **8.2 makes the subscribe handshake
+carry the client's chain anchor** — the `subscribe` JSON includes
+`(fromOffset, fromChainHash)`; the server validates and streams
+only post-anchor bytes, saving the genesis-replay on every
+reconnect. Wipe-recovery self-heals as a side effect. **8.1
+collapses `registry.open` + `session.subscribe` into one verb** —
+`await session.subscribe(key)` opens the Repo locally, plumbs the
+wire, and returns the Repo. **8.0 makes the relay the single
+chain authority per repo** — a per-repo `RepoSerializer` at the
+relay atomically accepts or rejects incoming pushes against the
+current top; clients receiving the authoritative stream trust +
+append. Conflict detection that used
 to happen by accident at every client now happens deliberately at
 one point, and rejections come back to the client as a real
 reactive signal (`repo.pushRejected`). 8.0 also lands a layering
@@ -480,10 +483,15 @@ streamo's model:
 - *merge* = a commit referencing prior values from anywhere (via
   `Repo.merge(source, { remoteParent })`)
 
-**What's still open: recovery UX (v1 designed; implementation next).**
-Today: when a push is rejected or the local alignment check catches a
-race, the chat banner shows a generic message; the user's only path is
-refresh, which silently abandons whatever they tried to write.
+**Recovery UX v1: landed in 8.3.** Library-side: both divergence
+flags carry the rejected commit's `dataAddress`, and `Repo._reset()`
+now also clears both flags. Chat-side: the conflict banner has
+Send/Discard buttons that close the WS, wipe local state,
+re-subscribe (to inherit the relay's view), and on Send re-apply
+the rejected value merged with the relay's current state. The
+crude bits (400ms settle window, no automatic retry on persistent
+contention, no visual diff view) are listed in CHANGELOG 8.3 as
+post-v1 polish.
 
 **Design floor (landed 2026-05-21).** Both signals — `pushRejected`
 from the relay's reject control message, and `conflictDetected` from

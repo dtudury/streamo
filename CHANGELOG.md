@@ -5,6 +5,105 @@ for what's next.
 
 ---
 
+## 8.3.0 — recovery UX v1: rejected commits surface their data; apps can offer Send/Discard
+
+**The headline.** When a push is rejected or a local alignment check
+catches a race, apps can finally do something with it beyond
+*"refresh and lose your edits."* Both divergence flags now carry the
+rejected commit's `dataAddress`, so apps decode the value, quote it
+back to the user, and offer real recovery — typically a Send it now
+(re-apply on top of the relay's current state) and a Discard (drop
+the local-only state, take the relay's view).
+
+**Library API change** — both flags become symmetric:
+
+```js
+repo.pushRejected:     null | { reason, dataAddress }   // was { reason }
+repo.conflictDetected: null | { dataAddress }           // was true | false
+```
+
+`dataAddress` points at the value of the local last commit at the
+moment of rejection. Apps decode via `repo.decode(flag.dataAddress)`
+to see what was rejected.
+
+**`Repo._reset()` now also clears both flags** (and fires their
+reactive mutations). Used by the recovery orchestration: stash the
+rejected value, call `_reset()` to wipe local state, re-subscribe
+to inherit the relay's view, then re-apply the stashed value via
+`set()`.
+
+**Backward-compatibility note.** `null` is falsy and the new objects
+are truthy, so existing `if (repo.pushRejected)` / `if
+(repo.conflictDetected)` boolean-style tests keep working. The
+object fields (`reason`, `dataAddress`) are strictly additive. The
+one breaking case: code that did `repo.conflictDetected === true`
+will be `false` now (the object isn't strictly equal to `true`).
+We've grepped the codebase; no internal callers do that.
+
+**The reference implementation** in `public/apps/chat/main.js`. The
+sync-warning banner now has **[send it now]** and **[discard]**
+buttons when *your* write didn't sync. The retry orchestration:
+
+1. Stash the rejected value via `repo.decode(flag.dataAddress)`.
+2. `repo._reset()` — wipes local bytes + clears flags.
+3. `session.ws.close()` — tears down the old WS.
+4. Fresh `registrySync` + `session.subscribe(myKey)` — relay streams
+   its authoritative state back down.
+5. *(Send only)* Apply `mergeChatValue(currentValue, rejectedValue)`
+   — concatenate both message lists, dedupe by `at` timestamp — and
+   push the merged value via `repo.set()`.
+6. *(Discard)* Skip the merge; the relay's view wins.
+
+`mergeChatValue` is app-specific. Other apps will write their own
+merge for their value shape — the library doesn't try to abstract
+this (no value-type information; merge semantics are fundamentally
+per-shape).
+
+**No automatic retry loop on persistent contention.** If the merged
+push gets rejected again (yet another peer beat us during the
+recovery window), the banner re-appears and the user clicks again.
+We deliberately don't auto-retry — exponential backoff has
+well-known self-DDoS failure modes (one of us has lived through the
+classic `t = t*t` instant-DDoS), and a banner-click is the safer
+floor.
+
+**What's NOT in v1**:
+
+- *Library-side recovery orchestration.* The app holds the session +
+  registry handles; the dance lives there. Library exposes primitives
+  (dataAddress on the flags, `_reset()` clearing them). Revisit when
+  a second app needs the same dance.
+- *Visual diff of what would be lost.* Today the chat list shows the
+  user's messages regardless (they're locally written, visible). The
+  banner just offers the choice. Diff view is post-v1 polish.
+- *Branch-as-non-head-value.* The most streamo-native recovery
+  shape — save rejected commits as addressed-but-non-head values
+  inside the same Repo, with a `mergedFrom: [branch_addr, ...]`
+  field on the merge commit. Own thread in ROADMAP; not in v1.
+- *Smart "wait for the first SIG after subscribe" trigger.* The
+  retry waits 400ms after re-subscribe before applying the merge —
+  crude but works at our latency. If the relay's state takes
+  longer to arrive, the merge happens against the empty Repo and
+  the user has to click "send it now" again. Worth refining when
+  it bites; not a v1 blocker.
+
+**Tests.** 219, all green. Updated one existing test (`alignment
+check catches the push-in-flight race`) to verify
+`conflictDetected.dataAddress` is set and decodes to the user's
+local value. No new automated tests for the chat-app orchestration
+(browser-level integration that's awkward to mock cleanly); manual
+verification via two-tab on streamo.dev.
+
+**Driver story.** 8.0 made divergence *detectable*. 8.1 made the
+"I want this key live" verb cleaner. 8.2 made the wire skip the
+genesis-replay. 8.3 closes the user-facing loop — when divergence
+happens, the user can choose what to do with their writes instead
+of losing them silently. The four releases ship as one day's arc
+in CHANGELOG; the demo Rick sees next week is qualitatively
+different from the one we'd have shown this morning.
+
+---
+
 ## 8.2.0 — the subscribe handshake carries the client's chain anchor
 
 **The headline.** Reconnecting clients no longer pay for a full

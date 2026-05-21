@@ -74,9 +74,16 @@ echo "── git pull ──"
 ssh "$SSH_TARGET" "cd ${REMOTE_APP} && git pull origin ${BRANCH}" | tail -8
 
 # Step 4: install deps
+#
+# `npm ci` (vs `npm install`) reads the lockfile as the source of truth and
+# does NOT modify it.  Previously `npm install --production` would rewrite
+# the lockfile's name/version header to match package.json, leaving the
+# working tree dirty and tripping the next deploy's precheck.  `npm ci`
+# requires package.json + package-lock.json to agree — they do, as of the
+# commit that introduced this change.
 echo ""
-echo "── npm install ──"
-ssh "$SSH_TARGET" "cd ${REMOTE_APP} && PATH=${FNM_BIN}:\$PATH npm install --production --no-audit --no-fund" 2>&1 | tail -5
+echo "── npm ci ──"
+ssh "$SSH_TARGET" "cd ${REMOTE_APP} && PATH=${FNM_BIN}:\$PATH npm ci --omit=dev --no-audit --no-fund" 2>&1 | tail -5
 
 # Step 5: optional archive wipe
 if [[ "$RESET" == "1" ]]; then

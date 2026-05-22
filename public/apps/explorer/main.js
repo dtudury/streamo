@@ -48,6 +48,14 @@ const currentMembers = liveValue([], { recaller, name: 'currentMembers' })
 // walked — new joins arrive via announce instead.
 registrySync(registry, location.hostname, port, {
   onHello: msg => { if (msg.home) homeKey.set(msg.home) },
+  // Connection pill — follows the live socket across reconnects. registrySync
+  // reconnects on its own now, so a drop reads "reconnecting…" rather than the
+  // old "refresh to reconnect", which no longer reflects what happens.
+  onConnectionChange: connected => {
+    state.set('connection', connected
+      ? { status: 'ok',  text: `connected · ${location.hostname}:${port}` }
+      : { status: 'err', text: 'reconnecting…' })
+  },
   follow: (keyHex, repo, subscribe) => {
     // Walk both `members` (legacy — historical chat participants on
     // relays from before the announce-based discovery model) and
@@ -69,12 +77,9 @@ registrySync(registry, location.hostname, port, {
 })
   .then(s => {
     session = s
-    state.set('connection', { status: 'ok',  text: `connected · ${location.hostname}:${port}` })
-    // Reactive connection-pill: stay honest about WS state. Without
-    // these, the pill says "connected" forever even after the server
-    // restarts and the WS closes (we hit exactly this earlier today).
-    s.ws.on('close', () => state.set('connection', { status: 'err', text: 'disconnected — refresh to reconnect' }))
-    s.ws.on('error', () => state.set('connection', { status: 'err', text: 'connection error — refresh' }))
+    // The connection pill is driven by `onConnectionChange` above — it
+    // tracks the live socket across reconnects, where a handler bound to
+    // a single `s.ws` could not.
     // Express interest in the home topic once it's known. The watch
     // re-fires when homeKey arrives from `hello`; idempotent on the
     // server side, so the once-it-arrives behavior is what we want.

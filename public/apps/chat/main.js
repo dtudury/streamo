@@ -31,6 +31,11 @@ const recaller = new Recaller('chat')
 const loggedIn    = liveValue(false, { recaller, name: 'loggedIn' })
 const loginStatus = liveValue('',    { recaller, name: 'loginStatus' })
 
+// True while the relay socket is live. registrySync reconnects on its own;
+// this just flips so the header can show "reconnecting…" while it works.
+// Messages typed while offline are written locally and flush on reconnect.
+const connected   = liveValue(true,  { recaller, name: 'connected' })
+
 // Post-login state, written once during login and read thereafter.
 // They're plain lets because they don't change after login completes —
 // the slots that read them are only created when loggedIn flips to
@@ -182,6 +187,7 @@ async function login (e) {
     // another peer-back and so on.
     const announcedTo = new Set()
     session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
+      onConnectionChange: c => connected.set(c),
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       },
@@ -229,9 +235,12 @@ async function login (e) {
       // Wipe local state (bytes + flags) and tear down the old WS so the
       // fresh sync starts from a clean empty Repo.
       myRepo._reset()
-      session.ws.close()
+      // session.close() — not session.ws.close() — so the old session
+      // doesn't auto-reconnect and race the fresh one we build below.
+      session.close()
       const freshAnnouncedTo = new Set()
       session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
+        onConnectionChange: c => connected.set(c),
         follow: (keyHex, repo, subscribe) => {
           for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
         },
@@ -434,6 +443,13 @@ mount(h`
       background: #16a34a;
       box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18);
     }
+    /* Self-connection state — amber while registrySync's backoff loop
+       works. Quiet by design: messages typed offline flush on reconnect. */
+    .reconnecting {
+      font-size: .72rem;
+      font-weight: 500;
+      color: #b45309;
+    }
     #messages {
       flex: 1;
       overflow-y: auto;
@@ -564,6 +580,9 @@ mount(h`
         <span class="page-title">chat</span>
         <span class="my-name">(${() => myName})</span>
         <span class="my-swatch" title="your color — derived from your key"></span>
+        ${() => connected.get()
+          ? null
+          : h`<span class="reconnecting" data-key="reconnecting">⟳ reconnecting…</span>`}
         ${() => {
           // Claude's presence dot. No "peer left" signal exists on the
           // wire, so presence is read by staleness: green while watch.js's

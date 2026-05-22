@@ -12,6 +12,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
+import { sendWebPush } from './webpush.js'
 
 /**
  * A persistent set of Web Push subscriptions, keyed by endpoint (so a
@@ -80,4 +81,58 @@ export function pushRoutes (store, vapidPublicKey) {
       res.json({ ok: true })
     })
   }
+}
+
+// A chat message older than this is history — archive load on startup, a
+// client's backlog syncing up later — not news. We decide freshness by the
+// message's own timestamp, never by a counter, so none of that ever pages
+// anyone: only a message sent within this window counts.
+const NOTIFY_WINDOW_MS = 120000
+
+/**
+ * Watch every chat repo in the registry; when a genuinely fresh message
+ * lands, Web Push it to every subscriber except the message's own author.
+ *
+ * Freshness is the message's timestamp, not a delta count — so a burst of
+ * messages streaming in from the archive at startup, or a peer's history
+ * syncing up after they connect, never notifies: that content is stamped
+ * in the past. The author is skipped via the chat pubkey stored alongside
+ * each subscription.
+ *
+ * @param {import('../../streamo/RepoRegistry.js').RepoRegistry} registry
+ * @param {PushStore} store
+ * @param {{ publicKey: string, privateKey: string, subject: string }} vapid
+ * @param {{ send?: typeof sendWebPush }} [opts]  `send` is injectable for tests
+ */
+export function notifyOnMessages (registry, store, vapid, { send = sendWebPush } = {}) {
+  const counts = new Map()   // keyHex → messages.length last seen
+
+  registry.recaller.watch('push-notify', () => {
+    for (const [keyHex, repo] of registry) {
+      repo.byteLength                          // dep: re-run when this repo grows
+      const messages = repo.get?.('messages')
+      if (!Array.isArray(messages)) continue    // not a chat repo
+      const prev = counts.get(keyHex) ?? 0
+      counts.set(keyHex, messages.length)
+      if (messages.length <= prev) continue     // nothing new on this repo
+
+      // The newest message — and only if it's genuinely recent.
+      const last = messages[messages.length - 1]
+      if (Date.now() - +(last?.at ?? 0) > NOTIFY_WINDOW_MS) continue
+
+      const text = typeof last === 'string' ? last : (last?.text ?? '')
+      const payload = {
+        title: `${repo.get('name') || 'someone'} · streamo chat`,
+        body: text.length > 140 ? text.slice(0, 140).trim() + '…' : text,
+        url: '/apps/chat/',
+        tag: 'streamo-chat'
+      }
+      for (const { subscription, key } of store.all()) {
+        if (key === keyHex) continue            // don't notify an author of their own message
+        send(subscription, payload, vapid)
+          .then(status => { if (status === 404 || status === 410) store.remove(subscription.endpoint) })
+          .catch(err => console.error(`[push] send failed: ${err.message}`))
+      }
+    }
+  })
 }

@@ -7,7 +7,7 @@ import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
 import { buildTarotData } from '../../../scripts/tarot-data.js'
-import { PushStore, pushRoutes } from './push.js'
+import { PushStore, pushRoutes, notifyOnMessages } from './push.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
 if (envFile) config({ path: envFile })
@@ -141,16 +141,22 @@ if (server.signer) {
   console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
 }
 
-// Web Push — the relay's subscription store + endpoints. Stood up only
-// when a VAPID public key is configured (.env STREAMO_VAPID_PUBLIC); a
-// relay without it just runs without push. The fire-a-push-when-a-
-// message-lands half, which also needs the private key, comes next.
+// Web Push — the relay's subscription store, endpoints, and the watcher
+// that fires a notification when a chat message lands. Stood up only when
+// a full VAPID keypair is configured (.env STREAMO_VAPID_PUBLIC/_PRIVATE);
+// a relay without one just runs without push.
 let pushStore = null
-if (process.env.STREAMO_VAPID_PUBLIC) {
+let vapid = null
+if (process.env.STREAMO_VAPID_PUBLIC && process.env.STREAMO_VAPID_PRIVATE) {
   pushStore = new PushStore(join(dataDir, 'push-subscriptions.json'))
-  console.log(`[chat] web push: ${pushStore.all().length} stored subscription(s)`)
+  vapid = {
+    publicKey: process.env.STREAMO_VAPID_PUBLIC,
+    privateKey: process.env.STREAMO_VAPID_PRIVATE,
+    subject: process.env.STREAMO_VAPID_SUBJECT ?? 'mailto:streamo@streamo.dev'
+  }
+  console.log(`[chat] web push: enabled (${pushStore.all().length} stored subscription(s))`)
 } else {
-  console.log('[chat] web push: off — no STREAMO_VAPID_PUBLIC in env')
+  console.log('[chat] web push: off — set STREAMO_VAPID_PUBLIC/_PRIVATE to enable')
 }
 
 await server.web(port, {
@@ -160,8 +166,11 @@ await server.web(port, {
   // In relay-only mode, an empty archive means everything falls through to
   // express.static (the bundled defaults) until an author pushes their bytes.
   serveRepoFiles: { repo: server.streamo, filesKey: 'files' },
-  routes: pushStore ? pushRoutes(pushStore, process.env.STREAMO_VAPID_PUBLIC) : undefined
+  routes: pushStore ? pushRoutes(pushStore, vapid.publicKey) : undefined
 })
+
+// Relay-side watcher: Web Push the subscribers when a fresh chat message lands.
+if (pushStore) notifyOnMessages(server.registry, pushStore, vapid)
 
 // Hint for relay-only operators: if no author has connected, the homepage
 // is being served from bundled defaults rather than the home repo.

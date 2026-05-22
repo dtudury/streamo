@@ -41,6 +41,14 @@ let myKey, myName, myRepo, registry, session
 // reconcile pushRejected or conflictDetected.
 let onRecover = null
 
+// Presence: peer key → last time we saw them announce. The wire carries
+// no "peer left" signal, so the dot reads presence by staleness — green
+// while announces keep landing, gray once they've been quiet. `presence`
+// is a plain object; `presenceTick` is the reactive heartbeat that makes
+// the dot re-check staleness as time passes.
+const presence = {}
+const presenceTick = liveValue(0, { recaller, name: 'presenceTick' })
+
 // Merge function for chat's value shape: concatenate two message lists
 // (current relay state + the rejected local writes), dedupe by `at`
 // timestamp, return a clean { name, messages: [...] } value. Other apps
@@ -181,6 +189,7 @@ async function login (e) {
       // back so they learn we exist — pure real-time fan-out peer
       // discovery, no server-side member tracking required.
       onAnnounce: key => {
+        presence[key] = Date.now()  // feeds the presence dot
         session.subscribe(key)
         if (!announcedTo.has(key)) {
           announcedTo.add(key)
@@ -278,6 +287,11 @@ async function login (e) {
       }
       lastDingCount = count
     })
+
+    // Presence heartbeat — re-evaluate the dot's staleness every 4s, so
+    // Claude's dot grays on its own ~30s after her announce heartbeat
+    // stops, with no event needed.
+    setInterval(() => presenceTick.set(Date.now()), 4000)
 
     // Flip the login signal — the mount template's `when(loggedIn, …)`
     // clauses fire, the login form unmounts, the chat panel takes over.
@@ -396,6 +410,29 @@ mount(h`
       border-radius: 2px;
       background: hsl(var(--my-hue, 220), 55%, 45%);
       margin-left: .15rem;
+    }
+    /* Claude's presence dot — pushed to the right edge of the header.
+       Green while her watcher's announce heartbeat is landing; gray once
+       it's been quiet ~30s. The dot IS the reply window. */
+    .presence {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: .3rem;
+      font-size: .75rem;
+      font-weight: 400;
+      color: #999;
+    }
+    .presence-dot {
+      width: .6rem;
+      height: .6rem;
+      border-radius: 50%;
+      background: #ccc;
+    }
+    .presence.present { color: #16a34a; }
+    .presence.present .presence-dot {
+      background: #16a34a;
+      box-shadow: 0 0 0 3px rgba(22, 163, 74, 0.18);
     }
     #messages {
       flex: 1;
@@ -527,6 +564,24 @@ mount(h`
         <span class="page-title">chat</span>
         <span class="my-name">(${() => myName})</span>
         <span class="my-swatch" title="your color — derived from your key"></span>
+        ${() => {
+          // Claude's presence dot. No "peer left" signal exists on the
+          // wire, so presence is read by staleness: green while watch.js's
+          // announce heartbeat keeps landing, gray ~30s after it stops.
+          // The dot IS the reply window — green means a reply reaches her.
+          const now = presenceTick.get() || Date.now()
+          let claudeKey = null
+          for (const [keyHex, repo] of registry) {
+            if (repo.get('name') === 'claude') claudeKey = keyHex
+          }
+          if (!claudeKey) return null
+          const seen = presence[claudeKey]
+          const present = seen != null && now - seen < 30000
+          return h`<span class=${['presence', present ? 'present' : 'away']}
+                         title=${present ? 'Claude is here — a reply will reach her' : 'Claude is away — no live session'}>
+            <span class="presence-dot"></span>claude
+          </span>`
+        }}
       </div>
       ${() => {
         // Sync warning slot — re-fires when any open repo raises a flag.

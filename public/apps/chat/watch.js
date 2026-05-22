@@ -78,12 +78,15 @@ const session = await registrySync(registry, host, port, {
   onAnnounce: (key) => { session.subscribe(key) }
 })
 
-// Announce Claude — this is the presence the chat dot reads. We stay
-// announced for as long as this process lives; when it exits, the announce
-// drops and the dot grays. The dot IS this process.
+// Announce Claude — this is the presence the chat dot reads. The wire has
+// no "peer left" signal, so the dot works by staleness: we re-announce on
+// a heartbeat, and the client greens Claude only while those keep landing.
+// When watch.js exits, the heartbeat stops and the dot grays. The dot IS
+// this process.
 await session.subscribe(myKey)
 session.interest(rootKey)
 session.announce(myKey, rootKey)
+setInterval(() => session.announce(myKey, rootKey), 10000)
 
 // Clean shutdown: close the socket and give the close frame a beat to
 // flush, so the relay drops the announce — and the dot grays — at once,

@@ -5,6 +5,31 @@ for what's next.
 
 ---
 
+## 8.4.2 — `/streams/:key/raw` counts the whole batched frame; explorer commit wheel
+
+**The fix.** 8.4.0 changed `makeReadableStream` to pack many chunks
+into one frame (`[4-byte LE len][chunk]` × N, up to 256KB). `webSync`'s
+`/streams/:key/raw` route never got the memo — its progress counter
+read only the *first* segment's length prefix, so `contentSent`
+under-counted, never reached `target`, and the pump `await`ed a
+live-stream append that never comes. The HTTP response never ended;
+clients hung until their body timeout (~300s). The route now walks
+every segment in the frame. Wire-format-invisible; restores pre-8.4
+behaviour.
+
+**Latent since 8.4.0.** `/streams/:key/raw` backs browser bootstrap
+and `Repo.merge`-over-HTTP — rarely-walked paths — so the regression
+shipped unnoticed across 8.4.0 and 8.4.1, and four `webSync` HTTP-body
+tests had been quietly red the whole time. Green again: 219/219.
+
+**Explorer: commit wheel (phase 1).** The at-view's `<details>` commit
+dropdown becomes an always-on big-wheel picker — flick, drag, or
+scroll to spin, momentum carries it, snap-to-row settles one commit
+under a centre band. Phase 1 is feel-only (spinning doesn't navigate
+yet). The gesture/momentum engine drives `translateY` on
+`requestAnimationFrame` and never touches the recaller, so the spin
+stays smooth no matter what the page below costs to render.
+
 ## 8.4.1 — wire parser O(N²) → O(N): fixes intermittent multi-second event-loop blocks
 
 **The headline.** All three wire-byte parsers (`makeWritableStream`,

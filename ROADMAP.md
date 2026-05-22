@@ -7,8 +7,13 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.4.1, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.4.2, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
+**8.4.2 fixes `/streams/:key/raw`** — the route's byte counter read
+only the first segment of an 8.4 batched frame, so the HTTP response
+never ended and clients hung; it now walks the whole frame. It also
+lands the explorer commit wheel (phase 1) — a Price-is-Right big-wheel
+commit picker that spins but doesn't navigate yet.
 **8.4.1 fixes the wire parsers' O(N²)** — `buf = buf.slice(rest)`
 per-chunk became `buf.subarray(...)` + `bufOffset` pointer.
 archiveSync startup of streamo-history went from 22.7s of

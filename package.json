@@ -1,6 +1,6 @@
 {
   "name": "@dtudury/streamo",
-  "version": "8.5.0",
+  "version": "8.5.1",
   "description": "peer-to-peer sync where your data and identity belong to you, not the server",
   "keywords": ["p2p", "peer-to-peer", "sync", "reactive", "content-addressed", "websocket", "signed", "append-only", "offline-first", "cryptographic", "identity"],
   "homepage": "https://streamo.dev",

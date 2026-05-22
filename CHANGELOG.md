@@ -5,6 +5,39 @@ for what's next.
 
 ---
 
+## 8.5.0 — auto-reconnect; the chat notification channel
+
+**Auto-reconnect.** A dropped registry WebSocket — network blip, PaaS
+idle-close, relay restart — used to leave the connection silently dead
+until the page was reloaded. `registrySync` now reconnects on its own,
+with exponential backoff + jitter. The session object is stable across
+reconnects: it remembers its intent — every `subscribe` / `interest` /
+`announce` — and replays it onto each fresh connection, while the
+relay's `hello` re-cascades the home repo for free. It builds on 8.2's
+anchored-`subscribe` handshake, so the resync is incremental, not a
+genesis replay. `session.close()` is the intentional-shutdown verb —
+it closes the socket *and* opts out of reconnection; an unexpected
+close reconnects. A first-connect failure still rejects the returned
+promise, so callers' login error paths are unchanged. New
+`onConnectionChange` callback and `reconnectBaseMs` option. The chat
+shows a quiet "reconnecting…" in its header while the backoff loop
+works; the explorer's connection pill now tracks the live socket
+across reconnects instead of sticking on a stale "disconnected".
+Every consumer — chat, `watch.js`, the explorer — gets reconnection
+for free. 4 new tests; 223 passing.
+
+**The chat notification channel.** The chat room gained a way to
+notify someone who isn't currently looking at it. An incoming message
+rings a short synthesized Web Audio chime — two sine partials a fifth
+apart, no asset to bundle. `notify.js` posts a single message to the
+room non-interactively and exits — the non-interactive sibling of
+`cli.js`. `watch.js` is a bounded watcher: it announces a presence for
+as long as it runs and watches the room for a reply, exiting the
+moment one lands or the window elapses. A presence dot in the chat
+header reads that announce by staleness — green while a watcher is
+live, gray once the announce falls quiet. And a fix: the chat header
+stays in place when the Android soft keyboard opens.
+
 ## 8.4.2 — `/streams/:key/raw` counts the whole batched frame; explorer commit wheel
 
 **The fix.** 8.4.0 changed `makeReadableStream` to pack many chunks

@@ -7,14 +7,18 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.4.2, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.5.0, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
-On `main` but not yet released: **auto-reconnect** — a dropped
-registry WebSocket re-opens itself with exponential backoff + jitter
-instead of going silently dead. The session object stays stable
-across the gap and replays its subscriptions and interest; the chat
-surfaces a quiet "reconnecting…" and the explorer's connection pill
+**8.5.0 lands auto-reconnect** — a dropped registry WebSocket re-opens
+itself with exponential backoff + jitter instead of going silently
+dead. The session object stays stable across the gap and replays its
+subscriptions and interest; `session.close()` opts out, the chat
+surfaces a quiet "reconnecting…", and the explorer's connection pill
 tracks the live socket rather than sticking on a stale "disconnected".
+8.5.0 also lands the chat notification channel — a Web Audio ding on
+incoming messages, `notify.js` for non-interactive posting, the
+bounded `watch.js` presence + reply watcher, and a presence dot that
+reads liveness by announce-staleness.
 **8.4.2 fixes `/streams/:key/raw`** — the route's byte counter read
 only the first segment of an 8.4 batched frame, so the HTTP response
 never ended and clients hung; it now walks the whole frame. It also

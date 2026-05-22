@@ -49,3 +49,32 @@ self.addEventListener('fetch', event => {
     }
   })())
 })
+
+// push: a message arrived for an attention that's elsewhere — no tab open,
+// or this one not in focus. The relay sends a small JSON payload
+// — { title, body, url, tag } — and we surface it as an OS notification.
+// `tag` collapses repeats, so a busy room rings once, not once per message.
+self.addEventListener('push', event => {
+  let data = {}
+  try { data = event.data?.json() ?? {} } catch { /* non-JSON push — ignore */ }
+  event.waitUntil(self.registration.showNotification(data.title ?? 'streamo', {
+    body: data.body ?? '',
+    icon: '/streamo.svg',
+    badge: '/streamo.svg',
+    tag: data.tag,
+    data: { url: data.url ?? '/' }
+  }))
+})
+
+// notificationclick: focus an already-open tab for that URL if there is one,
+// otherwise open a fresh one — clicking the notification lands you in the room.
+self.addEventListener('notificationclick', event => {
+  event.notification.close()
+  const target = new URL(event.notification.data?.url ?? '/', self.location.origin)
+  event.waitUntil((async () => {
+    for (const client of await self.clients.matchAll({ type: 'window', includeUncontrolled: true })) {
+      if (new URL(client.url).pathname === target.pathname) return client.focus()
+    }
+    return self.clients.openWindow(target.href)
+  })())
+})

@@ -1,5 +1,5 @@
 // The at-view — the page you see after picking a repo from the
-// registry. Two reactive slots: HEADER (commit selector + byte strip
+// registry. Two reactive slots: HEADER (commit wheel + byte strip
 // + tabs) reacts to bridge fires only; CONTENT reacts to bridge AND
 // hover, so the page peeks at the hovered chunk without re-rendering
 // the strip itself.
@@ -28,6 +28,7 @@ import { repoReuseStats, valueEconomics } from './analytics.js'
 import { makeTrees } from './trees.js'
 import { makeSections } from './sections.js'
 import { makeByteStreamSection } from './byte-stream.js'
+import { makeCommitWheel } from './commit-wheel.js'
 
 // At-view-local state. atTab is genuinely at-view-specific — keeping
 // it here instead of in context.state keeps cross-view state focused
@@ -39,8 +40,9 @@ const atState = liveObject({ atTab: 'value' }, { recaller, name: 'at-view' })
 // through; now main.js just imports `AtView` and the actions handler.
 const verifyStatus = makeVerifier(recaller)
 const { valueTree, storageTree, referenceTree, handleTreeAction } = makeTrees(recaller)
-const { sigDetailBody, commitSelectorSection, repoExtras, rawChunkSection } = makeSections({ verifyStatus })
+const { sigDetailBody, repoExtras, rawChunkSection } = makeSections({ verifyStatus })
 const byteStreamSection = makeByteStreamSection()
+const commitWheelSection = makeCommitWheel()
 
 export function AtView ({ keyHex }) {
     // AtView's body is built once per repo (the outer mount slot only
@@ -89,9 +91,9 @@ export function AtView ({ keyHex }) {
                data-action="set-tab" data-tab="refs">refs</a>
           </nav>
         `
-        const selector = commitSelectorSection(repo, keyHex, ctx.resolved)
+        const wheel = commitWheelSection(repo, keyHex, ctx.resolved)
         const bytes = byteStreamSection(repo, keyHex)
-        return h`<div class="atview-header">${selector}${bytes}${tabs}</div>`
+        return h`<div class="atview-header">${wheel}${bytes}${tabs}</div>`
       }}
 
       ${() => {

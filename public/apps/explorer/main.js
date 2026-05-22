@@ -11,7 +11,7 @@
 //
 //   main.js's job:
 //     - connect via registrySync (then update state.connection)
-//     - set up document.body event wiring (drag + post-render strip sync)
+//     - set up document.body event wiring (drag, wheel-spin, post-render sync)
 //     - mount one template against document.body
 //     - delegate clicks (navigation actions here; view actions to AtView)
 
@@ -22,6 +22,7 @@ import { liveValue } from '../../streamo/LiveSource.js'
 import { truncKey, fmtDate } from './format.js'
 import { recaller, registry, state, homeKey, loc, getKeyHex, go, isSyncing } from './context.js'
 import { setupInteractions } from './interactions.js'
+import { setupCommitWheel } from './commit-wheel.js'
 import { AtView, handleAtViewAction } from './at-view.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
@@ -144,16 +145,17 @@ function repoCard (keyHex, repo, extraClass = null) {
 // ── DOM wiring ────────────────────────────────────────────────────────────
 
 const { isClickSuppressed, syncStrips } = setupInteractions({ appEl: document.body })
+const { syncWheel } = setupCommitWheel({ appEl: document.body })
 
-// Schedule the post-render strip pin-to-HEAD on bridge fires (chunk
-// arrivals) or navigation. Debounced to one rAF per frame. Hover
-// changes do NOT trigger sync — the strip itself doesn't re-render
-// on hover, only the inspector below.
+// Schedule the post-render pass on bridge fires (chunk arrivals) or
+// navigation: pin the byte strip to HEAD and seed any freshly-mounted
+// commit wheel. Debounced to one rAF per frame. Hover changes do NOT
+// trigger sync — neither the strip nor the wheel re-renders on hover.
 let syncScheduled = false
 function scheduleSync () {
   if (syncScheduled) return
   syncScheduled = true
-  requestAnimationFrame(() => { syncScheduled = false; syncStrips() })
+  requestAnimationFrame(() => { syncScheduled = false; syncStrips(); syncWheel() })
 }
 recaller.watch('strip-sync', () => {
   // Iterating registry registers on (registry, 'keys') — new-repo opens.

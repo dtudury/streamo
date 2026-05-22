@@ -96,6 +96,50 @@ home screen day one:
 
 ---
 
-## next entries
+## 2026-05-22 — step 1 landed: local-only UI shell
 
-(Appended as we go.)
+Shipped `e2b53fc` — the whole app runs in one file (`main.js`, ~430
+lines incl. styles), end-to-end studying works against the Greek
+alphabet deck, no streamo plumbing yet.
+
+### what's real now
+
+- **Login derives a real keypair** via `Signer(username, password, 1)`
+  → `keysFor('flashcards')` → pubkey shown in the "signed in as" strip.
+  We don't sign anything with it yet, but the keypair is in hand — step
+  2 will pass the Signer into a Reviews Repo's `attachSigner`.
+- **Decks fetched as static JSON** from `./decks/*.json`. The fetched
+  content is stashed in a `liveObject` keyed by deck id; the home
+  view reads it reactively. Step 3 will swap this for `registry.open(
+  deckAddress)` + value reads from a real Repo.
+- **Reviews in localStorage**, keyed `flashcards:review:<deckId>:<idx>`.
+  SM-2 state stored per (deckId, cardIdx). Step 2 replaces this with
+  a Reviews Repo whose value is `{ deck, reviews: [...] }` and SM-2
+  state is recomputed by folding over `reviews`.
+
+### tiny tradeoff worth flagging
+
+`deckStats()` reads localStorage directly — the recaller doesn't track
+it. We get away with this in v1 because the home view re-mounts when
+you return from study (so stats refresh on view-change). If we ever
+need live stats *while* on home, we'd have to lift review state into
+the Recaller. Step 2 fixes this incidentally — the Reviews Repo IS
+the LiveSource, so stats become naturally reactive.
+
+### worked-example value for the eventual doc
+
+The whole reactive pattern this app demonstrates lands clean:
+- One Recaller, shared across `liveObject` instances and `mount()`.
+- View-routing as a string in state (`'home' | 'study'`), gating with
+  `when(() => view() === 'home', ...)`.
+- Function-style cells (`${() => ...}`) for list rendering;
+  `data-action` + a single delegated `click` listener for the dynamic
+  parts (avoids the `onclick=${fn}` reactive-cell footgun for list
+  items).
+- Form submission via `onsubmit=${() => login}` — the outer arrow IS
+  the cell; the inner identifier is the handler.
+- `data-key` on study cards so the reveal-state resets cleanly when
+  the index advances.
+
+These are exactly the patterns the public "build a streamo app" doc
+will lean on — captured here as a byproduct, not invented later.

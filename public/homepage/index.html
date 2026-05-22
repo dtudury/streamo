@@ -495,5 +495,18 @@
     p.addEventListener('input', update)
   </script>
 
+  <script>
+    // Register the streamo service worker (an offline shell — see /sw.js).
+    // updateViaCache:'none' so a cached sw.js can never block its own
+    // update; the worker stays easy to evolve. If it ever misbehaves it is
+    // killable the usual way: DevTools → Application → Service Workers.
+    if ('serviceWorker' in navigator) {
+      addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+          .catch(err => console.warn('[streamo] service worker registration failed:', err))
+      })
+    }
+  </script>
+
 </body>
 </html>

@@ -79,6 +79,12 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *   of the repository it was announced under.  Only fires for topics you have
  *   previously declared interest in via `session.interest(topicKey)`.
  *
+ * @property {boolean} [secure]
+ *   Force the `wss://` scheme for the WebSocket connection.  In a browser
+ *   the scheme is derived from `location` automatically; Node has no
+ *   `location`, so a Node client connecting to a TLS relay must pass
+ *   `secure: true` — otherwise it falls through to plain `ws://`.
+ *
  * @property {string} [home]
  *   Server-side only.  The hex public key of the repository this peer offers
  *   as its public face — its "home."  When set, the peer sends a `hello`
@@ -496,9 +502,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
 export function registrySync (registry, host, port, options = {}) {
   return new Promise((resolve, reject) => {
     // In a browser served over https://, plain ws:// is blocked as mixed
-    // content. Derive the protocol from location when available; Node has no
-    // location and falls through to ws://.
-    const protocol = globalThis.location?.protocol === 'https:' ? 'wss' : 'ws'
+    // content, so derive the scheme from location. Node has no location —
+    // a Node client reaching a TLS relay passes `options.secure` to force
+    // wss; otherwise it falls through to plain ws://.
+    const secure = options.secure ?? (globalThis.location?.protocol === 'https:')
+    const protocol = secure ? 'wss' : 'ws'
     const ws = adaptWebSocket(new WS(`${protocol}://${host}:${port}`))
 
     ws.on('open', () => {

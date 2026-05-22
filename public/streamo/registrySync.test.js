@@ -100,12 +100,12 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, 'localhost', port)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('hello') === 'world')
     assert.equal(clientRegistry.get(keyHex).get('hello'), 'world')
 
-    ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -116,7 +116,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, 'localhost', port)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('v') === 1)
 
@@ -124,7 +124,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRegistry.get(keyHex)?.get('v') === 2)
     assert.equal(clientRegistry.get(keyHex).get('v'), 2)
 
-    ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -138,7 +138,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, homeKey)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (k, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -153,7 +153,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRegistry.get(newKey)?.get('late') === true)
     assert.equal(clientRegistry.get(newKey).get('late'), true)
 
-    ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -185,7 +185,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRegistry.get(privateKey)?.get('name') === 'secret')
     assert.equal(clientRegistry.get(privateKey).get('name'), 'secret')
 
-    session.ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -215,7 +215,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(registryA.get(keyB).get('owner'), 'B')
     assert.equal(registryB.get(keyA).get('owner'), 'A')
 
-    session.ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -246,7 +246,7 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(!clientRepo.pushRejected,
       'no rejection: server accepted the unvalidated anchor and let the upward push proceed')
 
-    session.ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -267,7 +267,7 @@ describe(import.meta.url, ({ test }) => {
     const clientRepo = await session1.subscribe(key)
     await waitFor(() => clientRepo.get('stage') === 1)
     const anchorOffset = clientRepo.signedLength
-    session1.ws.close()
+    session1.close()
     await new Promise(r => setTimeout(r, 30))
 
     // Phase 2: server extends the chain while client is disconnected
@@ -285,7 +285,7 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(!clientRepo.pushRejected,
       'no rejection: the anchor validated against the server\'s chain')
 
-    session2.ws.close()
+    session2.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -312,7 +312,7 @@ describe(import.meta.url, ({ test }) => {
     const repo2 = await session.subscribe(key)
     assert.ok(repo === repo2, 'second subscribe returns the same Repo instance')
 
-    session.ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -331,7 +331,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -344,7 +344,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(clientRegistry.get(aliceKey).get('name'), 'alice')
     assert.equal(clientRegistry.get(bobKey).get('name'), 'bob')
 
-    ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -356,7 +356,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = new RepoRegistry()
-    const { ws } = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -372,7 +372,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRegistry.get(carolKey)?.get('name') === 'carol')
     assert.equal(clientRegistry.get(carolKey).get('name'), 'carol')
 
-    ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -661,7 +661,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(serverRepo.get('v'), 'apple',
       'apple is still the canonical value at the relay')
 
-    session.ws.close()
+    session.close()
     await new Promise(r => wss.close(r))
   })
 
@@ -690,7 +690,119 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(serverRepo.get('v'), 'banana', 'relay accepted the chained push')
     assert.equal(clientRepo.pushRejected, null, 'no rejection on a clean push')
 
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('auto-reconnects after an unexpected socket drop and resumes syncing', async ({ assert }) => {
+    // The home repo is auto-subscribed via `hello` on every connect, so a
+    // reconnect rediscovers it for free — post-drop changes keep flowing.
+    const serverRegistry = new RepoRegistry()
+    const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 70)
+    serverRepo.set({ v: 1 })
+
+    const { wss, port } = await startServer(serverRegistry, key)
+    const clientRegistry = new RepoRegistry()
+    const events = []
+    const session = await registrySync(clientRegistry, 'localhost', port, {
+      reconnectBaseMs: 20,
+      onConnectionChange: c => events.push(c)
+    })
+    await waitFor(() => clientRegistry.get(key)?.get('v') === 1)
+
+    // Drop the raw socket *without* session.close() — an unexpected close,
+    // which is what triggers reconnection.
     session.ws.close()
+    await waitFor(() => events.filter(c => c).length === 2, 3000)
+
+    serverRepo.set({ v: 2 })
+    await waitFor(() => clientRegistry.get(key)?.get('v') === 2, 3000)
+    assert.equal(clientRegistry.get(key).get('v'), 2, 'syncing resumed on the reconnected socket')
+    assert.equal(events.join(','), 'true,false,true', 'connection went live → dropped → live')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('reconnect replays explicit subscriptions (a non-home key keeps syncing)', async ({ assert }) => {
+    // A key reached only via session.subscribe() isn't rediscoverable from
+    // `hello` — the session must remember it and replay the subscribe.
+    const serverRegistry = new RepoRegistry()
+    const { repo: homeRepo, hex: homeKey } = await openWriter(serverRegistry, 71)
+    homeRepo.set({ members: [] })
+    const { repo: privateRepo, hex: privateKey } = await openWriter(serverRegistry, 72)
+    privateRepo.set({ stage: 1 })
+
+    const { wss, port } = await startServer(serverRegistry, homeKey)
+    const clientRegistry = new RepoRegistry()
+    const events = []
+    const session = await registrySync(clientRegistry, 'localhost', port, {
+      reconnectBaseMs: 20,
+      onConnectionChange: c => events.push(c)
+    })
+    await session.subscribe(privateKey)
+    await waitFor(() => clientRegistry.get(privateKey)?.get('stage') === 1)
+
+    session.ws.close()
+    await waitFor(() => events.filter(c => c).length === 2, 3000)
+
+    // The relay extends the private key after the reconnect — the client
+    // only sees it if the explicit subscribe was replayed.
+    privateRepo.set({ stage: 2 })
+    await waitFor(() => clientRegistry.get(privateKey)?.get('stage') === 2, 3000)
+    assert.equal(clientRegistry.get(privateKey).get('stage'), 2,
+      'the replayed subscribe re-plumbed the non-home key')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('reconnect replays interest (announcements still arrive after a drop)', async ({ assert }) => {
+    // interest() is ephemeral server-side state, cleared when the socket
+    // closes. The session must re-declare it on the fresh connection.
+    const { wss, port } = await startServer(new RepoRegistry())
+    const topic = fakeKey(70)
+    const announced = fakeKey(71)
+
+    const received = []
+    const events = []
+    const listener = await registrySync(new RepoRegistry(), 'localhost', port, {
+      reconnectBaseMs: 20,
+      onAnnounce: key => received.push(key),
+      onConnectionChange: c => events.push(c)
+    })
+    listener.interest(topic)
+    const announcer = await registrySync(new RepoRegistry(), 'localhost', port)
+    await new Promise(r => setTimeout(r, 50))
+
+    // Drop the listener; once it's back, its interest must have been replayed.
+    listener.ws.close()
+    await waitFor(() => events.filter(c => c).length === 2, 3000)
+    await new Promise(r => setTimeout(r, 50))  // let the replayed interest register
+
+    announcer.announce(announced, topic)
+    await waitFor(() => received.includes(announced), 3000)
+    assert.ok(received.includes(announced), 'the replayed interest still routes announcements')
+
+    listener.close()
+    announcer.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('session.close() shuts down without reconnecting', async ({ assert }) => {
+    const { wss, port } = await startServer(new RepoRegistry())
+    const events = []
+    const session = await registrySync(new RepoRegistry(), 'localhost', port, {
+      reconnectBaseMs: 20,
+      onConnectionChange: c => events.push(c)
+    })
+    session.close()
+    // Wait well past the backoff window — a reconnect, if it were going to
+    // happen, would have fired by now.
+    await new Promise(r => setTimeout(r, 200))
+    assert.equal(events.join(','), 'true', 'intentional close does not reconnect')
+    assert.ok(session.ws.readyState >= 2, 'socket is closing or closed')
+
     await new Promise(r => wss.close(r))
   })
 })

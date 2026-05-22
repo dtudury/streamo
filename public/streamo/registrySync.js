@@ -8,6 +8,8 @@
  * via the `follow` callback (typically walking `home.value.members`).
  * Private repos sync only when explicitly subscribed — they are never
  * enumerated. 20-second keep-alive ping for PaaS hosts that idle-close.
+ * An unexpected socket close reconnects with exponential backoff; the
+ * session object is stable across reconnects and replays its intent.
  *
  * See design.md §10.
  */
@@ -56,6 +58,16 @@ const KEY_BYTES = 33
 // types, but the frame itself counts as activity.
 const KEEPALIVE_INTERVAL_MS = 20000
 
+// Auto-reconnect: after a connection that was once live drops unexpectedly,
+// re-open with exponential backoff + jitter until it comes back. The delay
+// climbs RECONNECT_BASE_MS · 2ⁿ up to RECONNECT_MAX_MS; a connection that
+// stayed open longer than RECONNECT_RESET_MS is treated as healthy and
+// resets the climb — so a long-stable link that finally drops reconnects
+// fast, while a flapping one keeps backing off.
+const RECONNECT_BASE_MS = 500
+const RECONNECT_MAX_MS = 15000
+const RECONNECT_RESET_MS = 30000
+
 /**
  * @typedef {Object} RegistrySyncOptions
  *
@@ -99,6 +111,16 @@ const KEEPALIVE_INTERVAL_MS = 20000
  *   auto-subscribe to `home` has been kicked off.  The message may carry a
  *   `home` key (the peer's public face) and is extensible to future fields
  *   like protocol version.
+ *
+ * @property {(connected: boolean) => void} [onConnectionChange]
+ *   Called with `true` each time a connection becomes live (including the
+ *   first) and `false` each time one drops.  Lets the UI surface a
+ *   "reconnecting…" state while the backoff loop works.
+ *
+ * @property {number} [reconnectBaseMs]
+ *   Base delay for the reconnect backoff, in milliseconds (default 500).
+ *   The nth retry waits up to `reconnectBaseMs · 2ⁿ` (capped at 15s), with
+ *   jitter.  Lower it for a LAN, raise it for a flaky link — or for tests.
  */
 
 /**
@@ -445,8 +467,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
 
 /**
  * @typedef {Object} RegistrySession
- * @property {WebSocket} ws  The underlying WebSocket connection.
- * @property {() => void} close  Close the connection.
+ * @property {WebSocket} ws  The current underlying WebSocket — replaced on
+ *   each reconnect, so read it fresh rather than caching the reference.
+ * @property {() => void} close  Intentional shutdown: close the socket and
+ *   opt out of reconnection.  An unexpected close (not via this method)
+ *   reconnects with backoff.
  * @property {(key: string) => void} interest
  *   Declare interest in a topic.  The server will route `announce` messages
  *   for this topic to you via the `onAnnounce` callback in options.
@@ -468,9 +493,24 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  * the `follow` callback walks members from there.  Returns a session object
  * with `interest`/`announce`/`subscribe` for ephemeral and explicit work.
  *
+ * ## Auto-reconnect
+ *
+ * After the first successful connection, an unexpected socket close — a
+ * network blip, a PaaS idle-close, a relay restart — triggers a reconnect
+ * with exponential backoff + jitter.  The returned session object is
+ * *stable*: its identity survives reconnection, so callers hold onto it and
+ * read `session.ws` fresh when they need the live socket.  On each fresh
+ * connection the session replays its intent — every key passed to
+ * `subscribe()`, every topic passed to `interest()`, every `announce()` —
+ * and the relay re-sends `hello`, so the home repo and its `follow` cascade
+ * rediscover themselves.  `session.close()` is the intentional-shutdown
+ * verb: it closes the socket *and* opts out of reconnection.  A failure on
+ * the very first connect still rejects the returned promise — reconnect
+ * only covers a connection that was once live.
+ *
  * ### Basic usage — sync the relay's public face
  *
- *   const { ws } = await registrySync(myRegistry, 'localhost', 8080)
+ *   const session = await registrySync(myRegistry, 'localhost', 8080)
  *
  * ### Ephemeral messaging — express interest and announce related repos
  *
@@ -500,21 +540,119 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  * @returns {Promise<RegistrySession>}
  */
 export function registrySync (registry, host, port, options = {}) {
-  return new Promise((resolve, reject) => {
-    // In a browser served over https://, plain ws:// is blocked as mixed
-    // content, so derive the scheme from location. Node has no location —
-    // a Node client reaching a TLS relay passes `options.secure` to force
-    // wss; otherwise it falls through to plain ws://.
-    const secure = options.secure ?? (globalThis.location?.protocol === 'https:')
-    const protocol = secure ? 'wss' : 'ws'
-    const ws = adaptWebSocket(new WS(`${protocol}://${host}:${port}`))
+  const { onConnectionChange = null, reconnectBaseMs = RECONNECT_BASE_MS } = options
+  // In a browser served over https://, plain ws:// is blocked as mixed
+  // content, so derive the scheme from location. Node has no location —
+  // a Node client reaching a TLS relay passes `options.secure` to force
+  // wss; otherwise it falls through to plain ws://.
+  const secure = options.secure ?? (globalThis.location?.protocol === 'https:')
+  const url = `${secure ? 'wss' : 'ws'}://${host}:${port}`
 
-    ws.on('open', () => {
-      ws.send('registry')
-      const peer = handleRegistryPeer(ws, registry, options, 'origin-registry')
-      resolve({ ws, close: () => ws.close(), ...peer })
+  // Intent — the keys and topics this session has asked for. A
+  // handleRegistryPeer is per-connection and forgets everything when its
+  // socket closes, so the session remembers and replays the intent onto
+  // every fresh connection. The relay re-sends `hello` on each connect, so
+  // the home repo (and its `follow` cascade) rediscovers itself for free;
+  // only what we subscribed/announced *directly* needs replaying.
+  const subscribed = new Set()   // session.subscribe(key)
+  const interests = new Set()    // session.interest(key)
+  const announces = new Map()    // key → Set<topic>, from session.announce()
+
+  let ws = null               // current socket (the `ws` getter exposes it)
+  let peer = null             // current handleRegistryPeer handle; null mid-reconnect
+  let closed = false          // session.close() called — stop reconnecting
+  let attempt = 0             // backoff step; reset after a stably-open connection
+  let reconnectTimer = null
+
+  // Replay the session's intent onto a freshly-connected peer.
+  function adoptPeer (sock, newPeer) {
+    ws = sock
+    peer = newPeer
+    for (const key of subscribed) peer.subscribe(key)
+    for (const key of interests) peer.interest(key)
+    for (const [key, topics] of announces) {
+      for (const topic of topics) peer.announce(key, topic)
+    }
+    onConnectionChange?.(true)
+  }
+
+  function scheduleReconnect () {
+    if (closed) return
+    const ceiling = Math.min(reconnectBaseMs * 2 ** attempt, RECONNECT_MAX_MS)
+    const delay = ceiling * (0.5 + Math.random() * 0.5)  // jitter into [0.5×, 1×]
+    attempt++
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null
+      connect().catch(scheduleReconnect)
+    }, delay)
+    // A pending reconnect must never be the reason a Node process stays
+    // alive (no-op in browsers, whose timers have no `unref`).
+    reconnectTimer.unref?.()
+  }
+
+  // Open one socket, run the handshake, attach a peer, replay intent. The
+  // returned promise resolves once the socket is open and rejects if it
+  // errors before opening — that's what makes the *first* connect awaitable
+  // and reconnection a fire-and-forget loop.
+  function connect () {
+    return new Promise((resolve, reject) => {
+      const sock = adaptWebSocket(new WS(url))
+      let opened = false
+      sock.on('open', () => {
+        opened = true
+        const openedAt = Date.now()
+        sock.send('registry')
+        adoptPeer(sock, handleRegistryPeer(sock, registry, options, 'origin-registry'))
+        sock.on('close', () => {
+          if (closed) return
+          peer = null
+          onConnectionChange?.(false)
+          // A connection that held up longer than RECONNECT_RESET_MS was
+          // healthy — reset the backoff so the next drop reconnects fast,
+          // while a connection that keeps flapping keeps backing off.
+          if (Date.now() - openedAt > RECONNECT_RESET_MS) attempt = 0
+          scheduleReconnect()
+        })
+        resolve()
+      })
+      // An error *before* open fails this attempt; an error *after* open is
+      // followed by a `close` event, which is what drives reconnection.
+      sock.on('error', err => { if (!opened) reject(err) })
     })
+  }
 
-    ws.on('error', reject)
-  })
+  const session = {
+    /** The current underlying WebSocket — replaced on each reconnect. */
+    get ws () { return ws },
+    /** Intentional shutdown: close the socket and stop reconnecting. */
+    close () {
+      closed = true
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      ws?.close()
+    },
+    /** Declare interest in a topic — receive future `announce` messages for it. */
+    interest (key) {
+      interests.add(key)
+      peer?.interest(key)
+    },
+    /** Announce `key` as related to `topic` — routed to peers interested in it. */
+    announce (key, topic) {
+      if (!announces.has(key)) announces.set(key, new Set())
+      announces.get(key).add(topic)
+      peer?.announce(key, topic)
+    },
+    /**
+     * Subscribe to a specific repo key: open the Repo locally, plumb the
+     * wire, and return the Repo. While reconnecting there is no live peer —
+     * the Repo still opens locally and the wire plumbing replays once the
+     * connection returns.
+     * @returns {Promise<import('./Repo.js').Repo>}
+     */
+    subscribe (key) {
+      subscribed.add(key)
+      return peer ? peer.subscribe(key) : registry.open(key)
+    }
+  }
+
+  return connect().then(() => session)
 }

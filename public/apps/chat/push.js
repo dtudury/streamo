@@ -130,7 +130,10 @@ export function notifyOnMessages (registry, store, vapid, { send = sendWebPush }
       for (const { subscription, key } of store.all()) {
         if (key === keyHex) continue            // don't notify an author of their own message
         send(subscription, payload, vapid)
-          .then(status => { if (status === 404 || status === 410) store.remove(subscription.endpoint) })
+          .then(status => {
+            if (status === 404 || status === 410) store.remove(subscription.endpoint)
+            else if (status >= 400) console.error(`[push] push service rejected the send (${status})`)
+          })
           .catch(err => console.error(`[push] send failed: ${err.message}`))
       }
     }

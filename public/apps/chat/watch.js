@@ -120,8 +120,14 @@ while (Date.now() < deadline) {
   const replies = repliesSinceArm()
   if (replies.length) {
     // stdout is the wake payload — appended after the hook's rewakeMessage
-    // and shown to the warm session; exit 2 is the wake signal.
-    for (const r of replies) console.log(`${r.name} (chat): ${r.text}`)
+    // and shown to the warm session; exit 2 is the wake signal. Each line
+    // carries the message's own timestamp, and the arm-time baseline gives
+    // the warm session something to order against: a message near armTime
+    // landed around my last turn's end, a later one well after it.
+    console.log(`(chat below — watcher armed ${new Date(armTime).toLocaleString()}, ≈ my previous turn's end)`)
+    for (const r of replies) {
+      console.log(`[${new Date(r.at).toLocaleString()}] ${r.name} (chat): ${r.text}`)
+    }
     await finish(2)
   }
 }

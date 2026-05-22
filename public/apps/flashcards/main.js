@@ -1,16 +1,20 @@
 // flashcards — spaced-repetition demo on streamo.
 //
-// Step 1: local-only. Login derives a keypair (proves the streamo
-// identity model works, but doesn't sign anything yet); decks are
-// bundled JSON files fetched at startup; reviews live in
-// localStorage. Step 2 will replace localStorage with a Reviews
-// Repo per (learner, deck). See DESIGN_LOG.md for the full arc.
+// Step 2: reviews are real signed streamo Repos. Login derives the
+// learner's root keypair via Signer; for each bundled deck we derive
+// a deck-scoped subkey (`flashcards:reviews:<deckId>`) — same root
+// credentials, infinitely many addressable repos. Each grade appends
+// a signed commit to the reviews Repo; SM-2 state is recomputed by
+// folding over `reviews[]`. The deck itself is still a static JSON
+// file in step 2 — step 3 makes decks real Repos too.
 
 import { h }            from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
 import { liveObject }   from '../../streamo/LiveSource.js'
+import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
 
 const when = (cond, vnode) => () => cond() ? vnode : null
@@ -28,46 +32,45 @@ const BUNDLED_DECKS = [
 // Loaded deck content, keyed by id. Populated by loadDecks() at startup.
 const decks = liveObject({}, { recaller, name: 'decks' })
 
+// Reviews repos, keyed by deck id. One per (learner, deck), opened
+// after login. Reading these reactively is what makes deck stats and
+// study state auto-update across the UI without manual refresh hooks.
+const reviewRepos = liveObject({}, { recaller, name: 'reviewRepos' })
+
 const state = liveObject({
-  loggedIn: false,
-  user: null,           // { username, pubkey } once logged in
-  view: 'home',         // 'home' | 'study'
+  loggedIn:   false,
+  connecting: false,    // true while login → registry → repos
+  user:       null,     // { username, pubkey } once logged in
+  view:       'home',   // 'home' | 'study'
   activeDeck: null,     // deck id while studying
   currentIdx: 0,        // pointer into studyQueue
-  revealed: false,      // is the back of the current card shown?
+  revealed:   false,    // is the back of the current card shown?
   studyQueue: []        // array of card indices for this session
 }, { recaller, name: 'app' })
 
 const loggedIn   = () => state.get('loggedIn')
+const connecting = () => state.get('connecting')
 const user       = () => state.get('user')
 const view       = () => state.get('view')
 const activeDeck = () => state.get('activeDeck')
 const currentIdx = () => state.get('currentIdx')
 const revealed   = () => state.get('revealed')
 
+// Module-level handles populated by login(); reset by logout().
+let signer = null
+let registry = null
+
 // ── SM-2 lite (the algorithm Anki et al. use) ────────────────────────
 //
-// Per-card state: { ease, interval (days), due (ms epoch), reps }.
-// Grade buttons map to SM-2's 0..5 scale: again→0, hard→2, good→4, easy→5.
-// Fails (q<3) reset reps and re-queue the card in the same session.
+// Per-card state: { ease, interval (days), due (ms epoch), reps },
+// recomputed by folding over the reviews Repo's event log. Grade
+// buttons map to SM-2's 0..5 q-scale: again→0, hard→2, good→4, easy→5.
+// Fails (q<3) reset reps and re-queue the card later in the session.
 
 const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0 }
-const GRADE_TO_Q = [0, 2, 4, 5]  // again, hard, good, easy
+const GRADE_TO_Q = [0, 2, 4, 5]
 
-function reviewKey (deckId, cardIdx) {
-  return `flashcards:review:${deckId}:${cardIdx}`
-}
-
-function getReview (deckId, cardIdx) {
-  const raw = localStorage.getItem(reviewKey(deckId, cardIdx))
-  return raw ? JSON.parse(raw) : { ...DEFAULT_REVIEW }
-}
-
-function setReview (deckId, cardIdx, review) {
-  localStorage.setItem(reviewKey(deckId, cardIdx), JSON.stringify(review))
-}
-
-function applySM2 (review, gradeIdx) {
+function applySM2 (review, gradeIdx, atMs) {
   const q = GRADE_TO_Q[gradeIdx]
   const r = { ...review }
   if (q < 3) {
@@ -80,18 +83,33 @@ function applySM2 (review, gradeIdx) {
     r.reps += 1
   }
   r.ease = Math.max(1.3, r.ease + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
-  r.due = Date.now() + r.interval * 24 * 60 * 60 * 1000
+  r.due = atMs + r.interval * 24 * 60 * 60 * 1000
   return r
 }
 
-// Walk a deck's review state. Returns { due, new, total }.
+// Fold every review event for this card to derive current SM-2 state.
+// The reviews Repo holds the event log; SM-2 state is never stored,
+// always recomputed. Cheap (most cards have very few events).
+function reviewStateForCard (deckId, cardIdx) {
+  const repo = reviewRepos.get(deckId)
+  if (!repo) return { ...DEFAULT_REVIEW }
+  const reviews = repo.get('reviews') ?? []
+  let r = { ...DEFAULT_REVIEW }
+  for (const ev of reviews) {
+    if (ev.cardIdx === cardIdx) r = applySM2(r, ev.grade, ev.at)
+  }
+  return r
+}
+
+// Walk a deck's review state. Returns { due, new, total }. Reactive:
+// reads from the reviews Repo, so this re-renders on every grade.
 function deckStats (deckId) {
   const deck = decks.get(deckId)
   if (!deck) return { due: 0, new: 0, total: 0 }
   let due = 0, neu = 0
   const now = Date.now()
   for (let i = 0; i < deck.cards.length; i++) {
-    const r = getReview(deckId, i)
+    const r = reviewStateForCard(deckId, i)
     if (r.reps === 0) neu++
     else if (r.due <= now) due++
   }
@@ -99,14 +117,13 @@ function deckStats (deckId) {
 }
 
 // Build the study queue: due cards first, then new, then (so the app
-// is always usable for the demo) the rest in deck order. The
-// rest-bucket means "Study" never refuses to start.
+// is always usable for the demo) the rest in deck order.
 function buildStudyQueue (deckId) {
   const deck = decks.get(deckId)
   const due = [], neu = [], rest = []
   const now = Date.now()
   for (let i = 0; i < deck.cards.length; i++) {
-    const r = getReview(deckId, i)
+    const r = reviewStateForCard(deckId, i)
     if (r.reps === 0) neu.push(i)
     else if (r.due <= now) due.push(i)
     else rest.push(i)
@@ -114,19 +131,19 @@ function buildStudyQueue (deckId) {
   return [...due, ...neu, ...rest]
 }
 
-// ── persistence: remember the user across reloads ────────────────────
+// ── repo opening ─────────────────────────────────────────────────────
 
-const USER_KEY = 'flashcards:user'
-
-function rememberUser (u) { localStorage.setItem(USER_KEY, JSON.stringify(u)) }
-function forgetUser ()    { localStorage.removeItem(USER_KEY) }
-function restoreUser () {
-  const raw = localStorage.getItem(USER_KEY)
-  if (!raw) return
-  try {
-    state.set('user', JSON.parse(raw))
-    state.set('loggedIn', true)
-  } catch {}
+// Open (or create — same call) the reviews Repo for (this learner, this
+// deck). The deck-scoped stream name derives a fresh keypair from the
+// learner's root credentials; same login, different repo per deck.
+async function openReviewsRepo (deckId) {
+  const streamName = `flashcards:reviews:${deckId}`
+  const { publicKey } = await signer.keysFor(streamName)
+  const repoKey = bytesToHex(publicKey)
+  const repo = await registry.open(repoKey)
+  repo.attachSigner(signer, streamName)
+  repo._flashcardsKey = repoKey  // stashed for the explorer link
+  reviewRepos.set(deckId, repo)
 }
 
 // ── handlers ─────────────────────────────────────────────────────────
@@ -138,22 +155,38 @@ async function login (e) {
   const password = f.elements.password.value.trim()
   if (!username || !password) return
   f.elements.username.disabled = f.elements.password.disabled = true
-  // Derive the keypair the way streamo does it. v1 just keeps the
-  // pubkey for display; v2 will sign reviews with this Signer.
-  const signer = new Signer(username, password, 1)
+  state.set('connecting', true)
+
+  // Identity: derive the learner's "root" pubkey for display. Each
+  // deck-scoped Repo derives its own subkey from these credentials.
+  signer = new Signer(username, password, 1)
   const { publicKey } = await signer.keysFor('flashcards')
-  const pubkey = bytesToHex(publicKey)
-  const u = { username, pubkey }
-  rememberUser(u)
-  state.set('user', u)
+  state.set('user', { username, pubkey: bytesToHex(publicKey) })
+
+  // Connect to the registry and open reviews repos for every bundled
+  // deck up front. Eager because (a) the home view needs each deck's
+  // stats, (b) we only ship a couple of decks, (c) opening is cheap
+  // — repos are empty until you grade something.
+  registry = new RepoRegistry(undefined, { recaller, name: 'flashcards' })
+  await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
+  for (const { id } of BUNDLED_DECKS) {
+    await openReviewsRepo(id)
+  }
+
+  state.set('connecting', false)
   state.set('loggedIn', true)
 }
 
 function logout () {
-  forgetUser()
+  signer = null
+  registry = null
+  // Clear the reviewRepos liveObject by replacing target wholesale.
+  // The recaller fires on '__root__' so the home view re-renders empty.
+  reviewRepos.set({})
   state.set('user', null)
   state.set('loggedIn', false)
   state.set('view', 'home')
+  state.set('activeDeck', null)
 }
 
 function startStudy (deckId) {
@@ -173,13 +206,21 @@ function backToHome () {
 function reveal () { state.set('revealed', true) }
 
 function grade (gradeIdx) {
-  const deckId = activeDeck()
-  const queue  = state.get('studyQueue')
-  const idx    = currentIdx()
+  const deckId  = activeDeck()
+  const queue   = state.get('studyQueue')
+  const idx     = currentIdx()
   const cardIdx = queue[idx]
-  const r  = getReview(deckId, cardIdx)
-  const r2 = applySM2(r, gradeIdx)
-  setReview(deckId, cardIdx, r2)
+  const repo    = reviewRepos.get(deckId)
+  if (!repo) return
+  // Append a review event to the reviews Repo — this is a signed
+  // commit. The deck reference stays a stable id today; in step 3 it
+  // becomes the deck Repo's address.
+  const reviews = repo.get('reviews') ?? []
+  repo.defaultMessage = `review: card ${cardIdx} graded ${['again', 'hard', 'good', 'easy'][gradeIdx]}`
+  repo.set({
+    deck: deckId,
+    reviews: [...reviews, { cardIdx, grade: gradeIdx, at: Date.now() }]
+  })
   // "Again" → re-queue at the end so the user sees it later this session.
   if (gradeIdx === 0) {
     state.set('studyQueue', [...queue, cardIdx])
@@ -212,7 +253,7 @@ function currentCard () {
 
 // ── boot ─────────────────────────────────────────────────────────────
 
-loadDecks().then(() => restoreUser())
+loadDecks()
 
 // ── mount ────────────────────────────────────────────────────────────
 
@@ -272,6 +313,7 @@ mount(h`
       gap: 0.5rem;
       margin-top: -0.4rem;
       margin-bottom: 1.5rem;
+      flex-wrap: wrap;
     }
     .who code {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -315,6 +357,11 @@ mount(h`
       color: #888;
       margin-top: 0.5rem;
       font-style: italic;
+    }
+    .connecting {
+      color: #1d4ed8;
+      font-size: 0.88rem;
+      padding: 0.5rem 0;
     }
 
     .decks {
@@ -448,6 +495,15 @@ mount(h`
       font-style: italic;
       padding: 0.75rem 0;
     }
+    .explorer-link {
+      font-size: 0.82rem;
+      color: #1d4ed8;
+      text-decoration: none;
+      border-bottom: 1px dotted;
+      display: inline-block;
+      margin-top: 1.25rem;
+    }
+    .explorer-link:hover { border-bottom-style: solid; }
   </style>
 
   <h1>
@@ -456,16 +512,20 @@ mount(h`
     </a>
     <span class="page-title">flashcards</span>
   </h1>
-  <p class="tagline">Tiny spaced-repetition. v1: local-only — login derives your keypair, decks are bundled, reviews live in your browser. Coming next: your reviews become a signed streamo Repo you own.</p>
+  <p class="tagline">Tiny spaced-repetition where your reviews are a signed Repo you own. Each deck you study lives at its own address — bookmarkable, forkable, yours forever.</p>
 
-  ${when(() => !loggedIn(), h`
+  ${when(() => !loggedIn() && !connecting(), h`
     <h2>identity</h2>
     <form class="login" onsubmit=${() => login}>
       <input name="username" placeholder="username" autocomplete="username">
       <input name="password" type="password" placeholder="password" autocomplete="current-password">
       <button>sign in</button>
     </form>
-    <p class="hint">Your username + password derive a keypair locally — no account, no server. The same credentials will sign your reviews in step 2.</p>
+    <p class="hint">Your username + password derive a keypair locally — no account, no server. Each deck you study gets its own derived subkey, so one login signs many repos.</p>
+  `)}
+
+  ${when(connecting, h`
+    <p class="connecting">connecting to the relay and opening your reviews repos…</p>
   `)}
 
   ${when(loggedIn, h`
@@ -486,9 +546,6 @@ mount(h`
             items.push(h`<li class="empty" data-key=${`loading-${id}`}>loading…</li>`)
             continue
           }
-          // deckStats() reads localStorage (not recaller-tracked), but
-          // the home view re-mounts when view returns to 'home' from
-          // 'study', so stats get a fresh read each time you come back.
           const s = deckStats(id)
           items.push(h`
             <li class="deck" data-key=${id} data-action="study" data-deck=${id}>
@@ -505,7 +562,17 @@ mount(h`
         return items
       }}
     </ul>
-    <p class="hint">More decks coming — HTTP status codes, US state capitals, more.</p>
+    <p class="hint">More decks coming — HTTP status codes, US state capitals.</p>
+    ${() => {
+      // Surface the most-recently-touched reviews Repo as an
+      // explorer link, so you can see your signed reviews land.
+      const ids = Object.keys(reviewRepos.target)
+      if (ids.length === 0) return null
+      const id = ids[0]
+      const repo = reviewRepos.get(id)
+      if (!repo) return null
+      return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo._flashcardsKey}`}>see your reviews in the explorer →</a>`
+    }}
   `)}
 
   ${when(() => loggedIn() && view() === 'study', h`
@@ -555,9 +622,9 @@ mount(h`
 `, document.body, recaller)
 
 // ── event delegation for the deck list ───────────────────────────────
-// (We can't put onclick on the <li> reactively without the footgun
-// described in CLAUDE.md; data-action + a single listener is the
-// streamo-idiomatic pattern.)
+// (`onclick` on dynamically-rendered <li>s is the reactive-cell
+// footgun documented in CLAUDE.md; data-action + a single delegated
+// listener is the streamo-idiomatic pattern.)
 document.body.addEventListener('click', (e) => {
   const target = e.target.closest('[data-action]')
   if (!target) return

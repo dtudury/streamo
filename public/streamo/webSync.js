@@ -114,8 +114,16 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
         if (contentSent >= target) { reader.cancel().catch(() => {}); res.end(); return }
         const { value, done } = await reader.read()
         if (done || !res.writable) { res.end(); return }
-        // wire frame: [4-byte LE length][chunk bytes] — read length to track progress
-        contentSent += (value[0]) | (value[1] << 8) | (value[2] << 16) | (value[3] << 24)
+        // Each frame is a BATCH of [4-byte LE length][chunk] segments —
+        // makeReadableStream packs many chunks per frame (8.4). Sum every
+        // segment's declared length so contentSent tracks the whole batch,
+        // not just its first chunk; otherwise it under-counts, never reaches
+        // target, and the pump awaits an append that never comes.
+        for (let off = 0; off + 4 <= value.length;) {
+          const len = (value[off]) | (value[off + 1] << 8) | (value[off + 2] << 16) | (value[off + 3] << 24)
+          contentSent += len
+          off += 4 + len
+        }
         res.write(Buffer.from(value))
         pump()
       }

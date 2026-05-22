@@ -9,6 +9,12 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 Streamo is at 8.4.2, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
+On `main` but not yet released: **auto-reconnect** — a dropped
+registry WebSocket re-opens itself with exponential backoff + jitter
+instead of going silently dead. The session object stays stable
+across the gap and replays its subscriptions and interest; the chat
+surfaces a quiet "reconnecting…" and the explorer's connection pill
+tracks the live socket rather than sticking on a stale "disconnected".
 **8.4.2 fixes `/streams/:key/raw`** — the route's byte counter read
 only the first segment of an 8.4 batched frame, so the HTTP response
 never ended and clients hung; it now walks the whole frame. It also
@@ -56,7 +62,7 @@ its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
 Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
 unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, and the
-`streamo-history` repo on one port. 219 tests passing.
+`streamo-history` repo on one port. 223 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.

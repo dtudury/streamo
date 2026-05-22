@@ -5,6 +5,43 @@ for what's next.
 
 ---
 
+## 8.6.0 — a service worker, and hand-rolled Web Push
+
+**The service worker.** The homepage registers `/sw.js` — served,
+fittingly, from the homepage Repo itself (fileSync mirrors it in,
+repoFileServer serves it at root scope). Its fetch strategy is
+network-first, not cache-first: online you always get live bytes, so
+a stale asset can't trap you; the cache is purely an offline fallback.
+`skipWaiting` + `clients.claim` + old-cache cleanup, and registration
+with `updateViaCache: 'none'`, so the worker is never stuck behind its
+own cached copy.
+
+**Web Push — hand-rolled, zero dependencies.** A chat message can now
+reach you with no tab open. The crypto is Node's built-in `crypto`, no
+library: VAPID (RFC 8292) — an ES256-signed JWT identifying the relay
+to the push service — and message encryption (RFC 8291 + 8188) — ECDH
+P-256, HKDF-SHA256, AES-128-GCM, the `aes128gcm` content encoding.
+`encryptContent` is pinned byte-for-byte to RFC 8291's Appendix A test
+vector — a known-answer test proving the reinvented wheel emits
+exactly the bytes a browser decrypts.
+
+Relay side: `webSync` gained a generic `routes` hook (an embedding
+server registers HTTP routes without webSync knowing about them); the
+chat server uses it for `GET /api/push/key` and `POST
+/api/push/subscribe`, backed by a subscription store kept in a plain
+JSON file — deliberately not a Repo, since repos in the registry are
+servable and subscriptions must stay private. A `notifyOnMessages`
+watcher fires a push when a fresh chat message lands, freshness judged
+by the message's own timestamp — so archive load and a peer's backlog
+syncing up never page anyone.
+
+Client side: on login the chat registers the service worker, requests
+notification permission, subscribes via `pushManager`, and hands the
+subscription to the relay. Best-effort throughout — an unsupported
+browser or a declined prompt just means no notifications; the room is
+unchanged. 11 new tests (the push crypto, the subscription store, the
+message watcher); 234 passing.
+
 ## 8.5.0 — auto-reconnect; the chat notification channel
 
 **Auto-reconnect.** A dropped registry WebSocket — network blip, PaaS

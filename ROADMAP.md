@@ -7,8 +7,15 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.5.0, published to npm as `@dtudury/streamo`, and
+Streamo is at 8.6.0, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment.
+**8.6.0 lands a service worker and hand-rolled Web Push** — the
+homepage registers a network-first `/sw.js`, and a chat message can
+now reach you with no tab open: VAPID + RFC-8291 message encryption,
+done with Node built-ins and no dependencies, pinned to the RFC's own
+test vector. The relay grew a generic `routes` hook, push endpoints, a
+subscription store, and a `notifyOnMessages` watcher; the chat client
+subscribes on login.
 **8.5.0 lands auto-reconnect** — a dropped registry WebSocket re-opens
 itself with exponential backoff + jitter instead of going silently
 dead. The session object stays stable across the gap and replays its
@@ -66,7 +73,7 @@ its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
 Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
 unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, and the
-`streamo-history` repo on one port. 223 tests passing.
+`streamo-history` repo on one port. 234 tests passing.
 
 See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
 here.

@@ -141,6 +141,51 @@ function playDing () {
   }
 }
 
+// ── web push ─────────────────────────────────────────────────────────
+// The ding needs the tab focused; Web Push does not. The service worker
+// (/sw.js) shows an OS notification on a `push` from the relay, even
+// with no tab open. setupPush opts this browser in — permission,
+// subscription, and handing the subscription to the relay.
+
+// VAPID's applicationServerKey wants raw bytes; the relay serves the key
+// base64url-encoded, so decode it.
+function urlB64ToUint8Array (base64url) {
+  const padded = base64url.padEnd(Math.ceil(base64url.length / 4) * 4, '=')
+  const binary = atob(padded.replace(/-/g, '+').replace(/_/g, '/'))
+  return Uint8Array.from(binary, c => c.charCodeAt(0))
+}
+
+// Subscribe this browser to Web Push for the room. `permission` is the
+// promise login() kicked off inside the click gesture (browsers require
+// a gesture to ask). All best-effort: push is an enhancement — if it's
+// unsupported, declined, or the relay has no VAPID key, the room works
+// exactly as before, just without OS notifications.
+async function setupPush (myKey, permission) {
+  try {
+    if ((await permission) !== 'granted') return
+    const reg = await navigator.serviceWorker.register('/sw.js', { updateViaCache: 'none' })
+    await navigator.serviceWorker.ready
+    const { key: vapidKey } = await fetch('/api/push/key').then(r => r.json()).catch(() => ({}))
+    if (!vapidKey) return  // relay has push disabled
+    const sub = await reg.pushManager.getSubscription()
+      ?? await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(vapidKey)
+      })
+    // Hand the subscription to the relay, tagged with our chat key so it
+    // can skip notifying us of our own messages. Re-sent on every login,
+    // so a relay that restarted (and lost its store) re-learns us.
+    await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ subscription: sub.toJSON(), key: myKey })
+    })
+    console.log('[chat] push notifications on')
+  } catch (err) {
+    console.warn('[chat] push setup skipped:', err.message)
+  }
+}
+
 function Msg ({ name, text, at, mine, hue }) {
   // +at coerces both Date and number to ms — stable key across old (number)
   // and new (Date) message records as we transition.
@@ -174,6 +219,12 @@ async function login (e) {
   // Unlock audio while we're still inside the click that submitted the
   // form — a later, gesture-less AudioContext would start suspended.
   armAudio()
+  // Ask for notification permission now, while the login click is still
+  // a live user gesture (browsers require one). The answer is awaited
+  // later by setupPush, once we have a key to subscribe with.
+  const pushPermission = ('Notification' in window && 'serviceWorker' in navigator && 'PushManager' in window)
+    ? (Notification.permission === 'default' ? Notification.requestPermission() : Promise.resolve(Notification.permission))
+    : Promise.resolve('unsupported')
 
   try {
     const signer = new Signer(username, password, 1)
@@ -301,6 +352,10 @@ async function login (e) {
     // Claude's dot grays on its own ~30s after her announce heartbeat
     // stops, with no event needed.
     setInterval(() => presenceTick.set(Date.now()), 4000)
+
+    // Opt this browser into Web Push — OS notifications when a message
+    // lands with no tab open. Best-effort, fire-and-forget (see setupPush).
+    setupPush(myKey, pushPermission)
 
     // Flip the login signal — the mount template's `when(loggedIn, …)`
     // clauses fire, the login form unmounts, the chat panel takes over.

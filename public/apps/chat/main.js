@@ -97,6 +97,37 @@ function dateLabel (d) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: now.getFullYear() === d.getFullYear() ? undefined : 'numeric' })
 }
 
+// ── the ding ─────────────────────────────────────────────────────────
+// A short synthesized chime when a message lands — Web Audio, so there's
+// no asset to bundle or serve. Two sine partials a fifth apart, fast
+// attack + exponential decay = a little bell. `armAudio()` runs from the
+// login click (a real user gesture) so the AudioContext is unlocked
+// before any message arrives — browsers won't let audio start otherwise.
+let audioCtx = null
+function armAudio () {
+  try {
+    audioCtx ??= new (window.AudioContext || window.webkitAudioContext)()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+  } catch { /* no Web Audio — the room still works, just silently */ }
+}
+function playDing () {
+  if (!audioCtx) return
+  if (audioCtx.state === 'suspended') audioCtx.resume()
+  const t0 = audioCtx.currentTime
+  for (const [freq, delay] of [[880, 0], [1320, 0.09]]) {
+    const osc = audioCtx.createOscillator()
+    const gain = audioCtx.createGain()
+    osc.type = 'sine'
+    osc.frequency.value = freq
+    gain.gain.setValueAtTime(0, t0 + delay)
+    gain.gain.linearRampToValueAtTime(0.2, t0 + delay + 0.012)
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.9)
+    osc.connect(gain).connect(audioCtx.destination)
+    osc.start(t0 + delay)
+    osc.stop(t0 + delay + 1)
+  }
+}
+
 function Msg ({ name, text, at, mine, hue }) {
   // +at coerces both Date and number to ms — stable key across old (number)
   // and new (Date) message records as we transition.
@@ -127,6 +158,9 @@ async function login (e) {
 
   f.elements.username.disabled = f.elements.password.disabled = true
   loginStatus.set('connecting…')
+  // Unlock audio while we're still inside the click that submitted the
+  // form — a later, gesture-less AudioContext would start suspended.
+  armAudio()
 
   try {
     const signer = new Signer(username, password, 1)
@@ -223,6 +257,26 @@ async function login (e) {
         const el = document.getElementById('messages')
         if (el) el.scrollTop = el.scrollHeight
       })
+    })
+
+    // Ding when a message lands from anyone but me — this is what lets
+    // you step away from the keyboard. The early runs (while the relay
+    // streams history down) only set the baseline; a 2.5s arm window
+    // suppresses dings until that initial sync settles, so opening the
+    // room doesn't chime once per backlogged message.
+    let lastDingCount = null
+    const dingArmedAt = Date.now() + 2500
+    recaller.watch('chat-ding', () => {
+      let count = 0
+      for (const [keyHex, repo] of registry) {
+        repo.byteLength  // register the chunk-arrival dependency
+        if (keyHex === myKey || keyHex === rootKey) continue
+        count += (repo.get('messages') ?? []).length
+      }
+      if (lastDingCount !== null && count > lastDingCount && Date.now() > dingArmedAt) {
+        playDing()
+      }
+      lastDingCount = count
     })
 
     // Flip the login signal — the mount template's `when(loggedIn, …)`

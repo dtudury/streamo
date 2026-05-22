@@ -7,6 +7,7 @@ import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
 import { buildTarotData } from '../../../scripts/tarot-data.js'
+import { PushStore, pushRoutes } from './push.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
 if (envFile) config({ path: envFile })
@@ -140,13 +141,26 @@ if (server.signer) {
   console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
 }
 
+// Web Push — the relay's subscription store + endpoints. Stood up only
+// when a VAPID public key is configured (.env STREAMO_VAPID_PUBLIC); a
+// relay without it just runs without push. The fire-a-push-when-a-
+// message-lands half, which also needs the private key, comes next.
+let pushStore = null
+if (process.env.STREAMO_VAPID_PUBLIC) {
+  pushStore = new PushStore(join(dataDir, 'push-subscriptions.json'))
+  console.log(`[chat] web push: ${pushStore.all().length} stored subscription(s)`)
+} else {
+  console.log('[chat] web push: off — no STREAMO_VAPID_PUBLIC in env')
+}
+
 await server.web(port, {
   // serveFromRepo middleware reads the home repo's `files` key on every
   // request — any path present wins; misses fall through to express.static
   // so /apps/explorer/, /streamo/*.js, /apps/styles/*.css keep working.
   // In relay-only mode, an empty archive means everything falls through to
   // express.static (the bundled defaults) until an author pushes their bytes.
-  serveRepoFiles: { repo: server.streamo, filesKey: 'files' }
+  serveRepoFiles: { repo: server.streamo, filesKey: 'files' },
+  routes: pushStore ? pushRoutes(pushStore, process.env.STREAMO_VAPID_PUBLIC) : undefined
 })
 
 // Hint for relay-only operators: if no author has connected, the homepage

@@ -28,12 +28,17 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
  *   homepage Repo's files via serveFromRepo: `{ repo, ...serveOpts }`. When
  *   set, the middleware mounts ahead of express.static so any path present
  *   in the Repo wins; misses fall through to disk.
+ * @param {(app: import('express').Express) => void} [peerOptions.routes]
+ *   optional hook to register extra HTTP routes — called after the JSON
+ *   body parser is in place. Lets an embedding server (e.g. the chat
+ *   relay's Web Push endpoints) add routes without webSync knowing about
+ *   them; webSync stays a generic relay server.
  * @returns {Promise<import('http').Server>}
  */
 export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000, peerOptions = {}) {
   const app = express()
 
-  const { serveRepoFiles, ...peerOpts } = peerOptions
+  const { serveRepoFiles, routes, ...peerOpts } = peerOptions
 
   if (serveRepoFiles && serveRepoFiles.repo) {
     const { repo, ...serveOpts } = serveRepoFiles
@@ -50,6 +55,10 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   app.use(express.static(publicDir))
 
   app.use(express.json())
+
+  // Embedding-server hook: register extra routes (the chat relay uses this
+  // for its Web Push endpoints). webSync itself stays push-agnostic.
+  routes?.(app)
 
   // Expose primary key so the browser app knows which streamo to open
   app.get('/api/info', (req, res) => {

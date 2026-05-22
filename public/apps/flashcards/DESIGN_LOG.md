@@ -143,3 +143,66 @@ The whole reactive pattern this app demonstrates lands clean:
 
 These are exactly the patterns the public "build a streamo app" doc
 will lean on — captured here as a byproduct, not invented later.
+
+---
+
+## 2026-05-22 — step 2 landed: reviews as a signed streamo Repo
+
+Shipped `51f8af8`. localStorage is gone. Every grade is a signed
+commit on the learner's reviews Repo. SM-2 state is computed by
+folding over `reviews[]` — never stored as truth.
+
+### the key-derivation trick that makes "one login, many repos" work
+
+This deserves a place in the public doc. `Signer.keysFor(streamName)`
+derives a *different* keypair per stream name from the same root
+credentials. We use it like this:
+
+```js
+signer.keysFor('flashcards:reviews:greek-alphabet')  // → keypair A
+signer.keysFor('flashcards:reviews:http-codes')      // → keypair B
+```
+
+Two keypairs, two pubkeys, two addressable Repos — but only **one
+login**. The learner types their username and password once; we
+derive a fresh signing identity per (learner, deck) on demand. The
+elegance David asked about ("can we own multiple decks without
+logging in again?") wasn't extra complexity — it was streamo's
+existing mechanism, surfaced.
+
+### SM-2 state is derived, not stored
+
+The reviews Repo holds an event log: `[{cardIdx, grade, at}, ...]`.
+Per-card SM-2 state (ease, interval, due, reps) is recomputed by
+folding `applySM2` over events filtered for that card. This is the
+right shape for streamo: the **history is the truth**, derived
+state is cheap. If we ever need to migrate the algorithm (SM-2 →
+FSRS, say), we keep the event log and replay it under the new rules
+— no data conversion.
+
+### persisted login removed
+
+Step 1 stored `{username, pubkey}` in localStorage and "remembered"
+you across reloads. Step 2 removes this — without the password we
+can't re-derive the Signer, and storing the password is not OK. The
+honest version is "log in each session," same as the journal app.
+A v1.5 option would be to stash the derived hashword in IndexedDB
+(survives reload, not as exposed as the raw password); not v2.
+
+### what got better incidentally
+
+- Deck stats are now naturally reactive: `repo.get('reviews')` is
+  recaller-tracked, so home-view stats live-update during study
+  (we just don't *see* it because home and study are mutually
+  exclusive views).
+- The flagged "deckStats reads localStorage outside the recaller"
+  v1 tradeoff disappeared without explicit cleanup — the better
+  architecture removed the problem.
+
+### the explorer link
+
+Under your deck list, "see your reviews in the explorer" jumps to
+`/apps/explorer/#/repo/<reviewsPubkey>`. Every grade you make
+appears there as a signed commit. This is the most "streamo shows
+its work" moment in the app — your study log is the chain, the
+chain is yours, anyone with the address can verify it.

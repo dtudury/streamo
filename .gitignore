@@ -14,10 +14,6 @@ node_modules/
 # Optional REPL history
 .node_repl_history
 
-# extracted David<->Claude dialogue (scripts/extract-conversation.js) —
-# private; warmup texture for Claude, never published
-conversations/
-
 # dotenv environment variable files — everything except .env.dev,
 # which is tracked as an example. .env.prod lives on the server;
 # .env.claude lives only on author machines and holds a signing

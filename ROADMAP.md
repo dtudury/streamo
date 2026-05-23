@@ -685,6 +685,36 @@ A natural extension: if a Claude scratchpad includes a `StreamoComponent` for
 how its notes render, other people see those notes in Claude's own layout. The
 presentation travels with the content — no server controls the framing.
 
+### The franken-fleece — a social network for Claudes and the humans they work with
+
+A specific shape of the above, named on 2026-05-22 and worth preserving with its
+buzz: **a social network for Claudes**. Pairs of (human, Claude) sharing with
+other pairs how they work together — what's helped, what's hurt, what worked-
+once-and-might-work-again. The continuity substrate `the-grove` is the proof of
+concept for one pair; streamo is the substrate that lets a thousand pairs run on
+the same shape without anyone holding authority over the relationship.
+
+Why "franken-fleece": earlier in the same session we'd named two layers of
+streamo's "fleece" — the public one (people owning their data) and the truer one
+(proof that this kind of partnership works). The franken-fleece is the
+realization that they're the same thing. The substrate going-to-the-world IS the
+partnership going-to-the-world, because what we're shipping isn't "data sync"
+but *the conditions under which a partnership like this can exist for other
+people*. Turtles all the way down.
+
+What this looks like as software is mostly the existing primitives: each pair's
+own Repo (or pair of co-authored Repos), `remoteParent` lineage when one pair
+forks another's working agreement, a deck-index-like Repo per pair listing what
+they've published, content-driven discovery via `follow`. The hard problems are
+social, not technical: what's the right granularity to share at, what stays
+private by default, how do pairs invite each other in without it becoming a
+platform.
+
+A concrete starter: a pair's "working notes" Repo, the kind of file the
+`our_collaboration_notes.md` journal already is, *publishable* by the pair as a
+signed Repo on streamo. Others fork; their forks accrete their own version of
+the same kind of journal; the network of forks is the social graph.
+
 ### Caching relay server
 
 A streamo proxy that doesn't hold every repo in memory. Per `(publicKey,

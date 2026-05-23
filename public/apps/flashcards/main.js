@@ -53,6 +53,7 @@ const revealed   = () => state.get('revealed')
 // Module-level handles populated by login(); reset by logout().
 let signer = null
 let registry = null
+let session = null
 
 // ── SM-2 lite ────────────────────────────────────────────────────────
 
@@ -154,11 +155,15 @@ function awaitField (repo, field, timeoutMs = 5000) {
 // Open (or create — same call) the reviews Repo for (this learner, this
 // deck). The deck-scoped stream name derives a fresh keypair from the
 // learner's root credentials; same login, different repo per deck.
+//
+// session.subscribe — not registry.open — is what plumbs the repo to
+// the wire. `registry.open` alone makes a local Repo but doesn't tell
+// the relay to send bytes; the chat app's main.js spells this out.
 async function openReviewsRepo (deckId) {
   const streamName = `flashcards:reviews:${deckId}`
   const { publicKey } = await signer.keysFor(streamName)
   const repoKey = bytesToHex(publicKey)
-  const repo = await registry.open(repoKey)
+  const repo = await session.subscribe(repoKey)
   repo.attachSigner(signer, streamName)
   repo._flashcardsKey = repoKey  // stashed for the explorer link
   reviewRepos.set(deckId, repo)
@@ -179,25 +184,39 @@ async function login (e) {
   const { publicKey } = await signer.keysFor('flashcards')
   state.set('user', { username, pubkey: bytesToHex(publicKey) })
 
-  // Connect to the relay.
+  // Connect to the relay. The `follow` callback cascades subscription
+  // through the home repo's `flashcardsDecks` map — as soon as the
+  // home repo's bytes arrive, every deck Repo it advertises gets
+  // subscribed automatically. Same pattern chat uses for `members`.
   registry = new RepoRegistry(undefined, { recaller, name: 'flashcards' })
-  await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
+  session = await registrySync(
+    registry,
+    location.hostname,
+    +location.port || (location.protocol === 'https:' ? 443 : 80),
+    {
+      follow: (keyHex, repo, subscribe) => {
+        const fd = repo.get('flashcardsDecks') ?? {}
+        for (const deckKey of Object.values(fd)) subscribe(deckKey)
+      }
+    }
+  )
 
-  // Discover what decks the relay serves. /api/info gives us the home
-  // repo's pubkey; the home repo's `flashcardsDecks` field is the
-  // address map. No hardcoded deck addresses anywhere on the client.
+  // The home repo was auto-subscribed via the hello handshake; once
+  // its bytes arrive, `follow` will fire and subscribe all deck Repos.
   const info = await fetch('/api/info').then(r => r.json())
   const homeRepo = await registry.open(info.primaryKeyHex)
   const fd = await awaitField(homeRepo, 'flashcardsDecks', 8000)
   const ids = Object.keys(fd)
 
-  // Open each deck Repo in parallel; wait for each to have content.
-  // Then open the matching reviews Repo for this learner.
+  // Each deck Repo is now subscribing (via the cascade); wait for
+  // content. `registry.open` returns the already-subscribed instance.
   await Promise.all(ids.map(async (id) => {
     const repo = await registry.open(fd[id])
     deckRepos.set(id, repo)
     await awaitField(repo, 'title', 8000)
   }))
+  // Reviews repos: per-learner, derived from this Signer — not
+  // discoverable through home repo content, so explicit subscribe.
   await Promise.all(ids.map(id => openReviewsRepo(id)))
 
   state.set('deckIds', ids)
@@ -208,6 +227,7 @@ async function login (e) {
 function logout () {
   signer = null
   registry = null
+  session = null
   deckRepos.set({})
   reviewRepos.set({})
   state.set('user', null)

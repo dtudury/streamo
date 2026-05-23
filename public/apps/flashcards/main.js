@@ -23,41 +23,41 @@ const when = (cond, vnode) => () => cond() ? vnode : null
 
 const recaller = new Recaller('flashcards')
 
-// Deck Repos and Reviews Repos, both keyed by deck id. Deck Repos are
-// authored by the relay's home identity; Reviews Repos are authored by
-// the logged-in learner. The deck-id keys in both maps are the only
-// thing tying them together at the data layer.
-const deckRepos   = liveObject({}, { recaller, name: 'deckRepos' })
+// Reviews repos are opened lazily — when the learner clicks Study on
+// a deck — so login doesn't pay an O(decks) cost in repos-and-wire
+// activity. Deck repos themselves are NOT held in a parallel
+// LiveSource: they live in the registry, which is itself a reactive
+// LiveSource (registry.get reports access on (this, 'keys')), so
+// reads in slots auto-subscribe.
 const reviewRepos = liveObject({}, { recaller, name: 'reviewRepos' })
 
 const state = liveObject({
-  loggedIn:   false,
-  connecting: false,    // true while login → discovery → repos
-  user:       null,     // { username, pubkey } once logged in
-  view:       'home',   // 'home' | 'study'
-  activeDeck: null,     // deck id while studying
-  currentIdx: 0,        // pointer into studyQueue
-  revealed:   false,    // is the back of the current card shown?
-  studyQueue: [],       // array of card indices for this session
-  deckIds:    []        // ids of discovered & opened decks (drives the home list)
+  loggedIn:      false,
+  connecting:    false,  // true while login → connect → subscribe(deck-index)
+  startingStudy: false,  // true while ensureReviewsRepo is running for a click
+  user:          null,   // { username, pubkey } once logged in
+  view:          'home', // 'home' | 'study'
+  activeDeck:    null,   // deck id while studying
+  currentIdx:    0,      // pointer into studyQueue
+  revealed:      false,  // is the back of the current card shown?
+  studyQueue:    []      // array of card indices for this session
 }, { recaller, name: 'app' })
 
-const loggedIn   = () => state.get('loggedIn')
-const connecting = () => state.get('connecting')
-const user       = () => state.get('user')
-const view       = () => state.get('view')
-const activeDeck = () => state.get('activeDeck')
-const currentIdx = () => state.get('currentIdx')
-const revealed   = () => state.get('revealed')
+const loggedIn      = () => state.get('loggedIn')
+const connecting    = () => state.get('connecting')
+const startingStudy = () => state.get('startingStudy')
+const user          = () => state.get('user')
+const view          = () => state.get('view')
+const activeDeck    = () => state.get('activeDeck')
+const currentIdx    = () => state.get('currentIdx')
+const revealed      = () => state.get('revealed')
 
 // Module-level handles populated by login(); reset by logout().
 let signer = null
 let registry = null
 let session = null
-// The learner's deck-index Repo — `{ decks: [<pubkey-hex>, ...] }`,
-// signed by them. Lists the decks the learner has authored or forked.
-// Populated at login; appended to on fork.
-let myDeckIndex = null
+let homeRepo = null     // the relay's home repo, source of bundled-deck addresses
+let myDeckIndex = null  // learner's deck-index Repo: { decks: [<pubkey-hex>, ...] }
 
 // ── SM-2 lite ────────────────────────────────────────────────────────
 
@@ -81,6 +81,26 @@ function applySM2 (review, gradeIdx, atMs) {
   return r
 }
 
+// Translate a deckId into the address of its deck Repo. Bundled decks
+// have a human-readable id ('greek-alphabet') and live at the address
+// listed in homeRepo.flashcardsDecks. Forks have no separate id —
+// their address IS their id. All reads here are recaller-tracked, so
+// callers in slots auto-subscribe to updates in either source.
+function addrFor (deckId) {
+  if (!deckId) return null
+  const fd = homeRepo?.get('flashcardsDecks') ?? {}
+  return fd[deckId] ?? deckId
+}
+
+function deckRepo (deckId) {
+  const addr = addrFor(deckId)
+  return addr ? registry?.get(addr) : undefined
+}
+
+function deckCards (deckId) {
+  return deckRepo(deckId)?.get('cards') ?? []
+}
+
 // SM-2 state derived by folding every review event for this card.
 function reviewStateForCard (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
@@ -91,10 +111,6 @@ function reviewStateForCard (deckId, cardIdx) {
     if (ev.cardIdx === cardIdx) r = applySM2(r, ev.grade, ev.at)
   }
   return r
-}
-
-function deckCards (deckId) {
-  return deckRepos.get(deckId)?.get('cards') ?? []
 }
 
 function deckStats (deckId) {
@@ -156,20 +172,27 @@ function awaitField (repo, field, timeoutMs = 5000) {
 
 // ── repo opening ─────────────────────────────────────────────────────
 
-// Open (or create — same call) the reviews Repo for (this learner, this
-// deck). The deck-scoped stream name derives a fresh keypair from the
-// learner's root credentials; same login, different repo per deck.
-//
-// session.subscribe — not registry.open — is what plumbs the repo to
-// the wire. `registry.open` alone makes a local Repo but doesn't tell
-// the relay to send bytes; the chat app's main.js spells this out.
-async function openReviewsRepo (deckId) {
+// Lazily open the reviews Repo for (this learner, this deck) on the
+// first study-click. The deck-scoped stream name derives a fresh
+// keypair from the learner's root credentials; same login, different
+// repo per deck. We await the `reviews` field before returning so the
+// first grade doesn't overwrite an existing history with an empty
+// one. Timeout = first-ever study of this deck.
+async function ensureReviewsRepo (deckId) {
+  const existing = reviewRepos.get(deckId)
+  if (existing) return existing
   const streamName = `flashcards:reviews:${deckId}`
   const { publicKey } = await signer.keysFor(streamName)
   const repoKey = bytesToHex(publicKey)
   const repo = await session.subscribe(repoKey)
   repo.attachSigner(signer, streamName)
+  // Wait for the relay to push existing reviews (if any) before
+  // declaring the repo "ready to write." Treat the timeout as
+  // "no prior reviews" — fresh learner on this deck.
+  try { await awaitField(repo, 'reviews', 2000) }
+  catch { /* new for this deck */ }
   reviewRepos.set(deckId, repo)
+  return repo
 }
 
 // ── handlers ─────────────────────────────────────────────────────────
@@ -192,7 +215,8 @@ async function login (e) {
   // and (b) any repo's `decks` array (the deck-index shape) for forks
   // the learner has authored. The home repo doesn't have `decks` and
   // the deck-index doesn't have `flashcardsDecks`, so each clause
-  // applies cleanly to its source.
+  // applies cleanly to its source. From here, discovery is *reactive*:
+  // bytes flow in, the home view re-renders.
   registry = new RepoRegistry(undefined, { recaller, name: 'flashcards' })
   session = await registrySync(
     registry,
@@ -208,46 +232,25 @@ async function login (e) {
     }
   )
 
-  // Bundled decks: discovered via home repo (auto-subscribed via hello).
+  // Two repos we DO need handles on: the home repo (so the home view
+  // can read flashcardsDecks reactively) and the learner's deck-index
+  // (same, for forks; also needed for the fork-action's write path).
+  // No further awaitFields here — slots fill in as bytes arrive.
   const info = await fetch('/api/info').then(r => r.json())
-  const homeRepo = await registry.open(info.primaryKeyHex)
-  const fd = await awaitField(homeRepo, 'flashcardsDecks', 8000)
-  const bundledIds = Object.keys(fd)
+  homeRepo = await registry.open(info.primaryKeyHex)
 
-  // Open the learner's deck-index Repo — same key-derivation pattern
-  // as reviews. Fresh users have no bytes here; we treat the brief
-  // timeout as "no forks yet."
   const idxStream = 'flashcards:deck-index'
   const { publicKey: idxPub } = await signer.keysFor(idxStream)
   const idxKey = bytesToHex(idxPub)
   myDeckIndex = await session.subscribe(idxKey)
   myDeckIndex.attachSigner(signer, idxStream)
-  let forkAddrs = []
-  try { forkAddrs = await awaitField(myDeckIndex, 'decks', 3000) }
-  catch { forkAddrs = [] }
+  // One genuine wait: ensure the deck-index's existing `decks` arrive
+  // before allowing a fork commit. Otherwise an existing learner could
+  // overwrite their own fork list on the first fork of a session.
+  // Timeout = new learner; no forks to preserve.
+  try { await awaitField(myDeckIndex, 'decks', 3000) }
+  catch { /* new learner */ }
 
-  // Open bundled deck repos. Each Repo carries its own `publicKeyHex`
-  // (set by the registry at open-time) so we don't need to stash a
-  // side-channel reference for the explorer link or fork lineage.
-  await Promise.all(bundledIds.map(async (id) => {
-    const repo = await registry.open(fd[id])
-    deckRepos.set(id, repo)
-    await awaitField(repo, 'title', 8000)
-  }))
-  // Open forked deck repos. The cascade has already subscribed them;
-  // we just wait for content. The fork's deckId is its pubkey-hex —
-  // no human-readable string id — the address IS the id.
-  await Promise.all(forkAddrs.map(async (addr) => {
-    const repo = await registry.open(addr)
-    deckRepos.set(addr, repo)
-    await awaitField(repo, 'title', 8000)
-  }))
-
-  // Reviews repos: one per (learner, deck) for bundled + forks alike.
-  const allIds = [...bundledIds, ...forkAddrs]
-  await Promise.all(allIds.map(id => openReviewsRepo(id)))
-
-  state.set('deckIds', allIds)
   state.set('connecting', false)
   state.set('loggedIn', true)
 }
@@ -256,20 +259,27 @@ function logout () {
   signer = null
   registry = null
   session = null
+  homeRepo = null
   myDeckIndex = null
-  deckRepos.set({})
   reviewRepos.set({})
   state.set('user', null)
-  state.set('deckIds', [])
   state.set('loggedIn', false)
   state.set('view', 'home')
   state.set('activeDeck', null)
 }
 
-function startStudy (deckId) {
-  const queue = buildStudyQueue(deckId)
+// Lazy: opens the reviews repo on first click for this deck. The await
+// is bounded by ensureReviewsRepo's 2s timeout. A "starting study…"
+// indicator covers the wait so the home stays responsive.
+async function startStudy (deckId) {
+  state.set('startingStudy', true)
+  try {
+    await ensureReviewsRepo(deckId)
+  } finally {
+    state.set('startingStudy', false)
+  }
   state.set('activeDeck', deckId)
-  state.set('studyQueue', queue)
+  state.set('studyQueue', buildStudyQueue(deckId))
   state.set('currentIdx', 0)
   state.set('revealed', false)
   state.set('view', 'study')
@@ -312,7 +322,7 @@ function grade (gradeIdx) {
 // (`flashcards:my-deck:<upstreamId>:<timestamp>`) derives a unique
 // subkey from the learner's root credentials.
 async function forkDeck (upstreamId) {
-  const upstreamRepo = deckRepos.get(upstreamId)
+  const upstreamRepo = deckRepo(upstreamId)
   const upstream = upstreamRepo?.get()
   if (!upstream) return
 
@@ -330,16 +340,14 @@ async function forkDeck (upstreamId) {
     forkedFrom: upstreamRepo.publicKeyHex
   })
 
-  // Append to the learner's deck-index. First fork from a fresh user
-  // initializes the `decks` array; subsequent forks append.
+  // Append to the learner's deck-index — the home view watches this
+  // reactively and will pick up the new fork on its own. First fork
+  // from a fresh user initializes the `decks` array; subsequent forks
+  // append.
   const currentForks = myDeckIndex.get('decks') ?? []
   myDeckIndex.defaultMessage = `added fork: ${upstream.title}`
   myDeckIndex.set({ decks: [...currentForks, newDeckKey] })
-
-  // Local state — deck repo, its reviews repo, and the home view's id list.
-  deckRepos.set(newDeckKey, forkRepo)
-  await openReviewsRepo(newDeckKey)
-  state.set('deckIds', [...state.get('deckIds'), newDeckKey])
+  // Reviews repo opens lazily on the first study-click; no eager open.
 }
 
 // ── view helpers ─────────────────────────────────────────────────────
@@ -387,13 +395,23 @@ mount(h`
 
   ${when(() => loggedIn() && view() === 'home', h`
     <h2>your decks</h2>
+    ${when(startingStudy, h`<p class="connecting">starting study session…</p>`)}
     <ul class="decks">
       ${() => {
-        const ids = state.get('deckIds')
-        if (!ids.length) return h`<li class="empty">no decks served by this relay yet.</li>`
-        return ids.map(id => {
-          const repo = deckRepos.get(id)
-          const title = repo?.get('title') ?? '(loading)'
+        // Derive the deck list reactively from the two source repos.
+        // Reading homeRepo.flashcardsDecks + myDeckIndex.decks here
+        // subscribes the slot — any change (new fork, new bundled deck
+        // appearing) re-renders the list automatically.
+        const fd = homeRepo?.get('flashcardsDecks') ?? {}
+        const myDecks = myDeckIndex?.get('decks') ?? []
+        const entries = [
+          ...Object.keys(fd).map(id => ({ id, addr: fd[id] })),
+          ...myDecks.map(addr => ({ id: addr, addr }))
+        ]
+        if (entries.length === 0) return h`<li class="empty">discovering decks…</li>`
+        return entries.map(({ id, addr }) => {
+          const repo = registry.get(addr)
+          const title = repo?.get('title') ?? '(loading…)'
           const description = repo?.get('description') ?? ''
           const isFork = !!repo?.get('forkedFrom')
           const s = deckStats(id)
@@ -415,11 +433,12 @@ mount(h`
       }}
     </ul>
     ${() => {
-      const ids = state.get('deckIds')
-      if (!ids.length) return null
-      const repo = reviewRepos.get(ids[0])
-      if (!repo) return null
-      return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo.publicKeyHex}`}>see your reviews in the explorer →</a>`
+      // Explorer link: jump to the learner's deck-index repo (always
+      // open after login). Previously linked to a reviews repo, which
+      // is now lazy — this is a better default anyway: "see your decks
+      // in the explorer" is the more honest framing.
+      if (!myDeckIndex) return null
+      return h`<a class="explorer-link" href=${`../explorer/#/repo/${myDeckIndex.publicKeyHex}`}>see your decks in the explorer →</a>`
     }}
   `)}
 
@@ -429,7 +448,7 @@ mount(h`
         <button class="study-back" onclick=${handle(backToHome)}>← back</button>
         <span>${() => {
           const deckId = activeDeck()
-          const title  = deckRepos.get(deckId)?.get('title') ?? ''
+          const title  = deckRepo(deckId)?.get('title') ?? ''
           const queue  = state.get('studyQueue')
           const idx    = currentIdx()
           const remaining = Math.max(0, queue.length - idx)

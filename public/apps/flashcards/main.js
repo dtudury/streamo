@@ -54,6 +54,10 @@ const revealed   = () => state.get('revealed')
 let signer = null
 let registry = null
 let session = null
+// The learner's deck-index Repo — `{ decks: [<pubkey-hex>, ...] }`,
+// signed by them. Lists the decks the learner has authored or forked.
+// Populated at login; appended to on fork.
+let myDeckIndex = null
 
 // ── SM-2 lite ────────────────────────────────────────────────────────
 
@@ -185,9 +189,11 @@ async function login (e) {
   state.set('user', { username, pubkey: bytesToHex(publicKey) })
 
   // Connect to the relay. The `follow` callback cascades subscription
-  // through the home repo's `flashcardsDecks` map — as soon as the
-  // home repo's bytes arrive, every deck Repo it advertises gets
-  // subscribed automatically. Same pattern chat uses for `members`.
+  // through (a) the home repo's `flashcardsDecks` map for bundled decks
+  // and (b) any repo's `decks` array (the deck-index shape) for forks
+  // the learner has authored. The home repo doesn't have `decks` and
+  // the deck-index doesn't have `flashcardsDecks`, so each clause
+  // applies cleanly to its source.
   registry = new RepoRegistry(undefined, { recaller, name: 'flashcards' })
   session = await registrySync(
     registry,
@@ -197,29 +203,53 @@ async function login (e) {
       follow: (keyHex, repo, subscribe) => {
         const fd = repo.get('flashcardsDecks') ?? {}
         for (const deckKey of Object.values(fd)) subscribe(deckKey)
+        const myDecks = repo.get('decks') ?? []
+        for (const deckKey of myDecks) subscribe(deckKey)
       }
     }
   )
 
-  // The home repo was auto-subscribed via the hello handshake; once
-  // its bytes arrive, `follow` will fire and subscribe all deck Repos.
+  // Bundled decks: discovered via home repo (auto-subscribed via hello).
   const info = await fetch('/api/info').then(r => r.json())
   const homeRepo = await registry.open(info.primaryKeyHex)
   const fd = await awaitField(homeRepo, 'flashcardsDecks', 8000)
-  const ids = Object.keys(fd)
+  const bundledIds = Object.keys(fd)
 
-  // Each deck Repo is now subscribing (via the cascade); wait for
-  // content. `registry.open` returns the already-subscribed instance.
-  await Promise.all(ids.map(async (id) => {
+  // Open the learner's deck-index Repo — same key-derivation pattern
+  // as reviews. Fresh users have no bytes here; we treat the brief
+  // timeout as "no forks yet."
+  const idxStream = 'flashcards:deck-index'
+  const { publicKey: idxPub } = await signer.keysFor(idxStream)
+  const idxKey = bytesToHex(idxPub)
+  myDeckIndex = await session.subscribe(idxKey)
+  myDeckIndex.attachSigner(signer, idxStream)
+  myDeckIndex._flashcardsKey = idxKey
+  let forkAddrs = []
+  try { forkAddrs = await awaitField(myDeckIndex, 'decks', 3000) }
+  catch { forkAddrs = [] }
+
+  // Open bundled deck repos.
+  await Promise.all(bundledIds.map(async (id) => {
     const repo = await registry.open(fd[id])
+    repo._flashcardsKey = fd[id]
     deckRepos.set(id, repo)
     await awaitField(repo, 'title', 8000)
   }))
-  // Reviews repos: per-learner, derived from this Signer — not
-  // discoverable through home repo content, so explicit subscribe.
-  await Promise.all(ids.map(id => openReviewsRepo(id)))
+  // Open forked deck repos. The cascade has already subscribed them;
+  // we just wait for content and stash. The fork's deckId is its
+  // pubkey-hex (no human-readable string id — the address IS the id).
+  await Promise.all(forkAddrs.map(async (addr) => {
+    const repo = await registry.open(addr)
+    repo._flashcardsKey = addr
+    deckRepos.set(addr, repo)
+    await awaitField(repo, 'title', 8000)
+  }))
 
-  state.set('deckIds', ids)
+  // Reviews repos: one per (learner, deck) for bundled + forks alike.
+  const allIds = [...bundledIds, ...forkAddrs]
+  await Promise.all(allIds.map(id => openReviewsRepo(id)))
+
+  state.set('deckIds', allIds)
   state.set('connecting', false)
   state.set('loggedIn', true)
 }
@@ -228,6 +258,7 @@ function logout () {
   signer = null
   registry = null
   session = null
+  myDeckIndex = null
   deckRepos.set({})
   reviewRepos.set({})
   state.set('user', null)
@@ -271,6 +302,47 @@ function grade (gradeIdx) {
   }
   state.set('currentIdx', idx + 1)
   state.set('revealed', false)
+}
+
+// Fork a deck: derive a fresh keypair for this learner's fork, copy
+// the upstream's cards into it, cite the upstream by address as a
+// value-level `forkedFrom` field, and append the new address to the
+// learner's deck-index Repo. Returns the new deck's id (pubkey-hex).
+//
+// Same key-derivation trick that gives one-login-many-reviews-repos
+// also gives one-login-many-decks-repos: a per-fork stream name
+// (`flashcards:my-deck:<upstreamId>:<timestamp>`) derives a unique
+// subkey from the learner's root credentials.
+async function forkDeck (upstreamId) {
+  const upstreamRepo = deckRepos.get(upstreamId)
+  const upstream = upstreamRepo?.get()
+  if (!upstream) return
+
+  const forkStream = `flashcards:my-deck:${upstreamId}:${Date.now()}`
+  const { publicKey } = await signer.keysFor(forkStream)
+  const newDeckKey = bytesToHex(publicKey)
+
+  const forkRepo = await session.subscribe(newDeckKey)
+  forkRepo.attachSigner(signer, forkStream)
+  forkRepo._flashcardsKey = newDeckKey
+  forkRepo.defaultMessage = `fork of ${upstream.title}`
+  forkRepo.set({
+    title: `${upstream.title} (my fork)`,
+    description: `forked from ${upstreamRepo._flashcardsKey.slice(0, 10)}…`,
+    cards: [...upstream.cards],
+    forkedFrom: upstreamRepo._flashcardsKey
+  })
+
+  // Append to the learner's deck-index. First fork from a fresh user
+  // initializes the `decks` array; subsequent forks append.
+  const currentForks = myDeckIndex.get('decks') ?? []
+  myDeckIndex.defaultMessage = `added fork: ${upstream.title}`
+  myDeckIndex.set({ decks: [...currentForks, newDeckKey] })
+
+  // Local state — deck repo, its reviews repo, and the home view's id list.
+  deckRepos.set(newDeckKey, forkRepo)
+  await openReviewsRepo(newDeckKey)
+  state.set('deckIds', [...state.get('deckIds'), newDeckKey])
 }
 
 // ── view helpers ─────────────────────────────────────────────────────
@@ -428,9 +500,30 @@ mount(h`
       font-size: 0.78rem;
       color: #888;
       font-variant-numeric: tabular-nums;
+      align-items: baseline;
     }
     .deck-stats .due  { color: #b91c1c; }
     .deck-stats .new  { color: #047857; }
+    .deck-stats .fork-btn {
+      margin-left: auto;
+      background: none;
+      border: none;
+      color: #1d4ed8;
+      font-size: 0.78rem;
+      cursor: pointer;
+      padding: 0;
+      text-decoration: underline dotted;
+      font-family: inherit;
+    }
+    .deck-stats .fork-btn:hover { text-decoration-style: solid; }
+    .deck-badge {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #047857;
+      margin-left: 0.4rem;
+      vertical-align: middle;
+    }
 
     .study {
       padding: 1.5rem 0 0;
@@ -574,15 +667,19 @@ mount(h`
           const repo = deckRepos.get(id)
           const title = repo?.get('title') ?? '(loading)'
           const description = repo?.get('description') ?? ''
+          const isFork = !!repo?.get('forkedFrom')
           const s = deckStats(id)
           return h`
             <li class="deck" data-key=${id} onclick=${handle(() => startStudy(id))}>
-              <div class="deck-title">${title}</div>
+              <div class="deck-title">${title}${isFork ? h`<span class="deck-badge">your fork</span>` : null}</div>
               <div class="deck-desc">${description}</div>
               <div class="deck-stats">
                 <span class="due">${s.due} due</span>
                 <span class="new">${s.new} new</span>
                 <span>${s.total} total</span>
+                ${isFork
+                  ? null
+                  : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
             </li>
           `

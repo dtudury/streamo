@@ -278,14 +278,12 @@ function logout () {
   })
 }
 
-// Open the reviews repo (kicks off subscribe + ready-timeout) and
-// switch to study view. No captured queue, no captured index — the
-// study view derives currentCard from buildStudyQueue[0] live, so as
-// bytes arrive (or grade events fire), the "next card" updates on its
-// own. The card display itself is gated on isReady so it doesn't flash
-// a wrong first card before reviews arrive.
-async function startStudy (deckId) {
-  await ensureReviewsRepo(deckId)  // resolves on WS handshake; bytes flow async
+// Purely declarative. Setting activeDeck triggers the
+// 'ensure-reviews-for-active-deck' watcher below to open the reviews
+// repo as a side effect; the study view's reactive gate handles the
+// "wait until ready" UX. No await here, no side effects in the click
+// path — state change in, side effect out, the unidirectional shape.
+function startStudy (deckId) {
   state.set('activeDeck', deckId)
   state.set('revealed', false)
   state.set('view', 'study')
@@ -375,6 +373,25 @@ function currentCardIdx () {
   const queue = buildStudyQueue(deckId)
   return queue.length === 0 ? null : queue[0]
 }
+
+// ── reactive side effects ────────────────────────────────────────────
+//
+// Click handlers stay declarative — they update state. State changes
+// trigger this watcher, which kicks off the side effect of opening
+// the reviews repo for the active deck. The watcher *converges*:
+// once `reviewRepos.set(deckId, repo)` fires, the if-already-open
+// guard suppresses the side effect on subsequent passes. Same shape
+// as registrySync's `follow` callback — a watcher whose body runs a
+// fire-and-forget op that, when complete, makes its own trigger
+// condition false.
+
+recaller.watch('ensure-reviews-for-active-deck', () => {
+  const deckId = state.get('activeDeck')
+  if (!deckId) return                            // home view, nothing to open
+  if (reviewRepos.get(deckId)) return            // already opened
+  if (!signer || !session) return                // not yet logged in / connected
+  ensureReviewsRepo(deckId)                      // fire and forget
+})
 
 // ── mount ────────────────────────────────────────────────────────────
 

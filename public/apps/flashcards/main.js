@@ -37,7 +37,7 @@ const state = liveObject({
   user:       null,   // { username, pubkey } once logged in
   view:       'home', // 'home' | 'study'
   activeDeck: null,   // deck id while studying
-  revealed:   false   // is the back of the current card shown?
+  revealedCardIdx: null  // which card index has been flipped (not a session-level bool)
   // No studyQueue, no currentIdx — both derive from the reviews repo
   // each render. The "next card" is buildStudyQueue[0]; grading commits
   // a review event and the queue shifts naturally as a side effect.
@@ -48,7 +48,11 @@ const connecting = () => state.get('connecting')
 const user       = () => state.get('user')
 const view       = () => state.get('view')
 const activeDeck = () => state.get('activeDeck')
-const revealed   = () => state.get('revealed')
+// `revealed` is derived: the back is shown only if the SPECIFIC card we
+// flipped is still the current card. If the queue shifts under us (bytes
+// arrive, another tab grades, deck changes), the back auto-hides because
+// revealedCardIdx no longer matches currentCardIdx — naturally reactive.
+const revealed = () => state.get('revealedCardIdx') === currentCardIdx()
 
 // Module-level handles populated by login(); reset by logout().
 let signer = null
@@ -248,8 +252,8 @@ function logout () {
     connecting: false,
     user:       null,
     view:       'home',
-    activeDeck: null,
-    revealed:   false
+    activeDeck:      null,
+    revealedCardIdx: null
   })
 }
 
@@ -260,7 +264,7 @@ function logout () {
 // path — state change in, side effect out, the unidirectional shape.
 function startStudy (deckId) {
   state.set('activeDeck', deckId)
-  state.set('revealed', false)
+  state.set('revealedCardIdx', null)
   state.set('view', 'study')
 }
 
@@ -269,16 +273,20 @@ function backToHome () {
   state.set('activeDeck', null)
 }
 
-function reveal () { state.set('revealed', true) }
+// Reveal ties the flip to the SPECIFIC card we're showing right now.
+// If the queue shifts before the user grades, `revealed()` returns
+// false and the back auto-hides — and grade() applies to the card we
+// revealed, not whatever queue[0] is at grade-time.
+function reveal () { state.set('revealedCardIdx', currentCardIdx()) }
 
 function grade (gradeIdx) {
   const deckId = activeDeck()
   const repo   = reviewRepos.get(deckId)
   if (!repo) return
-  // The current card is whichever one tops the live queue right now.
-  const queue = buildStudyQueue(deckId)
-  if (queue.length === 0) return
-  const cardIdx = queue[0]
+  // Grade the card the user actually saw the back of — not whichever
+  // card happens to top the queue now if it shifted.
+  const cardIdx = state.get('revealedCardIdx')
+  if (cardIdx == null) return
   const reviews = repo.get('reviews') ?? []
   repo.defaultMessage = `review: card ${cardIdx} graded ${['again', 'hard', 'good', 'easy'][gradeIdx]}`
   repo.set({
@@ -287,9 +295,9 @@ function grade (gradeIdx) {
   })
   // No queue mutation, no index advance — the commit above updates
   // the reviews repo, which shifts buildStudyQueue's output, which
-  // makes the new queue[0] the next card. Just hide the back so the
-  // next card's front is what's shown.
-  state.set('revealed', false)
+  // makes the new queue[0] the next card. Clearing revealedCardIdx
+  // tells the view to show the next card's front.
+  state.set('revealedCardIdx', null)
 }
 
 // Fork a deck: derive a fresh keypair for this learner's fork, copy

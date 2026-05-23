@@ -1,12 +1,12 @@
 // flashcards — spaced-repetition demo on streamo.
 //
-// Step 2: reviews are real signed streamo Repos. Login derives the
-// learner's root keypair via Signer; for each bundled deck we derive
-// a deck-scoped subkey (`flashcards:reviews:<deckId>`) — same root
-// credentials, infinitely many addressable repos. Each grade appends
-// a signed commit to the reviews Repo; SM-2 state is recomputed by
-// folding over `reviews[]`. The deck itself is still a static JSON
-// file in step 2 — step 3 makes decks real Repos too.
+// Step 3: decks are real signed Repos on the relay too. The home
+// repo's `flashcardsDecks` field maps deck-id → pubkey-hex; the
+// client reads it at login, opens each deck Repo via the registry,
+// and reads title/description/cards reactively. The relay's home
+// identity is the deck author for bundled decks; fork-a-deck (step
+// 4) will let any learner mint their own deck Repo with the same
+// keysFor-subkey mechanism.
 
 import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
@@ -23,29 +23,23 @@ const when = (cond, vnode) => () => cond() ? vnode : null
 
 const recaller = new Recaller('flashcards')
 
-// Bundled decks shipped with the app. In step 3 these become deck
-// Repos addressable on the relay; for now they're static JSON files.
-const BUNDLED_DECKS = [
-  { id: 'greek-alphabet', path: './decks/greek-alphabet.json' }
-]
-
-// Loaded deck content, keyed by id. Populated by loadDecks() at startup.
-const decks = liveObject({}, { recaller, name: 'decks' })
-
-// Reviews repos, keyed by deck id. One per (learner, deck), opened
-// after login. Reading these reactively is what makes deck stats and
-// study state auto-update across the UI without manual refresh hooks.
+// Deck Repos and Reviews Repos, both keyed by deck id. Deck Repos are
+// authored by the relay's home identity; Reviews Repos are authored by
+// the logged-in learner. The deck-id keys in both maps are the only
+// thing tying them together at the data layer.
+const deckRepos   = liveObject({}, { recaller, name: 'deckRepos' })
 const reviewRepos = liveObject({}, { recaller, name: 'reviewRepos' })
 
 const state = liveObject({
   loggedIn:   false,
-  connecting: false,    // true while login → registry → repos
+  connecting: false,    // true while login → discovery → repos
   user:       null,     // { username, pubkey } once logged in
   view:       'home',   // 'home' | 'study'
   activeDeck: null,     // deck id while studying
   currentIdx: 0,        // pointer into studyQueue
   revealed:   false,    // is the back of the current card shown?
-  studyQueue: []        // array of card indices for this session
+  studyQueue: [],       // array of card indices for this session
+  deckIds:    []        // ids of discovered & opened decks (drives the home list)
 }, { recaller, name: 'app' })
 
 const loggedIn   = () => state.get('loggedIn')
@@ -60,12 +54,7 @@ const revealed   = () => state.get('revealed')
 let signer = null
 let registry = null
 
-// ── SM-2 lite (the algorithm Anki et al. use) ────────────────────────
-//
-// Per-card state: { ease, interval (days), due (ms epoch), reps },
-// recomputed by folding over the reviews Repo's event log. Grade
-// buttons map to SM-2's 0..5 q-scale: again→0, hard→2, good→4, easy→5.
-// Fails (q<3) reset reps and re-queue the card later in the session.
+// ── SM-2 lite ────────────────────────────────────────────────────────
 
 const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0 }
 const GRADE_TO_Q = [0, 2, 4, 5]
@@ -87,9 +76,7 @@ function applySM2 (review, gradeIdx, atMs) {
   return r
 }
 
-// Fold every review event for this card to derive current SM-2 state.
-// The reviews Repo holds the event log; SM-2 state is never stored,
-// always recomputed. Cheap (most cards have very few events).
+// SM-2 state derived by folding every review event for this card.
 function reviewStateForCard (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
   if (!repo) return { ...DEFAULT_REVIEW }
@@ -101,34 +88,65 @@ function reviewStateForCard (deckId, cardIdx) {
   return r
 }
 
-// Walk a deck's review state. Returns { due, new, total }. Reactive:
-// reads from the reviews Repo, so this re-renders on every grade.
+function deckCards (deckId) {
+  return deckRepos.get(deckId)?.get('cards') ?? []
+}
+
 function deckStats (deckId) {
-  const deck = decks.get(deckId)
-  if (!deck) return { due: 0, new: 0, total: 0 }
+  const cards = deckCards(deckId)
+  if (!cards.length) return { due: 0, new: 0, total: 0 }
   let due = 0, neu = 0
   const now = Date.now()
-  for (let i = 0; i < deck.cards.length; i++) {
+  for (let i = 0; i < cards.length; i++) {
     const r = reviewStateForCard(deckId, i)
     if (r.reps === 0) neu++
     else if (r.due <= now) due++
   }
-  return { due, new: neu, total: deck.cards.length }
+  return { due, new: neu, total: cards.length }
 }
 
-// Build the study queue: due cards first, then new, then (so the app
-// is always usable for the demo) the rest in deck order.
 function buildStudyQueue (deckId) {
-  const deck = decks.get(deckId)
+  const cards = deckCards(deckId)
   const due = [], neu = [], rest = []
   const now = Date.now()
-  for (let i = 0; i < deck.cards.length; i++) {
+  for (let i = 0; i < cards.length; i++) {
     const r = reviewStateForCard(deckId, i)
     if (r.reps === 0) neu.push(i)
     else if (r.due <= now) due.push(i)
     else rest.push(i)
   }
   return [...due, ...neu, ...rest]
+}
+
+// ── one-shot reactive await: resolves when a repo field becomes defined.
+//
+// We use this to wait for bytes to arrive after `registry.open(...)` —
+// the open returns immediately, but subscribed bytes flow in over WS
+// and the field of interest may not be populated for a few hundred ms.
+
+function awaitField (repo, field, timeoutMs = 5000) {
+  const existing = repo.get(field)
+  if (existing !== undefined) return Promise.resolve(existing)
+  return new Promise((resolve, reject) => {
+    let done = false
+    const fn = () => {
+      const v = repo.get(field)
+      if (v !== undefined && !done) {
+        done = true
+        repo.recaller.unwatch(fn)
+        clearTimeout(timer)
+        resolve(v)
+      }
+    }
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true
+        repo.recaller.unwatch(fn)
+        reject(new Error(`timeout waiting for ${field}`))
+      }
+    }, timeoutMs)
+    repo.recaller.watch(`await-${field}`, fn)
+  })
 }
 
 // ── repo opening ─────────────────────────────────────────────────────
@@ -157,22 +175,32 @@ async function login (e) {
   f.elements.username.disabled = f.elements.password.disabled = true
   state.set('connecting', true)
 
-  // Identity: derive the learner's "root" pubkey for display. Each
-  // deck-scoped Repo derives its own subkey from these credentials.
   signer = new Signer(username, password, 1)
   const { publicKey } = await signer.keysFor('flashcards')
   state.set('user', { username, pubkey: bytesToHex(publicKey) })
 
-  // Connect to the registry and open reviews repos for every bundled
-  // deck up front. Eager because (a) the home view needs each deck's
-  // stats, (b) we only ship a couple of decks, (c) opening is cheap
-  // — repos are empty until you grade something.
+  // Connect to the relay.
   registry = new RepoRegistry(undefined, { recaller, name: 'flashcards' })
   await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
-  for (const { id } of BUNDLED_DECKS) {
-    await openReviewsRepo(id)
-  }
 
+  // Discover what decks the relay serves. /api/info gives us the home
+  // repo's pubkey; the home repo's `flashcardsDecks` field is the
+  // address map. No hardcoded deck addresses anywhere on the client.
+  const info = await fetch('/api/info').then(r => r.json())
+  const homeRepo = await registry.open(info.primaryKeyHex)
+  const fd = await awaitField(homeRepo, 'flashcardsDecks', 8000)
+  const ids = Object.keys(fd)
+
+  // Open each deck Repo in parallel; wait for each to have content.
+  // Then open the matching reviews Repo for this learner.
+  await Promise.all(ids.map(async (id) => {
+    const repo = await registry.open(fd[id])
+    deckRepos.set(id, repo)
+    await awaitField(repo, 'title', 8000)
+  }))
+  await Promise.all(ids.map(id => openReviewsRepo(id)))
+
+  state.set('deckIds', ids)
   state.set('connecting', false)
   state.set('loggedIn', true)
 }
@@ -180,10 +208,10 @@ async function login (e) {
 function logout () {
   signer = null
   registry = null
-  // Clear the reviewRepos liveObject by replacing target wholesale.
-  // The recaller fires on '__root__' so the home view re-renders empty.
+  deckRepos.set({})
   reviewRepos.set({})
   state.set('user', null)
+  state.set('deckIds', [])
   state.set('loggedIn', false)
   state.set('view', 'home')
   state.set('activeDeck', null)
@@ -212,16 +240,12 @@ function grade (gradeIdx) {
   const cardIdx = queue[idx]
   const repo    = reviewRepos.get(deckId)
   if (!repo) return
-  // Append a review event to the reviews Repo — this is a signed
-  // commit. The deck reference stays a stable id today; in step 3 it
-  // becomes the deck Repo's address.
   const reviews = repo.get('reviews') ?? []
   repo.defaultMessage = `review: card ${cardIdx} graded ${['again', 'hard', 'good', 'easy'][gradeIdx]}`
   repo.set({
     deck: deckId,
     reviews: [...reviews, { cardIdx, grade: gradeIdx, at: Date.now() }]
   })
-  // "Again" → re-queue at the end so the user sees it later this session.
   if (gradeIdx === 0) {
     state.set('studyQueue', [...queue, cardIdx])
   }
@@ -229,31 +253,16 @@ function grade (gradeIdx) {
   state.set('revealed', false)
 }
 
-// ── data loading ─────────────────────────────────────────────────────
-
-async function loadDecks () {
-  for (const d of BUNDLED_DECKS) {
-    const r = await fetch(d.path)
-    const json = await r.json()
-    decks.set(d.id, json)
-  }
-}
-
 // ── view helpers ─────────────────────────────────────────────────────
 
 function currentCard () {
   const deckId = activeDeck()
-  const deck   = decks.get(deckId)
-  if (!deck) return null
+  const cards  = deckCards(deckId)
   const queue  = state.get('studyQueue')
   const idx    = currentIdx()
   if (idx >= queue.length) return null  // session complete
-  return deck.cards[queue[idx]]
+  return cards[queue[idx]]
 }
-
-// ── boot ─────────────────────────────────────────────────────────────
-
-loadDecks()
 
 // ── mount ────────────────────────────────────────────────────────────
 
@@ -512,7 +521,7 @@ mount(h`
     </a>
     <span class="page-title">flashcards</span>
   </h1>
-  <p class="tagline">Tiny spaced-repetition where your reviews are a signed Repo you own. Each deck you study lives at its own address — bookmarkable, forkable, yours forever.</p>
+  <p class="tagline">Tiny spaced-repetition where decks are real signed Repos on the relay and your reviews are a signed Repo you own. Each deck lives at its own address — bookmarkable, forkable, yours forever.</p>
 
   ${when(() => !loggedIn() && !connecting(), h`
     <h2>identity</h2>
@@ -525,7 +534,7 @@ mount(h`
   `)}
 
   ${when(connecting, h`
-    <p class="connecting">connecting to the relay and opening your reviews repos…</p>
+    <p class="connecting">connecting to the relay, discovering decks, opening your reviews repos…</p>
   `)}
 
   ${when(loggedIn, h`
@@ -539,37 +548,31 @@ mount(h`
     <h2>your decks</h2>
     <ul class="decks">
       ${() => {
-        const items = []
-        for (const { id } of BUNDLED_DECKS) {
-          const deck = decks.get(id)
-          if (!deck) {
-            items.push(h`<li class="empty" data-key=${`loading-${id}`}>loading…</li>`)
-            continue
-          }
+        const ids = state.get('deckIds')
+        if (!ids.length) return h`<li class="empty">no decks served by this relay yet.</li>`
+        return ids.map(id => {
+          const repo = deckRepos.get(id)
+          const title = repo?.get('title') ?? '(loading)'
+          const description = repo?.get('description') ?? ''
           const s = deckStats(id)
-          items.push(h`
+          return h`
             <li class="deck" data-key=${id} onclick=${handle(() => startStudy(id))}>
-              <div class="deck-title">${deck.title}</div>
-              <div class="deck-desc">${deck.description}</div>
+              <div class="deck-title">${title}</div>
+              <div class="deck-desc">${description}</div>
               <div class="deck-stats">
                 <span class="due">${s.due} due</span>
                 <span class="new">${s.new} new</span>
                 <span>${s.total} total</span>
               </div>
             </li>
-          `)
-        }
-        return items
+          `
+        })
       }}
     </ul>
-    <p class="hint">More decks coming — HTTP status codes, US state capitals.</p>
     ${() => {
-      // Surface the most-recently-touched reviews Repo as an
-      // explorer link, so you can see your signed reviews land.
-      const ids = Object.keys(reviewRepos.target)
-      if (ids.length === 0) return null
-      const id = ids[0]
-      const repo = reviewRepos.get(id)
+      const ids = state.get('deckIds')
+      if (!ids.length) return null
+      const repo = reviewRepos.get(ids[0])
       if (!repo) return null
       return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo._flashcardsKey}`}>see your reviews in the explorer →</a>`
     }}
@@ -580,12 +583,12 @@ mount(h`
       <div class="study-header">
         <button class="study-back" onclick=${handle(backToHome)}>← back</button>
         <span>${() => {
-          const deck = decks.get(activeDeck())
-          const queue = state.get('studyQueue')
-          const idx = currentIdx()
-          if (!deck) return ''
+          const deckId = activeDeck()
+          const title  = deckRepos.get(deckId)?.get('title') ?? ''
+          const queue  = state.get('studyQueue')
+          const idx    = currentIdx()
           const remaining = Math.max(0, queue.length - idx)
-          return `${deck.title} · ${remaining} left`
+          return title ? `${title} · ${remaining} left` : ''
         }}</span>
       </div>
       ${() => {

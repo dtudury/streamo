@@ -3,6 +3,7 @@
 import { config } from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
+import { readFile, readdir } from 'fs/promises'
 import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
@@ -96,6 +97,35 @@ if (server.signer) {
   }
   console.log(`[chat] tarot key: ${tarotKeyHex} (${tarotRepo.byteLength} bytes, ${[...tarotRepo.history()].length} commits)`)
 
+  // Bundled flashcards decks: each JSON in public/apps/flashcards/decks/
+  // becomes a signed Repo whose author is this relay's home identity.
+  // Deterministic per-deck subkey via `flashcards-deck:<id>`. The home
+  // repo's `flashcardsDecks` field will map id → pubkey-hex so the
+  // client can discover them at runtime — no hardcoded addresses.
+  const flashcardsDecksDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'flashcards', 'decks')
+  const flashcardsDecks = {}
+  try {
+    const files = (await readdir(flashcardsDecksDir)).filter(f => f.endsWith('.json') && !f.startsWith('_'))
+    for (const file of files) {
+      const id = file.replace(/\.json$/, '')
+      const content = JSON.parse(await readFile(join(flashcardsDecksDir, file), 'utf8'))
+      const deckKey = await server.signer.keysFor(`flashcards-deck:${id}`)
+      const deckKeyHex = bytesToHex(deckKey.publicKey)
+      const deckRepo = await server.registry.open(deckKeyHex)
+      deckRepo.attachSigner(server.signer, `flashcards-deck:${id}`)
+      // Idempotent: only commit when content actually differs.
+      if (JSON.stringify(deckRepo.get() ?? null) !== JSON.stringify(content)) {
+        deckRepo.defaultMessage = `seed: ${content.title}`
+        deckRepo.set(content)
+        console.log(`[chat] flashcards: seeded ${id} → ${deckKeyHex}`)
+      }
+      flashcardsDecks[id] = deckKeyHex
+    }
+    console.log(`[chat] flashcards: ${Object.keys(flashcardsDecks).length} deck(s) ready`)
+  } catch (e) {
+    if (e.code !== 'ENOENT') console.log(`[chat] flashcards: ${e.message}`)
+  }
+
   // Seed the primary repo with the journal — the home repo doubles as the
   // homepage's content source. Each future journal entry is a new commit on
   // this repo, and the homepage walks `entries` to render. The relay link
@@ -125,6 +155,12 @@ if (server.signer) {
       body: 'this is the streamo journal. each entry is a signed commit on this repo; the homepage walks them and the relay link in the explorer leads here. append-only history made visible.',
       at: new Date()
     }]
+    needsCommit = true
+  }
+  // Publish the bundled-deck address map on the home repo so the
+  // flashcards client can discover what's served without hardcoding.
+  if (JSON.stringify(seed.flashcardsDecks ?? {}) !== JSON.stringify(flashcardsDecks)) {
+    seed.flashcardsDecks = flashcardsDecks
     needsCommit = true
   }
   if (needsCommit) {

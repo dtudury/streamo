@@ -312,3 +312,82 @@ two LiveSources, one for identity, one for content. The journal app
 uses a single repo's `entries` array; we use this two-layer pattern
 because each deck is its own author / own address / own forkable
 unit. Different shape for different use case.
+
+---
+
+## 2026-05-22 — step 4 landed: fork-a-deck
+
+Shipped `8950c89`. A learner can now click *fork* on any deck they
+don't already own and get their own signed deck Repo with the
+upstream's cards copied, citing the upstream by address. The fork
+lives in the learner's deck-index Repo (one per learner, stream
+`flashcards:deck-index`), discovered at login and cascaded by the
+follow callback.
+
+### the same key-derivation trick, third time
+
+Step 2 used `Signer.keysFor` to give every learner-deck pair its own
+reviews keypair. Step 4 uses the *same trick* to give every fork its
+own deck keypair: `signer.keysFor('flashcards:my-deck:<upstreamId>
+:<timestamp>')`. Same root credentials; arbitrarily many addressable
+Repos; no "create a new identity" step. The pattern keeps paying off.
+
+### the follow cascade, generalised
+
+The `follow` callback now walks *two* sources from one body:
+
+```js
+follow: (keyHex, repo, subscribe) => {
+  const fd = repo.get('flashcardsDecks') ?? {}
+  for (const deckKey of Object.values(fd)) subscribe(deckKey)
+  const myDecks = repo.get('decks') ?? []
+  for (const deckKey of myDecks) subscribe(deckKey)
+}
+```
+
+`flashcardsDecks` only appears on the home repo; `decks` only
+appears on a deck-index. Each clause naturally applies to its
+source. The follow callback doesn't need to know *which* repo
+fired it — the data shape disambiguates.
+
+### "new user has no bytes" — the try/catch on awaitField
+
+A learner who's never forked has an empty deck-index Repo. The
+relay knows it's empty; awaitField times out. We treat the
+timeout as "no forks yet" rather than as an error:
+
+```js
+let forkAddrs = []
+try { forkAddrs = await awaitField(myDeckIndex, 'decks', 3000) }
+catch { forkAddrs = [] }
+```
+
+Two scenarios collapse cleanly into one (empty-as-empty); the only
+edge it doesn't cover is "the bytes exist on the relay but take
+longer than 3s to push." For v1 that's acceptable; the next reload
+catches up.
+
+### what doesn't work yet (worth surfacing)
+
+- **No live cross-tab sync of the deck list.** The deck-index repo
+  itself syncs reactively, but the home view reads `state.deckIds`
+  (set once at login). Fork in tab A → tab B needs refresh to see
+  the new deck. The right fix is a `recaller.watch` on
+  `myDeckIndex.get('decks')` that updates `state.deckIds` and opens
+  any newly-arrived addresses. Defer to step 5+.
+- **Editing a fork isn't here yet** — fork-without-edit is a
+  demonstrative move (proves the lineage and the keypair-per-fork
+  story). Step 5 adds the card editor: add card, edit, delete,
+  reorder.
+- **No tree view of fork lineage** — `forkedFrom` is stored on each
+  fork, but we don't walk it to render a "this is a fork of X which
+  is a fork of Y" chain. Reasonable v2 polish for the explorer too.
+
+### stopPropagation, briefly
+
+The Fork button lives inside the clickable `<li>` that triggers
+startStudy. Naive `onclick=${handle(() => forkDeck(id))}` would
+fork *and then* start studying. The handler explicitly
+`e.stopPropagation()` before calling forkDeck. Worth keeping in the
+"build a streamo app" doc — the `handle` form receives the event
+as its first arg, which makes propagation control trivial.

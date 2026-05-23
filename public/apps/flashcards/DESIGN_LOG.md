@@ -234,3 +234,81 @@ inherit the old patterns by mimicry.** This is the third
 "correction during build" moment in this app (after reviews-as-URL
 and the deckStats-recaller cleanup); each one made the code better
 *and* the eventual tutorial more honest.
+
+---
+
+## 2026-05-22 — step 3 landed: decks become signed Repos on the relay
+
+Shipped `68655f9`. The first end-to-end version where *every layer*
+of flashcards is on streamo: the deck is signed by the relay's home
+identity, the reviews are signed by the learner, the addresses
+discover at runtime. Greek alphabet's first real address:
+`03ef090a1b62f9154059a28269a22cc93f4433eb7190467b7600e47cf4237d8aad`.
+
+### the discovery pattern, in one breath
+
+The home repo is the relay's "what do I serve" advertisement.
+Adding a field to it (`flashcardsDecks: { id: pubkeyHex, ... }`)
+makes the bundled decks discoverable without any /api endpoint,
+without any hardcoded addresses, and without any out-of-band
+configuration. Client fetches `/api/info` to learn the home repo's
+pubkey, opens it via the registry, reads `flashcardsDecks`, opens
+each deck Repo. This is the page-as-Repo aesthetic extended to
+app-level metadata: **the home repo IS the catalog.**
+
+### the awaitField helper
+
+`registry.open(pubkeyHex)` returns immediately, but the repo's bytes
+arrive over WS asynchronously. For one-shot "wait for this field to
+exist" needs, we wrote a small helper:
+
+```js
+function awaitField (repo, field, timeoutMs = 5000) {
+  const existing = repo.get(field)
+  if (existing !== undefined) return Promise.resolve(existing)
+  return new Promise((resolve, reject) => {
+    const fn = () => { ... if (repo.get(field) !== undefined) resolve(...) }
+    repo.recaller.watch(`await-${field}`, fn)
+    const timer = setTimeout(() => { repo.recaller.unwatch(fn); reject(...) }, timeoutMs)
+  })
+}
+```
+
+Worth surfacing in the public doc — it's a small bridge between
+streamo's reactive idiom and async/await control flow. Reactive UI
+doesn't need it (slots re-run themselves); imperative discovery
+flows like login() do.
+
+### idempotent seeds: the JSON-stringify guard
+
+Server-side, the seed step runs on *every* startup. To avoid
+appending spurious commits to deck Repos on each restart, we guard:
+
+```js
+if (JSON.stringify(deckRepo.get() ?? null) !== JSON.stringify(content)) {
+  deckRepo.set(content)
+}
+```
+
+Same guard on the home repo's flashcardsDecks update. Cheap; stable
+chain history. The append-only nature of streamo makes idempotent
+seeds important — every redundant commit would live forever.
+
+### what unlocks next
+
+Step 4 (fork-a-deck) is now trivially within reach: a learner can
+derive their own deck-keypair via `signer.keysFor('flashcards-deck:
+my-fork-of-greek')`, set its value to a copy of the upstream deck,
+and cite the upstream as `remoteParent`. Same key-derivation trick
+that made one-login-many-reviews-repos work makes one-login-many-
+decks-repos work for the *learner* too.
+
+### the deck list at scale
+
+state.deckIds is the list-of-known-ids the home view subscribes to;
+deckRepos.get(id) reads the actual Repo. Splitting "what ids exist"
+from "what's in each repo" is the streamo idiom for collections —
+two LiveSources, one for identity, one for content. The journal app
+uses a single repo's `entries` array; we use this two-layer pattern
+because each deck is its own author / own address / own forkable
+unit. Different shape for different use case.

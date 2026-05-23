@@ -7,76 +7,94 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ## current state
 
-Streamo is at 8.6.0, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment.
-**8.6.0 lands a service worker and hand-rolled Web Push** — the
-homepage registers a network-first `/sw.js`, and a chat message can
-now reach you with no tab open: VAPID + RFC-8291 message encryption,
-done with Node built-ins and no dependencies, pinned to the RFC's own
-test vector. The relay grew a generic `routes` hook, push endpoints, a
-subscription store, and a `notifyOnMessages` watcher; the chat client
-subscribes on login.
-**8.5.0 lands auto-reconnect** — a dropped registry WebSocket re-opens
-itself with exponential backoff + jitter instead of going silently
-dead. The session object stays stable across the gap and replays its
-subscriptions and interest; `session.close()` opts out, the chat
-surfaces a quiet "reconnecting…", and the explorer's connection pill
-tracks the live socket rather than sticking on a stale "disconnected".
-8.5.0 also lands the chat notification channel — a Web Audio ding on
-incoming messages, `notify.js` for non-interactive posting, the
-bounded `watch.js` presence + reply watcher, and a presence dot that
-reads liveness by announce-staleness.
-**8.4.2 fixes `/streams/:key/raw`** — the route's byte counter read
-only the first segment of an 8.4 batched frame, so the HTTP response
-never ended and clients hung; it now walks the whole frame. It also
-lands the explorer commit wheel (phase 1) — a Price-is-Right big-wheel
-commit picker that spins but doesn't navigate yet.
-**8.4.1 fixes the wire parsers' O(N²)** — `buf = buf.slice(rest)`
-per-chunk became `buf.subarray(...)` + `bufOffset` pointer.
-archiveSync startup of streamo-history went from 22.7s of
-event-loop block to subsecond; recurring 1-7s steady-state lag
-events from WS echo handling vanished. **8.4 batches the wire
-reader's frames** — `makeReadableStream` now packs all ready
-chunks into one frame (capped at 256KB) instead of
-one-frame-per-chunk; a 21KB repo goes from ~10,000 WS sends to 1.
-Surfaced a latent `seed-history` archive flush race that the old
-slow path had been masking (now papered over by the same
-batching; proper fix filed). **8.3 lands recovery UX v1** —
-both divergence flags (`pushRejected`, `conflictDetected`) carry
-the rejected commit's `dataAddress`, and the chat banner has
-Send/Discard buttons that re-sync from the relay and (on Send)
-merge the local-only writes back in. **8.2 makes the subscribe
-handshake carry the client's chain anchor** — the `subscribe`
-JSON includes `(fromOffset, fromChainHash)`; the server validates
-and streams only post-anchor bytes, saving the genesis-replay on
-every reconnect. Wipe-recovery self-heals as a side effect. **8.1
-collapses `registry.open` + `session.subscribe` into one verb** —
-`await session.subscribe(key)` opens the Repo locally, plumbs the
-wire, and returns the Repo. **8.0 makes the relay the single
-chain authority per repo** — a per-repo `RepoSerializer` at the
-relay atomically accepts or rejects incoming pushes against the
-current top; clients receiving the authoritative stream trust +
-append. Conflict detection that used
-to happen by accident at every client now happens deliberately at
-one point, and rejections come back to the client as a real
-reactive signal (`repo.pushRejected`). 8.0 also lands a layering
-pass — Streamo is now a pure content-addressable codec, every
-chain-and-signing concern lives on Repo — plus a chain-hash
-simplification (2 sha256 calls per signature instead of 2N) and a
-vocabulary cleanup (fork/branch/conflict/merge per streamo's
-actual model, not git's). All breaking; see CHANGELOG for the
-migration. Underneath, 7.6 fine-grained watcher boundaries (each
-`<${Component}/>` invocation is its own watch scope), 7.5
-multi-home serving (every pushed repo is a public URL at
-`/streams/<keyhex>/`), 7.4 dumb-pipe relay (the relay can drop
-its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
-Page-as-Repo, 7.0 Obsecurity, and 6.0 hash-chain signatures are
-unchanged. The all-in-one server (`npm run dev` / `npm run prod`)
-hosts the homepage, chat, explorer, todomvc, and the
-`streamo-history` repo on one port. 234 tests passing.
+Streamo is at **8.6.0**, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. **234 tests
+passing.** The all-in-one server (`npm run dev` / `npm run prod`)
+hosts the homepage, chat, explorer, todomvc, the in-progress
+flashcards demo, and the `streamo-history` repo on one port.
 
-See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we got
-here.
+### recent releases
+
+- **8.6.0** — service worker + hand-rolled Web Push. The homepage
+  registers a network-first `/sw.js`, and a chat message can reach
+  you with no tab open: VAPID + RFC-8291 message encryption, done
+  with Node built-ins and no dependencies, pinned to the RFC's own
+  test vector. The relay grew a generic `routes` hook, push
+  endpoints, a subscription store, and a `notifyOnMessages` watcher;
+  the chat client subscribes on login.
+
+- **8.5.0** — auto-reconnect. A dropped registry WebSocket re-opens
+  itself with exponential backoff + jitter instead of going silently
+  dead. The session object stays stable across the gap and replays
+  its subscriptions and interest; `session.close()` opts out, the
+  chat surfaces a quiet "reconnecting…", and the explorer's
+  connection pill tracks the live socket rather than sticking on a
+  stale "disconnected". 8.5.0 also lands the chat notification
+  channel — a Web Audio ding on incoming messages, `notify.js` for
+  non-interactive posting, the bounded `watch.js` presence + reply
+  watcher, and a presence dot that reads liveness by
+  announce-staleness.
+
+- **8.4.2** — fixes `/streams/:key/raw`. The route's byte counter
+  read only the first segment of an 8.4 batched frame, so the HTTP
+  response never ended and clients hung; it now walks the whole
+  frame. Also lands the explorer commit wheel (phase 1) — a
+  Price-is-Right big-wheel commit picker that spins but doesn't
+  navigate yet.
+
+- **8.4.1** — fixes the wire parsers' O(N²). `buf = buf.slice(rest)`
+  per-chunk became `buf.subarray(...)` + `bufOffset` pointer.
+  archiveSync startup of streamo-history went from 22.7s of
+  event-loop block to subsecond; recurring 1–7s steady-state lag
+  events from WS echo handling vanished.
+
+- **8.4** — batches the wire reader's frames. `makeReadableStream`
+  now packs all ready chunks into one frame (capped at 256KB)
+  instead of one-frame-per-chunk; a 21KB repo goes from ~10,000 WS
+  sends to 1. Surfaced a latent `seed-history` archive flush race
+  that the old slow path had been masking (now papered over by the
+  same batching; proper fix filed).
+
+- **8.3** — recovery UX v1. Both divergence flags (`pushRejected`,
+  `conflictDetected`) carry the rejected commit's `dataAddress`, and
+  the chat banner has Send/Discard buttons that re-sync from the
+  relay and (on Send) merge the local-only writes back in.
+
+- **8.2** — subscribe-handshake-carries-chain-anchor. The `subscribe`
+  JSON includes `(fromOffset, fromChainHash)`; the server validates
+  and streams only post-anchor bytes, saving the genesis-replay on
+  every reconnect. Wipe-recovery self-heals as a side effect.
+
+- **8.1** — `session.subscribe` becomes the canonical client verb.
+  `await session.subscribe(key)` opens the Repo locally, plumbs the
+  wire, and returns the Repo. (Note: `registry.open` still exists as
+  a separate public method and remains a footgun for client code —
+  see *Held for a major bump* below for the planned final fix.)
+
+- **8.0** — the relay becomes the single chain authority per repo. A
+  per-repo `RepoSerializer` at the relay atomically accepts or
+  rejects incoming pushes against the current top; clients receiving
+  the authoritative stream trust + append. Conflict detection that
+  used to happen by accident at every client now happens deliberately
+  at one point, and rejections come back to the client as a real
+  reactive signal (`repo.pushRejected`). Also lands a layering pass —
+  Streamo is now a pure content-addressable codec, every
+  chain-and-signing concern lives on Repo — plus a chain-hash
+  simplification (2 sha256 calls per signature instead of 2N) and a
+  vocabulary cleanup (fork/branch/conflict/merge per streamo's
+  actual model, not git's). All breaking; see CHANGELOG for the
+  migration.
+
+- **7.x** — 7.6 fine-grained watcher boundaries (each
+  `<${Component}/>` invocation is its own watch scope), 7.5
+  multi-home serving (every pushed repo is a public URL at
+  `/streams/<keyhex>/`), 7.4 dumb-pipe relay (the relay can drop
+  its signer), 7.3 merge primitive + all-npx fork-and-serve, 7.1
+  page-as-Repo, 7.0 Obsecurity. **6.0** — hash-chain signatures.
+  All remain in place underneath the 8.x arc.
+
+See [CHANGELOG.md](./CHANGELOG.md) for the detailed history of how we
+got here.
 
 ---
 
@@ -497,7 +515,54 @@ Neither blocks anything; both are quality-of-presence-display polish.
 
 ---
 
-## known limitations
+## held for a major bump
+
+Refactors that are *too worthwhile to lose but not urgent and require
+a major version bump*. The trigger for shipping any of these: we're
+already planning a major bump for another reason, or one of these
+becomes the highest priority on its own. Bundling them when the
+breaking-change door is open keeps the cost amortised.
+
+### `registry.open` → retrieve-only (+ `_materialize` for internals)
+
+8.1 made `session.subscribe` the canonical client verb for "get me
+the Repo for this key, with bytes flowing." But `registry.open`
+remained as a separate public method that *creates* a local Repo when
+missing, without subscribing. That asymmetry is the footgun documented
+in CLAUDE.md's *known footguns* (open-vs-subscribe): clients reach for
+`open` because the English meaning is right ("open this repo"), get
+back an empty local Repo, and read undefined forever.
+
+The complete fix shape: **make `registry.open(key)` retrieve-only —
+returns the cached Repo or `undefined`, never creates.** All creation
+paths go through `session.subscribe` (public, wire-plumbing) or
+`registry._materialize` (internal, used by the registry's own cascade
+work and the relay's startup seed). The trap dissolves: a client that
+calls `open` on an un-subscribed key gets `undefined`, fails loudly on
+the next read, and is pointed toward `subscribe`. The English meaning
+of "open" — find the existing thing — finally matches the code.
+
+Breaking for any caller of `registry.open` that relied on the
+create-if-missing behavior. Migration is mostly mechanical: clients
+calling `open` for retrieval after the cascade subscribed need no
+change; clients calling `open` to bootstrap a new repo switch to
+`subscribe`. The relay's seed step switches to `_materialize`.
+
+### `Repo` → `StreamoRepo`
+
+The class name `Repo` is generic and bumps against git semantics —
+exactly the trap we hit in 2026-05-20 when refactoring toward git-like
+distributed-merge logic, before the vocabulary cleanup that made
+clear streamo's Repo is *Streamo + a signed chain*, not a git repo.
+Renaming the class to `StreamoRepo` removes the ambient pull toward
+the wrong model and pairs the class gestalt cleanly with `Streamo`
+(the codec) — same prefix, same family.
+
+Bundled with the `open` redesign because the migration touch-list
+overlaps: every import, every type annotation, every doc reference.
+Same major bump pays for both.
+
+---
 
 ### multi-device write conflict recovery *(detection landed in 8.0; UX is the open thread)*
 

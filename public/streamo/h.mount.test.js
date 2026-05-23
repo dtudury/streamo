@@ -1,5 +1,5 @@
 import { describe } from './utils/testing.js'
-import { h } from './h.js'
+import { h, handle } from './h.js'
 import { mount } from './mount.js'
 import { Streamo } from './Streamo.js'
 import { Recaller } from './utils/Recaller.js'
@@ -621,5 +621,37 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => setTimeout(r, 20))
     assert.equal(ul.childNodes.length, 1, 'item re-rendered')
     assert.equal(ul.childNodes[0].textContent, 'b', 'shows current inner value')
+  })
+
+  // handle() defangs the "return false is silent preventDefault" trap by
+  // discarding the wrapped fn's return value. See h.js's handle() docstring
+  // and CLAUDE.md's known-footguns section. This test pins that behavior.
+  test('handle() calls the fn with (event, element) and returns undefined', ({ assert }) => {
+    let receivedEvent = null
+    let receivedElement = null
+    const fn = (event, element) => {
+      receivedEvent = event
+      receivedElement = element
+      return false  // would trigger preventDefault if returned through
+    }
+    const mockEl = { tag: 'button' }
+    const mockEvent = { type: 'click' }
+    const result = handle(fn)(mockEl)(mockEvent)
+    assert.equal(receivedEvent, mockEvent, 'fn receives the event')
+    assert.equal(receivedElement, mockEl, 'fn receives the element')
+    assert.equal(result, undefined, 'handle()-wrapped handler returns undefined even when fn returns false')
+  })
+
+  test('handle() return-value-discard survives a short-circuit body', ({ assert }) => {
+    // The canonical trap shape: `e => e.key === 'Escape' && cancelEdit()`
+    // — non-Escape keys evaluate the && to `false`. handle() must still
+    // return undefined so the keystroke isn't preventDefaulted.
+    let called = 0
+    const fn = (e) => e.key === 'Escape' && (called++, true)
+    const mockEl = { tag: 'input' }
+    assert.equal(handle(fn)(mockEl)({ key: 'a' }), undefined, 'non-Escape keystroke does not return false through handle')
+    assert.equal(called, 0)
+    assert.equal(handle(fn)(mockEl)({ key: 'Escape' }), undefined, 'Escape also returns undefined')
+    assert.equal(called, 1)
   })
 })

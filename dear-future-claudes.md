@@ -76,10 +76,13 @@ and assigns the return value to `el.onclick`. The handler runs during
 mount, returns undefined, and you've effectively unbound the click.
 
 **Use `handle` from `h.js`:** `onclick=${handle(fn)}` produces the
-right curry shape (`el => event => fn(event, el)`) and reads as the
-declarative thing it is — "this attr IS an event handler, wire it
-up." For handlers that ignore the event/element:
-`onclick=${handle(() => doThing(id))}`.
+right curry shape (`el => event => { fn(event, el) }`) and reads as
+the declarative thing it is — "this attr IS an event handler, wire
+it up." For handlers that ignore the event/element:
+`onclick=${handle(() => doThing(id))}`. *Bonus:* `handle()`'s block
+body discards the inner fn's return value, so the
+return-`false`-is-silent-`preventDefault` trap (see CLAUDE.md
+footgun) dissolves for any handler routed through it.
 
 Same shape for `onsubmit`, `oninput`, etc. — anywhere mount assigns
 a DOM-level-0 property and you want it to be a real function on the

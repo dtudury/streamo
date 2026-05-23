@@ -349,7 +349,17 @@ function shallowEqual (a, b) {
  *
  *   <button onclick=${handle(() => toggleTodo(todo.id))}>
  *
+ * **Defangs the "return `false` is silent `preventDefault`" trap.** Mount
+ * assigns event handlers as DOM Level 0 properties (`el.onclick = fn`); per
+ * HTML spec, if such a handler returns `false`, the browser treats it as
+ * `event.preventDefault()`. A natural short-circuit body like `e =>
+ * e.key === 'Escape' && cancelEdit()` returns `false` for any non-Escape
+ * key, silently blocking the keystroke. By wrapping the inner call in a
+ * block body, `handle` *always* returns `undefined` regardless of what the
+ * user's `fn` returns — the trap dissolves for any handler routed through
+ * `handle`. If you explicitly want `preventDefault`, call `event.preventDefault()`.
+ *
  * @param {(event: Event, element: Element) => any} fn
- * @returns {(element: Element) => (event: Event) => any}
+ * @returns {(element: Element) => (event: Event) => void}
  */
-export const handle = fn => element => event => fn(event, element)
+export const handle = fn => element => event => { fn(event, element) }

@@ -68,23 +68,34 @@ lands without tests passing, you have failed the contract.
 
 ## known footguns
 
-- **`registry.open(key)` is local; `session.subscribe(key)` is the wire.**
-  `RepoRegistry.open(key)` ensures a Repo object exists locally for that pubkey
-  — it's idempotent, doesn't touch the network, and is used internally by the
-  registry when bytes arrive for an unknown key (or by code that explicitly
-  wants local-only behaviour, like the relay's startup seed step). **Client
-  code that wants bytes to flow wants `session.subscribe(key)`**, which calls
-  `open` *and* sends a `subscribe` message over the WS so the relay starts
-  pushing bytes. The cascading `follow` callback in `registrySync(...)` is the
-  content-driven sibling — subscribe-by-discovery via a watcher on a known
-  repo's value (`home.flashcardsDecks`, `home.members`, etc.) instead of
-  subscribe-by-explicit-call. We've hit this footgun twice now — both times by
-  reaching for `open` because the name sounded right ("I want to open this
-  repo"). *The lesson isn't that the API is mis-shaped — the split is real and
-  useful (the registry needs a local-only path; the relay seed wants it).* The
-  lesson is that **the right verb has a less-attractive name than the wrong
-  one, and that gravity recurs.** If your code calls `registry.open` directly
-  and you are not the registry or the server-side seed, look at it twice.
+- ## ⚠️ **IMPORTANT — REPEAT OFFENDER:** `registry.open(key)` is local; `session.subscribe(key)` is the wire.
+  **If your client code is reading `undefined` from a Repo you just opened, you
+  almost certainly wanted `session.subscribe` instead.** This footgun has
+  bitten us at least twice — independent Claudes from independent sessions,
+  both reaching for `open` because the English meaning is right. Read this
+  one twice before you write the `open` call.
+
+  `RepoRegistry.open(key)` ensures a Repo object exists locally for that
+  pubkey — it's idempotent, doesn't touch the network, and is used internally
+  by the registry when bytes arrive for an unknown key (or by code that
+  explicitly wants local-only behaviour, like the relay's startup seed step).
+  **Client code that wants bytes to flow wants `session.subscribe(key)`,**
+  which calls `open` *and* sends a `subscribe` message over the WS so the
+  relay starts pushing bytes. The cascading `follow` callback in
+  `registrySync(...)` is the content-driven sibling — subscribe-by-discovery
+  via a watcher on a known repo's value (`home.flashcardsDecks`,
+  `home.members`, etc.) instead of subscribe-by-explicit-call.
+
+  *The lesson isn't that the API is mis-shaped — the split is real and useful
+  (the registry needs a local-only path; the relay seed wants it).* The lesson
+  is that **the right verb has a less-attractive name than the wrong one, and
+  that gravity recurs.** The complete fix — making `open` retrieve-only,
+  routing all creation through `subscribe` — is tracked under *Held for a
+  major bump* in ROADMAP.md. Until that ships:
+
+  **If your code calls `registry.open` directly and you are not the registry
+  or the server-side seed, you are probably writing a bug.** Use
+  `session.subscribe` or wire a `follow` cascade instead.
 - **`onclick=${fn}` in h templates is a trap.** `attr=${fn}` is the *reactive
   cell* pattern: mount calls `fn(el)` on every render and assigns the **return
   value** to the attribute. For onclick this means the "handler" runs on every
@@ -129,17 +140,24 @@ lands without tests passing, you have failed the contract.
   Browser side-effects of "fresh insertion" (autofocus, password
   manager attribution) don't fire. **Add `data-key` whenever two
   semantically distinct elements share a tag in the same slot.**
-- **Returning `false` from an `on*` handler is silent `preventDefault`.**
-  Mount assigns event handlers as DOM Level 0 properties
-  (`el.onkeydown = fn`). Per HTML spec, if such a handler returns
-  `false`, the browser treats it as `event.preventDefault()`. The
-  trap surfaces when you write a short-circuit expression body like
-  `e => e.key === 'Escape' && cancelEdit()` — for any non-Escape
-  key, the expression evaluates to `false` and the handler returns
-  it. On a `<input>`'s `onkeydown`, that prevents the character
-  from being inserted; typing silently does nothing. **Always use a
-  block body that returns `undefined` for conditional handlers:**
-  `e => { if (e.key === 'Escape') cancelEdit() }`.
+- **Returning `false` from an `on*` handler is silent `preventDefault` —
+  defanged by `handle()`.** Mount assigns event handlers as DOM Level 0
+  properties (`el.onkeydown = fn`). Per HTML spec, if such a handler returns
+  `false`, the browser treats it as `event.preventDefault()`. The trap
+  surfaces when you write a short-circuit expression body like
+  `e => e.key === 'Escape' && cancelEdit()` — for any non-Escape key, the
+  expression evaluates to `false` and the handler returns it. On an
+  `<input>`'s `onkeydown`, that prevents the character from being inserted;
+  typing silently does nothing.
+  **`handle()` from `h.js` dissolves this trap** — its wrapper has a
+  block body (`event => { fn(event, element) }`) that discards the inner
+  return value, so handle()-wrapped handlers always return `undefined`
+  regardless of what your fn returns. *If you write event handlers
+  through `handle()`, this footgun does not apply.* If you explicitly
+  want `preventDefault`, call `event.preventDefault()`.
+  *Older code using the `onclick=${() => fn}` double-arrow shim (e.g.,
+  the journal app) is still vulnerable; for those, use a block body that
+  returns `undefined`:* `e => { if (e.key === 'Escape') cancelEdit() }`.
 
 ## architecture notes
 

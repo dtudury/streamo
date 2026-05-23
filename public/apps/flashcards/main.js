@@ -32,21 +32,19 @@ const recaller = new Recaller('flashcards')
 const reviewRepos = liveObject({}, { recaller, name: 'reviewRepos' })
 
 const state = liveObject({
-  loggedIn:      false,
-  connecting:    false,  // true while login → connect → subscribe(deck-index)
-  startingStudy: false,  // true while ensureReviewsRepo is running for a click
-  user:          null,   // { username, pubkey } once logged in
-  view:          'home', // 'home' | 'study'
-  activeDeck:    null,   // deck id while studying
-  currentIdx:    0,      // pointer into studyQueue
-  revealed:      false,  // is the back of the current card shown?
-  studyQueue:    []      // array of card indices for this session
+  loggedIn:   false,
+  connecting: false,  // true while login → connect → subscribe(deck-index)
+  user:       null,   // { username, pubkey } once logged in
+  view:       'home', // 'home' | 'study'
+  activeDeck: null,   // deck id while studying
+  currentIdx: 0,      // pointer into studyQueue
+  revealed:   false,  // is the back of the current card shown?
+  studyQueue: []      // array of card indices for this session
 }, { recaller, name: 'app' })
 
-const loggedIn      = () => state.get('loggedIn')
-const connecting    = () => state.get('connecting')
-const startingStudy = () => state.get('startingStudy')
-const user          = () => state.get('user')
+const loggedIn   = () => state.get('loggedIn')
+const connecting = () => state.get('connecting')
+const user       = () => state.get('user')
 const view          = () => state.get('view')
 const activeDeck    = () => state.get('activeDeck')
 const currentIdx    = () => state.get('currentIdx')
@@ -139,35 +137,33 @@ function buildStudyQueue (deckId) {
   return [...due, ...neu, ...rest]
 }
 
-// ── one-shot reactive await: resolves when a repo field becomes defined.
+// ── reactive readiness gates ─────────────────────────────────────────
 //
-// We use this to wait for bytes to arrive after `registry.open(...)` —
-// the open returns immediately, but subscribed bytes flow in over WS
-// and the field of interest may not be populated for a few hundred ms.
+// For repos we WRITE to, we need to know the relay's current state
+// before the first write — otherwise our commit lands on the wrong
+// chain head and either overwrites existing history (if our local
+// chain is shorter) or gets pushRejected. Two writes-on-open in this
+// app: appending to the learner's deck-index on fork, appending to a
+// reviews repo on grade.
+//
+// Instead of pre-awaiting at open-time (a UX wall), we open
+// immediately and "gate" the write action with a reactive ready
+// check: the action's button only appears (or fires) when the relevant
+// field has arrived OR a fallback timeout has elapsed. The timeout is
+// a `setTimeout` that flips a state flag — itself recaller-tracked —
+// so both branches of the gate are reactive.
 
-function awaitField (repo, field, timeoutMs = 5000) {
-  const existing = repo.get(field)
-  if (existing !== undefined) return Promise.resolve(existing)
-  return new Promise((resolve, reject) => {
-    let done = false
-    const fn = () => {
-      const v = repo.get(field)
-      if (v !== undefined && !done) {
-        done = true
-        repo.recaller.unwatch(fn)
-        clearTimeout(timer)
-        resolve(v)
-      }
-    }
-    const timer = setTimeout(() => {
-      if (!done) {
-        done = true
-        repo.recaller.unwatch(fn)
-        reject(new Error(`timeout waiting for ${field}`))
-      }
-    }, timeoutMs)
-    repo.recaller.watch(`await-${field}`, fn)
-  })
+function scheduleReady (repo, fieldName, key, timeoutMs = 2000) {
+  // No-op if already ready (avoid stacking timeouts on repeat opens).
+  if (repo.get(fieldName) !== undefined) return
+  if (state.get(`ready-${key}`)) return
+  setTimeout(() => state.set(`ready-${key}`, true), timeoutMs)
+}
+
+function isReady (repo, fieldName, key) {
+  if (!repo) return false
+  if (repo.get(fieldName) !== undefined) return true
+  return state.get(`ready-${key}`) === true
 }
 
 // ── repo opening ─────────────────────────────────────────────────────
@@ -175,9 +171,11 @@ function awaitField (repo, field, timeoutMs = 5000) {
 // Lazily open the reviews Repo for (this learner, this deck) on the
 // first study-click. The deck-scoped stream name derives a fresh
 // keypair from the learner's root credentials; same login, different
-// repo per deck. We await the `reviews` field before returning so the
-// first grade doesn't overwrite an existing history with an empty
-// one. Timeout = first-ever study of this deck.
+// repo per deck.
+//
+// No pre-await on the `reviews` field — instead, the grade buttons in
+// the study view gate themselves on `isReady(reviewRepo, 'reviews',
+// reviewsKey)`. View switches instantly; buttons appear when ready.
 async function ensureReviewsRepo (deckId) {
   const existing = reviewRepos.get(deckId)
   if (existing) return existing
@@ -186,12 +184,8 @@ async function ensureReviewsRepo (deckId) {
   const repoKey = bytesToHex(publicKey)
   const repo = await session.subscribe(repoKey)
   repo.attachSigner(signer, streamName)
-  // Wait for the relay to push existing reviews (if any) before
-  // declaring the repo "ready to write." Treat the timeout as
-  // "no prior reviews" — fresh learner on this deck.
-  try { await awaitField(repo, 'reviews', 2000) }
-  catch { /* new for this deck */ }
   reviewRepos.set(deckId, repo)
+  scheduleReady(repo, 'reviews', `reviews-${deckId}`, 2000)
   return repo
 }
 
@@ -244,12 +238,10 @@ async function login (e) {
   const idxKey = bytesToHex(idxPub)
   myDeckIndex = await session.subscribe(idxKey)
   myDeckIndex.attachSigner(signer, idxStream)
-  // One genuine wait: ensure the deck-index's existing `decks` arrive
-  // before allowing a fork commit. Otherwise an existing learner could
-  // overwrite their own fork list on the first fork of a session.
-  // Timeout = new learner; no forks to preserve.
-  try { await awaitField(myDeckIndex, 'decks', 3000) }
-  catch { /* new learner */ }
+  // Reactive readiness instead of an await: the Fork button gates
+  // itself on `isReady(myDeckIndex, 'decks', ...)`. Login doesn't
+  // wall on it.
+  scheduleReady(myDeckIndex, 'decks', 'deck-index', 3000)
 
   state.set('connecting', false)
   state.set('loggedIn', true)
@@ -262,22 +254,26 @@ function logout () {
   homeRepo = null
   myDeckIndex = null
   reviewRepos.set({})
-  state.set('user', null)
-  state.set('loggedIn', false)
-  state.set('view', 'home')
-  state.set('activeDeck', null)
+  // Fully reset state so `ready-*` flags from this session don't
+  // leak into the next login's gating checks.
+  state.set({
+    loggedIn:   false,
+    connecting: false,
+    user:       null,
+    view:       'home',
+    activeDeck: null,
+    currentIdx: 0,
+    revealed:   false,
+    studyQueue: []
+  })
 }
 
-// Lazy: opens the reviews repo on first click for this deck. The await
-// is bounded by ensureReviewsRepo's 2s timeout. A "starting study…"
-// indicator covers the wait so the home stays responsive.
+// Open the reviews repo (kicks off subscribe + ready-timeout) and
+// switch to study view immediately. The grade buttons in the study
+// view will gate themselves on the reviews-repo being ready — the
+// user can still see the card while bytes are arriving.
 async function startStudy (deckId) {
-  state.set('startingStudy', true)
-  try {
-    await ensureReviewsRepo(deckId)
-  } finally {
-    state.set('startingStudy', false)
-  }
+  await ensureReviewsRepo(deckId)  // resolves as soon as subscribe handshakes; no field-await
   state.set('activeDeck', deckId)
   state.set('studyQueue', buildStudyQueue(deckId))
   state.set('currentIdx', 0)
@@ -395,7 +391,6 @@ mount(h`
 
   ${when(() => loggedIn() && view() === 'home', h`
     <h2>your decks</h2>
-    ${when(startingStudy, h`<p class="connecting">starting study session…</p>`)}
     <ul class="decks">
       ${() => {
         // Derive the deck list reactively from the two source repos.
@@ -409,6 +404,11 @@ mount(h`
           ...myDecks.map(addr => ({ id: addr, addr }))
         ]
         if (entries.length === 0) return h`<li class="empty">discovering decks…</li>`
+        // The Fork button is gated on the learner's deck-index being
+        // ready (either bytes arrived or the timeout flag flipped) —
+        // forking before the existing fork list has loaded would
+        // overwrite history. The deck row itself renders regardless.
+        const forkReady = isReady(myDeckIndex, 'decks', 'deck-index')
         return entries.map(({ id, addr }) => {
           const repo = registry.get(addr)
           const title = repo?.get('title') ?? '(loading…)'
@@ -423,7 +423,7 @@ mount(h`
                 <span class="due">${s.due} due</span>
                 <span class="new">${s.new} new</span>
                 <span>${s.total} total</span>
-                ${isFork
+                ${isFork || !forkReady
                   ? null
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
@@ -471,8 +471,17 @@ mount(h`
             <div class="card-front">${card.front}</div>
             ${when(revealed, h`<div class="card-back">${() => currentCard()?.back ?? ''}</div>`)}
           </div>
-          ${() => revealed()
-            ? h`
+          ${() => {
+            if (!revealed()) return h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
+            // Grade buttons gated on the reviews repo being ready:
+            // the first grade writes a commit, and we don't want to
+            // overwrite an existing history that's still in flight.
+            const deckId = activeDeck()
+            const reviewRepo = reviewRepos.get(deckId)
+            if (!isReady(reviewRepo, 'reviews', `reviews-${deckId}`)) {
+              return h`<p class="hint" style="text-align: center;">syncing your review history…</p>`
+            }
+            return h`
               <div class="grades">
                 <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
                 <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
@@ -480,8 +489,7 @@ mount(h`
                 <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
               </div>
             `
-            : h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
-          }
+          }}
         `
       }}
     </div>

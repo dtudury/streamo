@@ -548,6 +548,31 @@ calling `open` for retrieval after the cascade subscribed need no
 change; clients calling `open` to bootstrap a new repo switch to
 `subscribe`. The relay's seed step switches to `_materialize`.
 
+### `RepoRegistry` requires an explicit `recaller` arg
+
+Currently `new RepoRegistry(undefined, { recaller })` — if you omit
+`{ recaller }`, the default factory silently creates a fresh
+`Recaller` per Repo. That's the foot-shape behind the "One Recaller
+per app" rule: forget the option and your views read from repos on
+recallers different from the one mount is watching, and slots go
+silently stale (no error, no log, just "huh, why isn't this
+updating"). Worst kind of bug.
+
+The fix: make `recaller` a required argument. Code that creates a
+registry has to think about *which* Recaller; passing the app's
+one becomes the obvious thing. Tests that genuinely want isolated
+recallers can still create their own — the public `Recaller`
+constructor stays. Only the implicit default goes away.
+
+Possibly paired with a dev-mode warning when a slot's
+`reportKeyAccess` is called from a watcher whose recaller differs
+from the source's. Catches the symptom at read-time. Lower priority
+than the API change itself.
+
+Bundled with the `open` redesign and the `Repo` rename because all
+three are breaking changes that benefit from sharing one major bump's
+migration window.
+
 ### `Repo` → `StreamoRepo`
 
 The class name `Repo` is generic and bumps against git semantics —

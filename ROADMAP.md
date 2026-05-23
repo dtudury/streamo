@@ -573,6 +573,33 @@ Bundled with the `open` redesign and the `Repo` rename because all
 three are breaking changes that benefit from sharing one major bump's
 migration window.
 
+### `repo.merge(updateFn)` — stale-state-safe writes
+
+The current `repo.set(value)` requires the caller to know the
+current value first (because the new value usually merges with the
+old). For repos arriving over the wire, that creates a race window:
+a write submitted before the relay's bytes arrive lands on an empty
+chain, *overwriting* existing history. We have `pushRejected` as a
+detection signal (8.3) but no built-in recovery primitive.
+
+A `repo.merge(updateFn)` primitive would handle this cleanly:
+`updateFn` takes the *current* value (whatever's loaded right now)
+and returns the new value. The implementation:
+1. Read current value, apply updateFn, set.
+2. If the set's commit lands on the relay's current head: done.
+3. If it gets pushRejected: re-sync from the relay (gives us the
+   true current value), re-apply updateFn against THAT, set again.
+4. Loop until success or genuine conflict.
+
+This pushes the "do I know the current state?" worry off the app
+and into the substrate. Apps just write what they mean; the merge
+primitive handles the chain-head race.
+
+Bundled with the others because it's an additive primitive that
+fits naturally with whatever wire-protocol enhancements ship in
+the major bump — e.g., a "caught up" signal would make merge's
+retry cheaper.
+
 ### `Repo` → `StreamoRepo`
 
 The class name `Repo` is generic and bumps against git semantics —

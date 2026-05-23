@@ -149,45 +149,25 @@ function buildStudyQueue (deckId) {
   return [...due, ...neu]
 }
 
-// ── reactive readiness gates ─────────────────────────────────────────
-//
-// For repos we WRITE to, we need to know the relay's current state
-// before the first write — otherwise our commit lands on the wrong
-// chain head and either overwrites existing history (if our local
-// chain is shorter) or gets pushRejected. Two writes-on-open in this
-// app: appending to the learner's deck-index on fork, appending to a
-// reviews repo on grade.
-//
-// Instead of pre-awaiting at open-time (a UX wall), we open
-// immediately and "gate" the write action with a reactive ready
-// check: the action's button only appears (or fires) when the relevant
-// field has arrived OR a fallback timeout has elapsed. The timeout is
-// a `setTimeout` that flips a state flag — itself recaller-tracked —
-// so both branches of the gate are reactive.
-
-function scheduleReady (repo, fieldName, key, timeoutMs = 2000) {
-  // No-op if already ready (avoid stacking timeouts on repeat opens).
-  if (repo.get(fieldName) !== undefined) return
-  if (state.get(`ready-${key}`)) return
-  setTimeout(() => state.set(`ready-${key}`, true), timeoutMs)
-}
-
-function isReady (repo, fieldName, key) {
-  if (!repo) return false
-  if (repo.get(fieldName) !== undefined) return true
-  return state.get(`ready-${key}`) === true
-}
+// (Used to live here: scheduleReady + isReady — a setTimeout-based
+//  kludge that conflated "has the data arrived?" with "is it safe to
+//  write?" Removed. The reading question answers itself reactively
+//  (undefined renders as empty, slots re-run when bytes arrive). The
+//  writing question — stale-state writes overwriting history — is
+//  handled at the substrate by 8.3's pushRejected flag and, in the
+//  longer term, by a `repo.merge(updateFn)` primitive queued under
+//  "Held for a major bump" in ROADMAP.md. For v1 of flashcards the
+//  race is rare and surfaces as a dropped grade rather than silent
+//  corruption.)
 
 // ── repo opening ─────────────────────────────────────────────────────
 
-// Lazily open the reviews Repo for (this learner, this deck) on the
-// first study-click. The deck-scoped stream name derives a fresh
-// keypair from the learner's root credentials; same login, different
-// repo per deck.
-//
-// No pre-await on the `reviews` field — instead, the grade buttons in
-// the study view gate themselves on `isReady(reviewRepo, 'reviews',
-// reviewsKey)`. View switches instantly; buttons appear when ready.
+// Lazily open the reviews Repo for (this learner, this deck), fired
+// by the 'ensure-reviews-for-active-deck' watcher when activeDeck
+// becomes set. The deck-scoped stream name derives a fresh keypair
+// from the learner's root credentials; same login, different repo
+// per deck. No pre-await on the `reviews` field — the study view
+// just reads whatever's there and renders accordingly.
 async function ensureReviewsRepo (deckId) {
   const existing = reviewRepos.get(deckId)
   if (existing) return existing
@@ -197,7 +177,6 @@ async function ensureReviewsRepo (deckId) {
   const repo = await session.subscribe(repoKey)
   repo.attachSigner(signer, streamName)
   reviewRepos.set(deckId, repo)
-  scheduleReady(repo, 'reviews', `reviews-${deckId}`, 2000)
   return repo
 }
 
@@ -250,10 +229,6 @@ async function login (e) {
   const idxKey = bytesToHex(idxPub)
   myDeckIndex = await session.subscribe(idxKey)
   myDeckIndex.attachSigner(signer, idxStream)
-  // Reactive readiness instead of an await: the Fork button gates
-  // itself on `isReady(myDeckIndex, 'decks', ...)`. Login doesn't
-  // wall on it.
-  scheduleReady(myDeckIndex, 'decks', 'deck-index', 3000)
 
   state.set('connecting', false)
   state.set('loggedIn', true)
@@ -440,11 +415,6 @@ mount(h`
           ...myDecks.map(addr => ({ id: addr, addr }))
         ]
         if (entries.length === 0) return h`<li class="empty">discovering decks…</li>`
-        // The Fork button is gated on the learner's deck-index being
-        // ready (either bytes arrived or the timeout flag flipped) —
-        // forking before the existing fork list has loaded would
-        // overwrite history. The deck row itself renders regardless.
-        const forkReady = isReady(myDeckIndex, 'decks', 'deck-index')
         return entries.map(({ id, addr }) => {
           const repo = registry.get(addr)
           const title = repo?.get('title') ?? '(loading…)'
@@ -459,7 +429,7 @@ mount(h`
                 <span class="due">${s.due} due</span>
                 <span class="new">${s.new} new</span>
                 <span>${s.total} total</span>
-                ${isFork || !forkReady
+                ${isFork
                   ? null
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
@@ -491,16 +461,16 @@ mount(h`
         }}</span>
       </div>
       ${() => {
-        // Gate the card display on reviews being ready — otherwise a
-        // returning learner sees card[0] briefly before the loaded
-        // reviews re-derive the queue to a different first card. With
-        // the gate, the card area shows 'loading review state…' until
-        // reviews land (or the readiness timeout flips for new decks),
-        // then settles on the correct first card.
+        // Pure data → html. If the deck repo hasn't loaded yet, show
+        // a loading message. Otherwise render whatever the current
+        // queue says is the next card — for returning learners this
+        // may flash briefly from "card[0] (empty review state)" to
+        // "actual due card (loaded review state)"; small papercut,
+        // not silent failure.
         const deckId = activeDeck()
-        const reviewRepo = reviewRepos.get(deckId)
-        if (!isReady(reviewRepo, 'reviews', `reviews-${deckId}`)) {
-          return h`<div class="done"><p>loading review state…</p></div>`
+        const cards = deckCards(deckId)
+        if (cards.length === 0) {
+          return h`<div class="done"><p>loading deck…</p></div>`
         }
         const card = currentCard()
         if (!card) {

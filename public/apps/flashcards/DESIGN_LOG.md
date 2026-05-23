@@ -391,3 +391,83 @@ fork *and then* start studying. The handler explicitly
 `e.stopPropagation()` before calling forkDeck. Worth keeping in the
 "build a streamo app" doc — the `handle` form receives the event
 as its first arg, which makes propagation control trivial.
+
+---
+
+## 2026-05-22 — the reactivity arc: a function from data shapes to html shapes
+
+A long, meandering refactor session that started with "the
+`_flashcardsKey` underscore-stash is ugly" and ended with David
+naming the principle that had been emerging the whole way:
+
+> **"All we make is a function that maps data shapes to html shapes.
+> As the data shape changes, so the html shape changes."**
+
+That sentence belongs above every streamo app's main.js. It is the
+streamo idiom distilled.
+
+The peel went through six layers — each one was "why does X need to
+do Y?" finding a piece of cached imperative state that turned out
+to be derivable:
+
+1. **`_flashcardsKey` stash → `Repo.publicKeyHex`.** The Repo knew
+   its own address; we just hadn't exposed it. (`d287d5e`)
+2. **`deckRepos` liveObject + `state.deckIds` → reactive reads of
+   `homeRepo.flashcardsDecks` and `myDeckIndex.decks`.** The
+   registry IS the map of repos; the home repo IS the catalog.
+   Login became "connect + sit-back"; the home view derives the
+   list. (`74dd738`)
+3. **`awaitField` gates at login → reactive `scheduleReady`/`isReady`
+   gates at the action.** Wait at the door became gate the action.
+   Login finishes fast; the fork button and grade buttons appeared
+   when their underlying data was ready. (`adc74e2`)
+4. **`state.studyQueue` + `state.currentIdx` → `buildStudyQueue[0]`
+   derived per render.** SM-2's Again now sets due = now + 1 minute,
+   encoding session-relevance in the algorithm; the queue is a live
+   view of the reviews repo. (`ad8f6f1`)
+5. **`startStudy` awaits ensureReviewsRepo → reactive watcher on
+   `state.activeDeck`.** Click handlers became purely declarative —
+   three state.sets, no side effects. Side effects lifted to a
+   converging watcher (same shape as registrySync's follow callback).
+   (`0ac2369`)
+6. **`scheduleReady` + `isReady` → just read the data.** The final
+   peel: the readiness gates were conflating "has the data arrived"
+   (a reading question, fully answerable by reactive reads) with
+   "is it safe to write" (a writing question, about chain conflicts).
+   Different problems. Reading: just read; undefined means empty for
+   display. Writing: protected at the substrate by `pushRejected`,
+   with `repo.merge(updateFn)` queued for the major bump.
+
+What collapsed across the arc:
+- `awaitField` — gone (was 5+ uses).
+- `scheduleReady`, `isReady` — gone.
+- `state.deckIds`, `state.studyQueue`, `state.currentIdx`,
+  `state.startingStudy` — all gone.
+- `deckRepos` liveObject — gone (registry is the map).
+- `_flashcardsKey` stash — gone (Repo.publicKeyHex).
+- `openReviewsRepo` eager-loop at login — gone.
+
+What got added:
+- One reactive watcher (`ensure-reviews-for-active-deck`) to bridge
+  state changes into side effects.
+- `Repo.publicKeyHex` (one line in RepoRegistry.open).
+- Reactive derivations: `addrFor`, `deckRepo`, `deckCards`,
+  `currentCard`, `currentCardIdx`.
+
+The trade-offs we accepted:
+- **Brief card-flash for returning learners.** When reviews bytes
+  arrive after the study view renders, the queue re-derives and the
+  displayed card may shift from card[0] to the actual most-due card.
+  Small papercut, fixable later via a "caught up" wire signal or a
+  substrate merge primitive.
+- **Rare overwrite race on fork/grade if user acts before bytes
+  arrive.** `pushRejected` exists as a detection signal; we don't
+  wire its UX yet, so the failure mode is "the grade silently
+  doesn't take, user re-grades." Acceptable for v1 demo.
+
+David's "why does X need to do Y?" question was the engine of the
+whole arc. Each instance found a piece of state that didn't earn
+its keep. Worth recording as a technique: when imperative-looking
+code is inside a reactive system, ask whether the imperative state
+is *derivable*. Often it is, and removing it makes the code shorter,
+truer, and less buggy at the same time.

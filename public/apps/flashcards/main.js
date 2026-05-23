@@ -37,18 +37,18 @@ const state = liveObject({
   user:       null,   // { username, pubkey } once logged in
   view:       'home', // 'home' | 'study'
   activeDeck: null,   // deck id while studying
-  currentIdx: 0,      // pointer into studyQueue
-  revealed:   false,  // is the back of the current card shown?
-  studyQueue: []      // array of card indices for this session
+  revealed:   false   // is the back of the current card shown?
+  // No studyQueue, no currentIdx — both derive from the reviews repo
+  // each render. The "next card" is buildStudyQueue[0]; grading commits
+  // a review event and the queue shifts naturally as a side effect.
 }, { recaller, name: 'app' })
 
 const loggedIn   = () => state.get('loggedIn')
 const connecting = () => state.get('connecting')
 const user       = () => state.get('user')
-const view          = () => state.get('view')
-const activeDeck    = () => state.get('activeDeck')
-const currentIdx    = () => state.get('currentIdx')
-const revealed      = () => state.get('revealed')
+const view       = () => state.get('view')
+const activeDeck = () => state.get('activeDeck')
+const revealed   = () => state.get('revealed')
 
 // Module-level handles populated by login(); reset by logout().
 let signer = null
@@ -75,7 +75,13 @@ function applySM2 (review, gradeIdx, atMs) {
     r.reps += 1
   }
   r.ease = Math.max(1.3, r.ease + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
-  r.due = atMs + r.interval * 24 * 60 * 60 * 1000
+  // Due time. 'Again' (q<3) pushes due 1 minute forward — long enough
+  // that the card falls out of this session's derived queue, short
+  // enough that it comes back next time. Encodes session-relevance in
+  // the algorithm so the queue doesn't have to be a stateful array.
+  r.due = q < 3
+    ? atMs + 60 * 1000
+    : atMs + r.interval * 24 * 60 * 60 * 1000
   return r
 }
 
@@ -124,17 +130,23 @@ function deckStats (deckId) {
   return { due, new: neu, total: cards.length }
 }
 
+// Live-derived study queue: due cards first, then truly-new (never
+// reviewed). Cards that have been reviewed and aren't yet due fall out
+// — they'll be back when their due-time arrives. The queue is rebuilt
+// on every read; session-relevance comes from the SM-2 due times in
+// the reviews repo, not from a stateful array.
 function buildStudyQueue (deckId) {
   const cards = deckCards(deckId)
-  const due = [], neu = [], rest = []
+  const due = [], neu = []
   const now = Date.now()
   for (let i = 0; i < cards.length; i++) {
     const r = reviewStateForCard(deckId, i)
-    if (r.reps === 0) neu.push(i)
+    const everReviewed = r.due > 0  // DEFAULT_REVIEW has due=0; any grade sets a timestamp
+    if (!everReviewed) neu.push(i)
     else if (r.due <= now) due.push(i)
-    else rest.push(i)
+    // else: in 'rest' — has reviews, not yet due. Not in the queue.
   }
-  return [...due, ...neu, ...rest]
+  return [...due, ...neu]
 }
 
 // ── reactive readiness gates ─────────────────────────────────────────
@@ -262,21 +274,19 @@ function logout () {
     user:       null,
     view:       'home',
     activeDeck: null,
-    currentIdx: 0,
-    revealed:   false,
-    studyQueue: []
+    revealed:   false
   })
 }
 
 // Open the reviews repo (kicks off subscribe + ready-timeout) and
-// switch to study view immediately. The grade buttons in the study
-// view will gate themselves on the reviews-repo being ready — the
-// user can still see the card while bytes are arriving.
+// switch to study view. No captured queue, no captured index — the
+// study view derives currentCard from buildStudyQueue[0] live, so as
+// bytes arrive (or grade events fire), the "next card" updates on its
+// own. The card display itself is gated on isReady so it doesn't flash
+// a wrong first card before reviews arrive.
 async function startStudy (deckId) {
-  await ensureReviewsRepo(deckId)  // resolves as soon as subscribe handshakes; no field-await
+  await ensureReviewsRepo(deckId)  // resolves on WS handshake; bytes flow async
   state.set('activeDeck', deckId)
-  state.set('studyQueue', buildStudyQueue(deckId))
-  state.set('currentIdx', 0)
   state.set('revealed', false)
   state.set('view', 'study')
 }
@@ -289,22 +299,23 @@ function backToHome () {
 function reveal () { state.set('revealed', true) }
 
 function grade (gradeIdx) {
-  const deckId  = activeDeck()
-  const queue   = state.get('studyQueue')
-  const idx     = currentIdx()
-  const cardIdx = queue[idx]
-  const repo    = reviewRepos.get(deckId)
+  const deckId = activeDeck()
+  const repo   = reviewRepos.get(deckId)
   if (!repo) return
+  // The current card is whichever one tops the live queue right now.
+  const queue = buildStudyQueue(deckId)
+  if (queue.length === 0) return
+  const cardIdx = queue[0]
   const reviews = repo.get('reviews') ?? []
   repo.defaultMessage = `review: card ${cardIdx} graded ${['again', 'hard', 'good', 'easy'][gradeIdx]}`
   repo.set({
     deck: deckId,
     reviews: [...reviews, { cardIdx, grade: gradeIdx, at: Date.now() }]
   })
-  if (gradeIdx === 0) {
-    state.set('studyQueue', [...queue, cardIdx])
-  }
-  state.set('currentIdx', idx + 1)
+  // No queue mutation, no index advance — the commit above updates
+  // the reviews repo, which shifts buildStudyQueue's output, which
+  // makes the new queue[0] the next card. Just hide the back so the
+  // next card's front is what's shown.
   state.set('revealed', false)
 }
 
@@ -350,11 +361,19 @@ async function forkDeck (upstreamId) {
 
 function currentCard () {
   const deckId = activeDeck()
-  const cards  = deckCards(deckId)
-  const queue  = state.get('studyQueue')
-  const idx    = currentIdx()
-  if (idx >= queue.length) return null  // session complete
-  return cards[queue[idx]]
+  if (!deckId) return null
+  const queue = buildStudyQueue(deckId)
+  if (queue.length === 0) return null  // session complete (or not yet started)
+  return deckCards(deckId)[queue[0]]
+}
+
+// The card index that's currently being shown — used as a data-key on
+// the card div so it recycles cleanly when grade() shifts the queue.
+function currentCardIdx () {
+  const deckId = activeDeck()
+  if (!deckId) return null
+  const queue = buildStudyQueue(deckId)
+  return queue.length === 0 ? null : queue[0]
 }
 
 // ── mount ────────────────────────────────────────────────────────────
@@ -449,13 +468,23 @@ mount(h`
         <span>${() => {
           const deckId = activeDeck()
           const title  = deckRepo(deckId)?.get('title') ?? ''
-          const queue  = state.get('studyQueue')
-          const idx    = currentIdx()
-          const remaining = Math.max(0, queue.length - idx)
+          // Live count: derived from the queue each render.
+          const remaining = buildStudyQueue(deckId).length
           return title ? `${title} · ${remaining} left` : ''
         }}</span>
       </div>
       ${() => {
+        // Gate the card display on reviews being ready — otherwise a
+        // returning learner sees card[0] briefly before the loaded
+        // reviews re-derive the queue to a different first card. With
+        // the gate, the card area shows 'loading review state…' until
+        // reviews land (or the readiness timeout flips for new decks),
+        // then settles on the correct first card.
+        const deckId = activeDeck()
+        const reviewRepo = reviewRepos.get(deckId)
+        if (!isReady(reviewRepo, 'reviews', `reviews-${deckId}`)) {
+          return h`<div class="done"><p>loading review state…</p></div>`
+        }
         const card = currentCard()
         if (!card) {
           return h`
@@ -467,21 +496,12 @@ mount(h`
           `
         }
         return h`
-          <div class="card" data-key=${`card-${currentIdx()}`}>
+          <div class="card" data-key=${`card-${currentCardIdx()}`}>
             <div class="card-front">${card.front}</div>
             ${when(revealed, h`<div class="card-back">${() => currentCard()?.back ?? ''}</div>`)}
           </div>
-          ${() => {
-            if (!revealed()) return h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
-            // Grade buttons gated on the reviews repo being ready:
-            // the first grade writes a commit, and we don't want to
-            // overwrite an existing history that's still in flight.
-            const deckId = activeDeck()
-            const reviewRepo = reviewRepos.get(deckId)
-            if (!isReady(reviewRepo, 'reviews', `reviews-${deckId}`)) {
-              return h`<p class="hint" style="text-align: center;">syncing your review history…</p>`
-            }
-            return h`
+          ${() => revealed()
+            ? h`
               <div class="grades">
                 <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
                 <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
@@ -489,7 +509,8 @@ mount(h`
                 <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
               </div>
             `
-          }}
+            : h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
+          }
         `
       }}
     </div>

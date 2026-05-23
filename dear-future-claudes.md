@@ -22,18 +22,25 @@ seeing the page's structure in one place. For streamo apps that means:
   reassemble — it tempts the eye to organize by "component," but the
   result reads worse because you chase definitions around. The whole
   page in HTML order beats a bag-of-named-pieces almost every time.
-- **Keep the CSS inside main.js** so the whole story stays in one
-  file. For small apps (under ~100 lines of CSS), inline it directly
-  in the `<style>` block at the top of the template — the journal
-  app shows this shape. For larger apps where the style block has
-  become a wall the reader has to scroll past to reach the page
-  structure, **lift the CSS into a `stylesheet()` function at the
-  *bottom* of main.js** and reference it as `<style>${stylesheet()}</style>`
-  inside the mount template; function declarations are hoisted so
-  the forward reference resolves. The flashcards app shows this
-  second shape. Either way, don't pull CSS out to a `.css` file —
-  that scatters the page across the directory and breaks
-  one-file-one-page legibility.
+- **Default: CSS in a sibling `styles.css`** linked from `index.html`.
+  This is the standard web idiom — browser devtools edit it natively,
+  CSS tooling works without convincing, and the stylesheet loads in
+  parallel with the JS so there's no flash of unstyled content. The
+  flashcards app shows this shape. *The earlier "keep CSS inside
+  main.js for one-file-one-page legibility" rule was overstated —
+  the page's prose lives in the h-template, which is in JS by
+  necessity; CSS is declarative reference material, not part of the
+  prose you read top-to-bottom.* Three real exceptions where CSS
+  belongs inline:
+  - **Components** — a `StreamoComponent`'s scoped CSS belongs with
+    its template and behavior, because the component IS a discrete
+    unit and exporting CSS out breaks that discreteness.
+  - **Very small pages** — under ~50 lines of CSS, the journal-app
+    shape (inline `<style>` at the top of the mount template) is
+    fine; the cost of a separate file outweighs the readability win.
+  - **CSS with interpolated JS values** — `background: ${themeColor}`
+    or `padding: ${unit * 4}px` *can't* live in a static `.css`
+    file; it has to be in JS.
 - **Use form-level handlers** with `onsubmit=${handle(handler)}` and
   reach for inputs via `e.target.elements.<name>` rather than
   `getElementById`. The form *is* the input registry.

@@ -359,7 +359,132 @@ function currentCard () {
 // ── mount ────────────────────────────────────────────────────────────
 
 mount(h`
-  <style>
+  <style>${stylesheet()}</style>
+
+  <h1>
+    <a class="brand-lockup" href="../../" title="streamo home">
+      <img src="../../streamo.svg" alt="">streamo
+    </a>
+    <span class="page-title">flashcards</span>
+  </h1>
+  <p class="tagline">Tiny spaced-repetition where decks are real signed Repos on the relay and your reviews are a signed Repo you own. Each deck lives at its own address — bookmarkable, forkable, yours forever.</p>
+
+  ${when(() => !loggedIn() && !connecting(), h`
+    <h2>identity</h2>
+    <form class="login" onsubmit=${handle(login)}>
+      <input name="username" placeholder="username" autocomplete="username">
+      <input name="password" type="password" placeholder="password" autocomplete="current-password">
+      <button>sign in</button>
+    </form>
+    <p class="hint">Your username + password derive a keypair locally — no account, no server. Each deck you study gets its own derived subkey, so one login signs many repos.</p>
+  `)}
+
+  ${when(connecting, h`
+    <p class="connecting">connecting to the relay, discovering decks, opening your reviews repos…</p>
+  `)}
+
+  ${when(loggedIn, h`
+    <div class="who">
+      <span>signed in as <code>${() => user()?.username ?? ''}</code> · <code>${() => (user()?.pubkey ?? '').slice(0, 10)}…</code></span>
+      <button onclick=${handle(logout)}>sign out</button>
+    </div>
+  `)}
+
+  ${when(() => loggedIn() && view() === 'home', h`
+    <h2>your decks</h2>
+    <ul class="decks">
+      ${() => {
+        const ids = state.get('deckIds')
+        if (!ids.length) return h`<li class="empty">no decks served by this relay yet.</li>`
+        return ids.map(id => {
+          const repo = deckRepos.get(id)
+          const title = repo?.get('title') ?? '(loading)'
+          const description = repo?.get('description') ?? ''
+          const isFork = !!repo?.get('forkedFrom')
+          const s = deckStats(id)
+          return h`
+            <li class="deck" data-key=${id} onclick=${handle(() => startStudy(id))}>
+              <div class="deck-title">${title}${isFork ? h`<span class="deck-badge">your fork</span>` : null}</div>
+              <div class="deck-desc">${description}</div>
+              <div class="deck-stats">
+                <span class="due">${s.due} due</span>
+                <span class="new">${s.new} new</span>
+                <span>${s.total} total</span>
+                ${isFork
+                  ? null
+                  : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
+              </div>
+            </li>
+          `
+        })
+      }}
+    </ul>
+    ${() => {
+      const ids = state.get('deckIds')
+      if (!ids.length) return null
+      const repo = reviewRepos.get(ids[0])
+      if (!repo) return null
+      return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo._flashcardsKey}`}>see your reviews in the explorer →</a>`
+    }}
+  `)}
+
+  ${when(() => loggedIn() && view() === 'study', h`
+    <div class="study">
+      <div class="study-header">
+        <button class="study-back" onclick=${handle(backToHome)}>← back</button>
+        <span>${() => {
+          const deckId = activeDeck()
+          const title  = deckRepos.get(deckId)?.get('title') ?? ''
+          const queue  = state.get('studyQueue')
+          const idx    = currentIdx()
+          const remaining = Math.max(0, queue.length - idx)
+          return title ? `${title} · ${remaining} left` : ''
+        }}</span>
+      </div>
+      ${() => {
+        const card = currentCard()
+        if (!card) {
+          return h`
+            <div class="done">
+              <h3>session complete 🌳</h3>
+              <p>come back tomorrow, or browse another deck.</p>
+              <button class="reveal-btn" style="margin-top: 1.25rem;" onclick=${handle(backToHome)}>back to decks</button>
+            </div>
+          `
+        }
+        return h`
+          <div class="card" data-key=${`card-${currentIdx()}`}>
+            <div class="card-front">${card.front}</div>
+            ${when(revealed, h`<div class="card-back">${() => currentCard()?.back ?? ''}</div>`)}
+          </div>
+          ${() => revealed()
+            ? h`
+              <div class="grades">
+                <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
+                <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
+                <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
+                <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
+              </div>
+            `
+            : h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
+          }
+        `
+      }}
+    </div>
+  `)}
+`, document.body, recaller)
+
+// ── stylesheet ───────────────────────────────────────────────────────
+// CSS lives at the bottom of main.js (called as `${stylesheet()}` in
+// the mount above — function declarations are hoisted, so the
+// reference resolves). This keeps the "page lives in one file"
+// principle (the whole story is still here) without putting a wall
+// of selectors between the reader and the page structure. See
+// dear-future-claudes.md's CSS guidance for when to choose this
+// shape over inline-at-top.
+
+function stylesheet () {
+  return `
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
       font-family: system-ui, -apple-system, sans-serif;
@@ -626,117 +751,5 @@ mount(h`
       margin-top: 1.25rem;
     }
     .explorer-link:hover { border-bottom-style: solid; }
-  </style>
-
-  <h1>
-    <a class="brand-lockup" href="../../" title="streamo home">
-      <img src="../../streamo.svg" alt="">streamo
-    </a>
-    <span class="page-title">flashcards</span>
-  </h1>
-  <p class="tagline">Tiny spaced-repetition where decks are real signed Repos on the relay and your reviews are a signed Repo you own. Each deck lives at its own address — bookmarkable, forkable, yours forever.</p>
-
-  ${when(() => !loggedIn() && !connecting(), h`
-    <h2>identity</h2>
-    <form class="login" onsubmit=${handle(login)}>
-      <input name="username" placeholder="username" autocomplete="username">
-      <input name="password" type="password" placeholder="password" autocomplete="current-password">
-      <button>sign in</button>
-    </form>
-    <p class="hint">Your username + password derive a keypair locally — no account, no server. Each deck you study gets its own derived subkey, so one login signs many repos.</p>
-  `)}
-
-  ${when(connecting, h`
-    <p class="connecting">connecting to the relay, discovering decks, opening your reviews repos…</p>
-  `)}
-
-  ${when(loggedIn, h`
-    <div class="who">
-      <span>signed in as <code>${() => user()?.username ?? ''}</code> · <code>${() => (user()?.pubkey ?? '').slice(0, 10)}…</code></span>
-      <button onclick=${handle(logout)}>sign out</button>
-    </div>
-  `)}
-
-  ${when(() => loggedIn() && view() === 'home', h`
-    <h2>your decks</h2>
-    <ul class="decks">
-      ${() => {
-        const ids = state.get('deckIds')
-        if (!ids.length) return h`<li class="empty">no decks served by this relay yet.</li>`
-        return ids.map(id => {
-          const repo = deckRepos.get(id)
-          const title = repo?.get('title') ?? '(loading)'
-          const description = repo?.get('description') ?? ''
-          const isFork = !!repo?.get('forkedFrom')
-          const s = deckStats(id)
-          return h`
-            <li class="deck" data-key=${id} onclick=${handle(() => startStudy(id))}>
-              <div class="deck-title">${title}${isFork ? h`<span class="deck-badge">your fork</span>` : null}</div>
-              <div class="deck-desc">${description}</div>
-              <div class="deck-stats">
-                <span class="due">${s.due} due</span>
-                <span class="new">${s.new} new</span>
-                <span>${s.total} total</span>
-                ${isFork
-                  ? null
-                  : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
-              </div>
-            </li>
-          `
-        })
-      }}
-    </ul>
-    ${() => {
-      const ids = state.get('deckIds')
-      if (!ids.length) return null
-      const repo = reviewRepos.get(ids[0])
-      if (!repo) return null
-      return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo._flashcardsKey}`}>see your reviews in the explorer →</a>`
-    }}
-  `)}
-
-  ${when(() => loggedIn() && view() === 'study', h`
-    <div class="study">
-      <div class="study-header">
-        <button class="study-back" onclick=${handle(backToHome)}>← back</button>
-        <span>${() => {
-          const deckId = activeDeck()
-          const title  = deckRepos.get(deckId)?.get('title') ?? ''
-          const queue  = state.get('studyQueue')
-          const idx    = currentIdx()
-          const remaining = Math.max(0, queue.length - idx)
-          return title ? `${title} · ${remaining} left` : ''
-        }}</span>
-      </div>
-      ${() => {
-        const card = currentCard()
-        if (!card) {
-          return h`
-            <div class="done">
-              <h3>session complete 🌳</h3>
-              <p>come back tomorrow, or browse another deck.</p>
-              <button class="reveal-btn" style="margin-top: 1.25rem;" onclick=${handle(backToHome)}>back to decks</button>
-            </div>
-          `
-        }
-        return h`
-          <div class="card" data-key=${`card-${currentIdx()}`}>
-            <div class="card-front">${card.front}</div>
-            ${when(revealed, h`<div class="card-back">${() => currentCard()?.back ?? ''}</div>`)}
-          </div>
-          ${() => revealed()
-            ? h`
-              <div class="grades">
-                <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
-                <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
-                <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
-                <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
-              </div>
-            `
-            : h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
-          }
-        `
-      }}
-    </div>
-  `)}
-`, document.body, recaller)
+  `
+}

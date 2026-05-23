@@ -22,10 +22,18 @@ seeing the page's structure in one place. For streamo apps that means:
   reassemble — it tempts the eye to organize by "component," but the
   result reads worse because you chase definitions around. The whole
   page in HTML order beats a bag-of-named-pieces almost every time.
-- **Inline the CSS too,** as a multi-line pretty `<style>` block
-  inside the template. Don't pull it out to a `.css` file or a
-  detached `const css = \`...\``; that scatters the page across
-  multiple definitions.
+- **Keep the CSS inside main.js** so the whole story stays in one
+  file. For small apps (under ~100 lines of CSS), inline it directly
+  in the `<style>` block at the top of the template — the journal
+  app shows this shape. For larger apps where the style block has
+  become a wall the reader has to scroll past to reach the page
+  structure, **lift the CSS into a `stylesheet()` function at the
+  *bottom* of main.js** and reference it as `<style>${stylesheet()}</style>`
+  inside the mount template; function declarations are hoisted so
+  the forward reference resolves. The flashcards app shows this
+  second shape. Either way, don't pull CSS out to a `.css` file —
+  that scatters the page across the directory and breaks
+  one-file-one-page legibility.
 - **Use form-level handlers** with `onsubmit=${handle(handler)}` and
   reach for inputs via `e.target.elements.<name>` rather than
   `getElementById`. The form *is* the input registry.

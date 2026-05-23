@@ -471,3 +471,43 @@ its keep. Worth recording as a technique: when imperative-looking
 code is inside a reactive system, ask whether the imperative state
 is *derivable*. Often it is, and removing it makes the code shorter,
 truer, and less buggy at the same time.
+
+---
+
+## 2026-05-23 — observed-from-use: partial-deck learning is a real feature
+
+David noted while studying the Greek alphabet that he doesn't
+naturally take a whole deck at once. His real flow: start with a
+handful of cards, get comfortable with them, then add a few more.
+Cards not in the active set are *available* (in the deck) but not
+currently being *learned*. Only ever learning a few at a time; the
+rest sit until opted in.
+
+The current app treats all cards as available-from-the-start. SM-2
+takes them in deck order; the learner has no add/remove control.
+The "new" count partially gestures at this concept but isn't the
+same thing.
+
+**The real feature: a per-(learner, deck) active set, stored in the
+reviews repo.** Schema sketch:
+- Reviews repo value: `{ deck, reviews: [...], active: [cardIdx, ...] }`
+- `buildStudyQueue` filters cards to those in `active`
+- "Available cards" UI lets the learner explicitly add cards to
+  `active`; "remove from active" puts them back into available
+
+Composes naturally with:
+- **Editor** — you can add/remove cards from your fork AND control
+  which of your fork's cards are active for study.
+- **Mastery visibility** — you can see which cards you're learning,
+  which are mature, which are available-but-not-active.
+
+Soft-delete (deck-side cards marked `deleted: true` rather than
+spliced out) plays well with this — both keep the cardIdx stable
+across UI operations, so existing reviews don't misalign. Eventually
+moving to content-addressed cards (where reviews cite card content,
+not card position) would eliminate the index-alignment concern
+entirely. v1 stays with indices + soft-delete; the content-addressed
+move queues for later.
+
+Queued for the session after the editor lands. Real product insight,
+came directly from David's lived use of the app.

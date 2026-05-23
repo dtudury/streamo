@@ -68,6 +68,23 @@ lands without tests passing, you have failed the contract.
 
 ## known footguns
 
+- **`registry.open(key)` is local; `session.subscribe(key)` is the wire.**
+  `RepoRegistry.open(key)` ensures a Repo object exists locally for that pubkey
+  — it's idempotent, doesn't touch the network, and is used internally by the
+  registry when bytes arrive for an unknown key (or by code that explicitly
+  wants local-only behaviour, like the relay's startup seed step). **Client
+  code that wants bytes to flow wants `session.subscribe(key)`**, which calls
+  `open` *and* sends a `subscribe` message over the WS so the relay starts
+  pushing bytes. The cascading `follow` callback in `registrySync(...)` is the
+  content-driven sibling — subscribe-by-discovery via a watcher on a known
+  repo's value (`home.flashcardsDecks`, `home.members`, etc.) instead of
+  subscribe-by-explicit-call. We've hit this footgun twice now — both times by
+  reaching for `open` because the name sounded right ("I want to open this
+  repo"). *The lesson isn't that the API is mis-shaped — the split is real and
+  useful (the registry needs a local-only path; the relay seed wants it).* The
+  lesson is that **the right verb has a less-attractive name than the wrong
+  one, and that gravity recurs.** If your code calls `registry.open` directly
+  and you are not the registry or the server-side seed, look at it twice.
 - **`onclick=${fn}` in h templates is a trap.** `attr=${fn}` is the *reactive
   cell* pattern: mount calls `fn(el)` on every render and assigns the **return
   value** to the attribute. For onclick this means the "handler" runs on every

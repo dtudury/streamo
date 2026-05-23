@@ -75,6 +75,13 @@ export class RepoRegistry {
    * so concurrent open() calls always return the same instance. Once the
    * factory resolves, the repo's recaller is bridged into ours.
    *
+   * **For clients that want bytes to flow over the wire, prefer
+   * `session.subscribe(publicKeyHex)`** (from a `registrySync(...)` return
+   * value) or the `follow` cascade. `open` alone makes a *local* Repo only —
+   * it doesn't send a subscribe message to the relay, so the bytes for this
+   * key won't be pushed. See CLAUDE.md's footguns section for the full
+   * rationale.
+   *
    * @param {string} publicKeyHex
    * @returns {Promise<Repo>}
    */

@@ -600,19 +600,29 @@ fits naturally with whatever wire-protocol enhancements ship in
 the major bump — e.g., a "caught up" signal would make merge's
 retry cheaper.
 
-### `Repo` → `StreamoRepo`
+### `Repo` → `StreamoRecord`
 
 The class name `Repo` is generic and bumps against git semantics —
 exactly the trap we hit in 2026-05-20 when refactoring toward git-like
 distributed-merge logic, before the vocabulary cleanup that made
 clear streamo's Repo is *Streamo + a signed chain*, not a git repo.
-Renaming the class to `StreamoRepo` removes the ambient pull toward
-the wrong model and pairs the class gestalt cleanly with `Streamo`
-(the codec) — same prefix, same family.
+The rename lifts more weight than just removing the collision:
+**`Record` is conceptually accurate** in a way `Repo` never was.
+A streamo Repo is a *record* — signed, indelible, single-author,
+chain-of-events. *"Ship's log"* shape. None of the git-Repo baggage
+(mutability, branchability, force-pushable history). `StreamoRecord`
+keeps the unique-prefix property while also fixing the conceptual
+naming.
 
-Bundled with the `open` redesign because the migration touch-list
-overlaps: every import, every type annotation, every doc reference.
-Same major bump pays for both.
+This pairs with the everyday vocabulary we landed on in conversation
+2026-05-23 — **records / procedures / images** as the streamo-app
+trio (now in README's "core ideas" section). The class rename keeps
+the code-side aligned with how we talk about these things.
+
+Bundled with the `open` redesign and the `RepoRegistry` recaller-
+required change because the migration touch-list overlaps: every
+import, every type annotation, every doc reference. Same major bump
+pays for all three.
 
 ---
 

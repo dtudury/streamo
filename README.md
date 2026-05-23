@@ -45,6 +45,22 @@ The protocol fits in [`design.md`](./design.md). The reference implementation co
 - **Every write is provably yours** — commits are signed with your keypair and append-only. History is permanent and can't be forged; peers reject unsigned or mis-signed data.
 - **Content-addressed** — data is identified by what it is, not where it lives. The same value always lands at the same address; deduplication and diffing are structural.
 
+## records, procedures, and images
+
+A streamo app is really three kinds of thing, layered on top of each other. If you already think in *input / function / output*, this is the same shape — just with names for the artifacts at each layer.
+
+- **Records** are streamo's primary data unit (the things called `Repo` in the code today). Each record is signed by exactly one keypair, append-only, indelible, and content-addressed. Your reviews on a flashcard deck are a record. The deck itself is a record. The relay's homepage is a record. Records are *how data exists in streamo* — and the indelibility means they're an honest log of what was written, not what someone wishes they'd written.
+
+- **Procedures** are deterministic specifications for combining records — the JavaScript (functions, helpers, render code) that reads one or more records and produces something derived from them. Anyone with the same records and the same procedure gets the same result. Procedures themselves are often delivered as files served from a record (*page-as-Repo*), which means the procedure *is itself* a record — same audit trail, same indelibility, same verifiability.
+
+- **Images** are the rendered, consultable outputs — the web pages, JSON responses, leaderboards, feeds that someone actually looks at. *"Here are your decks, here's what's due"* is an image. *"Here are this commentator's verified rankings"* is an image. The same records can be imaged many ways: change the procedure, change the inputs, and you get a different image. No single canonical image — any peer can publish their own from the same records.
+
+The composition is the whole story: **a procedure consumes records and produces an image.**
+
+Each layer carries streamo-specific properties. Records are *indelible and signed*. Procedures are *deterministic and universally verifiable* — anyone can re-run a procedure on the same records and reproduce the image. Images are *plural by construction* — they're claims from a viewpoint, not facts about the records.
+
+This is the shape that makes *"no server holds authority"* concrete: the records can live anywhere, the procedure can be run anywhere, and the image can be rendered by anyone — and as long as the inputs and the procedure check out, the image they hand you is verifiable on your own device. The relay is a delivery convenience, not a source of truth.
+
 ## three ways to use streamo
 
 There are basically three audiences. Pick the one that's you:

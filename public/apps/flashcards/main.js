@@ -169,7 +169,6 @@ async function openReviewsRepo (deckId) {
   const repoKey = bytesToHex(publicKey)
   const repo = await session.subscribe(repoKey)
   repo.attachSigner(signer, streamName)
-  repo._flashcardsKey = repoKey  // stashed for the explorer link
   reviewRepos.set(deckId, repo)
 }
 
@@ -223,24 +222,23 @@ async function login (e) {
   const idxKey = bytesToHex(idxPub)
   myDeckIndex = await session.subscribe(idxKey)
   myDeckIndex.attachSigner(signer, idxStream)
-  myDeckIndex._flashcardsKey = idxKey
   let forkAddrs = []
   try { forkAddrs = await awaitField(myDeckIndex, 'decks', 3000) }
   catch { forkAddrs = [] }
 
-  // Open bundled deck repos.
+  // Open bundled deck repos. Each Repo carries its own `publicKeyHex`
+  // (set by the registry at open-time) so we don't need to stash a
+  // side-channel reference for the explorer link or fork lineage.
   await Promise.all(bundledIds.map(async (id) => {
     const repo = await registry.open(fd[id])
-    repo._flashcardsKey = fd[id]
     deckRepos.set(id, repo)
     await awaitField(repo, 'title', 8000)
   }))
   // Open forked deck repos. The cascade has already subscribed them;
-  // we just wait for content and stash. The fork's deckId is its
-  // pubkey-hex (no human-readable string id — the address IS the id).
+  // we just wait for content. The fork's deckId is its pubkey-hex —
+  // no human-readable string id — the address IS the id.
   await Promise.all(forkAddrs.map(async (addr) => {
     const repo = await registry.open(addr)
-    repo._flashcardsKey = addr
     deckRepos.set(addr, repo)
     await awaitField(repo, 'title', 8000)
   }))
@@ -324,13 +322,12 @@ async function forkDeck (upstreamId) {
 
   const forkRepo = await session.subscribe(newDeckKey)
   forkRepo.attachSigner(signer, forkStream)
-  forkRepo._flashcardsKey = newDeckKey
   forkRepo.defaultMessage = `fork of ${upstream.title}`
   forkRepo.set({
     title: `${upstream.title} (my fork)`,
-    description: `forked from ${upstreamRepo._flashcardsKey.slice(0, 10)}…`,
+    description: `forked from ${upstreamRepo.publicKeyHex.slice(0, 10)}…`,
     cards: [...upstream.cards],
-    forkedFrom: upstreamRepo._flashcardsKey
+    forkedFrom: upstreamRepo.publicKeyHex
   })
 
   // Append to the learner's deck-index. First fork from a fresh user
@@ -422,7 +419,7 @@ mount(h`
       if (!ids.length) return null
       const repo = reviewRepos.get(ids[0])
       if (!repo) return null
-      return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo._flashcardsKey}`}>see your reviews in the explorer →</a>`
+      return h`<a class="explorer-link" href=${`../explorer/#/repo/${repo.publicKeyHex}`}>see your reviews in the explorer →</a>`
     }}
   `)}
 

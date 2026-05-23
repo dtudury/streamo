@@ -91,6 +91,10 @@ export class RepoRegistry {
     const placeholder = new Promise(r => { resolve = r })
     this.#streams.set(publicKeyHex, placeholder)
     const stream = await this.#factory(publicKeyHex)
+    // The Repo's own pubkey-hex is the key the registry stored it under.
+    // Exposing it lets clients ask the Repo "what address are you?" without
+    // a reverse-lookup or a side-channel stash on the instance.
+    stream.publicKeyHex = publicKeyHex
     this.#streams.set(publicKeyHex, stream)
     resolve(stream)
     // Fire (this, 'keys') so iteration-based slots — those that called

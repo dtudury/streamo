@@ -206,3 +206,31 @@ Under your deck list, "see your reviews in the explorer" jumps to
 appears there as a signed commit. This is the most "streamo shows
 its work" moment in the app — your study log is the chain, the
 chain is yours, anyone with the address can verify it.
+
+### addendum — `handle` and a caught doc-lag
+
+David noticed the event handlers were still using the older
+`onclick=${() => fn}` double-arrow shim — the pattern the journal
+app uses, which I'd copied. Meanwhile `h.js` had quietly grown a
+`handle` helper that produces the same curry shape declaratively:
+`onclick=${handle(fn)}`. The fix had been written; the docs hadn't
+been propagated; new code inherited the old shape.
+
+Refactored all six handler sites in flashcards to use `handle`, and
+asked the deeper question David surfaced: now that `handle` exists,
+the deck list's `data-action` delegation isn't actually fixing a
+footgun — it's a separate pattern useful for large/uniform lists
+(the explorer's case), not the universal escape hatch CLAUDE.md was
+implying. Refactored deck-list clicks to inline `onclick=${handle(
+() => startStudy(id))}` and removed the body-level delegated
+listener. Two patterns, two purposes, clear in the docs now.
+
+Updated CLAUDE.md and dear-future-claudes.md to reflect this; the
+journal app stays on the older shape as a legible older reference.
+
+The meta-lesson worth keeping in the public doc: **when a substrate
+grows a new affordance, the docs need to catch up or new code will
+inherit the old patterns by mimicry.** This is the third
+"correction during build" moment in this app (after reviews-as-URL
+and the deckStats-recaller cleanup); each one made the code better
+*and* the eventual tutorial more honest.

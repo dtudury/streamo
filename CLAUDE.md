@@ -71,9 +71,16 @@ lands without tests passing, you have failed the contract.
 - **`onclick=${fn}` in h templates is a trap.** `attr=${fn}` is the *reactive
   cell* pattern: mount calls `fn(el)` on every render and assigns the **return
   value** to the attribute. For onclick this means the "handler" runs on every
-  mount and `el.onclick` becomes `undefined`. Use **event delegation** with
-  `data-action` attributes on a single listener attached to the app container
-  (see `public/apps/explorer/main.js`).
+  mount and `el.onclick` becomes `undefined`. **The fix is `handle`** from
+  `h.js`: `onclick=${handle(fn)}` produces the right curry shape
+  (`el => event => fn(event, el)`) without double-arrow noise. For no-args
+  handlers: `onclick=${handle(() => doThing(id))}`. The journal app still
+  uses the older `onclick=${() => fn}` double-arrow shim that predates
+  `handle` — both work; `handle` reads better. **Event delegation** with
+  `data-action` attributes on a single listener at the app container (see
+  `public/apps/explorer/main.js`) is still the right call for genuinely
+  large or uniform dynamic lists, but it's a separate tool — not the
+  universal escape hatch from this footgun.
 - **One Recaller per app.** A Recaller is meant to be the shared
   coordination point: data sources fire on it, views watch on it,
   the `(target, key)` NestedSet keeps unrelated subsystems from

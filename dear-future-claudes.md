@@ -26,7 +26,7 @@ seeing the page's structure in one place. For streamo apps that means:
   inside the template. Don't pull it out to a `.css` file or a
   detached `const css = \`...\``; that scatters the page across
   multiple definitions.
-- **Use form-level handlers** with `onsubmit=${() => handler}` and
+- **Use form-level handlers** with `onsubmit=${handle(handler)}` and
   reach for inputs via `e.target.elements.<name>` rather than
   `getElementById`. The form *is* the input registry.
 - The `when(cond, vnode)` helper is welcome; named handlers and
@@ -38,9 +38,13 @@ seeing the page's structure in one place. For streamo apps that means:
   any pre-existing children before rendering, so the loading shim
   is replaced wholesale at first render — no manual wipe required.
 
-The journal app at `public/apps/journal/main.js` is the worked
-example. If you see another app drift from this shape and the human
-hasn't asked otherwise, gently bring it back.
+The flashcards app at `public/apps/flashcards/main.js` is the
+current worked example — it follows the patterns below including the
+`handle(...)` shape for event handlers. The journal app at
+`public/apps/journal/main.js` is older but still legible; it predates
+`handle` and uses the `onclick=${() => fn}` double-arrow shim instead.
+If you see another app drift from this shape and the human hasn't
+asked otherwise, gently bring it back.
 
 ## when NOT to use the h-heavy style
 
@@ -56,9 +60,27 @@ code legible for someone who's going to read it.
 and assigns the return value to `el.onclick`. The handler runs during
 mount, returns undefined, and you've effectively unbound the click.
 
-Always wrap: `onclick=${() => handler}`. The cell returns the handler
-function; mount assigns it to `el.onclick`; click events get to it.
-Same shape for `onsubmit`, `oninput`, etc.
+**Use `handle` from `h.js`:** `onclick=${handle(fn)}` produces the
+right curry shape (`el => event => fn(event, el)`) and reads as the
+declarative thing it is — "this attr IS an event handler, wire it
+up." For handlers that ignore the event/element:
+`onclick=${handle(() => doThing(id))}`.
+
+Same shape for `onsubmit`, `oninput`, etc. — anywhere mount assigns
+a DOM-level-0 property and you want it to be a real function on the
+node.
+
+The older `onclick=${() => fn}` double-arrow shim (still seen in the
+journal app) works for the same reason — the outer arrow is the cell
+that returns the handler — but it's correct-but-unpleasant. `handle`
+makes the intent legible. Prefer it.
+
+**When delegation IS the right call:** for genuinely large or uniform
+dynamic lists, `data-action` attributes on items + a single listener
+on the app container is the streamo idiom (the explorer's commit and
+repo lists are the canonical case). Delegation isn't the universal
+escape hatch from the `on*` footgun — `handle` is. They're different
+tools for different problems.
 
 This is also in CLAUDE.md's known footguns.
 

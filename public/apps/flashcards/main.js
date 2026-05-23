@@ -8,7 +8,7 @@
 // folding over `reviews[]`. The deck itself is still a static JSON
 // file in step 2 — step 3 makes decks real Repos too.
 
-import { h }            from '../../streamo/h.js'
+import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
@@ -516,7 +516,7 @@ mount(h`
 
   ${when(() => !loggedIn() && !connecting(), h`
     <h2>identity</h2>
-    <form class="login" onsubmit=${() => login}>
+    <form class="login" onsubmit=${handle(login)}>
       <input name="username" placeholder="username" autocomplete="username">
       <input name="password" type="password" placeholder="password" autocomplete="current-password">
       <button>sign in</button>
@@ -531,7 +531,7 @@ mount(h`
   ${when(loggedIn, h`
     <div class="who">
       <span>signed in as <code>${() => user()?.username ?? ''}</code> · <code>${() => (user()?.pubkey ?? '').slice(0, 10)}…</code></span>
-      <button onclick=${() => logout}>sign out</button>
+      <button onclick=${handle(logout)}>sign out</button>
     </div>
   `)}
 
@@ -548,7 +548,7 @@ mount(h`
           }
           const s = deckStats(id)
           items.push(h`
-            <li class="deck" data-key=${id} data-action="study" data-deck=${id}>
+            <li class="deck" data-key=${id} onclick=${handle(() => startStudy(id))}>
               <div class="deck-title">${deck.title}</div>
               <div class="deck-desc">${deck.description}</div>
               <div class="deck-stats">
@@ -578,7 +578,7 @@ mount(h`
   ${when(() => loggedIn() && view() === 'study', h`
     <div class="study">
       <div class="study-header">
-        <button class="study-back" onclick=${() => backToHome}>← back</button>
+        <button class="study-back" onclick=${handle(backToHome)}>← back</button>
         <span>${() => {
           const deck = decks.get(activeDeck())
           const queue = state.get('studyQueue')
@@ -595,7 +595,7 @@ mount(h`
             <div class="done">
               <h3>session complete 🌳</h3>
               <p>come back tomorrow, or browse another deck.</p>
-              <button class="reveal-btn" style="margin-top: 1.25rem;" onclick=${() => backToHome}>back to decks</button>
+              <button class="reveal-btn" style="margin-top: 1.25rem;" onclick=${handle(backToHome)}>back to decks</button>
             </div>
           `
         }
@@ -607,28 +607,16 @@ mount(h`
           ${() => revealed()
             ? h`
               <div class="grades">
-                <button class="grade-again" onclick=${() => () => grade(0)}>again</button>
-                <button class="grade-hard"  onclick=${() => () => grade(1)}>hard</button>
-                <button class="grade-good"  onclick=${() => () => grade(2)}>good</button>
-                <button class="grade-easy"  onclick=${() => () => grade(3)}>easy</button>
+                <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
+                <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
+                <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
+                <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
               </div>
             `
-            : h`<button class="reveal-btn" onclick=${() => reveal}>reveal</button>`
+            : h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
           }
         `
       }}
     </div>
   `)}
 `, document.body, recaller)
-
-// ── event delegation for the deck list ───────────────────────────────
-// (`onclick` on dynamically-rendered <li>s is the reactive-cell
-// footgun documented in CLAUDE.md; data-action + a single delegated
-// listener is the streamo-idiomatic pattern.)
-document.body.addEventListener('click', (e) => {
-  const target = e.target.closest('[data-action]')
-  if (!target) return
-  if (target.dataset.action === 'study') {
-    startStudy(target.dataset.deck)
-  }
-})

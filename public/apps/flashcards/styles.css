@@ -692,3 +692,121 @@ h2 {
   border-color: #a7f3d0;
   background: white;
 }
+
+/* ── manage panel on the study page ───────────────────────────────────
+   Collapsed by default — shows just a faded "manage deck" pill.
+   Hovering the panel expands it to reveal the active + available
+   card lists. Uses the `grid-template-rows: 0fr ↔ 1fr` trick so the
+   expansion animates to the content's natural height. */
+.manage-deck {
+  position: relative;
+  margin-top: 1.5rem;
+  border: 1px dashed #ddd;
+  border-radius: 10px;
+  background: #fafafa;
+  transition: background 0.2s ease, border-color 0.2s ease, border-style 0.2s ease;
+}
+.manage-deck-pill {
+  padding: 0.75rem 1rem;
+  text-align: center;
+  color: #999;
+  font-style: italic;
+  user-select: none;
+  font-size: 0.92rem;
+  letter-spacing: 0.04em;
+  transition: color 0.2s ease, border-color 0.2s ease;
+}
+.manage-deck-expanded {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s ease;
+}
+.manage-deck-inner {
+  overflow: hidden;
+  min-height: 0;
+  padding: 0 1rem;
+}
+.manage-deck:hover {
+  background: white;
+  border-color: #ccc;
+  border-style: solid;
+}
+.manage-deck:hover .manage-deck-pill {
+  color: #555;
+  font-style: normal;
+  border-bottom: 1px solid #eee;
+}
+.manage-deck:hover .manage-deck-expanded {
+  grid-template-rows: 1fr;
+}
+.manage-deck-inner > .manage-section:first-child {
+  margin-top: 1rem;
+}
+.manage-deck-inner > .manage-cards:last-child,
+.manage-deck-inner > .empty:last-child {
+  padding-bottom: 1rem;
+}
+
+/* Compact card variant — used inside the manage panel.
+   Default state: only the mastery bar + label are visible (the
+   "bottom of a card" look David asked for). Hovering an individual
+   card expands the front/back content above the bar. The grid-rows
+   transition gives a smooth height animation; the margin-bottom on
+   the content-wrap is the "slight margin" so the bar isn't flush
+   against the front/back text when expanded. */
+.manage-card-compact {
+  padding: 0.55rem 0.9rem;
+  gap: 0;
+}
+.manage-card-content-wrap {
+  position: relative;
+  z-index: 1;
+}
+.manage-card-compact .manage-card-content-wrap {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.2s ease, margin-bottom 0.2s ease;
+  margin-bottom: 0;
+}
+.manage-card-compact .manage-card-content-wrap > * {
+  overflow: hidden;
+  min-height: 0;
+}
+.manage-card-compact:hover .manage-card-content-wrap {
+  grid-template-rows: 1fr;
+  margin-bottom: 0.45rem;
+}
+
+/* Empty-state card area on the study page — shown when the active
+   set is empty (fresh deck) or when nothing is currently due. Same
+   footprint as a real card so the layout doesn't shift between
+   states. */
+.study-empty {
+  text-align: center;
+  padding: 2rem 1.5rem;
+  border: 1px dashed #ddd;
+  border-radius: 10px;
+  background: #fafafa;
+  min-height: 13rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.study-empty h3 {
+  margin: 0 0 0.5rem;
+  font-weight: 500;
+  font-size: 1.3rem;
+  color: #555;
+}
+.study-empty p {
+  margin: 0;
+  color: #777;
+  max-width: 26rem;
+  line-height: 1.4;
+}
+.study-empty em {
+  font-style: normal;
+  font-weight: 500;
+  color: #444;
+}

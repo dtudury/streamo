@@ -147,7 +147,7 @@ function deckStats (deckId) {
   const now = Date.now()
   for (let i = 0; i < cards.length; i++) {
     if (cards[i]?.deleted) continue
-    if (active !== null && !active.has(i)) continue
+    if (!active.has(i)) continue
     activeCount++
     const r = reviewStateForCard(deckId, i)
     if (r.reps === 0) neu++
@@ -168,7 +168,7 @@ function buildStudyQueue (deckId) {
   const now = Date.now()
   for (let i = 0; i < cards.length; i++) {
     if (cards[i]?.deleted) continue   // soft-deleted cards don't appear in study
-    if (active !== null && !active.has(i)) continue  // not in active set
+    if (!active.has(i)) continue  // not in active set
     const r = reviewStateForCard(deckId, i)
     const everReviewed = r.due > 0  // DEFAULT_REVIEW has due=0; any grade sets a timestamp
     if (!everReviewed) neu.push(i)
@@ -184,41 +184,28 @@ function buildStudyQueue (deckId) {
 // the learner is *currently* studying. Cards not in the active set
 // are *available* (in the deck) but don't appear in the study queue.
 //
-// Legacy default: if `active` is undefined (learner has never touched
-// the manage UI), treat as "all non-deleted cards are active" — so
-// existing users see no behavior change until they explicitly opt in.
-// Returns `null` for the legacy case so callers can short-circuit.
+// **Default: empty.** A fresh deck has no active cards; the learner
+// opts cards in via the manage UI on the study page. Previously the
+// default was "all active" — that didn't match the new combined UI
+// where the manage panel is the way you turn a deck on for yourself.
 
 function activeCardIds (deckId) {
   const repo = reviewRepos.get(deckId)
-  if (!repo) return null  // not ready — caller should treat as "all"
+  if (!repo) return new Set()
   const active = repo.get('active')
-  if (active === undefined) return null  // legacy: all-active
+  if (!Array.isArray(active)) return new Set()
   return new Set(active)
 }
 
 function isCardActive (deckId, cardIdx) {
-  const active = activeCardIds(deckId)
-  if (active === null) return true  // legacy default
-  return active.has(cardIdx)
+  return activeCardIds(deckId).has(cardIdx)
 }
 
 function toggleCardActive (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
   if (!repo) return
   const value = repo.get() ?? { deck: deckId, reviews: [] }
-  let activeArr = value.active
-  if (activeArr === undefined) {
-    // First touch — materialize the legacy "all" set so we can
-    // meaningfully toggle one off. Includes all non-deleted card
-    // indices for the current deck.
-    const cards = deckCards(deckId)
-    activeArr = []
-    for (let i = 0; i < cards.length; i++) {
-      if (!cards[i]?.deleted) activeArr.push(i)
-    }
-  }
-  const set = new Set(activeArr)
+  const set = new Set(Array.isArray(value.active) ? value.active : [])
   let nowActive
   if (set.has(cardIdx)) {
     set.delete(cardIdx)
@@ -341,7 +328,7 @@ function deckMastery (deckId, now) {
   let total = 0, n = 0
   for (let i = 0; i < cards.length; i++) {
     if (cards[i]?.deleted) continue
-    if (active !== null && !active.has(i)) continue
+    if (!active.has(i)) continue
     const r = reviewStateForCard(deckId, i)
     if (r.lastReviewAt) { total += masteryOf(r, now); n++ }
   }
@@ -843,7 +830,6 @@ mount(h`
                 <span class="due">${s.due} due</span>
                 <span class="new">${s.new} new</span>
                 <span>${s.active} active</span>
-                <button class="manage-btn" onclick=${handle((e) => { e.stopPropagation(); enterManage(id) })}>manage</button>
                 ${isFork
                   ? h`<button class="edit-btn" onclick=${handle((e) => { e.stopPropagation(); enterEdit(id) })}>edit</button>`
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
@@ -884,7 +870,7 @@ mount(h`
                 const upcoming = []
                 for (let i = 0; i < cards.length; i++) {
                   if (cards[i]?.deleted) continue
-                  if (active !== null && !active.has(i)) continue  // active set only
+                  if (!active.has(i)) continue  // active set only
                   const r = reviewStateForCard(id, i)
                   const due = r.due === 0 ? now : r.due  // new cards are "now"
                   upcoming.push({ idx: i, due })
@@ -938,70 +924,152 @@ mount(h`
         if (cards.length === 0) {
           return h`<div class="done"><p>loading deck…</p></div>`
         }
+        const now = time.get()  // alive: per-card mastery climbs each tick
         const card = currentCard()
-        if (!card) {
-          return h`
-            <div class="done">
-              <h3>session complete 🌳</h3>
-              <p>come back tomorrow, or browse another deck.</p>
-              <button class="reveal-btn" style="margin-top: 1.25rem;" onclick=${handle(backToHome)}>back to decks</button>
-            </div>
-          `
-        }
-        return h`
-          <div class="card ${() => revealed() ? 'revealed' : ''}"
-               data-key=${`card-${currentCardIdx()}`}
-               onclick=${handle(toggleReveal)}>
-            <div class="card-inner">
-              <div class="card-face card-face-front">
-                <div class="card-front-text">${card.front}</div>
-                <div class="card-flip-hint">
-                  <svg class="card-flip-icon" viewBox="0 0 24 16" aria-hidden="true">
-                    <ellipse cx="12" cy="8" rx="10" ry="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
-                    <circle cx="12" cy="8" r="3" fill="currentColor"/>
-                  </svg>
-                  <span>tap to reveal</span>
+        const activeSet = activeCardIds(deckId)
+
+        // Studied card area: either the current queue card OR an
+        // empty-state pointing the learner at the manage panel below.
+        // Two distinct emptys — fresh deck (no active cards yet) vs.
+        // session-complete (active cards exist, none currently due).
+        const studyArea = card
+          ? h`
+            <div class="card ${() => revealed() ? 'revealed' : ''}"
+                 data-key=${`card-${currentCardIdx()}`}
+                 onclick=${handle(toggleReveal)}>
+              <div class="card-inner">
+                <div class="card-face card-face-front">
+                  <div class="card-front-text">${card.front}</div>
+                  <div class="card-flip-hint">
+                    <svg class="card-flip-icon" viewBox="0 0 24 16" aria-hidden="true">
+                      <ellipse cx="12" cy="8" rx="10" ry="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                      <circle cx="12" cy="8" r="3" fill="currentColor"/>
+                    </svg>
+                    <span>tap to reveal</span>
+                  </div>
+                </div>
+                <div class="card-face card-face-back">
+                  <div class="card-back-text">${() => currentCard()?.back ?? ''}</div>
                 </div>
               </div>
-              <div class="card-face card-face-back">
-                <div class="card-back-text">${() => currentCard()?.back ?? ''}</div>
+            </div>
+            ${() => {
+              // Mastery strip — tied to the current queue card so the
+              // learner sees the climbing bar for what they're about
+              // to grade. Always shown; gray for no-history.
+              const idx = currentCardIdx()
+              if (idx == null) return null
+              const review = reviewStateForCard(deckId, idx)
+              const hasHistory = !!review.lastReviewAt
+              const m = masteryOf(review, time.get())
+              const pct = Math.min(100, (m / 7) * 100)
+              const color = hasHistory ? masteryColor(m) : '#aaa'
+              return h`
+                <div class="study-mastery-wrap">
+                  <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
+                    <div class="study-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
+                  </div>
+                  <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
+                </div>
+              `
+            }}
+            ${() => revealed()
+              ? h`
+                <div class="grades">
+                  <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
+                  <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
+                  <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
+                  <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
+                </div>
+              `
+              : null
+            }
+          `
+          : activeSet.size === 0
+            ? h`
+              <div class="study-empty">
+                <h3>no cards yet</h3>
+                <p>hover over <em>manage deck</em> below and click a card to add it to your study set.</p>
+              </div>
+            `
+            : h`
+              <div class="study-empty">
+                <h3>all caught up 🌳</h3>
+                <p>nothing due right now — come back later, or manage your deck below to add more cards.</p>
+              </div>
+            `
+
+        // Manage panel: collapsed pill by default; the whole deck's
+        // cards revealed on hover. Sorted by due-time ascending (next
+        // due at top; never-reviewed = due 0 = bubbles to the top of
+        // its section). All cards rendered compact (mastery bar only)
+        // by default; hover over a card to reveal its front/back.
+        const allIndices = []
+        for (let i = 0; i < cards.length; i++) {
+          if (!cards[i]?.deleted) allIndices.push(i)
+        }
+        allIndices.sort((a, b) => {
+          const ra = reviewStateForCard(deckId, a)
+          const rb = reviewStateForCard(deckId, b)
+          return (ra.due || 0) - (rb.due || 0)
+        })
+        const activeList = allIndices.filter(i => activeSet.has(i))
+        const availableList = allIndices.filter(i => !activeSet.has(i))
+
+        const renderCompactCard = (i, isActive) => {
+          const c = cards[i]
+          const review = reviewStateForCard(deckId, i)
+          const hasHistory = !!review.lastReviewAt
+          const m = masteryOf(review, now)
+          const pct = Math.min(100, (m / 7) * 100)
+          const color = hasHistory ? masteryColor(m) : '#aaa'
+          const iconLines = isActive
+            ? h`<line x1="0" y1="0" x2="100" y2="100" stroke-width="14"/>
+                <line x1="100" y1="0" x2="0" y2="100" stroke-width="14"/>`
+            : h`<line x1="50" y1="0" x2="50" y2="100" stroke-width="14"/>
+                <line x1="0" y1="50" x2="100" y2="50" stroke-width="14"/>`
+          return h`
+            <li class="manage-card manage-card-compact ${isActive ? 'manage-card-active' : 'manage-card-available'}"
+                data-key=${`manage-${i}`}
+                onclick=${handle(() => toggleCardActive(deckId, i))}>
+              <svg class="manage-card-icon" viewBox="0 0 100 100" aria-hidden="true">
+                ${iconLines}
+              </svg>
+              <div class="manage-card-content-wrap">
+                <div class="manage-card-content">
+                  <div class="manage-card-front">${c.front || '(blank)'}</div>
+                  <div class="manage-card-back">${c.back || ''}</div>
+                </div>
+              </div>
+              <div class="manage-card-mastery-wrap">
+                <div class="manage-card-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="manage-card-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
+                </div>
+                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
+              </div>
+            </li>
+          `
+        }
+
+        const managePanel = h`
+          <div class="manage-deck">
+            <div class="manage-deck-pill">manage deck</div>
+            <div class="manage-deck-expanded">
+              <div class="manage-deck-inner">
+                <h3 class="manage-section">active <span class="manage-count">(${activeList.length})</span><span class="manage-section-hint">click to remove</span></h3>
+                ${activeList.length === 0
+                  ? h`<p class="empty">no active cards yet.</p>`
+                  : h`<ul class="manage-cards">${activeList.map(i => renderCompactCard(i, true))}</ul>`}
+                <h3 class="manage-section">available <span class="manage-count">(${availableList.length})</span><span class="manage-section-hint">click to add</span></h3>
+                ${availableList.length === 0
+                  ? h`<p class="empty">every card in this deck is active.</p>`
+                  : h`<ul class="manage-cards">${availableList.map(i => renderCompactCard(i, false))}</ul>`}
               </div>
             </div>
           </div>
-          ${() => {
-            // Mastery strip below the studied card — same shape as the
-            // manage view, but tied to the current queue card so the
-            // learner sees the climbing/draining bar for what they're
-            // about to grade. Always shown; gray for no-history.
-            const idx = currentCardIdx()
-            const deckId = activeDeck()
-            if (idx == null) return null
-            const review = reviewStateForCard(deckId, idx)
-            const hasHistory = !!review.lastReviewAt
-            const m = masteryOf(review, time.get())
-            const pct = Math.min(100, (m / 7) * 100)
-            const color = hasHistory ? masteryColor(m) : '#aaa'
-            return h`
-              <div class="study-mastery-wrap">
-                <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
-                  <div class="study-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
-                </div>
-                <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
-              </div>
-            `
-          }}
-          ${() => revealed()
-            ? h`
-              <div class="grades">
-                <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
-                <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
-                <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
-                <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
-              </div>
-            `
-            : null
-          }
         `
+
+        return h`${studyArea}${managePanel}`
       }}
     </div>
   `)}

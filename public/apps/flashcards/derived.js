@@ -70,18 +70,32 @@ export function reviewStateForCard (deckId, cardIdx) {
   return r
 }
 
-// The deck's current retention target — readable from anywhere (slot,
-// handler, render). Defaults to DEFAULT_RETENTION_TARGET when the
-// learner hasn't set one for this deck. While the slider is being
-// dragged, `state.pendingRetentionTarget` overrides — that's how the
-// deck re-sorts live during drag without writing a commit per pixel;
-// the commit happens once on slider release.
+// The deck's *effective* retention target — what consumers (mastery,
+// due-time, sort order) should use. During slider drag,
+// `state.pendingRetentionTarget` overrides the saved value, which is
+// how the deck re-sorts live. Defaults to DEFAULT_RETENTION_TARGET
+// when nothing is set.
 export function retentionTargetFor (deckId) {
   const pending = state.get('pendingRetentionTarget')
   if (pending != null) return pending
+  return committedRetentionTargetFor(deckId)
+}
+
+// The deck's *saved* retention target — ignoring any in-flight slider
+// preview. Used to decide whether the save button should appear (when
+// pending differs from saved).
+export function committedRetentionTargetFor (deckId) {
   const repo = reviewRepos.get(deckId)
   if (!repo) return DEFAULT_RETENTION_TARGET
   return repo.get('retentionTarget') ?? DEFAULT_RETENTION_TARGET
+}
+
+// Is there an unsaved slider change for this deck? True when the
+// learner has dragged the slider but not pressed save yet.
+export function hasPendingRetentionChange (deckId) {
+  const pending = state.get('pendingRetentionTarget')
+  if (pending == null) return false
+  return pending !== committedRetentionTargetFor(deckId)
 }
 
 // ── active set (partial-deck learning) ──────────────────────────────

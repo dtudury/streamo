@@ -822,10 +822,29 @@ h2 {
   padding: 1rem 0 0.8rem;
   border-bottom: 1px solid #eee;
 }
+.retention-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
 .retention-control label {
   font-size: 0.82rem;
   color: #555;
 }
+.retention-save {
+  background: #1d4ed8;
+  color: white;
+  border: none;
+  padding: 0.25rem 0.7rem;
+  border-radius: 4px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+.retention-save:hover { opacity: 0.88; }
 .retention-control label strong {
   font-variant-numeric: tabular-nums;
   color: #1d4ed8;

@@ -72,12 +72,21 @@ const signedForks = new Set()
 // isCardActive) lives in derived.js; toggleCardActive — the mutation
 // — stays here with the other user-action handlers.
 
-// Retention slider has two handlers: oninput updates only the
-// ephemeral pending value (the deck still re-sorts live because
-// retentionTargetFor() reads pending first), and onchange — fired
-// on drag release — commits the new value to the reviews repo
-// and clears pending. So a single full drag writes one commit
-// instead of fifty, without losing the live-jumping effect.
+// Retention slider has two handlers:
+//
+// - previewRetentionTarget (oninput): writes the new value ONLY to
+//   state.pendingRetentionTarget. retentionTargetFor() reads pending
+//   first, so the deck re-sorts live as you drag. NOT a commit.
+//
+// - saveRetentionTarget (onclick on the save button): commits the
+//   pending value to the reviews repo and clears pending. Save
+//   button only appears when there's a pending change that differs
+//   from the committed value.
+//
+// Drag-without-save = preview only; navigating away (backToHome)
+// clears pending and reverts to the committed value. David asked
+// for this shape so the slider is for exploration; saving is an
+// explicit step.
 
 function previewRetentionTarget (event) {
   const value = parseFloat(event.target.value)
@@ -85,12 +94,9 @@ function previewRetentionTarget (event) {
   state.set('pendingRetentionTarget', value)
 }
 
-function commitRetentionTarget (event) {
-  const value = parseFloat(event.target.value)
-  if (!Number.isFinite(value)) {
-    state.set('pendingRetentionTarget', null)
-    return
-  }
+function saveRetentionTarget () {
+  const pending = state.get('pendingRetentionTarget')
+  if (pending == null) return
   const deckId = activeDeck()
   const repo = reviewRepos.get(deckId)
   if (!repo) {
@@ -98,9 +104,9 @@ function commitRetentionTarget (event) {
     return
   }
   const v = repo.get() ?? { deck: deckId, reviews: [] }
-  if (v.retentionTarget !== value) {
-    repo.defaultMessage = `set retention target to ${(value * 100).toFixed(0)}%`
-    repo.set({ ...v, retentionTarget: value })
+  if (v.retentionTarget !== pending) {
+    repo.defaultMessage = `set retention target to ${(pending * 100).toFixed(0)}%`
+    repo.set({ ...v, retentionTarget: pending })
   }
   state.set('pendingRetentionTarget', null)
 }
@@ -628,7 +634,7 @@ export {
   // rather than pure data derivation; kept here next to revealed
   currentCard, currentCardIdx, revealed,
   // user-action handlers wired into onclick / onsubmit
-  toggleCardActive, previewRetentionTarget, commitRetentionTarget,
+  toggleCardActive, previewRetentionTarget, saveRetentionTarget,
   toggleReveal, grade, peekCard,
   startStudy, backToHome, enterEdit, exitEdit, enterManage, exitManage,
   forkDeck, deleteFork,

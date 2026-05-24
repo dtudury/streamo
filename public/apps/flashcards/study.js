@@ -10,12 +10,12 @@ import { state, time, activeDeck } from './state.js'
 import { masteryOf, masteryColor, barFor, formatTimeUntil } from './mastery.js'
 import {
   deckCards, deckRepo, buildStudyQueue, reviewStateForCard, activeCardIds,
-  retentionTargetFor
+  retentionTargetFor, hasPendingRetentionChange
 } from './derived.js'
 import {
   currentCard, currentCardIdx, revealed,
   toggleReveal, grade, backToHome, toggleCardActive, peekCard,
-  previewRetentionTarget, commitRetentionTarget
+  previewRetentionTarget, saveRetentionTarget
 } from './main.js'
 
 export function renderStudy () {
@@ -217,19 +217,22 @@ export function renderStudy () {
             <div class="manage-deck-expanded">
               <div class="manage-deck-inner">
                 ${() => {
-                  // Retention slider — per-deck "how hard should this
-                  // deck be?" knob. Higher target = shorter intervals
-                  // = cards come up more often = you ace the tests
-                  // (David's preference). Lower target = longer
-                  // intervals = fewer reviews. oninput fires per
-                  // drag step so the deck re-sorts live.
+                  // Retention slider. Dragging updates `pending`
+                  // (live preview — deck re-sorts as you drag), but
+                  // doesn't write to the repo. The "save" button
+                  // appears when pending differs from saved; click
+                  // it to commit. Navigate away → pending clears,
+                  // saved value sticks.
                   const target = retentionTargetFor(deckId)
+                  const hasUnsaved = hasPendingRetentionChange(deckId)
                   return h`
                     <div class="retention-control">
-                      <label>aim for <strong>${(target * 100).toFixed(0)}%</strong> retention <span class="retention-hint">${target > 0.92 ? '— ace it' : target < 0.75 ? '— skate by' : '— balanced'}</span></label>
+                      <div class="retention-label-row">
+                        <label>aim for <strong>${(target * 100).toFixed(0)}%</strong> retention <span class="retention-hint">${target > 0.92 ? '— ace it' : target < 0.75 ? '— skate by' : '— balanced'}</span></label>
+                        ${hasUnsaved ? h`<button class="retention-save" onclick=${handle(saveRetentionTarget)}>save</button>` : null}
+                      </div>
                       <input type="range" min="0.5" max="0.99" step="0.01" value=${target}
-                             oninput=${handle(previewRetentionTarget)}
-                             onchange=${handle(commitRetentionTarget)}>
+                             oninput=${handle(previewRetentionTarget)}>
                     </div>
                   `
                 }}

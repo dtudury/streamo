@@ -249,7 +249,8 @@ function startStudy (deckId) {
 function backToHome () {
   state.set('view', 'home')
   state.set('activeDeck', null)
-  state.set('studyAhead', false)  // opt-in study-ahead resets between sessions
+  state.set('studyAhead', false)   // opt-in study-ahead resets between sessions
+  state.set('peekCardIdx', null)   // and so does the manage-list peek
 }
 
 // Reveal ties the flip to the SPECIFIC card we're showing right now.
@@ -290,8 +291,11 @@ function grade (gradeIdx) {
   // No queue mutation, no index advance — the commit above updates
   // the reviews repo, which shifts buildStudyQueue's output, which
   // makes the new queue[0] the next card. Clearing revealedCardIdx
-  // tells the view to show the next card's front.
+  // tells the view to show the next card's front; clearing
+  // peekCardIdx hands control back to the queue (if the learner
+  // had peeked at this card, grading it returns to normal flow).
   state.set('revealedCardIdx', null)
+  state.set('peekCardIdx', null)
 }
 
 // Fork a deck: derive a fresh keypair for this learner's fork, copy
@@ -455,18 +459,31 @@ function exitManage () {
 function currentCard () {
   const deckId = activeDeck()
   if (!deckId) return null
-  const queue = buildStudyQueue(deckId)
-  if (queue.length === 0) return null  // session complete (or not yet started)
-  return deckCards(deckId)[queue[0]]
+  const idx = currentCardIdx()
+  return idx == null ? null : deckCards(deckId)[idx]
 }
 
 // The card index that's currently being shown — used as a data-key on
 // the card div so it recycles cleanly when grade() shifts the queue.
+// peekCardIdx overrides the queue: when the learner clicks the eye
+// button on a manage-list card, that card jumps to the studied slot
+// regardless of due-time. Cleared on grade and back-to-home.
 function currentCardIdx () {
+  const peek = state.get('peekCardIdx')
+  if (peek != null) return peek
   const deckId = activeDeck()
   if (!deckId) return null
   const queue = buildStudyQueue(deckId)
   return queue.length === 0 ? null : queue[0]
+}
+
+// Peek at a card from the manage list — pop it into the studied slot
+// and reveal its back. Lets the learner pick a specific card to look
+// at without grading their way through the queue. Cleared on grade
+// (next card comes from queue normally) and on back-to-home.
+function peekCard (cardIdx) {
+  state.set('peekCardIdx', cardIdx)
+  state.set('revealedCardIdx', cardIdx)
 }
 
 // ── reactive side effects ────────────────────────────────────────────
@@ -594,7 +611,7 @@ export {
   // rather than pure data derivation; kept here next to revealed
   currentCard, currentCardIdx, revealed,
   // user-action handlers wired into onclick / onsubmit
-  toggleCardActive, setRetentionTarget, toggleReveal, grade,
+  toggleCardActive, setRetentionTarget, toggleReveal, grade, peekCard,
   startStudy, backToHome, enterEdit, exitEdit, enterManage, exitManage,
   forkDeck, deleteFork,
   saveCard, cancelEditCard, startEditCard, deleteCard, addCard

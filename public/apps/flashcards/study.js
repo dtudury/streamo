@@ -14,7 +14,7 @@ import {
 } from './derived.js'
 import {
   currentCard, currentCardIdx, revealed,
-  toggleReveal, grade, backToHome, toggleCardActive, setRetentionTarget
+  toggleReveal, grade, backToHome, toggleCardActive, setRetentionTarget, peekCard
 } from './main.js'
 
 export function renderStudy () {
@@ -187,7 +187,14 @@ export function renderStudy () {
               <div class="manage-card-content-wrap">
                 <div class="manage-card-content">
                   <div class="manage-card-front">${c.front || '(blank)'}</div>
-                  <div class="manage-card-back">${c.back || ''}</div>
+                  <button class="manage-card-peek"
+                          title="look at this one in the studied slot"
+                          onclick=${handle((e) => { e.stopPropagation(); peekCard(i) })}>
+                    <svg viewBox="0 0 24 16" aria-hidden="true">
+                      <ellipse cx="12" cy="8" rx="10" ry="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                      <circle cx="12" cy="8" r="3" fill="currentColor"/>
+                    </svg>
+                  </button>
                 </div>
               </div>
               <div class="manage-card-mastery-wrap">

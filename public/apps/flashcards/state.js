@@ -41,11 +41,16 @@ export const state = liveObject({
   editingCardIdx:  null, // null = not editing; N = editing card N; -1 = adding new card
   managePinned:    false, // click the manage-deck pill to keep it open
                           // independent of hover (mobile: no hover events)
-  studyAhead:      false  // when true, study queue extends past 'due now'
+  studyAhead:      false, // when true, study queue extends past 'due now'
                           // to all active cards sorted by due-time — lets
                           // the learner keep grading after the algorithm
                           // says 'all caught up.' Set by clicking the
                           // all-caught-up empty state; reset on back-to-home.
+  peekCardIdx:     null   // when non-null, overrides currentCardIdx() so a
+                          // specific card from the manage list shows in
+                          // the studied slot (eye-icon "look at this one
+                          // now" without waiting for the queue). Cleared
+                          // on grade and on back-to-home.
   // No studyQueue, no currentIdx — both derive from the reviews repo
   // each render. The "next card" is buildStudyQueue[0]; grading commits
   // a review event and the queue shifts naturally as a side effect.

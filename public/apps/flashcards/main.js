@@ -67,6 +67,14 @@ let session = null
 let homeRepo = null     // the relay's home repo, source of bundled-deck addresses
 let myDeckIndex = null  // learner's deck-index Repo: { decks: [<pubkey-hex>, ...] }
 
+// Set of fork deck-repo addresses that have had their signer re-attached
+// this session. The signer is attached at fork-creation time inside
+// forkDeck(); on re-login the cascade re-opens the fork's repo but
+// doesn't know to re-attach. The 'attach-signer-to-fork-decks' watcher
+// below does that, using a streamName stored in the fork's deck value.
+// Reset on logout.
+const signedForks = new Set()
+
 // ── SM-2 lite ────────────────────────────────────────────────────────
 
 const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0, lastReviewAt: 0 }
@@ -432,6 +440,10 @@ function logout () {
   homeRepo = null
   myDeckIndex = null
   reviewRepos.set({})
+  signedForks.clear()
+  // Clear the URL hash so a stale deep-link doesn't try to re-enter
+  // a view that's no longer valid for whoever logs in next.
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search)
   // Fully reset state so `ready-*` flags from this session don't
   // leak into the next login's gating checks.
   state.set({
@@ -507,12 +519,18 @@ async function forkDeck (upstreamId) {
 
   const forkRepo = await session.subscribe(newDeckKey)
   forkRepo.attachSigner(signer, forkStream)
+  signedForks.add(newDeckKey)  // already attached this session
   forkRepo.defaultMessage = `fork of ${upstream.title}`
   forkRepo.set({
     title: `${upstream.title} (my fork)`,
     description: `forked from ${upstreamRepo.publicKeyHex.slice(0, 10)}…`,
     cards: [...upstream.cards],
-    forkedFrom: upstreamRepo.publicKeyHex
+    forkedFrom: upstreamRepo.publicKeyHex,
+    // Storing streamName in the deck value so re-login can re-attach
+    // the signer (signer derivation is one-way; we need the original
+    // name to reproduce the keypair). Without this the user could read
+    // their fork on re-login but not edit it.
+    streamName: forkStream
   })
 
   // Append to the learner's deck-index — the home view watches this
@@ -672,6 +690,38 @@ recaller.watch('ensure-reviews-for-all-decks', () => {
   }
   for (const addr of myDecks) {
     if (!reviewRepos.get(addr)) ensureReviewsRepo(addr)
+  }
+})
+
+// ── attach signers to fork deck repos on (re-)login ─────────────────
+//
+// forkDeck() attaches the signer at fork-creation time. But the fork's
+// deck repo lives across sessions — and the *cascade* opens it on
+// re-login without knowing to re-attach. Result before this watcher:
+// the user can read their fork on re-login but can't edit it (writes
+// fail because no signer; the apparent symptom is 'edits lost when I
+// log back in').
+//
+// We can't recover the original streamName from just the address
+// (signer.keysFor is one-way), so forkDeck now stores it in the
+// fork's deck value. This watcher reads it and re-attaches.
+//
+// Legacy forks (created before this fix) have no streamName stored
+// and can't be re-edited from a new session — they need to be
+// re-forked. Logged when skipped, not crashed.
+
+recaller.watch('attach-signer-to-fork-decks', () => {
+  if (!state.get('loggedIn')) return
+  if (!signer || !registry) return
+  const myDecks = myDeckIndex?.get('decks') ?? []
+  for (const addr of myDecks) {
+    if (signedForks.has(addr)) continue
+    const repo = registry.get(addr)
+    if (!repo) continue
+    const streamName = repo.get('streamName')
+    if (!streamName) continue  // legacy fork without streamName — skip
+    repo.attachSigner(signer, streamName)
+    signedForks.add(addr)
   }
 })
 

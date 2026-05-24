@@ -652,13 +652,19 @@ function currentCardIdx () {
 // condition false.
 
 recaller.watch('ensure-reviews-for-all-decks', () => {
+  // Subscribe to state.loggedIn FIRST — this is what makes the watcher
+  // fire when login completes. signer/session/homeRepo/myDeckIndex are
+  // module-level `let`s and not recaller-tracked, so reading them alone
+  // doesn't subscribe; without this loggedIn dep the watcher's first
+  // run at module load returns early and never re-fires.
+  if (!state.get('loggedIn')) return
+  if (!signer || !session) return
   // Eagerly open every discovered deck's reviews repo so the home
   // view's mastery/stats/schedule populate without needing a click.
   // Converges: once `reviewRepos.get(id)` is truthy, this loop skips
   // it. Each pass only fires async opens for newly-discovered decks
   // (a new fork appearing in myDeckIndex, a new bundled deck appearing
   // in flashcardsDecks). Same shape as registrySync's follow callback.
-  if (!signer || !session) return
   const fd = homeRepo?.get('flashcardsDecks') ?? {}
   const myDecks = myDeckIndex?.get('decks') ?? []
   for (const id of Object.keys(fd)) {
@@ -668,6 +674,54 @@ recaller.watch('ensure-reviews-for-all-decks', () => {
     if (!reviewRepos.get(addr)) ensureReviewsRepo(addr)
   }
 })
+
+// ── URL hash routing ────────────────────────────────────────────────
+//
+// state.view + activeDeck are encoded in location.hash so the browser's
+// back/forward buttons navigate between app screens. Format:
+//   #study/<deckId>   — studying a deck
+//   #edit/<deckId>    — editing a fork
+//   #manage/<deckId>  — managing active set
+//   (empty hash)      — home
+//
+// State → hash via a watcher (idempotent — only pushState when the
+// hash actually needs to change). Hash → state via a `popstate` event
+// listener (fires on back/forward). Both check-before-write so the
+// two sides don't echo.
+
+function stateToHashValue () {
+  const v = state.get('view')
+  const deck = state.get('activeDeck')
+  if (v && v !== 'home' && deck) return `#${v}/${deck}`
+  return ''
+}
+
+function applyHashToState () {
+  const raw = location.hash.replace(/^#/, '')
+  if (!raw) {
+    if (state.get('view') !== 'home') state.set('view', 'home')
+    if (state.get('activeDeck') !== null) state.set('activeDeck', null)
+    return
+  }
+  const slash = raw.indexOf('/')
+  if (slash < 0) return
+  const view = raw.slice(0, slash)
+  const deck = raw.slice(slash + 1)
+  if (!['study', 'edit', 'manage'].includes(view) || !deck) return
+  if (state.get('view') !== view) state.set('view', view)
+  if (state.get('activeDeck') !== deck) state.set('activeDeck', deck)
+}
+
+recaller.watch('sync-state-to-url-hash', () => {
+  if (!state.get('loggedIn')) return  // don't write hash before login
+  const want = stateToHashValue()
+  const current = location.hash
+  if (current === want) return
+  if (current === '' && want === '') return
+  history.pushState(null, '', want || (location.pathname + location.search))
+})
+
+window.addEventListener('popstate', applyHashToState)
 
 // ── mount ────────────────────────────────────────────────────────────
 

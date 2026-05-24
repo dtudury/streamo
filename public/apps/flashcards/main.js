@@ -69,7 +69,7 @@ let myDeckIndex = null  // learner's deck-index Repo: { decks: [<pubkey-hex>, ..
 
 // ── SM-2 lite ────────────────────────────────────────────────────────
 
-const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0 }
+const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0, lastReviewAt: 0 }
 const GRADE_TO_Q = [0, 2, 4, 5]
 
 function applySM2 (review, gradeIdx, atMs) {
@@ -92,6 +92,10 @@ function applySM2 (review, gradeIdx, atMs) {
   r.due = q < 3
     ? atMs + 60 * 1000
     : atMs + r.interval * 24 * 60 * 60 * 1000
+  // Track the moment of this grading. Mastery is a function of
+  // elapsed time since this — climbs slowly between reviews, resets
+  // (here) on each grade. So the bar is alive.
+  r.lastReviewAt = atMs
   return r
 }
 
@@ -242,10 +246,29 @@ function toggleCardActive (deckId, cardIdx) {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-function masteryOf (review) {
-  if (!review || review.due === 0) return 0
-  const days = Math.max(0, review.interval)
-  return Math.log2(1 + days)
+// Mastery climbs with elapsed time since the last review. Takes `now`
+// so a slot calling this can pass `time.get()` and re-render reactively
+// every second — the bar is alive. Grading 'again' resets lastReviewAt
+// to the moment of the grade; mastery falls to ~0 and starts over.
+function masteryOf (review, now) {
+  if (!review || !review.lastReviewAt) return 0
+  const elapsedDays = Math.max(0, (now - review.lastReviewAt) / DAY_MS)
+  return Math.log2(1 + elapsedDays)
+}
+
+// Map a mastery score to a color that's legible on white. Banded so
+// it's deterministic and easy to reason about; avoids pale yellow on
+// the brown end (that's a contrast disaster) by reaching for dark
+// amber there instead. Used for both the bar fill and the tinted
+// 'mastery 2.40' label.
+function masteryColor (mastery) {
+  if (mastery < 1) return '#b91c1c'  // dark red — just starting
+  if (mastery < 2) return '#c2410c'  // burnt orange
+  if (mastery < 3) return '#92400e'  // dark amber (NOT pale yellow)
+  if (mastery < 4) return '#4d7c0f'  // olive / lime-dark
+  if (mastery < 5) return '#047857'  // emerald
+  if (mastery < 6) return '#0e7490'  // teal
+  return '#1d4ed8'                   // blue — well-mastered
 }
 
 function urgencyOf (review, nowMs) {
@@ -274,7 +297,7 @@ function formatTimeUntil (deltaMs) {
 // active, ever-reviewed cards. Represents "how well I know what I'm
 // currently studying," not "the whole deck's potential." Returns 0
 // if nothing's been reviewed yet.
-function deckMastery (deckId) {
+function deckMastery (deckId, now) {
   const cards = deckCards(deckId)
   if (cards.length === 0) return 0
   const active = activeCardIds(deckId)
@@ -283,7 +306,7 @@ function deckMastery (deckId) {
     if (cards[i]?.deleted) continue
     if (active !== null && !active.has(i)) continue
     const r = reviewStateForCard(deckId, i)
-    if (r.due > 0) { total += masteryOf(r); n++ }
+    if (r.lastReviewAt) { total += masteryOf(r, now); n++ }
   }
   return n === 0 ? 0 : total / n
 }
@@ -674,16 +697,22 @@ mount(h`
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
               ${() => {
-                // Mastery summary — average across reviewed cards.
-                // Reactive: reviews repo updates → re-runs.
-                const m = deckMastery(id)
+                // Live mastery summary — climbs with elapsed time since
+                // last review. Reads time.get() so the slot re-renders
+                // every second; reads reviews repo so it also updates on
+                // grades. Bar width and label color both map to the same
+                // mastery value; no gradient stretching, no decorative
+                // baked-in colors that don't mean anything.
+                const now = time.get()
+                const m = deckMastery(id, now)
                 if (m === 0) return null
                 const pct = Math.min(100, (m / 7) * 100)
+                const color = masteryColor(m)
                 return h`
-                  <div class="deck-mastery" title="average mastery: ${m.toFixed(1)} / 7">
+                  <div class="deck-mastery" title="average mastery: ${m.toFixed(2)} / 7" style=${`color: ${color}`}>
                     <div class="deck-mastery-bar" style=${`width:${pct.toFixed(0)}%`}></div>
-                    <span class="deck-mastery-label">mastery ${m.toFixed(1)}</span>
                   </div>
+                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(2)}</div>
                 `
               }}
               ${() => {
@@ -883,6 +912,7 @@ mount(h`
       ${() => {
         const deckId = activeDeck()
         const cards = deckCards(deckId)
+        const now = time.get()  // alive: per-card mastery climbs each tick
         if (cards.length === 0) return h`<p class="empty">no cards in this deck yet.</p>`
 
         // Partition into active and available, preserving original indices.
@@ -896,8 +926,9 @@ mount(h`
         const renderCard = (i, isActive) => {
           const card = cards[i]
           const review = reviewStateForCard(deckId, i)
-          const mastery = masteryOf(review)
+          const mastery = masteryOf(review, now)
           const masteryPct = Math.min(100, (mastery / 7) * 100)
+          const color = masteryColor(mastery)
           return h`
             <li class="manage-card ${isActive ? 'manage-card-active' : 'manage-card-available'}"
                 data-key=${`manage-${i}`}
@@ -906,8 +937,8 @@ mount(h`
                 <div class="manage-card-front">${card.front || '(blank)'}</div>
                 <div class="manage-card-back">${card.back || ''}</div>
               </div>
-              ${review.due > 0
-                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(1)} / 7`}>
+              ${review.lastReviewAt
+                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(2)} / 7`} style=${`color: ${color}`}>
                      <div class="manage-card-mastery-bar" style=${`width:${masteryPct.toFixed(0)}%`}></div>
                    </div>`
                 : null}

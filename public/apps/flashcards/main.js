@@ -477,6 +477,15 @@ function backToHome () {
 // false and the back auto-hides — and grade() applies to the card we
 // revealed, not whatever queue[0] is at grade-time.
 function reveal () { state.set('revealedCardIdx', currentCardIdx()) }
+// toggleReveal: the whole card is the flip target. Clicking flips
+// front↔back (so a learner can re-check the front after revealing).
+// Tied to currentCardIdx so the toggle is per-card; once you grade and
+// the queue shifts, revealed() goes false naturally.
+function toggleReveal () {
+  const idx = currentCardIdx()
+  const current = state.get('revealedCardIdx')
+  state.set('revealedCardIdx', current === idx ? null : idx)
+}
 
 function grade (gradeIdx) {
   const deckId = activeDeck()
@@ -940,10 +949,47 @@ mount(h`
           `
         }
         return h`
-          <div class="card" data-key=${`card-${currentCardIdx()}`}>
-            <div class="card-front">${card.front}</div>
-            ${when(revealed, h`<div class="card-back">${() => currentCard()?.back ?? ''}</div>`)}
+          <div class="card ${() => revealed() ? 'revealed' : ''}"
+               data-key=${`card-${currentCardIdx()}`}
+               onclick=${handle(toggleReveal)}>
+            <div class="card-inner">
+              <div class="card-face card-face-front">
+                <div class="card-front-text">${card.front}</div>
+                <div class="card-flip-hint">
+                  <svg class="card-flip-icon" viewBox="0 0 24 16" aria-hidden="true">
+                    <ellipse cx="12" cy="8" rx="10" ry="6" stroke="currentColor" stroke-width="1.5" fill="none"/>
+                    <circle cx="12" cy="8" r="3" fill="currentColor"/>
+                  </svg>
+                  <span>tap to reveal</span>
+                </div>
+              </div>
+              <div class="card-face card-face-back">
+                <div class="card-back-text">${() => currentCard()?.back ?? ''}</div>
+              </div>
+            </div>
           </div>
+          ${() => {
+            // Mastery strip below the studied card — same shape as the
+            // manage view, but tied to the current queue card so the
+            // learner sees the climbing/draining bar for what they're
+            // about to grade. Always shown; gray for no-history.
+            const idx = currentCardIdx()
+            const deckId = activeDeck()
+            if (idx == null) return null
+            const review = reviewStateForCard(deckId, idx)
+            const hasHistory = !!review.lastReviewAt
+            const m = masteryOf(review, time.get())
+            const pct = Math.min(100, (m / 7) * 100)
+            const color = hasHistory ? masteryColor(m) : '#aaa'
+            return h`
+              <div class="study-mastery-wrap">
+                <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="study-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
+                </div>
+                <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
+              </div>
+            `
+          }}
           ${() => revealed()
             ? h`
               <div class="grades">
@@ -953,7 +999,7 @@ mount(h`
                 <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
               </div>
             `
-            : h`<button class="reveal-btn" onclick=${handle(reveal)}>reveal</button>`
+            : null
           }
         `
       }}
@@ -1087,7 +1133,7 @@ mount(h`
             <li class="manage-card ${isActive ? 'manage-card-active' : 'manage-card-available'}"
                 data-key=${`manage-${i}`}
                 onclick=${handle(() => toggleCardActive(deckId, i))}>
-              <svg class="manage-card-icon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+              <svg class="manage-card-icon" viewBox="0 0 100 100" aria-hidden="true">
                 ${iconLines}
               </svg>
               <div class="manage-card-content">

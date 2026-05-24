@@ -187,30 +187,99 @@ h2 {
   text-decoration: underline dotted;
   font-family: inherit;
 }
+/* The card is a 3D-flip container — clicking it toggles `.revealed`,
+   which rotates `.card-inner` 180° on the Y axis. `backface-visibility:
+   hidden` on each face means only one side is ever visible. Fixed
+   height keeps the layout stable so the grade buttons and mastery
+   strip never shift when flipping. */
 .card {
-  border: 1px solid #ddd;
-  border-radius: 10px;
-  padding: 3rem 1.5rem;
-  background: white;
-  min-height: 11rem;
+  perspective: 1000px;
+  height: 13rem;
+  cursor: pointer;
+  position: relative;
+  user-select: none;
+}
+.card-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.55s cubic-bezier(0.4, 0, 0.2, 1);
+  transform-style: preserve-3d;
+}
+.card.revealed .card-inner {
+  transform: rotateY(180deg);
+}
+.card-face {
+  position: absolute;
+  inset: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 1.25rem;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border: 1px solid #ddd;
+  border-radius: 10px;
+  background: white;
+  padding: 1.5rem 1.5rem 2.4rem;  /* extra bottom for the flip hint */
   text-align: center;
 }
-.card-front {
+.card-face-back {
+  transform: rotateY(180deg);
+}
+.card-front-text {
   font-size: 2.6rem;
   font-weight: 500;
   line-height: 1.2;
 }
-.card-back {
-  font-size: 1.2rem;
-  color: #555;
-  border-top: 1px solid #eee;
-  padding-top: 1.25rem;
-  width: 100%;
+.card-back-text {
+  font-size: 1.6rem;
+  color: #333;
+  line-height: 1.3;
+}
+.card-flip-hint {
+  position: absolute;
+  bottom: 0.7rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  color: #aaa;
+  font-style: italic;
+  pointer-events: none;
+}
+.card-flip-icon {
+  width: 22px;
+  height: 14px;
+}
+
+/* Mastery strip under the studied card — same primitive shape as the
+   manage-card mastery, but slightly taller bar. Bar + label flush
+   (no internal gap). */
+.study-mastery-wrap {
+  margin-top: 0.7rem;
+  margin-bottom: 0.8rem;
+}
+.study-mastery {
+  position: relative;
+  height: 4px;
+  background: #f3f4f6;
+  border-radius: 999px;
+}
+.study-mastery-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: currentColor;
+  border-radius: 999px;
+  transition: width 0.3s ease-out, background 0.6s ease-out;
+}
+.study-mastery-label {
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0;
+  text-align: right;
 }
 .reveal-btn {
   align-self: center;
@@ -572,16 +641,19 @@ h2 {
   /* `color` set inline via masteryColor() — tinted, legible. */
 }
 
-/* SVG icon overlay — big faded X (active) or + (available) that appears
+/* SVG icon overlay — faded X (active) or + (available) that appears
    on hover. Positioned absolutely behind the content; pointer-events
-   off so clicks pass through to the card itself. Scaled with
-   preserveAspectRatio="none" so it covers the full bleed of the card,
-   strokes have square caps for sharp/right-angle ends. */
+   off so clicks pass through to the card itself. Sized to 2/3 the
+   card's height with square aspect (NOT stretched), centered. The
+   default preserveAspectRatio keeps the X at true right angles
+   regardless of card width. */
 .manage-card-icon {
   position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+  top: 16.67%;            /* (100 - 66.67) / 2 — centered vertically */
+  height: 66.67%;         /* 2/3 the card's height */
+  aspect-ratio: 1 / 1;    /* keep it square — strokes meet at right angles */
+  left: 50%;
+  transform: translateX(-50%);
   pointer-events: none;
   opacity: 0;
   transition: opacity 0.2s ease-out;

@@ -29,21 +29,43 @@ const loginStatus = liveValue('',    { recaller, name: 'loginStatus' })
 // Lives outside the Repo because it's per-tab UI state, not persisted.
 const editingId = liveValue(null, { recaller, name: 'editingId' })
 
-// URL hash drives the filter (#/, #/active, #/completed) — matches the
-// canonical TodoMVC routing convention. liveLocation gives us reactive
-// reads of window.location without a separate hashchange listener.
+// URL hash drives both *which list* and *which filter* —
+//   #/                          → no key → login screen
+//   #/<keyHex>                  → that key's todos, "all" filter
+//   #/<keyHex>/active           → that key's todos, "active" filter
+//   #/<keyHex>/completed        → that key's todos, "completed" filter
+//
+// The key in the URL is the *list being viewed*, not necessarily the
+// signed-in user. If you visit someone else's URL, you'll see their
+// list read-only — writes only fire when the URL's key matches your
+// signed-in key (the canWrite() check below).
+//
+// liveLocation gives us reactive reads of window.location without a
+// separate hashchange listener; per-segment reads via `hashParts`
+// mean only the slots that care about the changed segment re-render.
 const loc = liveLocation({ recaller, name: 'location' })
+const urlKey = () => {
+  const k = loc.get('hashParts', 1)
+  return (k && /^[0-9a-f]{66}$/.test(k)) ? k : null
+}
 const filterFromHash = () => {
-  switch (loc.get('hash')) {
-    case '#/active':    return 'active'
-    case '#/completed': return 'completed'
-    default:            return 'all'
+  switch (loc.get('hashParts', 2)) {
+    case 'active':    return 'active'
+    case 'completed': return 'completed'
+    default:          return 'all'
   }
 }
 
-// Set after successful login. Plain lets — the slots that read them are
-// only constructed after loggedIn flips true, so closure capture is fine.
-let myRepo, myKey
+// Set after successful login. registry and session live at module
+// scope so the URL-driven subscribe watcher (below in login()) can
+// reach them. myRepo/myKey/signer drive the *write* path; the *read*
+// path goes through the URL key.
+let registry, session, myRepo, myKey
+const canWrite = () => loggedIn.get() && urlKey() === myKey
+const viewedRepo = () => {
+  const k = urlKey()
+  return (k && registry) ? (registry.get(k) || null) : null
+}
 
 // ── handlers ─────────────────────────────────────────────────────────
 
@@ -61,8 +83,8 @@ async function login (e) {
     const signer = new Signer(username, password, 1)
     const { publicKey } = await signer.keysFor('todomvc')
     myKey = bytesToHex(publicKey)
-    const registry = new RepoRegistry(undefined, { recaller, name: 'todomvc' })
-    const session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
+    registry = new RepoRegistry(undefined, { recaller, name: 'todomvc' })
+    session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
     myRepo = await registry.open(myKey)
     myRepo.attachSigner(signer, 'todomvc')
     myRepo.defaultMessage = `signed in as ${username}`
@@ -71,6 +93,21 @@ async function login (e) {
     // come back. registry.open creates the local Repo; this asks the
     // relay to stream the historical chunks into it.
     await session.subscribe(myKey)
+    // If the URL doesn't already point at a valid key (fresh visit, or
+    // user pasted a malformed URL), navigate to our own list. If the
+    // URL DOES carry a key, leave it alone — the user is here to view
+    // that specific list, even if it's not theirs.
+    if (!urlKey()) loc.set('hash', `#/${myKey}`)
+    // Auto-subscribe to whatever key shows up in the URL — flashcards
+    // and explorer use the same shape. Reads `urlKey()` (URL hashParts)
+    // and `registry.get(key)` (registry keys), so it refires on both
+    // nav and arrival and self-quiets once the bytes land.
+    recaller.watch('todomvc-url-subscribe', () => {
+      const k = urlKey()
+      if (!k) return
+      if (registry.get(k)) return
+      session.subscribe(k)
+    })
     loggedIn.set(true)
   } catch (err) {
     loginStatus.set(`error: ${err.message}`)
@@ -78,8 +115,17 @@ async function login (e) {
   }
 }
 
-const getTodos = () => myRepo.get('todos') ?? []
-const setTodos = (todos, msg) => { myRepo.defaultMessage = msg; myRepo.set({ todos }) }
+// Reads target the URL's Repo (viewedRepo), so visiting someone else's
+// list shows their todos. Writes target *your own* Repo (myRepo) — and
+// only fire when canWrite() (URL's key matches your signed-in key);
+// the UI already hides write affordances in that case, but the guard
+// here is the truth-of-the-matter safety net.
+const getTodos = () => viewedRepo()?.get('todos') ?? []
+const setTodos = (todos, msg) => {
+  if (!canWrite()) return
+  myRepo.defaultMessage = msg
+  myRepo.set({ todos })
+}
 
 function addTodo (e) {
   e.preventDefault()
@@ -141,16 +187,16 @@ const cancelEdit = () => editingId.set(null)
 
 // ── view ─────────────────────────────────────────────────────────────
 
-function TodoItem ({ todo }) {
-  const editing = editingId.get() === todo.id
+function TodoItem ({ todo, editable }) {
+  const editing = editable && editingId.get() === todo.id
   const classes = [todo.done && 'completed', editing && 'editing'].filter(Boolean).join(' ')
   return h`
     <li class=${classes} data-key=${todo.id}>
       <div class="view">
-        <input class="toggle" type="checkbox" checked=${todo.done}
+        <input class="toggle" type="checkbox" checked=${todo.done} disabled=${!editable}
                onclick=${handle(() => toggleTodo(todo.id))}>
-        <label ondblclick=${handle(() => startEdit(todo.id))}>${todo.text}</label>
-        <button class="destroy" onclick=${handle(() => deleteTodo(todo.id))}></button>
+        <label ondblclick=${editable ? handle(() => startEdit(todo.id)) : null}>${todo.text}</label>
+        ${editable ? h`<button class="destroy" onclick=${handle(() => deleteTodo(todo.id))}></button>` : null}
       </div>
       ${editing ? h`
         <form onsubmit=${handle(e => saveEdit(e, todo.id))}>
@@ -173,28 +219,40 @@ mount(h`
   <section class="todoapp">
     <header class="header">
       <h1>todos</h1>
-      ${() => loggedIn.get() ? h`
-        <form data-key="new-todo-form" onsubmit=${handle(addTodo)}>
-          <input data-key="new-todo" class="new-todo" name="text" placeholder="What needs to be done?" autofocus autocomplete="off">
-        </form>
-      ` : h`
-        <form data-key="login-form" class="login" onsubmit=${handle(login)}>
-          <input data-key="username" name="username" placeholder="username" autocomplete="username" autofocus>
-          <input data-key="password" name="password" type="password" placeholder="password" autocomplete="current-password">
-          <button>sign in</button>
-          <div class="login-status">${() => loginStatus.get()}</div>
-        </form>
-      `}
+      ${() => {
+        if (!loggedIn.get()) return h`
+          <form data-key="login-form" class="login" onsubmit=${handle(login)}>
+            <input data-key="username" name="username" placeholder="username" autocomplete="username" autofocus>
+            <input data-key="password" name="password" type="password" placeholder="password" autocomplete="current-password">
+            <button>sign in</button>
+            <div class="login-status">${() => loginStatus.get()}</div>
+          </form>
+        `
+        if (canWrite()) return h`
+          <form data-key="new-todo-form" onsubmit=${handle(addTodo)}>
+            <input data-key="new-todo" class="new-todo" name="text" placeholder="What needs to be done?" autofocus autocomplete="off">
+          </form>
+        `
+        // Logged in, but viewing someone else's list (URL key !== myKey).
+        // Surface what's being viewed and offer a one-click way back home.
+        return h`
+          <div data-key="viewing-other" class="viewing-other">
+            viewing <code>${urlKey()?.slice(0, 10)}…</code> · read-only
+            <a href=${`#/${myKey}`}>← back to your list</a>
+          </div>
+        `
+      }}
     </header>
 
     ${() => !loggedIn.get() || getTodos().length === 0 ? null : h`
       <section class="main">
         <input id="toggle-all" class="toggle-all" type="checkbox"
-               checked=${getTodos().every(t => t.done)}
+               checked=${getTodos().every(t => t.done)} disabled=${!canWrite()}
                onclick=${handle(toggleAll)}>
         <label for="toggle-all">Mark all as complete</label>
         <ul class="todo-list">${() => {
           const filter = filterFromHash()
+          const editable = canWrite()
           const filtered = getTodos().filter(t =>
             filter === 'all' || (filter === 'active' ? !t.done : t.done)
           )
@@ -203,7 +261,7 @@ mount(h`
           // re-render fresh-mounts all <li>s, destroying any in-progress
           // edit (focus, partial text). With the key, the existing <li>
           // is recycled and its inner DOM survives.
-          return filtered.map(t => h`<${TodoItem} todo=${t} data-key=${t.id}/>`)
+          return filtered.map(t => h`<${TodoItem} todo=${t} editable=${editable} data-key=${t.id}/>`)
         }}</ul>
       </section>
     `}
@@ -216,13 +274,18 @@ mount(h`
         }}</span>
         <ul class="filters">${() => {
           const f = filterFromHash()
+          const k = urlKey()
+          // Filter links carry the current key — switching filters
+          // keeps you viewing the same list. Per-segment hashParts
+          // reactivity means swapping filter doesn't redraw the
+          // key-driven parts of the app.
           return h`
-            <li><a class=${f === 'all'       ? 'selected' : null} href="#/">All</a></li>
-            <li><a class=${f === 'active'    ? 'selected' : null} href="#/active">Active</a></li>
-            <li><a class=${f === 'completed' ? 'selected' : null} href="#/completed">Completed</a></li>
+            <li><a class=${f === 'all'       ? 'selected' : null} href=${`#/${k}`}>All</a></li>
+            <li><a class=${f === 'active'    ? 'selected' : null} href=${`#/${k}/active`}>Active</a></li>
+            <li><a class=${f === 'completed' ? 'selected' : null} href=${`#/${k}/completed`}>Completed</a></li>
           `
         }}</ul>
-        ${() => getTodos().some(t => t.done)
+        ${() => canWrite() && getTodos().some(t => t.done)
           ? h`<button class="clear-completed" onclick=${handle(clearCompleted)}>Clear completed</button>`
           : null}
       </footer>
@@ -231,8 +294,8 @@ mount(h`
 
   ${() => loggedIn.get() ? h`
     <footer class="info">
-      <p>Double-click to edit a todo</p>
-      <p>Signed, append-only — <a class="explorer-link" href=${`../explorer/#/repo/${myKey}`}>see your list in the explorer →</a></p>
+      ${canWrite() ? h`<p>Double-click to edit a todo</p>` : null}
+      <p>Signed, append-only — <a class="explorer-link" href=${`../explorer/#/repo/${urlKey()}`}>see this list in the explorer →</a></p>
       <p>Powered by <a href="/">streamo</a></p>
     </footer>
   ` : null}

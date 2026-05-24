@@ -25,7 +25,7 @@
 
 import { DEFAULT_REVIEW, applySM2 } from './sm2.js'
 import { masteryOf }                from './mastery.js'
-import { registry, reviewRepos }    from './state.js'
+import { registry, reviewRepos, state } from './state.js'
 import { homeRepo }                 from './main.js'
 
 // Translate a deckId into the address of its deck Repo. Bundled decks
@@ -103,6 +103,14 @@ export function deckStats (deckId) {
 // — they'll be back when their due-time arrives. The queue is rebuilt
 // on every read; session-relevance comes from the SM-2 due times in
 // the reviews repo, not from a stateful array.
+//
+// **Study-ahead mode** — when the normal queue is empty AND the learner
+// has opted in via `state.studyAhead`, surface ALL active non-deleted
+// cards sorted by next-due (earliest first), regardless of whether
+// they're due yet. Lets the user keep grading past the algorithm's
+// "all caught up" threshold; the math doesn't care about timing
+// (`applySM2` integrates a review event with `atMs = now` no matter
+// what the current due-time was), so this is safe.
 export function buildStudyQueue (deckId) {
   const cards = deckCards(deckId)
   const active = activeCardIds(deckId)
@@ -117,7 +125,21 @@ export function buildStudyQueue (deckId) {
     else if (r.due <= now) due.push(i)
     // else: in 'rest' — has reviews, not yet due. Not in the queue.
   }
-  return [...due, ...neu]
+  const normal = [...due, ...neu]
+  if (normal.length > 0 || !state.get('studyAhead')) return normal
+  // Study-ahead fallback: every active card, sorted by next-due.
+  const ahead = []
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i]?.deleted) continue
+    if (!active.has(i)) continue
+    ahead.push(i)
+  }
+  ahead.sort((a, b) => {
+    const ra = reviewStateForCard(deckId, a)
+    const rb = reviewStateForCard(deckId, b)
+    return (ra.due || 0) - (rb.due || 0)
+  })
+  return ahead
 }
 
 // Mastery for the deck's *active set* — average over non-deleted,

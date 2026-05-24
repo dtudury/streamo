@@ -78,9 +78,11 @@ export function renderStudy () {
               </div>
             `
             : h`
-              <div class="study-empty">
+              <div class="study-empty study-empty-clickable"
+                   onclick=${handle(() => state.set('studyAhead', true))}
+                   title="click to keep studying">
                 <h3>all caught up 🌳</h3>
-                <p>nothing due right now — come back later, or manage your deck below to add more cards.</p>
+                <p>nothing due right now — <em>click to keep studying</em> (we'll show the next-soonest card), or come back later.</p>
               </div>
             `
 

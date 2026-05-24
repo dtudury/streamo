@@ -232,6 +232,7 @@ function startStudy (deckId) {
 function backToHome () {
   state.set('view', 'home')
   state.set('activeDeck', null)
+  state.set('studyAhead', false)  // opt-in study-ahead resets between sessions
 }
 
 // Reveal ties the flip to the SPECIFIC card we're showing right now.

@@ -847,3 +847,17 @@ h2 {
   font-weight: 500;
   color: #444;
 }
+/* Clickable variant — the "all caught up" card invites a click to
+   keep studying past the algorithm's threshold (study-ahead mode). */
+.study-empty-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.study-empty-clickable:hover {
+  border-color: #1d4ed8;
+  border-style: solid;
+  background: white;
+}
+.study-empty-clickable:hover em {
+  color: #1d4ed8;
+}

@@ -38,11 +38,12 @@ const reviewRepos = liveObject({}, { recaller, name: 'reviewRepos' })
 
 const state = liveObject({
   loggedIn:   false,
-  connecting: false,  // true while login → connect → subscribe(deck-index)
-  user:       null,   // { username, pubkey } once logged in
-  view:       'home', // 'home' | 'study'
-  activeDeck: null,   // deck id while studying
-  revealedCardIdx: null  // which card index has been flipped (not a session-level bool)
+  connecting: false,    // true while login → connect → subscribe(deck-index)
+  user:       null,     // { username, pubkey } once logged in
+  view:       'home',   // 'home' | 'study' | 'edit'
+  activeDeck: null,     // deck id while studying or editing
+  revealedCardIdx: null, // which card has been flipped (not a session-level bool)
+  editingCardIdx:  null  // null = not editing; N = editing card N; -1 = adding new card
   // No studyQueue, no currentIdx — both derive from the reviews repo
   // each render. The "next card" is buildStudyQueue[0]; grading commits
   // a review event and the queue shifts naturally as a side effect.
@@ -404,6 +405,90 @@ async function forkDeck (upstreamId) {
   // Reviews repo opens lazily on the first study-click; no eager open.
 }
 
+// ── editor handlers ─────────────────────────────────────────────────
+//
+// The editor edits a fork's deck Repo. Each edit (save, delete, add)
+// is a signed commit on the fork; the home view's mastery/schedule
+// strips and the study view's queue all re-render reactively.
+//
+// Soft-delete: a deleted card stays in the cards[] array with a
+// `deleted: true` flag set, so cardIdx alignment with existing
+// reviews stays stable. Deleted cards are filtered out everywhere
+// (study queue, editor list).
+//
+// editingCardIdx: null = not editing; N = editing existing card N;
+// -1 = adding a new card (sentinel).
+
+function enterEdit (deckId) {
+  state.set('activeDeck', deckId)
+  state.set('editingCardIdx', null)
+  state.set('view', 'edit')
+}
+
+function exitEdit () {
+  state.set('view', 'home')
+  state.set('activeDeck', null)
+  state.set('editingCardIdx', null)
+}
+
+function startEditCard (cardIdx) {
+  state.set('editingCardIdx', cardIdx)
+}
+
+function cancelEditCard () {
+  state.set('editingCardIdx', null)
+}
+
+function addCard () {
+  state.set('editingCardIdx', -1)  // sentinel for "new card"
+}
+
+function saveCard (e) {
+  e.preventDefault()
+  const form = e.target
+  const front = form.elements.front.value.trim()
+  const back  = form.elements.back.value.trim()
+  const cardIdx = state.get('editingCardIdx')
+  const deckId = activeDeck()
+  const repo = deckRepo(deckId)
+  if (!repo) return
+  const deck = repo.get()
+  if (!deck) return
+
+  let newCards
+  let message
+  if (cardIdx === -1) {
+    // Adding new — skip if both fields blank.
+    if (!front && !back) {
+      state.set('editingCardIdx', null)
+      return
+    }
+    newCards = [...deck.cards, { front, back }]
+    message = `add card: ${(front || back).slice(0, 40)}`
+  } else {
+    // Editing existing — preserve any other fields (like `deleted`) on the card.
+    newCards = [...deck.cards]
+    newCards[cardIdx] = { ...newCards[cardIdx], front, back }
+    message = `edit card ${cardIdx}: ${(front || back).slice(0, 40)}`
+  }
+  repo.defaultMessage = message
+  repo.set({ ...deck, cards: newCards })
+  state.set('editingCardIdx', null)
+}
+
+function deleteCard (cardIdx) {
+  if (!confirm("Delete this card? Reviews of it stay in your history but it won't appear in study.")) return
+  const deckId = activeDeck()
+  const repo = deckRepo(deckId)
+  if (!repo) return
+  const deck = repo.get()
+  if (!deck) return
+  const newCards = [...deck.cards]
+  newCards[cardIdx] = { ...newCards[cardIdx], deleted: true }
+  repo.defaultMessage = `delete card ${cardIdx}`
+  repo.set({ ...deck, cards: newCards })
+}
+
 // ── view helpers ─────────────────────────────────────────────────────
 
 function currentCard () {
@@ -504,7 +589,7 @@ mount(h`
                 <span class="new">${s.new} new</span>
                 <span>${s.total} total</span>
                 ${isFork
-                  ? null  // edit button lands in the next commit (step 5 — card editor)
+                  ? h`<button class="edit-btn" onclick=${handle((e) => { e.stopPropagation(); enterEdit(id) })}>edit</button>`
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
               ${() => {
@@ -612,6 +697,91 @@ mount(h`
           }
         `
       }}
+    </div>
+  `)}
+
+  ${when(() => loggedIn() && view() === 'edit', h`
+    <div class="edit">
+      <div class="study-header">
+        <button class="study-back" onclick=${handle(exitEdit)}>← back</button>
+        <span>${() => {
+          const deckId = activeDeck()
+          const title = deckRepo(deckId)?.get('title') ?? ''
+          return title ? `editing: ${title}` : 'editing…'
+        }}</span>
+      </div>
+
+      ${() => {
+        const deckId = activeDeck()
+        const repo = deckRepo(deckId)
+        const deck = repo?.get()
+        if (!deck) return h`<p class="hint">loading deck…</p>`
+        const upstreamAddr = deck.forkedFrom
+        if (!upstreamAddr) return null
+        return h`<p class="hint edit-lineage">forked from <a class="explorer-link" style="margin-top:0" href=${`../explorer/#/repo/${upstreamAddr}`}>${upstreamAddr.slice(0, 10)}…</a></p>`
+      }}
+
+      <ul class="edit-cards">
+        ${() => {
+          const deckId = activeDeck()
+          const cards = deckCards(deckId)
+          const editingIdx = state.get('editingCardIdx')
+          if (cards.length === 0 && editingIdx !== -1) {
+            return h`<li class="empty">no cards yet — click '+ add card' below.</li>`
+          }
+          // Render existing (non-deleted) cards; render the "new card"
+          // form at the end if editingIdx === -1.
+          const items = []
+          for (let i = 0; i < cards.length; i++) {
+            const card = cards[i]
+            if (card?.deleted) continue
+            if (editingIdx === i) {
+              items.push(h`
+                <li class="edit-card edit-card-editing" data-key=${`edit-${i}`}>
+                  <form onsubmit=${handle(saveCard)}>
+                    <input name="front" placeholder="front" value=${card.front ?? ''} autofocus>
+                    <input name="back" placeholder="back" value=${card.back ?? ''}>
+                    <div class="edit-card-actions">
+                      <button class="save-btn">save</button>
+                      <button type="button" class="cancel-btn" onclick=${handle(cancelEditCard)}>cancel</button>
+                    </div>
+                  </form>
+                </li>
+              `)
+            } else {
+              items.push(h`
+                <li class="edit-card" data-key=${`view-${i}`}>
+                  <div class="edit-card-front">${card.front || '(blank)'}</div>
+                  <div class="edit-card-back">${card.back || ''}</div>
+                  <div class="edit-card-actions">
+                    <button class="edit-card-btn" onclick=${handle(() => startEditCard(i))}>edit</button>
+                    <button class="edit-card-btn delete" onclick=${handle(() => deleteCard(i))}>delete</button>
+                  </div>
+                </li>
+              `)
+            }
+          }
+          if (editingIdx === -1) {
+            items.push(h`
+              <li class="edit-card edit-card-editing edit-card-new" data-key="new">
+                <form onsubmit=${handle(saveCard)}>
+                  <input name="front" placeholder="front" autofocus>
+                  <input name="back" placeholder="back">
+                  <div class="edit-card-actions">
+                    <button class="save-btn">add</button>
+                    <button type="button" class="cancel-btn" onclick=${handle(cancelEditCard)}>cancel</button>
+                  </div>
+                </form>
+              </li>
+            `)
+          }
+          return items
+        }}
+      </ul>
+
+      ${() => state.get('editingCardIdx') === -1
+        ? null
+        : h`<button class="add-card-btn" onclick=${handle(addCard)}>+ add card</button>`}
     </div>
   `)}
 `, document.body, recaller)

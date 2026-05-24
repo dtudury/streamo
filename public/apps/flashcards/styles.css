@@ -316,3 +316,139 @@ h2 {
   border-radius: 999px;
   color: #333;
 }
+
+/* edit button on a learner's forked deck — mirrors fork-btn shape
+   on bundled decks so the affordance lives in the same spot. */
+.deck-stats .edit-btn {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #047857;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline dotted;
+  font-family: inherit;
+}
+.deck-stats .edit-btn:hover { text-decoration-style: solid; }
+
+/* ── edit view ─────────────────────────────────────────────────────── */
+.edit {
+  padding: 1.5rem 0 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1rem;
+}
+.edit-lineage {
+  margin-top: -0.4rem;
+  margin-bottom: 0.5rem;
+}
+.edit-cards {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 0;
+}
+.edit-card {
+  border: 1px solid #eee;
+  border-radius: 8px;
+  background: white;
+  padding: 0.75rem 1rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0.6rem;
+  align-items: center;
+}
+.edit-card-front {
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+.edit-card-back {
+  font-size: 0.95rem;
+  color: #555;
+}
+.edit-card-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+.edit-card-btn {
+  background: none;
+  border: 1px solid #ddd;
+  color: #555;
+  font-size: 0.78rem;
+  cursor: pointer;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
+  font-family: inherit;
+}
+.edit-card-btn:hover { border-color: #1d4ed8; color: #1d4ed8; }
+.edit-card-btn.delete:hover { border-color: #b91c1c; color: #b91c1c; }
+
+.edit-card-editing {
+  display: block;  /* override the grid for the form view */
+  border-color: #1d4ed8;
+}
+.edit-card-editing form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.edit-card-editing input {
+  padding: 0.5rem 0.7rem;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-family: inherit;
+}
+.edit-card-editing input:focus {
+  outline: none;
+  border-color: #1d4ed8;
+}
+.edit-card-editing .edit-card-actions {
+  justify-content: flex-end;
+}
+.edit-card-editing .save-btn {
+  padding: 0.4rem 1rem;
+  background: #1d4ed8;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.edit-card-editing .save-btn:hover { opacity: 0.88; }
+.edit-card-editing .cancel-btn {
+  padding: 0.4rem 0.9rem;
+  background: none;
+  color: #666;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.edit-card-editing .cancel-btn:hover { color: #1c1917; border-color: #1c1917; }
+.edit-card-new {
+  border-style: dashed;
+}
+
+.add-card-btn {
+  align-self: flex-start;
+  background: white;
+  border: 1px dashed #1d4ed8;
+  color: #1d4ed8;
+  font-size: 0.92rem;
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  margin-top: 0.5rem;
+}
+.add-card-btn:hover {
+  background: #1d4ed8;
+  color: white;
+}

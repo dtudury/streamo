@@ -131,12 +131,17 @@ export function barFor (review, now) {
     // step) NEVER read as fully fresh — they start at whatever
     // fraction of a day they have. David: "it should only be full
     // if there's a day or more left."
+    //
+    // Shape: power curve `(t/D)^p` with p ≈ 0.4. Fits David's three
+    // anchor points exactly: t=1day→100%, t=5min→~10%, t=0→0%. p is
+    // derived as `log(0.10) / log(5min/1day) ≈ 0.407`. Distributes
+    // the visible motion across the full day instead of cramming
+    // it into the last hour like the prior log curve did.
     const drainWindowMs = ONE_DAY_MS
     if (timeUntilDueMs >= drainWindowMs) {
       return { kind: 'remaining', width: 100 }
     }
-    // Log shape: drains slowly in the first hours, fast near due.
-    const w = Math.log(timeUntilDueMs + 1) / Math.log(drainWindowMs + 1)
+    const w = Math.pow(timeUntilDueMs / drainWindowMs, 0.4)
     return { kind: 'remaining', width: Math.max(0, Math.min(100, w * 100)) }
   }
   // Overdue: bar grows as overdue-ness piles up. Scale = 1 year (not

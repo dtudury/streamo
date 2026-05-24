@@ -43,7 +43,9 @@ const state = liveObject({
   view:       'home',   // 'home' | 'study' | 'edit' | 'manage'
   activeDeck: null,     // deck id while studying / editing / managing
   revealedCardIdx: null, // which card has been flipped (not a session-level bool)
-  editingCardIdx:  null  // null = not editing; N = editing card N; -1 = adding new card
+  editingCardIdx:  null, // null = not editing; N = editing card N; -1 = adding new card
+  managePinned:    false // click the manage-deck pill to keep it open
+                         // independent of hover (mobile: no hover events)
   // No studyQueue, no currentIdx — both derive from the reviews repo
   // each render. The "next card" is buildStudyQueue[0]; grading commits
   // a review event and the queue shifts naturally as a side effect.
@@ -482,9 +484,15 @@ function grade (gradeIdx) {
   // card happens to top the queue now if it shifted.
   const cardIdx = state.get('revealedCardIdx')
   if (cardIdx == null) return
-  const reviews = repo.get('reviews') ?? []
+  // Spread the existing repo value so we preserve sibling fields
+  // (notably `active`). Before this, grade() rebuilt the value as
+  // `{deck, reviews}` and silently wiped the active set on every
+  // grade — David noticed: add cards → grade easy → active set gone.
+  const value = repo.get() ?? { deck: deckId, reviews: [] }
+  const reviews = value.reviews ?? []
   repo.defaultMessage = `review: card ${cardIdx} graded ${['again', 'hard', 'good', 'easy'][gradeIdx]}`
   repo.set({
+    ...value,
     deck: deckId,
     reviews: [...reviews, { cardIdx, grade: gradeIdx, at: Date.now() }]
   })
@@ -1046,8 +1054,11 @@ mount(h`
         }
 
         const managePanel = h`
-          <div class="manage-deck">
-            <div class="manage-deck-pill">manage deck</div>
+          <div class="manage-deck ${() => state.get('managePinned') ? 'manage-deck-pinned' : ''}">
+            <div class="manage-deck-pill"
+                 onclick=${handle(() => state.set('managePinned', !state.get('managePinned')))}>
+              manage deck${() => state.get('managePinned') ? ' ▾' : ''}
+            </div>
             <div class="manage-deck-expanded">
               <div class="manage-deck-inner">
                 <h3 class="manage-section">active <span class="manage-count">(${activeList.length})</span><span class="manage-section-hint">click to remove</span></h3>

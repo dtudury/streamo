@@ -734,17 +734,25 @@ h2 {
   min-height: 0;
   padding: 0 1rem;
 }
-.manage-deck:hover {
+.manage-deck-pill {
+  cursor: pointer;
+}
+.manage-deck:hover,
+.manage-deck-pinned {
   background: #fafafa;   /* expanded picks up the soft gray that
                             used to be on collapsed — color states
                             swapped, animation preserved */
   border-color: #ccc;
   border-style: solid;
 }
-.manage-deck:hover .manage-deck-pill {
+.manage-deck:hover .manage-deck-pill,
+.manage-deck-pinned .manage-deck-pill {
   color: #555;
   font-style: normal;
   border-bottom: 1px solid #eee;
+}
+.manage-deck-pinned .manage-deck-expanded {
+  grid-template-rows: 1fr;  /* pinned: stay expanded regardless of hover */
 }
 .manage-deck:hover .manage-deck-expanded {
   grid-template-rows: 1fr;

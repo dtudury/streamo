@@ -53,13 +53,65 @@ seeing the page's structure in one place. For streamo apps that means:
   any pre-existing children before rendering, so the loading shim
   is replaced wholesale at first render — no manual wipe required.
 
-The flashcards app at `public/apps/flashcards/main.js` is the
-current worked example — it follows the patterns below including the
+The flashcards app at `public/apps/flashcards/` is the current
+worked example — it follows the patterns below including the
 `handle(...)` shape for event handlers. The journal app at
 `public/apps/journal/main.js` is older but still legible; it predates
 `handle` and uses the `onclick=${() => fn}` double-arrow shim instead.
 If you see another app drift from this shape and the human hasn't
 asked otherwise, gently bring it back.
+
+## the rule at scale: map h-template shape to output shape
+
+Around 1300 lines, the flashcards app hit the limit of "one mount,
+one h-template." Refining the rule:
+
+**The spirit was always *"map the h-template to the output's shape."***
+A single-page app has one mount() with one h-template. A four-page
+app — like flashcards — has one mount() that *routes* between four
+separate render functions, each returning the h-template for **one**
+page. Each page reads top-to-bottom as its own prose. The pages
+compose at the mount's top-level switch
+(`when(view() === 'home', renderHome())`, etc.), not by stitching
+named fragments inside a page.
+
+**What stays prohibited: INTRA-page fragmentation.** Don't break a
+single page into `${navHeader} ${form} ${footer}` and reassemble.
+Each page's h-template is still one continuous piece of HTML-shaped
+JS. Only the *page boundaries* are file boundaries.
+
+**What CAN live in sibling files** alongside the page templates:
+
+- **Pure math / domain primitives** — SM-2 algorithm, mastery
+  formulas, HSL gradients. No DOM, no reactivity, no app coupling.
+  Sibling files (`sm2.js`, `mastery.js`).
+- **Runtime singletons** — the app's shared Recaller, root state
+  liveObject, registry, time ticker. Late-bound module-level
+  bindings (like a `registry` assigned during login) work via the
+  ES module live-binding rule, optionally with a thin setter.
+  Sibling file (`state.js`).
+- **Read-only derivations** over those singletons — functions like
+  `deckStats(deckId)` or `buildStudyQueue(deckId)` that fold state
+  into a derived value. Pure reads, recaller-tracked, no side
+  effects. Sibling file (`derived.js`).
+- **URL routing** — state ↔ location bridge. Self-contained side-
+  effect module imported once from main.js. Sibling file
+  (`routing.js`); prefer the streamo `liveLocation()` LiveSource
+  over manual `recaller.watch + window.addEventListener('popstate')`.
+
+**What stays in main.js**: the orchestration layer — login/logout
+flow, user-action handlers (grade, fork, edit-card), repo lifecycle
+watchers, and the single mount() call that composes pages via
+`when()` guards. main.js becomes the *route table + lifecycle
+manager*, not a kitchen sink.
+
+The 2026-05-23 flashcards refactor is the worked example:
+1313-line monolith → main.js (584) + 9 siblings averaging ~100
+lines each. Each file reads as its own conceptual unit; the page
+templates still read top-to-bottom; nothing got fragmented. If
+your app is under ~500 lines, none of this applies — the original
+single-file shape is still preferred. The split earns its keep
+when there are multiple pages AND substrate worth naming.
 
 ## when NOT to use the h-heavy style
 

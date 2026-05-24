@@ -973,17 +973,6 @@ mount(h`
                 </div>
               `
             }}
-            ${() => revealed()
-              ? h`
-                <div class="grades">
-                  <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
-                  <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
-                  <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
-                  <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
-                </div>
-              `
-              : null
-            }
           `
           : activeSet.size === 0
             ? h`
@@ -1074,7 +1063,24 @@ mount(h`
           </div>
         `
 
-        return h`${studyArea}${managePanel}`
+        // Grades and the manage panel share the same vertical slot:
+        // when the card is flipped (revealed) the four grade buttons
+        // sit there; otherwise the manage-deck pill (which expands on
+        // hover) takes the same space. Keeps the page from jumping
+        // around as you flip/grade.
+        const gradesPanel = h`
+          <div class="grades">
+            <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
+            <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
+            <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
+            <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
+          </div>
+        `
+
+        return h`
+          ${studyArea}
+          ${() => (card && revealed()) ? gradesPanel : managePanel}
+        `
       }}
     </div>
   `)}

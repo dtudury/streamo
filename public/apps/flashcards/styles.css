@@ -578,9 +578,20 @@ h2 {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
+  gap: 0;          /* hit boxes meet — no dead space between cards
+                      that would briefly drop the hover state and
+                      collapse the previously-expanded card */
   padding: 0;
   margin: 0;
+}
+/* Overlap card borders by 1px so adjacent cards share a single line
+   instead of a doubled one. The hovered card lifts to z-index 1 so
+   its (highlighted) border paints over its neighbors' edges. */
+.manage-cards .manage-card + .manage-card {
+  margin-top: -1px;
+}
+.manage-cards .manage-card:hover {
+  z-index: 1;
 }
 .manage-card {
   position: relative;
@@ -700,13 +711,13 @@ h2 {
   margin-top: 1.5rem;
   border: 1px dashed #ddd;
   border-radius: 10px;
-  background: #fafafa;
+  background: transparent;  /* no bg in the collapsed state */
   transition: background 0.2s ease, border-color 0.2s ease, border-style 0.2s ease;
 }
 .manage-deck-pill {
   padding: 0.75rem 1rem;
   text-align: center;
-  color: #999;
+  color: #ddd;          /* matches the dashed border in collapsed state */
   font-style: italic;
   user-select: none;
   font-size: 0.92rem;
@@ -724,7 +735,9 @@ h2 {
   padding: 0 1rem;
 }
 .manage-deck:hover {
-  background: white;
+  background: #fafafa;   /* expanded picks up the soft gray that
+                            used to be on collapsed — color states
+                            swapped, animation preserved */
   border-color: #ccc;
   border-style: solid;
 }

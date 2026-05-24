@@ -87,6 +87,19 @@ registrySync(registry, location.hostname, port, {
       const home = homeKey.get()
       if (home) session.interest(home)
     })
+    // Auto-subscribe to a URL-named key the registry doesn't already hold.
+    // Without this, opening `#/repo/<keyHex>` cold (a shared link, a paste)
+    // leaves AtView reading `registry.get(keyHex) === undefined` and sitting
+    // on "opening…" forever. Reads `getKeyHex()` (URL → hashParts 1+2) and
+    // `registry.get(keyHex)` (registry keys) — so the watcher refires on
+    // either nav or arrival, and self-quiets once bytes are in.
+    recaller.watch('explorer-auto-subscribe', () => {
+      const keyHex = getKeyHex()
+      if (!keyHex) return
+      if (!/^[0-9a-f]{66}$/.test(keyHex)) return
+      if (registry.get(keyHex)) return
+      session.subscribe(keyHex)
+    })
   })
   .catch(e => state.set('connection', { status: 'err', text: `connection failed: ${e.message}` }))
 

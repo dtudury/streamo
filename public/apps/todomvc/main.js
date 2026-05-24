@@ -262,7 +262,7 @@ mount(h`
       <section class="main">
         ${!loggedIn.get() ? h`
           <a class="close-to-login" data-key="close-to-login" href="#">
-            <span class="x">×</span><span>close to login</span>
+            <span class="x">×</span><span>sign in instead</span>
           </a>
         ` : h`
           <input data-key="toggle-all" id="toggle-all" class="toggle-all" type="checkbox"

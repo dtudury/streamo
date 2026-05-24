@@ -263,19 +263,41 @@ function masteryOf (review, now) {
   return Math.log2(1 + review.interval + elapsedDays)
 }
 
-// Map a mastery score to a color that's legible on white. Banded so
-// it's deterministic and easy to reason about; avoids pale yellow on
-// the brown end (that's a contrast disaster) by reaching for dark
-// amber there instead. Used for both the bar fill and the tinted
-// 'mastery 2.40' label.
+// Map a mastery score to a color via smooth HSL interpolation between
+// stops anchored at log-time positions. Color shifts FASTER than width
+// at low mastery: red→yellow→green happens in the first ~30% of the
+// bar, then colors stretch slowly toward blue across the rest.
+//
+// Stops chosen to land on clean intervals — yellow at 1.5 days
+// (~19% bar width), green at 3 days (~29%). Past green: emerald at
+// 1 week, teal at 1 month, blue at 3+ months. All chosen for
+// legibility on white since the same color is used for both the bar
+// fill and the text label.
 function masteryColor (mastery) {
-  if (mastery < 1) return '#b91c1c'  // dark red — just starting
-  if (mastery < 2) return '#c2410c'  // burnt orange
-  if (mastery < 3) return '#92400e'  // dark amber (NOT pale yellow)
-  if (mastery < 4) return '#4d7c0f'  // olive / lime-dark
-  if (mastery < 5) return '#047857'  // emerald
-  if (mastery < 6) return '#0e7490'  // teal
-  return '#1d4ed8'                   // blue — well-mastered
+  const stops = [
+    [0.00, 355, 80, 50],   // bright red — only the sliver
+    [0.50,  20, 85, 48],   // red-orange transitioning
+    [1.00,  35, 90, 45],   // amber
+    [1.32,  45, 95, 40],   // fully yellow — 1.5 days
+    [2.00, 140, 70, 38],   // fully green — 3 days
+    [3.00, 160, 75, 30],   // emerald — 1 week
+    [4.95, 190, 85, 30],   // teal — 1 month
+    [6.50, 215, 75, 45]    // blue — 3+ months
+  ]
+  if (mastery <= stops[0][0]) {
+    const [, h, s, l] = stops[0]
+    return `hsl(${h}, ${s}%, ${l}%)`
+  }
+  for (let i = 0; i < stops.length - 1; i++) {
+    const [m1, h1, s1, l1] = stops[i]
+    const [m2, h2, s2, l2] = stops[i + 1]
+    if (mastery <= m2) {
+      const t = (mastery - m1) / (m2 - m1)
+      return `hsl(${Math.round(h1 + (h2 - h1) * t)}, ${Math.round(s1 + (s2 - s1) * t)}%, ${Math.round(l1 + (l2 - l1) * t)}%)`
+    }
+  }
+  const [, h, s, l] = stops[stops.length - 1]
+  return `hsl(${h}, ${s}%, ${l}%)`
 }
 
 function urgencyOf (review, nowMs) {

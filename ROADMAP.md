@@ -100,35 +100,38 @@ got here.
 
 ## what's next
 
-### flashcards — card editor + scheduling visibility + partial-deck learning *(active thread)*
+### flashcards — the headliner demo *(active thread)*
 
-The flashcards demo (`public/apps/flashcards/`) is the project's current
-"things that show streamo off" headliner. Three queued moves, in order:
+The flashcards demo (`public/apps/flashcards/`) is the project's
+current "things that show streamo off" headliner — added as a card
+on the homepage. Three foundational arcs landed:
 
-- **Card editor** (step 5) — owners of forked decks need to actually
-  *edit* their cards. Right now "fork" gives you an addressable copy
-  but no way to make it different from upstream, which is half the
-  point. Add an edit view, soft-delete for stable cardIdx alignment
-  with existing reviews. The natural next move on the *fork story
-  becomes obvious through use* track.
+- **Card editor** — owners of forked decks can edit/add/delete;
+  soft-delete preserves `cardIdx` alignment with existing reviews.
+- **Scheduling visibility** — per-deck mastery bar with HSL log-
+  time gradient, live-ticking "next 5: now, in 12m…" strip via a
+  new `liveTime` LiveSource, per-card mastery on study + manage.
+- **Partial-deck learning** — per-(learner, deck) active set; the
+  manage UI lives *on the study page itself* as a collapsed pill
+  that expands on hover (desktop) or click-pin (mobile). Cards
+  sorted by due-time, fresh ones bubble to the top.
 
-- **Scheduling visibility** — currently the app's SM-2 internals are
-  opaque. *"What is this app doing?"* deserves an answer: per-deck
-  mastery summary, a live-ticking "next 5: now, now, in 1h…" strip
-  powered by a new `liveTime` LiveSource that wraps the clock and
-  fires the recaller every second. Composes beautifully with the
-  rest of the reactive substrate; effectively impossible in
-  non-reactive frameworks.
+The 2026-05-23 design pass added: 3D card flip on click with eye-
+icon "tap to reveal" hint, the layout-stability arc (everything
+in the study view holds its position across flip / grade /
+no-cards states), hover-previews-future-state on the manage list
+(the active card you're about to remove dims; the available card
+you're about to add brightens), deck-action button parity with the
+edit page, delete-fork action, and a grade() bug fix (was wiping
+the active set on every grade — wholesale `repo.set({...})` instead
+of spread). The brief: *things don't jump around.* Held.
 
-- **Partial-deck learning** — observed-from-use: David doesn't take
-  whole decks; he opts in cards a handful at a time. Add a per-
-  (learner, deck) `active: [cardIdx, ...]` field in the reviews repo;
-  `buildStudyQueue` filters to active cards only; UI to add/remove
-  cards from the active set. Composes with the editor (you control
-  what's in your fork AND what's currently active) and with
-  scheduling visibility (you can see which cards are learning vs
-  mature vs available). See flashcards/DESIGN_LOG.md for the full
-  shape.
+Open menu (not queued, just possibilities):
+- More bundled decks beyond Greek alphabet
+- Custom-deck creation flow from scratch
+- Richer card content (images, code blocks, markdown)
+- Stats / streak view, retention curves, deck-level analytics
+- A11y pass — keyboard nav for the flip + grade flow
 
 ### explorer value-view + bytestream performance *(active thread)*
 

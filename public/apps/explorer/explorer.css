@@ -9,15 +9,12 @@
        Page title ("explorer") sits beside it as a separate, lighter
        element so the relationship reads as [home] · [you-are-here]. */
     .brand-lockup {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
       font-size: 1.6rem;
       letter-spacing: -0.02em;
       color: var(--ink);
       text-decoration: none;
     }
-    .brand-lockup img { width: 1.8rem; height: 1.8rem; }
+    .brand-lockup img { width: 1.8rem; height: 1.8rem; vertical-align: baseline; margin-right: 0.4rem; }
     .brand-lockup:hover { opacity: 0.8; }
     .page-title {
       font-size: 0.95rem;

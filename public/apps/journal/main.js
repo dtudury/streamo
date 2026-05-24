@@ -157,9 +157,6 @@ mount(h`
     }
 
     .brand-lockup {
-      display: inline-flex;
-      align-items: center;
-      gap: .4rem;
       color: inherit;
       text-decoration: none;
       font-weight: 600;
@@ -168,6 +165,8 @@ mount(h`
     .brand-lockup img {
       width: 1.6rem;
       height: 1.6rem;
+      vertical-align: baseline;
+      margin-right: 0.35rem;
     }
     .brand-lockup:hover {
       opacity: 0.85;

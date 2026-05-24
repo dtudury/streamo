@@ -16,15 +16,18 @@ body {
 }
 
 .brand-lockup {
-  display: inline-flex;
-  align-items: center;
-  gap: .4rem;
+  /* Inline (not flex) so the "streamo" text and the page-title text
+     share a single baseline — no more streamo-floating-above-the-app-
+     name. The img is baseline-aligned so the logo's BOTTOM sits on
+     the baseline (logo extends UP into the line height); brings the
+     logo "down" to where the text reads, rather than pulling streamo
+     "up" to the logo's center. */
   color: inherit;
   text-decoration: none;
   font-weight: 600;
   font-size: 1.4rem;
 }
-.brand-lockup img { width: 1.6rem; height: 1.6rem; }
+.brand-lockup img { width: 1.6rem; height: 1.6rem; vertical-align: baseline; margin-right: 0.35rem; }
 .brand-lockup:hover { opacity: 0.85; }
 .page-title {
   font-weight: 400;

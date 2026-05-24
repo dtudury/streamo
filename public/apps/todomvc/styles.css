@@ -57,6 +57,37 @@
   color: #4d4d4d;
 }
 
+/* "× close to login" affordance at the top of the todo list when a
+   visitor is deep-linked in (URL has a key) but hasn't signed in.
+   Replaces the canonical TodoMVC toggle-all chevron + label in this
+   state — the chevron is meaningless without write access, and the
+   anonymous viewer's primary "exit" action is to clear the deep-link
+   and reach the login form. Whole bar is the click target; the × gets
+   the accent color on hover so it still reads as the focal point. */
+.close-to-login {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #fafafa;
+  color: #777;
+  font-size: 14px;
+  text-decoration: none;
+  border-bottom: 1px solid #ededed;
+}
+.close-to-login:hover {
+  background: #f0f0f0;
+  color: #4d4d4d;
+}
+.close-to-login .x {
+  font-size: 20px;
+  line-height: 1;
+  color: #ccc;
+}
+.close-to-login:hover .x {
+  color: #af5b5e;
+}
+
 /* "viewing <truncated key> · read-only" affordance, shown in the
    header when logged in but viewing someone else's list (URL key
    isn't your signed-in key). Same vertical real estate as the

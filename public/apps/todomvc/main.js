@@ -226,14 +226,22 @@ mount(h`
     <header class="header">
       <h1>todos</h1>
       ${() => {
-        if (!loggedIn.get()) return h`
-          <form data-key="login-form" class="login" onsubmit=${handle(login)}>
-            <input data-key="username" name="username" placeholder="username" autocomplete="username" autofocus>
-            <input data-key="password" name="password" type="password" placeholder="password" autocomplete="current-password">
-            <button>sign in</button>
-            <div class="login-status">${() => loginStatus.get()}</div>
-          </form>
-        `
+        if (!loggedIn.get()) {
+          // Deep-link viewing: a URL key is in play and the visitor
+          // hasn't signed in. The login form would be noisy here — they
+          // came here to view data, not to sign in. Hide the login form
+          // entirely; the "× close to login" affordance below offers
+          // the exit path back to credential entry.
+          if (urlKey()) return null
+          return h`
+            <form data-key="login-form" class="login" onsubmit=${handle(login)}>
+              <input data-key="username" name="username" placeholder="username" autocomplete="username" autofocus>
+              <input data-key="password" name="password" type="password" placeholder="password" autocomplete="current-password">
+              <button>sign in</button>
+              <div class="login-status">${() => loginStatus.get()}</div>
+            </form>
+          `
+        }
         if (canWrite()) return h`
           <form data-key="new-todo-form" onsubmit=${handle(addTodo)}>
             <input data-key="new-todo" class="new-todo" name="text" placeholder="What needs to be done?" autofocus autocomplete="off">
@@ -252,10 +260,16 @@ mount(h`
 
     ${() => !urlKey() || getTodos().length === 0 ? null : h`
       <section class="main">
-        <input id="toggle-all" class="toggle-all" type="checkbox"
-               checked=${getTodos().every(t => t.done)} disabled=${!canWrite()}
-               onclick=${handle(toggleAll)}>
-        <label for="toggle-all">Mark all as complete</label>
+        ${!loggedIn.get() ? h`
+          <a class="close-to-login" data-key="close-to-login" href="#">
+            <span class="x">×</span><span>close to login</span>
+          </a>
+        ` : h`
+          <input data-key="toggle-all" id="toggle-all" class="toggle-all" type="checkbox"
+                 checked=${getTodos().every(t => t.done)} disabled=${!canWrite()}
+                 onclick=${handle(toggleAll)}>
+          <label data-key="toggle-all-label" for="toggle-all">Mark all as complete</label>
+        `}
         <ul class="todo-list">${() => {
           const filter = filterFromHash()
           const editable = canWrite()

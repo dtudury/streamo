@@ -11,54 +11,26 @@
 import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
-import { Recaller }     from '../../streamo/utils/Recaller.js'
-import { liveObject, liveTime } from '../../streamo/LiveSource.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
 
 import { DEFAULT_REVIEW, applySM2 } from './sm2.js'
 import { DAY_MS, masteryOf, masteryColor, urgencyOf, formatTimeUntil } from './mastery.js'
+import {
+  recaller, time, reviewRepos, state, registry, setRegistry,
+  loggedIn, connecting, user, view, activeDeck
+} from './state.js'
 
 const when = (cond, vnode) => () => cond() ? vnode : null
 
 // ── app-level state ──────────────────────────────────────────────────
+//
+// The shared singletons (recaller, time, reviewRepos, state, registry,
+// derived getters) live in ./state.js — see that file. The login-flow
+// lets (signer, session, homeRepo, myDeckIndex) stay here because
+// they're tied to login()/logout() which also lives here.
 
-const recaller = new Recaller('flashcards')
-
-// A reactive clock. Slots that read time.get() auto-subscribe and
-// re-render every second — live countdowns, ticking 'overdue' counters,
-// schedule strips that update without any custom interval choreography.
-const time = liveTime({ recaller, name: 'flashcards-time', tickMs: 1000 })
-
-// Reviews repos are opened lazily — when the learner clicks Study on
-// a deck — so login doesn't pay an O(decks) cost in repos-and-wire
-// activity. Deck repos themselves are NOT held in a parallel
-// LiveSource: they live in the registry, which is itself a reactive
-// LiveSource (registry.get reports access on (this, 'keys')), so
-// reads in slots auto-subscribe.
-const reviewRepos = liveObject({}, { recaller, name: 'reviewRepos' })
-
-const state = liveObject({
-  loggedIn:   false,
-  connecting: false,    // true while login → connect → subscribe(deck-index)
-  user:       null,     // { username, pubkey } once logged in
-  view:       'home',   // 'home' | 'study' | 'edit' | 'manage'
-  activeDeck: null,     // deck id while studying / editing / managing
-  revealedCardIdx: null, // which card has been flipped (not a session-level bool)
-  editingCardIdx:  null, // null = not editing; N = editing card N; -1 = adding new card
-  managePinned:    false // click the manage-deck pill to keep it open
-                         // independent of hover (mobile: no hover events)
-  // No studyQueue, no currentIdx — both derive from the reviews repo
-  // each render. The "next card" is buildStudyQueue[0]; grading commits
-  // a review event and the queue shifts naturally as a side effect.
-}, { recaller, name: 'app' })
-
-const loggedIn   = () => state.get('loggedIn')
-const connecting = () => state.get('connecting')
-const user       = () => state.get('user')
-const view       = () => state.get('view')
-const activeDeck = () => state.get('activeDeck')
 // `revealed` is derived: the back is shown only if the SPECIFIC card we
 // flipped is still the current card. If the queue shifts under us (bytes
 // arrive, another tab grades, deck changes), the back auto-hides because
@@ -67,7 +39,6 @@ const revealed = () => state.get('revealedCardIdx') === currentCardIdx()
 
 // Module-level handles populated by login(); reset by logout().
 let signer = null
-let registry = null
 let session = null
 let homeRepo = null     // the relay's home repo, source of bundled-deck addresses
 let myDeckIndex = null  // learner's deck-index Repo: { decks: [<pubkey-hex>, ...] }
@@ -288,7 +259,7 @@ async function login (e) {
   // the deck-index doesn't have `flashcardsDecks`, so each clause
   // applies cleanly to its source. From here, discovery is *reactive*:
   // bytes flow in, the home view re-renders.
-  registry = new RepoRegistry(undefined, { recaller, name: 'flashcards' })
+  setRegistry(new RepoRegistry(undefined, { recaller, name: 'flashcards' }))
   session = await registrySync(
     registry,
     location.hostname,
@@ -322,7 +293,7 @@ async function login (e) {
 
 function logout () {
   signer = null
-  registry = null
+  setRegistry(null)
   session = null
   homeRepo = null
   myDeckIndex = null

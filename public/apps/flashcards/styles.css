@@ -781,7 +781,11 @@ h2 {
   overflow: hidden;
   min-height: 0;
 }
-.manage-card-compact:hover .manage-card-content-wrap {
+.manage-card-compact:hover .manage-card-content-wrap,
+.manage-deck-pinned .manage-card-compact .manage-card-content-wrap {
+  /* hover-expand on desktop, AND open all cards when the panel is
+     click-pinned — the hover-to-peek doesn't work on touch, so
+     pinning unfolds everything at once. */
   grid-template-rows: 1fr;
   margin-bottom: 0.45rem;
 }

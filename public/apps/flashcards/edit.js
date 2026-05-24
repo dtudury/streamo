@@ -10,7 +10,8 @@ import { h, handle } from '../../streamo/h.js'
 import { state, activeDeck } from './state.js'
 import { deckCards, deckRepo } from './derived.js'
 import {
-  exitEdit, saveCard, cancelEditCard, startEditCard, deleteCard, addCard
+  exitEdit, saveCard, cancelEditCard, startEditCard, deleteCard, addCard,
+  saveDeckTitle
 } from './main.js'
 
 export function renderEdit () {
@@ -24,6 +25,24 @@ export function renderEdit () {
           return title ? `editing: ${title}` : 'editing…'
         }}</span>
       </div>
+
+      ${() => {
+        // Editable deck title. Saves on the input's change event
+        // (blur or Enter). Uses data-key with the deck id so the
+        // mount recycler resets the field if the learner switches
+        // between forks without leaving the edit view.
+        const deckId = activeDeck()
+        const repo = deckRepo(deckId)
+        const deck = repo?.get()
+        if (!deck) return null
+        return h`
+          <input class="edit-deck-title"
+                 data-key=${`title-${deckId}`}
+                 placeholder="deck title"
+                 value=${deck.title ?? ''}
+                 onchange=${handle(saveDeckTitle)}>
+        `
+      }}
 
       ${() => {
         const deckId = activeDeck()

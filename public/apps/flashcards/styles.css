@@ -538,6 +538,28 @@ h2 {
   border-style: dashed;
 }
 
+/* Editable deck title on the edit page. Reads as the page's
+   heading by default; the dotted underline + blue focus state
+   signal it's an input without forcing a "form field" look. */
+.edit-deck-title {
+  width: 100%;
+  font-size: 1.5rem;
+  font-weight: 500;
+  font-family: inherit;
+  color: #1c1917;
+  background: none;
+  border: none;
+  border-bottom: 1px dotted #ccc;
+  padding: 0.3rem 0;
+  margin: 0.5rem 0;
+}
+.edit-deck-title:hover { border-bottom-color: #999; }
+.edit-deck-title:focus {
+  outline: none;
+  border-bottom-color: #1d4ed8;
+  border-bottom-style: solid;
+}
+
 .add-card-btn {
   align-self: flex-start;
   background: white;

@@ -419,6 +419,23 @@ function addCard () {
   state.set('editingCardIdx', -1)  // sentinel for "new card"
 }
 
+// Rename a fork's deck. Fires on the edit-page title input's change
+// event (blur or Enter). No-op when the input is empty (trimmed) or
+// when the title hasn't actually changed. If the deck repo has no
+// signer attached (e.g., a bundled deck reached by direct URL), the
+// repo.set call won't commit — silent no-op, no crash.
+function saveDeckTitle (event) {
+  const deckId = activeDeck()
+  const repo = deckRepo(deckId)
+  if (!repo) return
+  const next = event.target.value.trim()
+  if (!next) return
+  const deck = repo.get()
+  if (!deck || deck.title === next) return
+  repo.defaultMessage = `rename deck to "${next}"`
+  repo.set({ ...deck, title: next })
+}
+
 function saveCard (e) {
   e.preventDefault()
   const form = e.target
@@ -638,6 +655,6 @@ export {
   toggleReveal, grade, peekCard,
   startStudy, backToHome, enterEdit, exitEdit, enterManage, exitManage,
   forkDeck, deleteFork,
-  saveCard, cancelEditCard, startEditCard, deleteCard, addCard
+  saveCard, cancelEditCard, startEditCard, deleteCard, addCard, saveDeckTitle
 }
 

@@ -96,32 +96,51 @@ export function urgencyOf (review, nowMs) {
   return (nowMs - review.due) / (review.interval * DAY_MS)
 }
 
-// dueProgress: where this card is along its current interval, on a
-// **log scale that accelerates near due**. 0 = just reviewed, 100 =
-// at-or-past due. The log shape makes the bar move *visibly faster*
-// during the last hour/minute than during the long quiet middle —
-// David's "I want it to move pretty as I got down to the last
-// minute" intuition.
+// barFor: returns `{ kind, width }` describing how to draw the
+// urgency bar for a review record. Two distinct visual states:
 //
-// Math:
-//   intervalMs = due - lastReviewAt    (handles both 1-minute lapse
-//                                       intervals AND day-scale ones
-//                                       without a separate code path)
-//   timeUntilDueMs = max(0, due - now)
-//   width = 1 - log(timeUntilDueMs + 1) / log(intervalMs + 1)
+//   kind = 'remaining' — the card is NOT yet due. Bar is anchored
+//     left and DRAINS as time approaches due. Full bar = 1 day or
+//     more remaining; bar drains over the last 24h. Log shape
+//     accelerates the drain in the final hour/minute.
 //
-// At t=interval (just reviewed): width = 0. At t=0 (due): width = 1.
-// At t=interval/2 with interval=10d: width ≈ 0.25, NOT 0.5 — the
-// log curve loiters at the start, sprints at the end. That's the
-// gauge being "interesting, not accurate" by design.
-export function dueProgress (review, now) {
-  if (!review || !review.lastReviewAt) return 0
+//   kind = 'overdue' — the card is past its due time. Bar anchors
+//     right (visually distinct from the remaining state) and GROWS
+//     as overdue-ness accumulates. Sqrt shape so the early overdue
+//     is a thin sliver, not an immediate jump to half-full. Full
+//     bar = one full interval overdue.
+//
+//   kind = 'empty' — no history. Bar at 0%, used as the gray
+//     placeholder for never-reviewed cards.
+//
+// David's framing: "fill it up from the other side with its overdue-
+// ness... some sort of different treatment to keep it interesting."
+// The kind/width pair lets the renderer pick its anchor.
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+export function barFor (review, now) {
+  if (!review || !review.lastReviewAt) return { kind: 'empty', width: 0 }
   const intervalMs = review.due - review.lastReviewAt
-  if (intervalMs <= 0) return 100
-  const timeUntilDueMs = Math.max(0, review.due - now)
-  if (timeUntilDueMs <= 0) return 100   // overdue: full bar
-  const w = 1 - Math.log(timeUntilDueMs + 1) / Math.log(intervalMs + 1)
-  return Math.max(0, Math.min(100, w * 100))
+  if (intervalMs <= 0) return { kind: 'remaining', width: 100 }
+  const timeUntilDueMs = review.due - now
+  if (timeUntilDueMs > 0) {
+    // Pre-due: bar drains as time approaches due. Cap the drain
+    // window at 1 day (or the full interval if shorter) — long
+    // intervals are "full" until they get close.
+    const drainWindowMs = Math.min(ONE_DAY_MS, intervalMs)
+    if (timeUntilDueMs >= drainWindowMs) {
+      return { kind: 'remaining', width: 100 }
+    }
+    // Log shape: drains slowly in the first hours, fast near due.
+    const w = Math.log(timeUntilDueMs + 1) / Math.log(drainWindowMs + 1)
+    return { kind: 'remaining', width: Math.max(0, Math.min(100, w * 100)) }
+  }
+  // Overdue: bar grows from the right. Full at 1 full interval late.
+  const overdueMs = -timeUntilDueMs
+  if (overdueMs >= intervalMs) return { kind: 'overdue', width: 100 }
+  // Sqrt shape: visible early as a thin sliver, growth slows later.
+  const w = Math.sqrt(overdueMs / intervalMs)
+  return { kind: 'overdue', width: Math.max(0, Math.min(100, w * 100)) }
 }
 
 // A short, human-readable string for "time until due" — or "overdue"

@@ -7,7 +7,7 @@
 
 import { h, handle } from '../../streamo/h.js'
 import { state, time, activeDeck } from './state.js'
-import { masteryOf, masteryColor, dueProgress, formatTimeUntil } from './mastery.js'
+import { masteryOf, masteryColor, barFor, formatTimeUntil } from './mastery.js'
 import {
   deckCards, deckRepo, buildStudyQueue, reviewStateForCard, activeCardIds
 } from './derived.js'
@@ -117,13 +117,15 @@ export function renderStudy () {
               const hasHistory = !!review.lastReviewAt
               const m = masteryOf(review, now)
               const color = hasHistory ? masteryColor(m) : '#aaa'
-              // Width is now time-until-due (log scale), not mastery.
-              // Color stays mastery. Label shows mastery + due-in.
-              const width = hasHistory ? dueProgress(review, now) : 0
+              const bar = barFor(review, now)
               const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
+              // Overdue bars right-anchor; pre-due bars left-anchor.
+              const barStyle = bar.kind === 'overdue'
+                ? `right:0; left:auto; width:${bar.width.toFixed(0)}%`
+                : `width:${bar.width.toFixed(0)}%`
               return h`
-                <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
-                  <div class="study-mastery-bar" style=${`width:${width.toFixed(0)}%`}></div>
+                <div class="study-mastery" title=${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="study-mastery-bar" style=${barStyle}></div>
                 </div>
                 <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'mastery: n/a'}</div>
               `
@@ -154,8 +156,11 @@ export function renderStudy () {
           const hasHistory = !!review.lastReviewAt
           const m = masteryOf(review, now)
           const color = hasHistory ? masteryColor(m) : '#aaa'
-          const width = hasHistory ? dueProgress(review, now) : 0
+          const bar = barFor(review, now)
           const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
+          const barStyle = bar.kind === 'overdue'
+            ? `right:0; left:auto; width:${bar.width.toFixed(0)}%`
+            : `width:${bar.width.toFixed(0)}%`
           // Both icons live on a 3×3 grid in a 100×100 viewBox; each
           // bar is 100 long × 33.33 wide (3 cells × 1 cell). The plus
           // is two axis-aligned rects; the X is the same two bars
@@ -181,7 +186,7 @@ export function renderStudy () {
               </div>
               <div class="manage-card-mastery-wrap">
                 <div class="manage-card-mastery" title=${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
-                  <div class="manage-card-mastery-bar" style=${`width:${width.toFixed(0)}%`}></div>
+                  <div class="manage-card-mastery-bar" style=${barStyle}></div>
                 </div>
                 <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'mastery: n/a'}</div>
               </div>

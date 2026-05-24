@@ -17,6 +17,9 @@ import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
 
+import { DEFAULT_REVIEW, applySM2 } from './sm2.js'
+import { DAY_MS, masteryOf, masteryColor, urgencyOf, formatTimeUntil } from './mastery.js'
+
 const when = (cond, vnode) => () => cond() ? vnode : null
 
 // ── app-level state ──────────────────────────────────────────────────
@@ -77,37 +80,10 @@ let myDeckIndex = null  // learner's deck-index Repo: { decks: [<pubkey-hex>, ..
 // Reset on logout.
 const signedForks = new Set()
 
-// ── SM-2 lite ────────────────────────────────────────────────────────
-
-const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0, lastReviewAt: 0 }
-const GRADE_TO_Q = [0, 2, 4, 5]
-
-function applySM2 (review, gradeIdx, atMs) {
-  const q = GRADE_TO_Q[gradeIdx]
-  const r = { ...review }
-  if (q < 3) {
-    r.reps = 0
-    r.interval = 0
-  } else {
-    if (r.reps === 0)      r.interval = 1
-    else if (r.reps === 1) r.interval = 6
-    else                   r.interval = Math.round(r.interval * r.ease)
-    r.reps += 1
-  }
-  r.ease = Math.max(1.3, r.ease + 0.1 - (5 - q) * (0.08 + (5 - q) * 0.02))
-  // Due time. 'Again' (q<3) pushes due 1 minute forward — long enough
-  // that the card falls out of this session's derived queue, short
-  // enough that it comes back next time. Encodes session-relevance in
-  // the algorithm so the queue doesn't have to be a stateful array.
-  r.due = q < 3
-    ? atMs + 60 * 1000
-    : atMs + r.interval * 24 * 60 * 60 * 1000
-  // Track the moment of this grading. Mastery is a function of
-  // elapsed time since this — climbs slowly between reviews, resets
-  // (here) on each grade. So the bar is alive.
-  r.lastReviewAt = atMs
-  return r
-}
+// SM-2 + mastery math live in sibling files — pure functions, no
+// reactive coupling, no DOM. See ./sm2.js and ./mastery.js. Past-
+// claude's "inline everything" rule applies to the *markup*; pure
+// domain math belongs alongside, not inside.
 
 // Translate a deckId into the address of its deck Repo. Bundled decks
 // have a human-readable id ('greek-alphabet') and live at the address
@@ -240,96 +216,6 @@ function toggleCardActive (deckId, cardIdx) {
 //
 // formatTimeUntil: human-readable countdown that reads time.get()
 //   inside, so a slot using it ticks every second.
-
-const DAY_MS = 24 * 60 * 60 * 1000
-
-// Mastery = log₂(1 + interval + elapsed_days_since_last_review).
-// Two components:
-//   - `interval` is the SM-2 interval set by the most recent grade —
-//     the static commitment that *"you've earned this much."* Means the
-//     bar is populated right after a grade (interval ≥ 1 for 'good'),
-//     not empty. Visible reward for the work.
-//   - `elapsed_days` is time since the grade — adds the live climb,
-//     so the bar moves visibly while the user watches.
-// Grading 'again' resets interval to 0 AND lastReviewAt to now;
-// mastery falls back to ~0 and starts climbing fresh. Takes `now` so
-// the calling slot can pass time.get() and re-render each tick.
-function masteryOf (review, now) {
-  if (!review || !review.lastReviewAt) return 0
-  const elapsedDays = Math.max(0, (now - review.lastReviewAt) / DAY_MS)
-  return Math.log2(1 + review.interval + elapsedDays)
-}
-
-// Map a mastery score to a color via smooth HSL interpolation between
-// stops anchored at log-time positions. Color shifts FASTER than width
-// at low mastery: red→yellow→green happens in the first ~30% of the
-// bar, then colors stretch slowly toward blue across the rest.
-//
-// Stops chosen to land on clean intervals — yellow at 1.5 days
-// (~19% bar width), green at 3 days (~29%). Past green: emerald at
-// 1 week, teal at 1 month, blue at 3+ months. All chosen for
-// legibility on white since the same color is used for both the bar
-// fill and the text label.
-function masteryColor (mastery) {
-  const stops = [
-    [0.00, 355, 80, 50],   // bright red — only the sliver
-    [0.50,  20, 85, 48],   // red-orange transitioning
-    [1.00,  35, 90, 45],   // amber
-    [1.32,  45, 95, 40],   // fully yellow — 1.5 days
-    [2.00, 140, 70, 38],   // fully green — 3 days
-    [3.00, 160, 75, 30],   // emerald — 1 week
-    [4.95, 190, 85, 30],   // teal — 1 month
-    [6.50, 215, 75, 45]    // blue — 3+ months
-  ]
-  if (mastery <= stops[0][0]) {
-    const [, h, s, l] = stops[0]
-    return `hsl(${h}, ${s}%, ${l}%)`
-  }
-  for (let i = 0; i < stops.length - 1; i++) {
-    const [m1, h1, s1, l1] = stops[i]
-    const [m2, h2, s2, l2] = stops[i + 1]
-    if (mastery <= m2) {
-      const t = (mastery - m1) / (m2 - m1)
-      // Shortest-arc hue interpolation: take the SHORT way around the
-      // wheel, not the long way. Critical for the red (hue 355) →
-      // red-orange (hue 20) transition — naive linear interpolation
-      // wanders through cyan (hue ~187 at t=0.5) instead of staying
-      // in the red end. David caught this with a low-mastery card
-      // rendering as bright teal-green: width 3.9% (mastery 0.27) +
-      // color hsl(174, 83%, 49%). The width was right; the color
-      // was lying about which mastery value it represented.
-      let dh = h2 - h1
-      if (dh > 180) dh -= 360
-      else if (dh < -180) dh += 360
-      const hue = ((h1 + dh * t) % 360 + 360) % 360
-      return `hsl(${Math.round(hue)}, ${Math.round(s1 + (s2 - s1) * t)}%, ${Math.round(l1 + (l2 - l1) * t)}%)`
-    }
-  }
-  const [, h, s, l] = stops[stops.length - 1]
-  return `hsl(${h}, ${s}%, ${l}%)`
-}
-
-function urgencyOf (review, nowMs) {
-  if (!review || review.due === 0) return 0
-  if (review.interval <= 0) return Math.max(0, (nowMs - review.due) / DAY_MS)
-  return (nowMs - review.due) / (review.interval * DAY_MS)
-}
-
-// A short, human-readable string for "time until due" — or "overdue"
-// if the moment has passed. Designed to be called inside a reactive
-// slot that has already read time.get() (so the slot re-renders each
-// tick). The function takes ms (not a Date) so callers can pass
-// `(due - time.get())` cleanly.
-function formatTimeUntil (deltaMs) {
-  const abs = Math.abs(deltaMs)
-  const overdue = deltaMs < 0
-  let label
-  if (abs < 60 * 1000) label = `${Math.floor(abs / 1000)}s`
-  else if (abs < 60 * 60 * 1000) label = `${Math.floor(abs / 60000)}m`
-  else if (abs < DAY_MS) label = `${Math.floor(abs / 3600000)}h`
-  else label = `${Math.floor(abs / DAY_MS)}d`
-  return overdue ? `overdue ${label}` : (deltaMs <= 0 ? 'now' : `in ${label}`)
-}
 
 // Mastery for the deck's *active set* — average over non-deleted,
 // active, ever-reviewed cards. Represents "how well I know what I'm

@@ -3,6 +3,10 @@
   font-family: system-ui, -apple-system, sans-serif;
   font-size: 15px;
   color: #1c1917;
+  /* Reserve scrollbar gutter always — when content grows past the
+     viewport and the scrollbar appears, the page no longer reflows
+     by a few px and everything stays put. */
+  scrollbar-gutter: stable;
 }
 body {
   max-width: 36rem;
@@ -168,7 +172,7 @@ h2 {
   margin-left: auto;
 }
 .deck-stats .deck-action-btn + .deck-action-btn {
-  margin-left: 0.4rem;
+  margin-left: 0.5rem;  /* matches .edit-card-actions { gap: 0.5rem } */
 }
 .deck-badge {
   font-size: 0.65rem;
@@ -671,11 +675,23 @@ h2 {
   fill: #16a34a;  /* green */
 }
 
+/* Active vs. available cards preview their *post-click* state on hover:
+   active card hovered → looks like an available card resting (it's
+   about to become one). Available card hovered → looks like an
+   active card resting (the symmetric direction was already there
+   and David flagged he liked it). The colored borders are the
+   forward-signal: red on the way out, green on the way in. */
 .manage-card-active {
   background: white;
 }
 .manage-card-active:hover {
+  background: #fafafa;
+  opacity: 0.7;
   border-color: #fecaca;
+}
+.manage-card-active:hover .manage-card-front,
+.manage-card-active:hover .manage-card-back {
+  color: #777;
 }
 
 .manage-card-available {
@@ -690,6 +706,12 @@ h2 {
   opacity: 1;
   border-color: #a7f3d0;
   background: white;
+}
+.manage-card-available:hover .manage-card-front {
+  color: #1c1917;
+}
+.manage-card-available:hover .manage-card-back {
+  color: #555;
 }
 
 /* ── manage panel on the study page ───────────────────────────────────

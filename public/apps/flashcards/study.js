@@ -121,7 +121,12 @@ export function renderStudy () {
               const bar = barFor(review, now)
               const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
               // Overdue bars right-anchor; pre-due bars left-anchor.
-              const barStyle = bar.kind === 'overdue'
+              // Remaining bar anchors RIGHT (drains by shrinking
+              // toward the right edge as time runs out). Overdue
+              // bar anchors LEFT (grows rightward from the left
+              // edge). Visually distinct AND matches David's
+              // intuition about which side "represents" each state.
+              const barStyle = bar.kind === 'remaining'
                 ? `right:0; left:auto; width:${bar.width.toFixed(0)}%`
                 : `width:${bar.width.toFixed(0)}%`
               return h`
@@ -159,7 +164,7 @@ export function renderStudy () {
           const color = hasHistory ? masteryColor(m) : '#aaa'
           const bar = barFor(review, now)
           const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
-          const barStyle = bar.kind === 'overdue'
+          const barStyle = bar.kind === 'remaining'
             ? `right:0; left:auto; width:${bar.width.toFixed(0)}%`
             : `width:${bar.width.toFixed(0)}%`
           // Both icons live on a 3×3 grid in a 100×100 viewBox; each

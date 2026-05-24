@@ -54,7 +54,7 @@ export function renderManage () {
           const color = hasHistory ? masteryColor(mastery) : '#aaa'
           const bar = barFor(review, now)
           const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
-          const barStyle = bar.kind === 'overdue'
+          const barStyle = bar.kind === 'remaining'
             ? `right:0; left:auto; width:${bar.width.toFixed(0)}%`
             : `width:${bar.width.toFixed(0)}%`
           // Both icons live on a 3×3 grid in a 100×100 viewBox; each

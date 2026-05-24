@@ -116,7 +116,8 @@ export function urgencyOf (review, nowMs) {
 // David's framing: "fill it up from the other side with its overdue-
 // ness... some sort of different treatment to keep it interesting."
 // The kind/width pair lets the renderer pick its anchor.
-const ONE_DAY_MS = 24 * 60 * 60 * 1000
+const ONE_DAY_MS  = 24 * 60 * 60 * 1000
+const ONE_YEAR_MS = 365 * ONE_DAY_MS
 
 export function barFor (review, now) {
   if (!review || !review.lastReviewAt) return { kind: 'empty', width: 0 }
@@ -135,11 +136,15 @@ export function barFor (review, now) {
     const w = Math.log(timeUntilDueMs + 1) / Math.log(drainWindowMs + 1)
     return { kind: 'remaining', width: Math.max(0, Math.min(100, w * 100)) }
   }
-  // Overdue: bar grows from the right. Full at 1 full interval late.
+  // Overdue: bar grows as overdue-ness piles up. Scale = 1 year (not
+  // the card's interval) so a card overdue by a few days only fills
+  // a sliver; "fully overdue" requires neglect on the order of months
+  // to a year. David: "I want to see it move a little at the start
+  // but it should almost never be full."
   const overdueMs = -timeUntilDueMs
-  if (overdueMs >= intervalMs) return { kind: 'overdue', width: 100 }
+  if (overdueMs >= ONE_YEAR_MS) return { kind: 'overdue', width: 100 }
   // Sqrt shape: visible early as a thin sliver, growth slows later.
-  const w = Math.sqrt(overdueMs / intervalMs)
+  const w = Math.sqrt(overdueMs / ONE_YEAR_MS)
   return { kind: 'overdue', width: Math.max(0, Math.min(100, w * 100)) }
 }
 

@@ -629,12 +629,22 @@ function currentCardIdx () {
 // fire-and-forget op that, when complete, makes its own trigger
 // condition false.
 
-recaller.watch('ensure-reviews-for-active-deck', () => {
-  const deckId = state.get('activeDeck')
-  if (!deckId) return                            // home view, nothing to open
-  if (reviewRepos.get(deckId)) return            // already opened
-  if (!signer || !session) return                // not yet logged in / connected
-  ensureReviewsRepo(deckId)                      // fire and forget
+recaller.watch('ensure-reviews-for-all-decks', () => {
+  // Eagerly open every discovered deck's reviews repo so the home
+  // view's mastery/stats/schedule populate without needing a click.
+  // Converges: once `reviewRepos.get(id)` is truthy, this loop skips
+  // it. Each pass only fires async opens for newly-discovered decks
+  // (a new fork appearing in myDeckIndex, a new bundled deck appearing
+  // in flashcardsDecks). Same shape as registrySync's follow callback.
+  if (!signer || !session) return
+  const fd = homeRepo?.get('flashcardsDecks') ?? {}
+  const myDecks = myDeckIndex?.get('decks') ?? []
+  for (const id of Object.keys(fd)) {
+    if (!reviewRepos.get(id)) ensureReviewsRepo(id)
+  }
+  for (const addr of myDecks) {
+    if (!reviewRepos.get(addr)) ensureReviewsRepo(addr)
+  }
 })
 
 // ── mount ────────────────────────────────────────────────────────────
@@ -716,10 +726,10 @@ mount(h`
                 const pct = Math.min(100, (m / 7) * 100)
                 const color = masteryColor(m)
                 return h`
-                  <div class="deck-mastery" title="average mastery: ${m.toFixed(4)} / 7" style=${`color: ${color}`}>
+                  <div class="deck-mastery" title="average mastery: ${m.toFixed(7)} / 7" style=${`color: ${color}`}>
                     <div class="deck-mastery-bar" style=${`width:${pct.toFixed(0)}%`}></div>
                   </div>
-                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(4)}</div>
+                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(7)}</div>
                 `
               }}
               ${() => {
@@ -945,10 +955,10 @@ mount(h`
                 <div class="manage-card-back">${card.back || ''}</div>
               </div>
               ${review.lastReviewAt
-                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(4)} / 7`} style=${`color: ${color}`}>
+                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(7)} / 7`} style=${`color: ${color}`}>
                      <div class="manage-card-mastery-bar" style=${`width:${masteryPct.toFixed(0)}%`}></div>
                    </div>
-                   <div class="manage-card-mastery-label" style=${`color: ${color}`}>mastery ${mastery.toFixed(4)}</div>`
+                   <div class="manage-card-mastery-label" style=${`color: ${color}`}>mastery ${mastery.toFixed(7)}</div>`
                 : null}
               <span class="manage-card-toggle">${isActive ? 'remove' : 'add'}</span>
             </li>

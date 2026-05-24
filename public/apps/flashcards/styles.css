@@ -210,6 +210,22 @@ h2 {
   text-decoration: underline dotted;
   font-family: inherit;
 }
+.study-back:hover { text-decoration-style: solid; }
+/* Inline 'stop studying ahead' affordance in the study-header
+   right-side text. Replaces the 'N left' count when studyAhead is
+   on — same color family as .study-back so it reads as a matching
+   way out of the mode. */
+.study-ahead-stop {
+  background: none;
+  border: none;
+  color: #1d4ed8;
+  font-size: inherit;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline dotted;
+}
+.study-ahead-stop:hover { text-decoration-style: solid; }
 /* The card is a 3D-flip container — clicking it toggles `.revealed`,
    which rotates `.card-inner` 180° on the Y axis. `backface-visibility:
    hidden` on each face means only one side is ever visible. Fixed

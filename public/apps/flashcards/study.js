@@ -24,9 +24,18 @@ export function renderStudy () {
         <span>${() => {
           const deckId = activeDeck()
           const title  = deckRepo(deckId)?.get('title') ?? ''
-          // Live count: derived from the queue each render.
+          if (!title) return ''
+          // In study-ahead mode, the "N left" count is misleading
+          // (the user isn't *required* to study any more), so swap
+          // it for a clickable way out of the mode. Going back to
+          // the all-caught-up empty state — from there, the back
+          // arrow still works, and clicking the empty state can
+          // re-enter study-ahead.
+          if (state.get('studyAhead')) {
+            return h`${title} · <button class="study-ahead-stop" onclick=${handle(() => state.set('studyAhead', false))}>stop studying ahead</button>`
+          }
           const remaining = buildStudyQueue(deckId).length
-          return title ? `${title} · ${remaining} left` : ''
+          return `${title} · ${remaining} left`
         }}</span>
       </div>
       ${() => {

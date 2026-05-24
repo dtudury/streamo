@@ -5,6 +5,83 @@ for what's next.
 
 ---
 
+## 8.7.0 — flashcards as a real app; `Addressifier.close()` lands the seed-history race
+
+**Flashcards graduated from "in progress" to a real demo.** A
+spaced-repetition app on top of streamo's full stack — every deck is
+a signed Repo you can fork; your reviews are a per-deck Repo you
+sign locally. The session that built it out was a long polish arc,
+but the texture is worth surfacing:
+
+- **The four-page split.** `main.js` is the orchestrator (login,
+  watchers, action handlers); each view is its own h-template in its
+  own file (`home.js`, `study.js`, `edit.js`, `manage.js`). The
+  inline-everything rule refined: *the h-template shape mirrors the
+  output's shape* — multi-page apps want one h-template per page,
+  not one mega-template. `dear-future-claudes.md` carries the
+  refined rule for future-Claudes.
+- **Mastery left, due-state right.** Each card's bar splits its two
+  channels — color = mastery (knowledge held; climbs on grades),
+  width = time-until-due (drains as due approaches, fills from the
+  left when overdue). Time-remaining bar fit to a power curve
+  against three real anchor points. The deck visibly re-sorts live
+  as you drag the per-deck retention slider.
+- **Honest defaults.** First-good interval is 5 minutes, not 1 day
+  (SM-2's published default was lying to David about his retention).
+  `hard` reverts the interval instead of lapsing; `easy` carries a
+  1.3× bonus on top of the SM-2 multiplier. All exposed as named
+  constants — meant to be tuned, not theorems.
+- **Two new bundled decks.** Greek Alphabet and "Big Numbers" (a
+  human-centric tour of orders-of-magnitude from neurons to the
+  observable universe). Both seeded into the relay on startup;
+  new decks added to the seed JSON appear on connected clients
+  without a refresh — the substrate doing its thing.
+
+**`archiveSync.close()` — `seed-history`'s tail-loss race is gone.**
+The ROADMAP-tracked race: `process.exit(0)` after a `setTimeout`
+settle window, with archiveSync's writer loop running
+fire-and-forget — the exit could drop in-flight writes and queued
+chunks, typically the SIG tail. Fixed by giving the source a way to
+*end* rather than inventing a checkpoint primitive on top of an
+infinite stream.
+
+- `Addressifier.close()` — one-way switch that signals end-of-stream
+  to any open `makeReadableStream` readers. They drain whatever's in
+  `#chunks` and emit `done: true`. `append()` throws after close.
+  Idempotent.
+- `archiveSync` now returns `{ close }`. close() does
+  `stream.close()` and awaits the writer-loop's Promise. After it
+  resolves, every byte is with the kernel and the file handle is
+  closed — safe to `process.exit()` without losing tail data.
+- `Addressifier.wireByteLength` getter — `byteLength + 4 *
+  chunkCount`, the codec's on-disk / on-the-wire byte size. Used
+  for the append-vs-truncate decision when reopening an archive.
+- archiveSync also gains an **append-on-startup optimization** —
+  when the in-memory `wireByteLength` matches the file on disk
+  (Repo case, fresh-start case), opens the file with `'a'` and
+  starts the reader at `fromOffset = byteLength`, so only new
+  chunks get written. Plain Streams that compact on load still take
+  the truncate-rewrite branch. Mirrors how `registrySync` skips
+  already-known bytes on the wire.
+
+**Explorer cold-link auto-subscribe.** Opening
+`/apps/explorer/#/repo/<keyHex>` directly (a shared link, a paste,
+a foreign-relay redirect) used to leave AtView reading
+`registry.get(keyHex) === undefined` and sitting on *"opening…"*
+forever — the classic open-vs-subscribe footgun manifesting in UI.
+A recaller watcher inside the registrySync `.then` block now
+auto-subscribes when the URL points at a key the registry doesn't
+have yet, refires on either nav or arrival, and self-quiets once
+the bytes land.
+
+**Header alignment polish.** The explorer's `streamo · explorer`
+lockup matches the flashcards / journal / location treatment —
+`<h1>` with `align-items: baseline`, so the wordmark and the
+page-title share a single baseline regardless of font-size
+difference.
+
+---
+
 ## 8.6.0 — a service worker, and hand-rolled Web Push
 
 **The service worker.** The homepage registers `/sw.js` — served,

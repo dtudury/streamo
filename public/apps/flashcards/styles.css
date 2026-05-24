@@ -319,7 +319,8 @@ h2 {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   margin-top: 0;
-  text-align: right;
+  display: flex;
+  justify-content: space-between;
 }
 .reveal-btn {
   align-self: center;
@@ -682,7 +683,12 @@ h2 {
   font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
   margin-top: 0;  /* flush against the bar */
-  /* `color` set inline via masteryColor() — tinted, legible. */
+  display: flex;
+  justify-content: space-between;
+  /* `color` set inline via masteryColor() — tinted, legible. Mastery
+     name/value on the left, due-state on the right, matching the
+     bar's anchor semantics (remaining drains rightward, overdue
+     fills rightward). */
 }
 
 /* SVG icon overlay — faded X (active) or + (available) that appears

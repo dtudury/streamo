@@ -13,7 +13,7 @@
 
 import { h, handle } from '../../streamo/h.js'
 import { time, activeDeck } from './state.js'
-import { masteryOf, masteryColor, barFor, formatTimeUntil } from './mastery.js'
+import { masteryOf, masteryColor, barFor, formatDueState } from './mastery.js'
 import {
   deckCards, deckRepo, isCardActive, reviewStateForCard
 } from './derived.js'
@@ -53,7 +53,7 @@ export function renderManage () {
           const mastery = masteryOf(review, now)
           const color = hasHistory ? masteryColor(mastery) : '#aaa'
           const bar = barFor(review, now)
-          const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
+          const dueLabel = hasHistory ? formatDueState(review.due - now) : null
           const barStyle = bar.kind === 'remaining'
             ? `right:0; left:auto; width:${bar.width.toFixed(0)}%`
             : `width:${bar.width.toFixed(0)}%`
@@ -82,7 +82,10 @@ export function renderManage () {
                 <div class="manage-card-mastery" title=${hasHistory ? `mastery ${mastery.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
                   <div class="manage-card-mastery-bar" style=${barStyle}></div>
                 </div>
-                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${mastery.toFixed(4)} · ${dueLabel}` : 'mastery: n/a'}</div>
+                <div class="manage-card-mastery-label" style=${`color: ${color}`}>
+                  <span>${hasHistory ? `mastery ${mastery.toFixed(4)}` : 'mastery: n/a'}</span>
+                  ${hasHistory ? h`<span>${dueLabel}</span>` : null}
+                </div>
               </div>
             </li>
           `

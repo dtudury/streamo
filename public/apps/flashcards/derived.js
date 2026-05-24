@@ -168,6 +168,11 @@ export function buildStudyQueue (deckId) {
     else if (r.due <= now) due.push(i)
     // else: in 'rest' — has reviews, not yet due. Not in the queue.
   }
+  // Sort the due list so the most-overdue card comes first. David's
+  // ask: "I think the next card should be the most overdue one." It
+  // also matches the manage-list sort, so the next-card surfacing in
+  // the studied slot lines up with the top of the visible queue.
+  due.sort((a, b) => reviewStateForCard(deckId, a).due - reviewStateForCard(deckId, b).due)
   const normal = [...due, ...neu]
   if (normal.length > 0 || !state.get('studyAhead')) return normal
   // Study-ahead fallback: every active card, sorted by next-due.

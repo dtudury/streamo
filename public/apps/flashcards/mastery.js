@@ -160,7 +160,8 @@ export function barFor (review, now) {
 // if the moment has passed. Designed to be called inside a reactive
 // slot that has already read time.get() (so the slot re-renders each
 // tick). Takes ms (not a Date) so callers can pass (due - time.get())
-// cleanly.
+// cleanly. Used in the deck-schedule "next 5" strip where space is
+// tight — short labels like 'in 5m', 'now', 'overdue 1d'.
 export function formatTimeUntil (deltaMs) {
   const abs = Math.abs(deltaMs)
   const overdue = deltaMs < 0
@@ -170,4 +171,18 @@ export function formatTimeUntil (deltaMs) {
   else if (abs < DAY_MS) label = `${Math.floor(abs / 3600000)}h`
   else label = `${Math.floor(abs / DAY_MS)}d`
   return overdue ? `overdue ${label}` : (deltaMs <= 0 ? 'now' : `in ${label}`)
+}
+
+// Same time math, longer prose. Used in the per-card mastery labels
+// where the format matches David's spec: 'due in <t>' for not-yet-due,
+// '<t> overdue' for past-due, 'due now' at exactly zero.
+export function formatDueState (deltaMs) {
+  const abs = Math.abs(deltaMs)
+  const overdue = deltaMs < 0
+  let label
+  if (abs < 60 * 1000) label = `${Math.floor(abs / 1000)}s`
+  else if (abs < 60 * 60 * 1000) label = `${Math.floor(abs / 60000)}m`
+  else if (abs < DAY_MS) label = `${Math.floor(abs / 3600000)}h`
+  else label = `${Math.floor(abs / DAY_MS)}d`
+  return overdue ? `${label} overdue` : (deltaMs <= 0 ? 'due now' : `due in ${label}`)
 }

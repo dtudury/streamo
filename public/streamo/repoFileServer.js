@@ -77,6 +77,134 @@ function readFilesMap (repo, filesKey) {
 }
 
 /**
+ * Read the mounts table out of a Repo. Conventionally at `value.mounts`
+ * (a sibling of `files`). Returns undefined when the repo has no mounts
+ * or the structure isn't an object.
+ *
+ * A mount entry is `{ ref: <pubkeyHex>, dataAddress?: number }`. The
+ * `ref` is the pubkey of the record to mount; `dataAddress`, when
+ * present, pins to a specific commit (otherwise we serve the mounted
+ * record's latest content).
+ *
+ * @param {import('./Repo.js').Repo} repo
+ * @param {number} [atDataAddress]  if set, read mounts from this
+ *   specific commit's data instead of HEAD (for pinned-mount chains).
+ */
+function readMounts (repo, atDataAddress) {
+  if (!repo.lastCommit) return undefined
+  if (atDataAddress != null) {
+    try {
+      const value = repo.decode(atDataAddress)
+      return (value && typeof value === 'object') ? value.mounts : undefined
+    } catch { return undefined }
+  }
+  return repo.get('mounts')
+}
+
+/**
+ * Read a single file's bytes from a repo's files map — honoring an
+ * optional pinned `dataAddress` so the pinned-mount path can read the
+ * record's content as it was at a specific commit. Returns undefined
+ * when the file isn't in the map.
+ *
+ * @param {import('./Repo.js').Repo} repo
+ * @param {string|null} filesKey
+ * @param {string} path
+ * @param {number} [atDataAddress]
+ */
+function readFile (repo, filesKey, path, atDataAddress) {
+  if (atDataAddress != null) {
+    try {
+      const value = repo.decode(atDataAddress)
+      if (!value || typeof value !== 'object') return undefined
+      const map = filesKey === null ? value : value[filesKey]
+      return (map && typeof map === 'object') ? map[path] : undefined
+    } catch { return undefined }
+  }
+  const map = readFilesMap(repo, filesKey)
+  if (!map || typeof map !== 'object' || map instanceof Uint8Array) return undefined
+  return map[path]
+}
+
+/**
+ * Resolve a request `path` to a `{ repo, leafPath, leafDataAddress, value }`
+ * tuple by walking the record's `files` first and then its `mounts`
+ * table, recursing into mounted records when the local lookup misses.
+ *
+ * - **Files-first:** if the path hits `files[path]` on the current
+ *   record, that wins (David's "top-to-bottom, first match wins").
+ * - **Longest-prefix match** when walking mounts — if both
+ *   `mounts["lib/"]` and `mounts["lib/v1/"]` could match, the more
+ *   specific one wins.
+ * - **Cycle detection** by pubkeyHex set: each record can appear at
+ *   most once on the resolution chain. Per-request — the relay's
+ *   "answer each request independently" model means we don't try to
+ *   materialize the whole mount graph, just walk the path the URL
+ *   asked for.
+ * - **Pin-aware:** when a mount entry carries a `dataAddress`, the
+ *   recursion reads the mounted record's content at that specific
+ *   commit instead of HEAD. The pinned dataAddress propagates only
+ *   to its own subtree.
+ *
+ * Returns null if the path can't be resolved (no matching file, no
+ * matching mount, mount target not in registry, or cycle detected).
+ *
+ * @param {import('./Repo.js').Repo} repo
+ * @param {string} pubkeyHex
+ * @param {string} path
+ * @param {number|undefined} atDataAddress
+ * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }} registry
+ * @param {string|null} filesKey
+ * @param {Set<string>} visited
+ */
+function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, filesKey, visited) {
+  if (visited.has(pubkeyHex)) return null
+  visited.add(pubkeyHex)
+
+  // Files-first lookup on the current record.
+  const value = readFile(repo, filesKey, path, atDataAddress)
+  if (value !== undefined) {
+    return { repo, leafPath: path, leafDataAddress: atDataAddress, value }
+  }
+
+  // Then walk the mounts table looking for the longest matching prefix.
+  const mounts = readMounts(repo, atDataAddress)
+  if (!mounts || typeof mounts !== 'object') return null
+
+  let bestPrefix = null
+  for (const prefix of Object.keys(mounts)) {
+    // Mount keys conventionally end in `/`. Match either when the path
+    // starts with the (with-slash) prefix, or when the path exactly
+    // equals the without-trailing-slash version (rare — a request for
+    // the mount's bare root, which would normalize to <prefix>index.html
+    // anyway, but be defensive).
+    const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
+    if (path === bare || path.startsWith(prefix)) {
+      if (!bestPrefix || prefix.length > bestPrefix.length) bestPrefix = prefix
+    }
+  }
+  if (!bestPrefix) return null
+
+  const mount = mounts[bestPrefix]
+  if (!mount || typeof mount !== 'object' || typeof mount.ref !== 'string') return null
+  if (!/^[0-9a-f]{66}$/.test(mount.ref)) return null
+
+  const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
+  const mountedRepo = registry.get(mount.ref)
+  if (!mountedRepo) return null  // not subscribed; resolution falls through to 404
+
+  return resolveInRecord(
+    mountedRepo,
+    mount.ref,
+    innerPath || 'index.html',
+    typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
+    registry,
+    filesKey,
+    visited
+  )
+}
+
+/**
  * Turn a value at a path into bytes for the HTTP response. Inverse of
  * fileSync's encodeFile: JSON files stored as objects are re-serialized,
  * strings are UTF-8 encoded, Uint8Arrays pass through. Anything else
@@ -120,6 +248,15 @@ function injectImportMap (html, importMap) {
  *   path is derived from the request — defaults to `req.path`. Used by
  *   `serveFromRegistry` to feed in the wildcard tail instead of the full
  *   URL path.
+ * @param {import('./RepoRegistry.js').RepoRegistry} [options.registry]
+ *   optional registry — when provided, the middleware resolves through
+ *   the repo's `mounts` table to other records the registry holds.
+ *   Without a registry, mounts are ignored (files-only).
+ * @param {string} [options.pubkeyHex]  the pubkey of the served repo,
+ *   used as the starting point for cycle detection when mount
+ *   resolution is enabled. Defaults to a sentinel that's never a real
+ *   pubkey — fine for single-repo serving where no record will mount
+ *   back to the served repo.
  * @returns {(req, res, next) => void} Express middleware
  */
 export function serveFromRepo (repo, options = {}) {
@@ -128,7 +265,9 @@ export function serveFromRepo (repo, options = {}) {
     injectImportMap: doInject = true,
     libraryPath = '/streamo/',
     libraryPackageName = '@dtudury/streamo',
-    pathFromReq = req => req.path
+    pathFromReq = req => req.path,
+    registry = null,
+    pubkeyHex = '__root__'
   } = options
 
   return function repoFileMiddleware (req, res, next) {
@@ -137,20 +276,37 @@ export function serveFromRepo (repo, options = {}) {
     const path = normalize(pathFromReq(req))
     if (!path) return next()
 
-    const files = readFilesMap(repo, filesKey)
-    if (!files || typeof files !== 'object' || files instanceof Uint8Array) return next()
+    // Two resolution modes:
+    //   - registry provided → walk files + mounts recursively, with
+    //     cycle detection. Mount targets must already be in the
+    //     registry (no on-demand subscribe in this layer; that
+    //     happens upstream via registrySync's `follow` callback).
+    //   - no registry → files-only on the served repo, as before.
+    let resolved
+    if (registry) {
+      resolved = resolveInRecord(repo, pubkeyHex, path, undefined, registry, filesKey, new Set())
+      if (!resolved) return next()
+    } else {
+      const files = readFilesMap(repo, filesKey)
+      if (!files || typeof files !== 'object' || files instanceof Uint8Array) return next()
+      const value = files[path]
+      if (value === undefined) return next()
+      resolved = { repo, leafPath: path, leafDataAddress: undefined, value }
+    }
 
-    const value = files[path]
-    if (value === undefined) return next()
-
-    let bytes = encodeForResponse(path, value)
+    let bytes = encodeForResponse(resolved.leafPath, resolved.value)
     if (bytes === null) return next()
 
-    const ext = extname(path).toLowerCase()
+    const ext = extname(resolved.leafPath).toLowerCase()
     const mime = MIME[ext] || 'application/octet-stream'
 
-    const dataAddress = repo.lastCommit?.dataAddress
-    const etag = dataAddress !== undefined ? `"${dataAddress}-${encodeURIComponent(path)}"` : null
+    // ETag derives from the LEAF record's commit (the actual content
+    // source), pinned dataAddress if any, and the path. So a mount
+    // refresh upstream invalidates the ETag downstream; a pinned-
+    // address mount is stable across the mounted record's later
+    // commits (since the leaf address doesn't change).
+    const leafDataAddress = resolved.leafDataAddress ?? resolved.repo.lastCommit?.dataAddress
+    const etag = leafDataAddress !== undefined ? `"${leafDataAddress}-${encodeURIComponent(resolved.leafPath)}"` : null
 
     if (etag && req.headers && req.headers['if-none-match'] === etag) {
       res.statusCode = 304
@@ -224,6 +380,9 @@ export function serveFromRegistry (registry, options = {}) {
     } catch {
       return next()
     }
-    return serveFromRepo(repo, options)(req, res, next)
+    // Thread the registry + the served repo's pubkey through so
+    // serveFromRepo's mount resolver can walk the mounts table and
+    // cycle-detect by pubkey from this starting point.
+    return serveFromRepo(repo, { ...options, registry, pubkeyHex: keyhex })(req, res, next)
   }
 }

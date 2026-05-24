@@ -276,4 +276,186 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(r.headers['content-type'], 'text/html; charset=utf-8')
     assert.equal(r.body, null)
   })
+
+  // ── mounts ───────────────────────────────────────────────────────────────
+  // The `mounts` key declares "another record's files appear at this
+  // path-prefix." Resolution walks files-first (longest match wins on
+  // mounts), recurses into mounted records, cycle-detects per request,
+  // and supports pinning a mount to a specific dataAddress.
+
+  /**
+   * A minimal in-memory registry stub: a Map from pubkeyHex → Repo,
+   * with a `get(key)` accessor that mirrors the real RepoRegistry's
+   * synchronous-get shape. Sufficient for the resolver, which only
+   * uses .get(key) and the Repo's value-read API.
+   */
+  function makeStubRegistry (entries) {
+    const map = new Map(entries)
+    return { get: k => map.get(k) }
+  }
+
+  // The 66-hex shape is just a plausible-looking pubkey for testing
+  // (the resolver only cares about the regex shape, not real signing).
+  const KEY_A = 'a'.repeat(66)
+  const KEY_B = 'b'.repeat(66)
+  const KEY_C = 'c'.repeat(66)
+
+  test('mounts: resolves files-first on the served repo', ({ assert }) => {
+    // If `files` has the requested path, the mount shouldn't be
+    // consulted at all — even though a mount entry could otherwise
+    // claim the same prefix.
+    const a = makeRepo({ files: { 'index.html': 'A-root' }, mounts: { 'index.html/': { ref: KEY_B } } })
+    const b = makeRepo({ files: { 'index.html': 'B-content' } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/' })
+    assert.equal(r.statusCode, 200)
+    assert.equal(bodyAsString(r.body), 'A-root')
+  })
+
+  test('mounts: serves through a single mount to another record', ({ assert }) => {
+    const a = makeRepo({ files: { 'index.html': 'A' }, mounts: { 'lib/': { ref: KEY_B } } })
+    const b = makeRepo({ files: { 'foo.js': 'console.log("from B")' } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/lib/foo.js' })
+    assert.equal(r.statusCode, 200)
+    assert.equal(r.headers['content-type'], 'text/javascript; charset=utf-8')
+    assert.equal(bodyAsString(r.body), 'console.log("from B")')
+  })
+
+  test('mounts: longest matching prefix wins', ({ assert }) => {
+    const a = makeRepo({
+      files: {},
+      mounts: { 'lib/': { ref: KEY_B }, 'lib/v2/': { ref: KEY_C } }
+    })
+    const b = makeRepo({ files: { 'x.js': 'B-version' } })
+    const c = makeRepo({ files: { 'x.js': 'C-version' } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b], [KEY_C, c]]),
+      pubkeyHex: KEY_A
+    })
+    // /lib/x.js matches `lib/` prefix → B
+    const r1 = callMiddleware(mw, { path: '/lib/x.js' })
+    assert.equal(bodyAsString(r1.body), 'B-version')
+    // /lib/v2/x.js matches BOTH `lib/` and `lib/v2/` — the longer one wins
+    const r2 = callMiddleware(mw, { path: '/lib/v2/x.js' })
+    assert.equal(bodyAsString(r2.body), 'C-version')
+  })
+
+  test('mounts: missing file in mounted record falls through (404)', ({ assert }) => {
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: KEY_B } } })
+    const b = makeRepo({ files: { 'x.js': 'exists' } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/lib/missing.js' })
+    assert.ok(r.nextCalled, 'expected next() — missing file in mount falls through')
+  })
+
+  test('mounts: missing mount target (not in registry) falls through', ({ assert }) => {
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: KEY_B } } })
+    // KEY_B is referenced but not in the registry
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/lib/anything' })
+    assert.ok(r.nextCalled)
+  })
+
+  test('mounts: cycle (A → B → A) returns 404, not infinite recursion', ({ assert }) => {
+    const a = makeRepo({ files: {}, mounts: { 'b/': { ref: KEY_B } } })
+    const b = makeRepo({ files: {}, mounts: { 'a/': { ref: KEY_A } } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+      pubkeyHex: KEY_A
+    })
+    // Walk: A → b/ mount → B → a/ mount → A (already visited) → null
+    const r = callMiddleware(mw, { path: '/b/a/anything' })
+    assert.ok(r.nextCalled)
+  })
+
+  test('mounts: self-mount (A → A) returns 404 on the would-loop path', ({ assert }) => {
+    const a = makeRepo({ files: { 'top.js': 'self' }, mounts: { 'me/': { ref: KEY_A } } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a]]),
+      pubkeyHex: KEY_A
+    })
+    // A's own top.js still resolves
+    const r1 = callMiddleware(mw, { path: '/top.js' })
+    assert.equal(bodyAsString(r1.body), 'self')
+    // But /me/top.js attempts to recurse into A again → cycle → 404
+    const r2 = callMiddleware(mw, { path: '/me/top.js' })
+    assert.ok(r2.nextCalled)
+  })
+
+  test('mounts: nested mount-through-mount works (A → B → C)', ({ assert }) => {
+    const a = makeRepo({ files: {}, mounts: { 'b/': { ref: KEY_B } } })
+    const b = makeRepo({ files: {}, mounts: { 'c/': { ref: KEY_C } } })
+    const c = makeRepo({ files: { 'deep.txt': 'three levels' } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b], [KEY_C, c]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/b/c/deep.txt' })
+    assert.equal(r.statusCode, 200)
+    assert.equal(bodyAsString(r.body), 'three levels')
+  })
+
+  test('mounts: pinned dataAddress reads the record at that specific commit', ({ assert }) => {
+    // Build a record that goes through two commits; pin the mount to
+    // the first commit's dataAddress and confirm the served content
+    // matches the pinned commit, not HEAD.
+    const b = new Repo()
+    let w = b.checkout()
+    w.set({ files: { 'x.txt': 'v1' } })
+    b.commit(w, 'v1')
+    const v1DataAddress = b.lastCommit.dataAddress
+    w = b.checkout()
+    w.set({ files: { 'x.txt': 'v2' } })
+    b.commit(w, 'v2')
+
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: KEY_B, dataAddress: v1DataAddress } } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/lib/x.txt' })
+    assert.equal(bodyAsString(r.body), 'v1', 'pinned mount should serve v1, not v2')
+  })
+
+  test('mounts: are ignored when registry is not provided (files-only)', ({ assert }) => {
+    const a = makeRepo({ files: { 'top.txt': 'A' }, mounts: { 'lib/': { ref: KEY_B } } })
+    const mw = serveFromRepo(a, { injectImportMap: false })  // no registry
+    const r1 = callMiddleware(mw, { path: '/top.txt' })
+    assert.equal(bodyAsString(r1.body), 'A')
+    const r2 = callMiddleware(mw, { path: '/lib/anything' })
+    assert.ok(r2.nextCalled, 'mounts ignored without registry — anything via lib/ is 404')
+  })
+
+  test('mounts: invalid ref shape (not hex) falls through safely', ({ assert }) => {
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: 'not-a-key' } } })
+    const mw = serveFromRepo(a, {
+      injectImportMap: false,
+      registry: makeStubRegistry([[KEY_A, a]]),
+      pubkeyHex: KEY_A
+    })
+    const r = callMiddleware(mw, { path: '/lib/anything' })
+    assert.ok(r.nextCalled)
+  })
 })

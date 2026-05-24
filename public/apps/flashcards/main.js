@@ -852,10 +852,10 @@ mount(h`
                 const pct = Math.min(100, (m / 7) * 100)
                 const color = masteryColor(m)
                 return h`
-                  <div class="deck-mastery" title="average mastery: ${m.toFixed(7)} / 7" style=${`color: ${color}`}>
+                  <div class="deck-mastery" title="average mastery: ${m.toFixed(4)} / 7" style=${`color: ${color}`}>
                     <div class="deck-mastery-bar" style=${`width:${pct.toFixed(0)}%`}></div>
                   </div>
-                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(7)}</div>
+                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(4)}</div>
                 `
               }}
               ${() => {
@@ -1081,10 +1081,10 @@ mount(h`
                 <div class="manage-card-back">${card.back || ''}</div>
               </div>
               ${review.lastReviewAt
-                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(7)} / 7`} style=${`color: ${color}`}>
+                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(4)} / 7`} style=${`color: ${color}`}>
                      <div class="manage-card-mastery-bar" style=${`width:${masteryPct.toFixed(0)}%`}></div>
                    </div>
-                   <div class="manage-card-mastery-label" style=${`color: ${color}`}>mastery ${mastery.toFixed(7)}</div>`
+                   <div class="manage-card-mastery-label" style=${`color: ${color}`}>mastery ${mastery.toFixed(4)}</div>`
                 : null}
               <span class="manage-card-toggle">${isActive ? 'remove' : 'add'}</span>
             </li>

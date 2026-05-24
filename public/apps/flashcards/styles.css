@@ -291,7 +291,7 @@ h2 {
   font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
   font-weight: 500;
-  margin-top: 0.25rem;
+  margin-top: 0;
   /* `color` set inline per-deck via masteryColor() — tinted, legible. */
 }
 
@@ -530,6 +530,7 @@ h2 {
 .manage-card-back {
   font-size: 0.9rem;
   color: #555;
+  text-align: right;
 }
 .manage-card-mastery {
   position: relative;
@@ -551,7 +552,7 @@ h2 {
   grid-column: 1 / -1;
   font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
-  margin-top: 0.2rem;
+  margin-top: 0;
   /* `color` set inline via masteryColor() — tinted, legible. */
 }
 .manage-card-toggle {

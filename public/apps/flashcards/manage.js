@@ -13,7 +13,7 @@
 
 import { h, handle } from '../../streamo/h.js'
 import { time, activeDeck } from './state.js'
-import { masteryOf, masteryColor } from './mastery.js'
+import { masteryOf, masteryColor, dueProgress, formatTimeUntil } from './mastery.js'
 import {
   deckCards, deckRepo, isCardActive, reviewStateForCard
 } from './derived.js'
@@ -51,8 +51,9 @@ export function renderManage () {
           const review = reviewStateForCard(deckId, i)
           const hasHistory = !!review.lastReviewAt
           const mastery = masteryOf(review, now)
-          const masteryPct = Math.min(100, (mastery / 7) * 100)
           const color = hasHistory ? masteryColor(mastery) : '#aaa'
+          const width = hasHistory ? dueProgress(review, now) : 0
+          const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
           // Both icons live on a 3×3 grid in a 100×100 viewBox; each
           // bar is 100 long × 33.33 wide (3 cells × 1 cell). The plus
           // is two axis-aligned rects; the X is the same two bars
@@ -75,10 +76,10 @@ export function renderManage () {
                 <div class="manage-card-back">${card.back || ''}</div>
               </div>
               <div class="manage-card-mastery-wrap">
-                <div class="manage-card-mastery" title=${hasHistory ? `mastery: ${mastery.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
-                  <div class="manage-card-mastery-bar" style=${`width:${hasHistory ? masteryPct.toFixed(0) : 0}%`}></div>
+                <div class="manage-card-mastery" title=${hasHistory ? `mastery ${mastery.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="manage-card-mastery-bar" style=${`width:${width.toFixed(0)}%`}></div>
                 </div>
-                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${mastery.toFixed(4)}` : 'mastery: n/a'}</div>
+                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${mastery.toFixed(4)} · ${dueLabel}` : 'mastery: n/a'}</div>
               </div>
             </li>
           `

@@ -96,6 +96,34 @@ export function urgencyOf (review, nowMs) {
   return (nowMs - review.due) / (review.interval * DAY_MS)
 }
 
+// dueProgress: where this card is along its current interval, on a
+// **log scale that accelerates near due**. 0 = just reviewed, 100 =
+// at-or-past due. The log shape makes the bar move *visibly faster*
+// during the last hour/minute than during the long quiet middle —
+// David's "I want it to move pretty as I got down to the last
+// minute" intuition.
+//
+// Math:
+//   intervalMs = due - lastReviewAt    (handles both 1-minute lapse
+//                                       intervals AND day-scale ones
+//                                       without a separate code path)
+//   timeUntilDueMs = max(0, due - now)
+//   width = 1 - log(timeUntilDueMs + 1) / log(intervalMs + 1)
+//
+// At t=interval (just reviewed): width = 0. At t=0 (due): width = 1.
+// At t=interval/2 with interval=10d: width ≈ 0.25, NOT 0.5 — the
+// log curve loiters at the start, sprints at the end. That's the
+// gauge being "interesting, not accurate" by design.
+export function dueProgress (review, now) {
+  if (!review || !review.lastReviewAt) return 0
+  const intervalMs = review.due - review.lastReviewAt
+  if (intervalMs <= 0) return 100
+  const timeUntilDueMs = Math.max(0, review.due - now)
+  if (timeUntilDueMs <= 0) return 100   // overdue: full bar
+  const w = 1 - Math.log(timeUntilDueMs + 1) / Math.log(intervalMs + 1)
+  return Math.max(0, Math.min(100, w * 100))
+}
+
 // A short, human-readable string for "time until due" — or "overdue"
 // if the moment has passed. Designed to be called inside a reactive
 // slot that has already read time.get() (so the slot re-renders each

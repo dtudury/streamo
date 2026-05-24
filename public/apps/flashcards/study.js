@@ -7,7 +7,7 @@
 
 import { h, handle } from '../../streamo/h.js'
 import { state, time, activeDeck } from './state.js'
-import { masteryOf, masteryColor } from './mastery.js'
+import { masteryOf, masteryColor, dueProgress, formatTimeUntil } from './mastery.js'
 import {
   deckCards, deckRepo, buildStudyQueue, reviewStateForCard, activeCardIds
 } from './derived.js'
@@ -112,16 +112,20 @@ export function renderStudy () {
               }
               const idx = currentCardIdx()
               if (idx == null) return null
+              const now = time.get()
               const review = reviewStateForCard(deckId, idx)
               const hasHistory = !!review.lastReviewAt
-              const m = masteryOf(review, time.get())
-              const pct = Math.min(100, (m / 7) * 100)
+              const m = masteryOf(review, now)
               const color = hasHistory ? masteryColor(m) : '#aaa'
+              // Width is now time-until-due (log scale), not mastery.
+              // Color stays mastery. Label shows mastery + due-in.
+              const width = hasHistory ? dueProgress(review, now) : 0
+              const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
               return h`
-                <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
-                  <div class="study-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
+                <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="study-mastery-bar" style=${`width:${width.toFixed(0)}%`}></div>
                 </div>
-                <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
+                <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'mastery: n/a'}</div>
               `
             }}
           </div>
@@ -149,8 +153,9 @@ export function renderStudy () {
           const review = reviewStateForCard(deckId, i)
           const hasHistory = !!review.lastReviewAt
           const m = masteryOf(review, now)
-          const pct = Math.min(100, (m / 7) * 100)
           const color = hasHistory ? masteryColor(m) : '#aaa'
+          const width = hasHistory ? dueProgress(review, now) : 0
+          const dueLabel = hasHistory ? formatTimeUntil(review.due - now) : null
           // Both icons live on a 3×3 grid in a 100×100 viewBox; each
           // bar is 100 long × 33.33 wide (3 cells × 1 cell). The plus
           // is two axis-aligned rects; the X is the same two bars
@@ -175,10 +180,10 @@ export function renderStudy () {
                 </div>
               </div>
               <div class="manage-card-mastery-wrap">
-                <div class="manage-card-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
-                  <div class="manage-card-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
+                <div class="manage-card-mastery" title=${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="manage-card-mastery-bar" style=${`width:${width.toFixed(0)}%`}></div>
                 </div>
-                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
+                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)} · ${dueLabel}` : 'mastery: n/a'}</div>
               </div>
             </li>
           `

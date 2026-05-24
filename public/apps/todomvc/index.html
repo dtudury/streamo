@@ -20,6 +20,16 @@
     .login button       { width: 100%; padding: 12px; background: #af5b5e; color: #fff; border: 0; cursor: pointer; font-size: 16px; font-family: inherit }
     .login button:hover { opacity: .9 }
     .login-status       { margin-top: 8px; color: #777; font-size: 13px; min-height: 1.2em }
+
+    /* "see your list in the explorer →" link in the info footer.
+       The canonical TodoMVC palette is intentionally muted; the
+       brighter accent (e.g. flashcards' blue) would look out of
+       place here. So we match the surrounding dim gray and just
+       distinguish the link with a dotted underline that fills in
+       on hover — same affordance pattern as flashcards, different
+       color register. */
+    .info .explorer-link              { color: inherit; text-decoration: none; border-bottom: 1px dotted; }
+    .info .explorer-link:hover        { border-bottom-style: solid; color: #4d4d4d; }
   </style>
 </head>
 <body>

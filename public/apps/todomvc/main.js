@@ -232,7 +232,7 @@ mount(h`
   ${() => loggedIn.get() ? h`
     <footer class="info">
       <p>Double-click to edit a todo</p>
-      <p>Signed, append-only, served at <code>/streams/${myKey}/</code></p>
+      <p>Signed, append-only — <a class="explorer-link" href=${`../explorer/#/repo/${myKey}`}>see your list in the explorer →</a></p>
       <p>Powered by <a href="/">streamo</a></p>
     </footer>
   ` : null}

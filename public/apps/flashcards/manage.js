@@ -15,9 +15,9 @@ import { h, handle } from '../../streamo/h.js'
 import { time, activeDeck } from './state.js'
 import { masteryOf, masteryColor } from './mastery.js'
 import {
-  deckCards, deckRepo, isCardActive, reviewStateForCard,
-  toggleCardActive, exitManage
-} from './main.js'
+  deckCards, deckRepo, isCardActive, reviewStateForCard
+} from './derived.js'
+import { toggleCardActive, exitManage } from './main.js'
 
 export function renderManage () {
   return h`

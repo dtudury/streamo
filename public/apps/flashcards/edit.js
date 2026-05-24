@@ -8,8 +8,8 @@
 
 import { h, handle } from '../../streamo/h.js'
 import { state, activeDeck } from './state.js'
+import { deckCards, deckRepo } from './derived.js'
 import {
-  deckCards, deckRepo,
   exitEdit, saveCard, cancelEditCard, startEditCard, deleteCard, addCard
 } from './main.js'
 

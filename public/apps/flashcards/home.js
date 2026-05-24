@@ -15,8 +15,10 @@ import { h, handle } from '../../streamo/h.js'
 import { time, registry } from './state.js'
 import { masteryColor, formatTimeUntil } from './mastery.js'
 import {
+  deckStats, deckCards, deckMastery, reviewStateForCard, activeCardIds
+} from './derived.js'
+import {
   homeRepo, myDeckIndex,
-  deckStats, deckCards, deckMastery, reviewStateForCard, activeCardIds,
   startStudy, enterEdit, deleteFork, forkDeck
 } from './main.js'
 

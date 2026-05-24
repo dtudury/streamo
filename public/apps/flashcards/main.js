@@ -15,12 +15,12 @@ import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
 
-import { DEFAULT_REVIEW, applySM2 } from './sm2.js'
-import { DAY_MS, masteryOf, masteryColor, urgencyOf, formatTimeUntil } from './mastery.js'
 import {
   recaller, time, reviewRepos, state, registry, setRegistry,
   loggedIn, connecting, user, view, activeDeck
 } from './state.js'
+import { deckRepo, deckCards, reviewStateForCard, activeCardIds } from './derived.js'
+import './routing.js'  // side-effect: installs the state ↔ hash watcher + popstate listener
 import { renderHome }   from './home.js'
 import { renderStudy }  from './study.js'
 import { renderEdit }   from './edit.js'
@@ -60,99 +60,17 @@ const signedForks = new Set()
 // claude's "inline everything" rule applies to the *markup*; pure
 // domain math belongs alongside, not inside.
 
-// Translate a deckId into the address of its deck Repo. Bundled decks
-// have a human-readable id ('greek-alphabet') and live at the address
-// listed in homeRepo.flashcardsDecks. Forks have no separate id —
-// their address IS their id. All reads here are recaller-tracked, so
-// callers in slots auto-subscribe to updates in either source.
-function addrFor (deckId) {
-  if (!deckId) return null
-  const fd = homeRepo?.get('flashcardsDecks') ?? {}
-  return fd[deckId] ?? deckId
-}
-
-function deckRepo (deckId) {
-  const addr = addrFor(deckId)
-  return addr ? registry?.get(addr) : undefined
-}
-
-function deckCards (deckId) {
-  return deckRepo(deckId)?.get('cards') ?? []
-}
-
-// SM-2 state derived by folding every review event for this card.
-function reviewStateForCard (deckId, cardIdx) {
-  const repo = reviewRepos.get(deckId)
-  if (!repo) return { ...DEFAULT_REVIEW }
-  const reviews = repo.get('reviews') ?? []
-  let r = { ...DEFAULT_REVIEW }
-  for (const ev of reviews) {
-    if (ev.cardIdx === cardIdx) r = applySM2(r, ev.grade, ev.at)
-  }
-  return r
-}
-
-function deckStats (deckId) {
-  const cards = deckCards(deckId)
-  const active = activeCardIds(deckId)
-  if (!cards.length) return { due: 0, new: 0, active: 0 }
-  let due = 0, neu = 0, activeCount = 0
-  const now = Date.now()
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i]?.deleted) continue
-    if (!active.has(i)) continue
-    activeCount++
-    const r = reviewStateForCard(deckId, i)
-    if (r.reps === 0) neu++
-    else if (r.due <= now) due++
-  }
-  return { due, new: neu, active: activeCount }
-}
-
-// Live-derived study queue: due cards first, then truly-new (never
-// reviewed). Cards that have been reviewed and aren't yet due fall out
-// — they'll be back when their due-time arrives. The queue is rebuilt
-// on every read; session-relevance comes from the SM-2 due times in
-// the reviews repo, not from a stateful array.
-function buildStudyQueue (deckId) {
-  const cards = deckCards(deckId)
-  const active = activeCardIds(deckId)
-  const due = [], neu = []
-  const now = Date.now()
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i]?.deleted) continue   // soft-deleted cards don't appear in study
-    if (!active.has(i)) continue  // not in active set
-    const r = reviewStateForCard(deckId, i)
-    const everReviewed = r.due > 0  // DEFAULT_REVIEW has due=0; any grade sets a timestamp
-    if (!everReviewed) neu.push(i)
-    else if (r.due <= now) due.push(i)
-    // else: in 'rest' — has reviews, not yet due. Not in the queue.
-  }
-  return [...due, ...neu]
-}
+// Derived data functions (addrFor, deckRepo, deckCards,
+// reviewStateForCard, deckStats, buildStudyQueue, activeCardIds,
+// isCardActive, deckMastery) live in ./derived.js — pure reads
+// over registry / reviewRepos / homeRepo, no side effects, no DOM.
 
 // ── active set (partial-deck learning) ──────────────────────────────
 //
 // Per-(learner, deck) state stored in the reviews repo: which cards
-// the learner is *currently* studying. Cards not in the active set
-// are *available* (in the deck) but don't appear in the study queue.
-//
-// **Default: empty.** A fresh deck has no active cards; the learner
-// opts cards in via the manage UI on the study page. Previously the
-// default was "all active" — that didn't match the new combined UI
-// where the manage panel is the way you turn a deck on for yourself.
-
-function activeCardIds (deckId) {
-  const repo = reviewRepos.get(deckId)
-  if (!repo) return new Set()
-  const active = repo.get('active')
-  if (!Array.isArray(active)) return new Set()
-  return new Set(active)
-}
-
-function isCardActive (deckId, cardIdx) {
-  return activeCardIds(deckId).has(cardIdx)
-}
+// the learner is *currently* studying. The read side (activeCardIds,
+// isCardActive) lives in derived.js; toggleCardActive — the mutation
+// — stays here with the other user-action handlers.
 
 function toggleCardActive (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
@@ -191,24 +109,6 @@ function toggleCardActive (deckId, cardIdx) {
 //
 // formatTimeUntil: human-readable countdown that reads time.get()
 //   inside, so a slot using it ticks every second.
-
-// Mastery for the deck's *active set* — average over non-deleted,
-// active, ever-reviewed cards. Represents "how well I know what I'm
-// currently studying," not "the whole deck's potential." Returns 0
-// if nothing's been reviewed yet.
-function deckMastery (deckId, now) {
-  const cards = deckCards(deckId)
-  if (cards.length === 0) return 0
-  const active = activeCardIds(deckId)
-  let total = 0, n = 0
-  for (let i = 0; i < cards.length; i++) {
-    if (cards[i]?.deleted) continue
-    if (!active.has(i)) continue
-    const r = reviewStateForCard(deckId, i)
-    if (r.lastReviewAt) { total += masteryOf(r, now); n++ }
-  }
-  return n === 0 ? 0 : total / n
-}
 
 // (Used to live here: scheduleReady + isReady — a setTimeout-based
 //  kludge that conflated "has the data arrived?" with "is it safe to
@@ -618,53 +518,9 @@ recaller.watch('attach-signer-to-fork-decks', () => {
   }
 })
 
-// ── URL hash routing ────────────────────────────────────────────────
-//
-// state.view + activeDeck are encoded in location.hash so the browser's
-// back/forward buttons navigate between app screens. Format:
-//   #study/<deckId>   — studying a deck
-//   #edit/<deckId>    — editing a fork
-//   #manage/<deckId>  — managing active set
-//   (empty hash)      — home
-//
-// State → hash via a watcher (idempotent — only pushState when the
-// hash actually needs to change). Hash → state via a `popstate` event
-// listener (fires on back/forward). Both check-before-write so the
-// two sides don't echo.
-
-function stateToHashValue () {
-  const v = state.get('view')
-  const deck = state.get('activeDeck')
-  if (v && v !== 'home' && deck) return `#${v}/${deck}`
-  return ''
-}
-
-function applyHashToState () {
-  const raw = location.hash.replace(/^#/, '')
-  if (!raw) {
-    if (state.get('view') !== 'home') state.set('view', 'home')
-    if (state.get('activeDeck') !== null) state.set('activeDeck', null)
-    return
-  }
-  const slash = raw.indexOf('/')
-  if (slash < 0) return
-  const view = raw.slice(0, slash)
-  const deck = raw.slice(slash + 1)
-  if (!['study', 'edit', 'manage'].includes(view) || !deck) return
-  if (state.get('view') !== view) state.set('view', view)
-  if (state.get('activeDeck') !== deck) state.set('activeDeck', deck)
-}
-
-recaller.watch('sync-state-to-url-hash', () => {
-  if (!state.get('loggedIn')) return  // don't write hash before login
-  const want = stateToHashValue()
-  const current = location.hash
-  if (current === want) return
-  if (current === '' && want === '') return
-  history.pushState(null, '', want || (location.pathname + location.search))
-})
-
-window.addEventListener('popstate', applyHashToState)
+// URL hash routing lives in ./routing.js — side-effect import below.
+// Importing the module wires up the recaller watcher + popstate
+// listener; nothing else from this file calls into it directly.
 
 // ── mount ────────────────────────────────────────────────────────────
 
@@ -715,9 +571,9 @@ mount(h`
 export {
   // module lets (live bindings, mutated by login/logout above)
   homeRepo, myDeckIndex,
-  // derived state functions used inside page slots
-  deckRepo, deckCards, reviewStateForCard, deckStats, deckMastery,
-  buildStudyQueue, activeCardIds, isCardActive,
+  // current-card derivations — these read state.get('revealedCardIdx')
+  // and the queue, so they're tied to the study session's UI state
+  // rather than pure data derivation; kept here next to revealed
   currentCard, currentCardIdx, revealed,
   // user-action handlers wired into onclick / onsubmit
   toggleCardActive, toggleReveal, grade,

@@ -9,8 +9,10 @@ import { h, handle } from '../../streamo/h.js'
 import { state, time, activeDeck } from './state.js'
 import { masteryOf, masteryColor } from './mastery.js'
 import {
-  deckCards, deckRepo, currentCard, currentCardIdx, revealed,
-  buildStudyQueue, reviewStateForCard, activeCardIds,
+  deckCards, deckRepo, buildStudyQueue, reviewStateForCard, activeCardIds
+} from './derived.js'
+import {
+  currentCard, currentCardIdx, revealed,
   toggleReveal, grade, backToHome, toggleCardActive
 } from './main.js'
 

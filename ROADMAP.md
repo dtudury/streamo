@@ -191,24 +191,6 @@ Goals for this thread: open a commit feels instant; the bytestream
 strip stays responsive at thousands of chunks; the dropdown stays
 usable at 1000+ commits.
 
-### archiveSync flush race — `seed-history` can lose tail writes under load *(small fix, important)*
-
-`scripts/seed-history.js` does `process.exit(0)` after a 500ms
-settle window. archiveSync's writer loop is fire-and-forget — when
-the process exits, in-flight `fileHandle.write` calls and queued
-ReadableStream values are dropped. With 8.4's batching this drains
-fast enough that small seeds (a few thousand commits) flush
-cleanly, but a bigger seed (10K+ commits) or a sustained-write
-workload could still lose tail chunks — typically the SIGNATURE
-chunks appended last by auto-sign, which is exactly the case that
-makes the loaded `.bin` look complete but actually be staged-
-forever-no-SIG on the client side.
-
-The proper fix is an awaitable `archiveSync.flush()` (or a
-deterministic drain) so seed-history can wait for the writer loop
-to catch up before exiting. ~30 LOC change. Filed here as a
-reminder; not blocking at our current scale.
-
 ### wire-protocol upward-path optimization + sender-side echo-skip *(small follow-ups to 8.2)*
 
 8.2 (in progress / about to ship) landed the downward-path optimization:

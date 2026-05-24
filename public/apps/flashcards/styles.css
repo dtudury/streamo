@@ -659,17 +659,14 @@ h2 {
   transition: opacity 0.2s ease-out;
   z-index: 0;
 }
-.manage-card-icon line {
-  stroke-linecap: square;
-}
 .manage-card:hover .manage-card-icon {
   opacity: 0.22;
 }
-.manage-card-active .manage-card-icon line {
-  stroke: #dc2626;  /* red */
+.manage-card-active .manage-card-icon rect {
+  fill: #dc2626;  /* red */
 }
-.manage-card-available .manage-card-icon line {
-  stroke: #16a34a;  /* green */
+.manage-card-available .manage-card-icon rect {
+  fill: #16a34a;  /* green */
 }
 
 .manage-card-active {

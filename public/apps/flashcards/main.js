@@ -1023,11 +1023,16 @@ mount(h`
           const m = masteryOf(review, now)
           const pct = Math.min(100, (m / 7) * 100)
           const color = hasHistory ? masteryColor(m) : '#aaa'
+          // Both icons live on a 3×3 grid in a 100×100 viewBox; each
+          // bar is 100 long × 33.33 wide (3 cells × 1 cell). The plus
+          // is two axis-aligned rects; the X is the same two bars
+          // rotated ±45° around the center — identical bar dimensions
+          // in both icons, only the angle changes.
           const iconLines = isActive
-            ? h`<line x1="0" y1="0" x2="100" y2="100" stroke-width="14"/>
-                <line x1="100" y1="0" x2="0" y2="100" stroke-width="14"/>`
-            : h`<line x1="50" y1="0" x2="50" y2="100" stroke-width="14"/>
-                <line x1="0" y1="50" x2="100" y2="50" stroke-width="14"/>`
+            ? h`<rect x="0" y="33.33" width="100" height="33.33" transform="rotate(45 50 50)"/>
+                <rect x="0" y="33.33" width="100" height="33.33" transform="rotate(-45 50 50)"/>`
+            : h`<rect x="0" y="33.33" width="100" height="33.33"/>
+                <rect x="33.33" y="0" width="33.33" height="100"/>`
           return h`
             <li class="manage-card manage-card-compact ${isActive ? 'manage-card-active' : 'manage-card-available'}"
                 data-key=${`manage-${i}`}
@@ -1192,11 +1197,16 @@ mount(h`
           const mastery = masteryOf(review, now)
           const masteryPct = Math.min(100, (mastery / 7) * 100)
           const color = hasHistory ? masteryColor(mastery) : '#aaa'
+          // Both icons live on a 3×3 grid in a 100×100 viewBox; each
+          // bar is 100 long × 33.33 wide (3 cells × 1 cell). The plus
+          // is two axis-aligned rects; the X is the same two bars
+          // rotated ±45° around the center — identical bar dimensions
+          // in both icons, only the angle changes.
           const iconLines = isActive
-            ? h`<line x1="0" y1="0" x2="100" y2="100" stroke-width="14"/>
-                <line x1="100" y1="0" x2="0" y2="100" stroke-width="14"/>`
-            : h`<line x1="50" y1="0" x2="50" y2="100" stroke-width="14"/>
-                <line x1="0" y1="50" x2="100" y2="50" stroke-width="14"/>`
+            ? h`<rect x="0" y="33.33" width="100" height="33.33" transform="rotate(45 50 50)"/>
+                <rect x="0" y="33.33" width="100" height="33.33" transform="rotate(-45 50 50)"/>`
+            : h`<rect x="0" y="33.33" width="100" height="33.33"/>
+                <rect x="33.33" y="0" width="33.33" height="100"/>`
           return h`
             <li class="manage-card ${isActive ? 'manage-card-active' : 'manage-card-available'}"
                 data-key=${`manage-${i}`}

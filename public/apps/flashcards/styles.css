@@ -547,6 +547,13 @@ h2 {
   border-radius: 999px;
   transition: width 0.3s ease-out, background 0.6s ease-out;
 }
+.manage-card-mastery-label {
+  grid-column: 1 / -1;
+  font-size: 0.66rem;
+  font-variant-numeric: tabular-nums;
+  margin-top: 0.2rem;
+  /* `color` set inline via masteryColor() — tinted, legible. */
+}
 .manage-card-toggle {
   font-size: 0.78rem;
   color: #888;

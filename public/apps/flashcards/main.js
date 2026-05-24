@@ -246,14 +246,21 @@ function toggleCardActive (deckId, cardIdx) {
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-// Mastery climbs with elapsed time since the last review. Takes `now`
-// so a slot calling this can pass `time.get()` and re-render reactively
-// every second — the bar is alive. Grading 'again' resets lastReviewAt
-// to the moment of the grade; mastery falls to ~0 and starts over.
+// Mastery = log₂(1 + interval + elapsed_days_since_last_review).
+// Two components:
+//   - `interval` is the SM-2 interval set by the most recent grade —
+//     the static commitment that *"you've earned this much."* Means the
+//     bar is populated right after a grade (interval ≥ 1 for 'good'),
+//     not empty. Visible reward for the work.
+//   - `elapsed_days` is time since the grade — adds the live climb,
+//     so the bar moves visibly while the user watches.
+// Grading 'again' resets interval to 0 AND lastReviewAt to now;
+// mastery falls back to ~0 and starts climbing fresh. Takes `now` so
+// the calling slot can pass time.get() and re-render each tick.
 function masteryOf (review, now) {
   if (!review || !review.lastReviewAt) return 0
   const elapsedDays = Math.max(0, (now - review.lastReviewAt) / DAY_MS)
-  return Math.log2(1 + elapsedDays)
+  return Math.log2(1 + review.interval + elapsedDays)
 }
 
 // Map a mastery score to a color that's legible on white. Banded so
@@ -709,10 +716,10 @@ mount(h`
                 const pct = Math.min(100, (m / 7) * 100)
                 const color = masteryColor(m)
                 return h`
-                  <div class="deck-mastery" title="average mastery: ${m.toFixed(2)} / 7" style=${`color: ${color}`}>
+                  <div class="deck-mastery" title="average mastery: ${m.toFixed(4)} / 7" style=${`color: ${color}`}>
                     <div class="deck-mastery-bar" style=${`width:${pct.toFixed(0)}%`}></div>
                   </div>
-                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(2)}</div>
+                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(4)}</div>
                 `
               }}
               ${() => {
@@ -938,9 +945,10 @@ mount(h`
                 <div class="manage-card-back">${card.back || ''}</div>
               </div>
               ${review.lastReviewAt
-                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(2)} / 7`} style=${`color: ${color}`}>
+                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(4)} / 7`} style=${`color: ${color}`}>
                      <div class="manage-card-mastery-bar" style=${`width:${masteryPct.toFixed(0)}%`}></div>
-                   </div>`
+                   </div>
+                   <div class="manage-card-mastery-label" style=${`color: ${color}`}>mastery ${mastery.toFixed(4)}</div>`
                 : null}
               <span class="manage-card-toggle">${isActive ? 'remove' : 'add'}</span>
             </li>

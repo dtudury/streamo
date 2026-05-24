@@ -12,7 +12,7 @@ import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
-import { liveObject }   from '../../streamo/LiveSource.js'
+import { liveObject, liveTime } from '../../streamo/LiveSource.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
@@ -22,6 +22,11 @@ const when = (cond, vnode) => () => cond() ? vnode : null
 // ── app-level state ──────────────────────────────────────────────────
 
 const recaller = new Recaller('flashcards')
+
+// A reactive clock. Slots that read time.get() auto-subscribe and
+// re-render every second — live countdowns, ticking 'overdue' counters,
+// schedule strips that update without any custom interval choreography.
+const time = liveTime({ recaller, name: 'flashcards-time', tickMs: 1000 })
 
 // Reviews repos are opened lazily — when the learner clicks Study on
 // a deck — so login doesn't pay an O(decks) cost in repos-and-wire
@@ -144,6 +149,7 @@ function buildStudyQueue (deckId) {
   const due = [], neu = []
   const now = Date.now()
   for (let i = 0; i < cards.length; i++) {
+    if (cards[i]?.deleted) continue  // soft-deleted cards don't appear in study
     const r = reviewStateForCard(deckId, i)
     const everReviewed = r.due > 0  // DEFAULT_REVIEW has due=0; any grade sets a timestamp
     if (!everReviewed) neu.push(i)
@@ -151,6 +157,66 @@ function buildStudyQueue (deckId) {
     // else: in 'rest' — has reviews, not yet due. Not in the queue.
   }
   return [...due, ...neu]
+}
+
+// ── derived metrics ─────────────────────────────────────────────────
+//
+// "What is this app doing?" — make the SM-2 internals legible. Three
+// derived numbers worth surfacing:
+//
+// mastery (0..~7): how well-learned a card is. Derived from interval.
+//   log₂(1 + days). Brand new = 0; week-out = 3; month-out = ~5;
+//   months-out = 7+. Maps cleanly to a color gradient.
+//
+// urgency (negative..+∞): how overdue a card is, scaled by its own
+//   interval. -1 = won't be due for another full interval; 0 = due now;
+//   +1 = a full interval late. Self-normalizes by mastery.
+//
+// formatTimeUntil: human-readable countdown that reads time.get()
+//   inside, so a slot using it ticks every second.
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+function masteryOf (review) {
+  if (!review || review.due === 0) return 0
+  const days = Math.max(0, review.interval)
+  return Math.log2(1 + days)
+}
+
+function urgencyOf (review, nowMs) {
+  if (!review || review.due === 0) return 0
+  if (review.interval <= 0) return Math.max(0, (nowMs - review.due) / DAY_MS)
+  return (nowMs - review.due) / (review.interval * DAY_MS)
+}
+
+// A short, human-readable string for "time until due" — or "overdue"
+// if the moment has passed. Designed to be called inside a reactive
+// slot that has already read time.get() (so the slot re-renders each
+// tick). The function takes ms (not a Date) so callers can pass
+// `(due - time.get())` cleanly.
+function formatTimeUntil (deltaMs) {
+  const abs = Math.abs(deltaMs)
+  const overdue = deltaMs < 0
+  let label
+  if (abs < 60 * 1000) label = `${Math.floor(abs / 1000)}s`
+  else if (abs < 60 * 60 * 1000) label = `${Math.floor(abs / 60000)}m`
+  else if (abs < DAY_MS) label = `${Math.floor(abs / 3600000)}h`
+  else label = `${Math.floor(abs / DAY_MS)}d`
+  return overdue ? `overdue ${label}` : (deltaMs <= 0 ? 'now' : `in ${label}`)
+}
+
+// Mastery for the deck as a whole — average over non-deleted, ever-
+// reviewed cards. Returns 0 if no cards have been reviewed yet.
+function deckMastery (deckId) {
+  const cards = deckCards(deckId)
+  if (cards.length === 0) return 0
+  let total = 0, n = 0
+  for (let i = 0; i < cards.length; i++) {
+    if (cards[i]?.deleted) continue
+    const r = reviewStateForCard(deckId, i)
+    if (r.due > 0) { total += masteryOf(r); n++ }
+  }
+  return n === 0 ? 0 : total / n
 }
 
 // (Used to live here: scheduleReady + isReady — a setTimeout-based
@@ -438,9 +504,47 @@ mount(h`
                 <span class="new">${s.new} new</span>
                 <span>${s.total} total</span>
                 ${isFork
-                  ? null
+                  ? null  // edit button lands in the next commit (step 5 — card editor)
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
+              ${() => {
+                // Mastery summary — average across reviewed cards.
+                // Reactive: reviews repo updates → re-runs.
+                const m = deckMastery(id)
+                if (m === 0) return null
+                const pct = Math.min(100, (m / 7) * 100)
+                return h`
+                  <div class="deck-mastery" title="average mastery: ${m.toFixed(1)} / 7">
+                    <div class="deck-mastery-bar" style=${`width:${pct.toFixed(0)}%`}></div>
+                    <span class="deck-mastery-label">mastery ${m.toFixed(1)}</span>
+                  </div>
+                `
+              }}
+              ${() => {
+                // Live next-up strip. Reads time.get() so it ticks
+                // every second; reads reviewRepo via deckStats helpers
+                // so it updates when grades land.
+                const cards = deckCards(id)
+                if (cards.length === 0) return null
+                // Find the soonest 5 due/upcoming cards (any state).
+                const now = time.get()
+                const upcoming = []
+                for (let i = 0; i < cards.length; i++) {
+                  if (cards[i]?.deleted) continue
+                  const r = reviewStateForCard(id, i)
+                  const due = r.due === 0 ? now : r.due  // new cards are "now"
+                  upcoming.push({ idx: i, due })
+                }
+                upcoming.sort((a, b) => a.due - b.due)
+                const next5 = upcoming.slice(0, 5)
+                if (next5.length === 0) return null
+                return h`
+                  <div class="deck-schedule">
+                    <span class="deck-schedule-label">next ${next5.length}:</span>
+                    ${next5.map((c, i) => h`<span class="deck-schedule-tick" data-key=${`tick-${i}`}>${formatTimeUntil(c.due - now)}</span>`)}
+                  </div>
+                `
+              }}
             </li>
           `
         })

@@ -157,6 +157,55 @@ export function liveValue (initial, options = {}) {
 }
 
 /**
+ * A reactive clock. `get()` returns `Date.now()` and reports access
+ * on the recaller; an internal interval ticks at `tickMs` (default
+ * 1 second) and fires a key mutation, causing any slot or watcher
+ * that read it to re-run with the fresh time.
+ *
+ * The canonical worked example of *non-streamo state, wrapped as a
+ * LiveSource so the reactive substrate can see it.* Same shape as
+ * `apps/location/main.js` does for `window.location` — anything not
+ * naturally reactive becomes participating-reactive when wrapped
+ * this way.
+ *
+ * Use cases:
+ *  - Live countdowns ("due in 5m 23s", ticking).
+ *  - Stale-after-N-seconds UI cues.
+ *  - Anything where a slot's correctness depends on elapsed time.
+ *
+ * `set` is exposed for symmetry but is rarely meaningful — the
+ * clock's value is determined externally. Calling `set()` is a no-op
+ * by design (we don't pretend to mutate real time).
+ *
+ *   const time = liveTime({ recaller })
+ *   mount(h\`<span>${() => formatRelative(deadline - time.get())}</span>\`, ...)
+ *
+ * @param {object} [options]
+ * @param {Recaller} [options.recaller]  Recaller to share; defaults to a fresh one.
+ * @param {string} [options.name='time']
+ * @param {number} [options.tickMs=1000]  Tick interval in ms.
+ * @returns {{recaller: Recaller, get: () => number, set: () => void, target: object, stop: () => void}}
+ */
+export function liveTime (options = {}) {
+  const { name = 'time', recaller = new Recaller(name), tickMs = 1000 } = options
+  const ref = { now: Date.now() }
+  const intervalId = setInterval(() => {
+    ref.now = Date.now()
+    recaller.reportKeyMutation(ref, 'now')
+  }, tickMs)
+  return {
+    recaller,
+    get () {
+      recaller.reportKeyAccess(ref, 'now')
+      return ref.now
+    },
+    set () { /* no-op: the wall clock isn't ours to set */ },
+    target: ref,
+    stop () { clearInterval(intervalId) }
+  }
+}
+
+/**
  * Runtime check: does this value satisfy the LiveSource contract?
  * Structural, not nominal — `Streamo`, `Repo`, `liveObject` return
  * values, and any custom factory that exposes the shape all pass.

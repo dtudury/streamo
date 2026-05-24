@@ -62,7 +62,12 @@ export function reviewStateForCard (deckId, cardIdx) {
     if (ev.cardIdx === cardIdx) r = applySM2(r, ev.grade, ev.at)
   }
   if (r.lastReviewAt) {
-    const target = repo.get('retentionTarget') ?? DEFAULT_RETENTION_TARGET
+    // Use retentionTargetFor so the slider's `pendingRetentionTarget`
+    // takes precedence — otherwise reading the repo directly here
+    // skipped the live preview and the bars stayed pinned to the
+    // saved value while the slider was being dragged. David caught
+    // it: 'the mastery bars still aren't moving when I drag.'
+    const target = retentionTargetFor(deckId)
     const mult = retentionMultiplier(target)
     const rawIntervalMs = r.due - r.lastReviewAt
     r.due = r.lastReviewAt + rawIntervalMs * mult

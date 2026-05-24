@@ -497,6 +497,14 @@ h2 {
   color: #aaa;
   margin-left: 0.3rem;
 }
+.manage-section-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  color: #aaa;
+  font-style: italic;
+  margin-left: 0.5rem;
+  font-weight: 400;
+}
 .manage-cards {
   list-style: none;
   display: flex;
@@ -506,20 +514,26 @@ h2 {
   margin: 0;
 }
 .manage-card {
+  position: relative;
   border: 1px solid #eee;
   border-radius: 8px;
   padding: 0.65rem 0.9rem;
   cursor: pointer;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 0.6rem;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;  /* between content and the mastery wrap; NOT between bar/label */
   transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+}
+.manage-card-content,
+.manage-card-mastery-wrap {
+  position: relative;
+  z-index: 1;  /* sit above the SVG overlay */
 }
 .manage-card-content {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.6rem;
+  column-gap: 0.6rem;
   align-items: baseline;
 }
 .manage-card-front {
@@ -532,13 +546,16 @@ h2 {
   color: #555;
   text-align: right;
 }
+/* Mastery bar + label are wrapped so their internal gap can be 0 while
+   the outer card-flex still has spacing between content and mastery. */
+.manage-card-mastery-wrap {
+  display: block;
+}
 .manage-card-mastery {
   position: relative;
   height: 3px;
   background: #f3f4f6;
   border-radius: 999px;
-  grid-column: 1 / -1;
-  margin-top: 0.35rem;
   /* `color` set inline via masteryColor(); the bar inherits. */
 }
 .manage-card-mastery-bar {
@@ -549,29 +566,45 @@ h2 {
   transition: width 0.3s ease-out, background 0.6s ease-out;
 }
 .manage-card-mastery-label {
-  grid-column: 1 / -1;
   font-size: 0.66rem;
   font-variant-numeric: tabular-nums;
-  margin-top: 0;
+  margin-top: 0;  /* flush against the bar */
   /* `color` set inline via masteryColor() — tinted, legible. */
 }
-.manage-card-toggle {
-  font-size: 0.78rem;
-  color: #888;
-  font-style: italic;
-  text-align: right;
-  white-space: nowrap;
+
+/* SVG icon overlay — big faded X (active) or + (available) that appears
+   on hover. Positioned absolutely behind the content; pointer-events
+   off so clicks pass through to the card itself. Scaled with
+   preserveAspectRatio="none" so it covers the full bleed of the card,
+   strokes have square caps for sharp/right-angle ends. */
+.manage-card-icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+  z-index: 0;
+}
+.manage-card-icon line {
+  stroke-linecap: square;
+}
+.manage-card:hover .manage-card-icon {
+  opacity: 0.22;
+}
+.manage-card-active .manage-card-icon line {
+  stroke: #dc2626;  /* red */
+}
+.manage-card-available .manage-card-icon line {
+  stroke: #16a34a;  /* green */
 }
 
 .manage-card-active {
   background: white;
 }
 .manage-card-active:hover {
-  border-color: #b91c1c;
-}
-.manage-card-active:hover .manage-card-toggle {
-  color: #b91c1c;
-  font-style: normal;
+  border-color: #fecaca;
 }
 
 .manage-card-available {
@@ -584,10 +617,6 @@ h2 {
 }
 .manage-card-available:hover {
   opacity: 1;
-  border-color: #047857;
+  border-color: #a7f3d0;
   background: white;
-}
-.manage-card-available:hover .manage-card-toggle {
-  color: #047857;
-  font-style: normal;
 }

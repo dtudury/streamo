@@ -846,16 +846,21 @@ mount(h`
                 // grades. Bar width and label color both map to the same
                 // mastery value; no gradient stretching, no decorative
                 // baked-in colors that don't mean anything.
+                //
+                // For decks with NO reviewed cards yet, render the bar
+                // grayed-out with 'mastery: n/a' so the affordance is
+                // still present and clearly says 'no data yet' rather
+                // than disappearing entirely.
                 const now = time.get()
                 const m = deckMastery(id, now)
-                if (m === 0) return null
+                const hasHistory = m > 0
                 const pct = Math.min(100, (m / 7) * 100)
-                const color = masteryColor(m)
+                const color = hasHistory ? masteryColor(m) : '#aaa'
                 return h`
-                  <div class="deck-mastery" title="average mastery: ${m.toFixed(4)} / 7" style=${`color: ${color}`}>
-                    <div class="deck-mastery-bar" style=${`width:${pct.toFixed(0)}%`}></div>
+                  <div class="deck-mastery" title=${hasHistory ? `average mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
+                    <div class="deck-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
                   </div>
-                  <div class="deck-mastery-label" style=${`color: ${color}`}>mastery ${m.toFixed(4)}</div>
+                  <div class="deck-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
                 `
               }}
               ${() => {
@@ -1069,34 +1074,42 @@ mount(h`
         const renderCard = (i, isActive) => {
           const card = cards[i]
           const review = reviewStateForCard(deckId, i)
+          const hasHistory = !!review.lastReviewAt
           const mastery = masteryOf(review, now)
           const masteryPct = Math.min(100, (mastery / 7) * 100)
-          const color = masteryColor(mastery)
+          const color = hasHistory ? masteryColor(mastery) : '#aaa'
+          const iconLines = isActive
+            ? h`<line x1="0" y1="0" x2="100" y2="100" stroke-width="14"/>
+                <line x1="100" y1="0" x2="0" y2="100" stroke-width="14"/>`
+            : h`<line x1="50" y1="0" x2="50" y2="100" stroke-width="14"/>
+                <line x1="0" y1="50" x2="100" y2="50" stroke-width="14"/>`
           return h`
             <li class="manage-card ${isActive ? 'manage-card-active' : 'manage-card-available'}"
                 data-key=${`manage-${i}`}
                 onclick=${handle(() => toggleCardActive(deckId, i))}>
+              <svg class="manage-card-icon" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                ${iconLines}
+              </svg>
               <div class="manage-card-content">
                 <div class="manage-card-front">${card.front || '(blank)'}</div>
                 <div class="manage-card-back">${card.back || ''}</div>
               </div>
-              ${review.lastReviewAt
-                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(4)} / 7`} style=${`color: ${color}`}>
-                     <div class="manage-card-mastery-bar" style=${`width:${masteryPct.toFixed(0)}%`}></div>
-                   </div>
-                   <div class="manage-card-mastery-label" style=${`color: ${color}`}>mastery ${mastery.toFixed(4)}</div>`
-                : null}
-              <span class="manage-card-toggle">${isActive ? 'remove' : 'add'}</span>
+              <div class="manage-card-mastery-wrap">
+                <div class="manage-card-mastery" title=${hasHistory ? `mastery: ${mastery.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="manage-card-mastery-bar" style=${`width:${hasHistory ? masteryPct.toFixed(0) : 0}%`}></div>
+                </div>
+                <div class="manage-card-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${mastery.toFixed(4)}` : 'mastery: n/a'}</div>
+              </div>
             </li>
           `
         }
 
         return h`
-          <h3 class="manage-section">active <span class="manage-count">(${activeList.length})</span></h3>
+          <h3 class="manage-section">active <span class="manage-count">(${activeList.length})</span><span class="manage-section-hint">click to remove</span></h3>
           ${activeList.length === 0
             ? h`<p class="empty">no active cards yet — tap one from <em>available</em> below to start learning it.</p>`
             : h`<ul class="manage-cards">${activeList.map(i => renderCard(i, true))}</ul>`}
-          <h3 class="manage-section">available <span class="manage-count">(${availableList.length})</span></h3>
+          <h3 class="manage-section">available <span class="manage-count">(${availableList.length})</span><span class="manage-section-hint">click to add</span></h3>
           ${availableList.length === 0
             ? h`<p class="empty">all cards in this deck are currently active.</p>`
             : h`<ul class="manage-cards">${availableList.map(i => renderCard(i, false))}</ul>`}

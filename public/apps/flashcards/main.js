@@ -19,7 +19,7 @@ import {
   recaller, time, reviewRepos, state, registry, setRegistry,
   loggedIn, connecting, user, view, activeDeck
 } from './state.js'
-import { deckRepo, deckCards, reviewStateForCard, activeCardIds } from './derived.js'
+import { deckRepo, deckCards, reviewStateForCard, activeCardIds, buildStudyQueue } from './derived.js'
 import './routing.js'  // side-effect: installs the state ↔ hash watcher + popstate listener
 import { renderHome }   from './home.js'
 import { renderStudy }  from './study.js'

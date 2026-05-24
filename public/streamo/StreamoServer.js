@@ -42,6 +42,11 @@ export function parseOrigin (hostPort) {
 export class StreamoServer {
   #dataDir
   #keyIterations
+  // Per-repo archive closers, keyed by pubkey. Populated by the
+  // registry factory below as each repo is opened. `close()` calls
+  // the primary's entry; if richer "close all" semantics are ever
+  // needed we have the whole map sitting here ready.
+  #archiveClosers
 
   name
   username
@@ -79,9 +84,11 @@ export class StreamoServer {
       resolvedPublicKeyHex = bytesToHex(publicKey)
     }
 
+    const archiveClosers = new Map()
     const registry = new RepoRegistry(async key => {
       const repo = new Repo()
-      await archiveSync(repo, dataDir, key)
+      const { close } = await archiveSync(repo, dataDir, key)
+      archiveClosers.set(key, close)
       return repo
     })
     const streamo = await registry.open(resolvedPublicKeyHex)
@@ -90,7 +97,27 @@ export class StreamoServer {
     const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
     server.#dataDir = dataDir
     server.#keyIterations = keyIterations
+    server.#archiveClosers = archiveClosers
     return server
+  }
+
+  /**
+   * Close the primary streamo and wait for its archive writer to drain.
+   * Signals end-of-stream to the writer, lets it finish what's in the
+   * pipe, closes the file handle. Use before `process.exit()` so the
+   * tail (typically SIG chunks appended by auto-sign) lands cleanly
+   * instead of being dropped by the exit.
+   *
+   * After this resolves the streamo is closed — no further appends.
+   * Long-lived servers (the relay) never call this; the writer runs
+   * for the lifetime of the process.
+   *
+   * Only closes the primary repo — registry peers opened in this
+   * process aren't written to from here.
+   */
+  async close () {
+    const close = this.#archiveClosers.get(this.publicKeyHex)
+    if (close) await close()
   }
 
   async web (port, peerOptions = {}) {

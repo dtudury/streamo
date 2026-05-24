@@ -6,7 +6,7 @@ import { archiveSync } from './public/streamo/archiveSync.js'
 import { webSync } from './public/streamo/webSync.js'
 import { Signer } from './public/streamo/Signer.js'
 import WebSocket from 'ws'
-import { rm, mkdtemp } from 'fs/promises'
+import { rm, mkdtemp, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -265,13 +265,84 @@ describe(import.meta.url, ({ test }) => {
     const dir = await mkdtemp(join(tmpdir(), 'smoke-'))
     try {
       const stream1 = new Streamo()
-      await archiveSync(stream1, dir, publicKeyHex)
+      const { close } = await archiveSync(stream1, dir, publicKeyHex)
       stream1.set({ persisted: true })
-      await new Promise(r => setTimeout(r, 100))  // let write loop flush
+      await close()  // signal end-of-stream + await writer drain
 
       const stream2 = new Streamo()
       await archiveSync(stream2, dir, publicKeyHex)
       assert.deepEqual(stream2.get(), { persisted: true })
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('archiveSync.close() resolves only after the writer loop has drained', async ({ assert }) => {
+    // The contract: after close, every byte the streamo had is on disk
+    // and the file handle is closed. No settle window, no race window.
+    const { publicKeyHex } = await makeKey('close-contract')
+    const dir = await mkdtemp(join(tmpdir(), 'smoke-'))
+    try {
+      const stream = new Repo()
+      const { close } = await archiveSync(stream, dir, publicKeyHex)
+      // 50 sets × ~1KB payload — enough to exercise the writer loop's
+      // batching path. With 8.4 wire-batching this drains fast, but
+      // "fast" isn't "synchronous"; close has to actually wait.
+      for (let i = 0; i < 50; i++) {
+        stream.set({ counter: i, payload: 'x'.repeat(1000) })
+      }
+      const expectedBytes = stream.wireByteLength  // wire-format bytes match the file
+      await close()
+      const fileBytes = await readFile(join(dir, `${publicKeyHex}.bin`))
+      assert.equal(fileBytes.length, expectedBytes,
+        'file size on disk matches in-memory wireByteLength after close')
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('archiveSync appends rather than rewrites on a Repo re-open', async ({ assert }) => {
+    // The append path: load existing bytes, add new ones, close. The
+    // existing on-disk bytes should be byte-identical to what they
+    // were before — a re-open opens with 'a' and starts the reader at
+    // fromOffset = byteLength, so only the tail is written.
+    const { publicKeyHex } = await makeKey('append-path')
+    const dir = await mkdtemp(join(tmpdir(), 'smoke-'))
+    try {
+      // First session: write a few commits to the archive.
+      {
+        const stream = new Repo()
+        const { close } = await archiveSync(stream, dir, publicKeyHex)
+        stream.set({ phase: 'first', n: 1 })
+        stream.set({ phase: 'first', n: 2 })
+        await close()
+      }
+      const filePath = join(dir, `${publicKeyHex}.bin`)
+      const before = await readFile(filePath)
+
+      // Second session: reopen, verify the load restored wireByteLength,
+      // append more, close, and confirm the original bytes survived
+      // verbatim at the head of the file.
+      const stream = new Repo()
+      const { close } = await archiveSync(stream, dir, publicKeyHex)
+      assert.equal(stream.wireByteLength, before.length,
+        'load restored in-memory wireByteLength to file size')
+      stream.set({ phase: 'second', n: 3 })
+      await close()
+
+      const after = await readFile(filePath)
+      assert.equal(after.length, stream.wireByteLength,
+        'file size on disk matches new in-memory wireByteLength after close')
+      assert.deepEqual(after.subarray(0, before.length), before,
+        'original bytes preserved byte-identically — proves append, not rewrite')
+
+      // Round-trip: fresh Streamo loading the final file sees both
+      // sessions' commits as a continuous chain.
+      const stream3 = new Repo()
+      await archiveSync(stream3, dir, publicKeyHex)
+      assert.deepEqual(stream3.get(), { phase: 'second', n: 3 })
+      const history = [...stream3.history()].map(c => c.message).reverse()
+      assert.ok(history.length >= 3, `expected ≥3 commits, got ${history.length}`)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

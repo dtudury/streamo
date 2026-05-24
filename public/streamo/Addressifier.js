@@ -26,11 +26,27 @@ export class Addressifier {
 
   #resolveNext
   #nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
+  // close() flips this to true and wakes any readable streams that
+  // are blocked on #nextChunk. Once closed, append() throws and all
+  // readable streams emit `done: true` after draining whatever's in
+  // `#chunks`. One-way; there's no reopen.
+  #closed = false
 
   get byteLength () {
     if (!this.#chunks.length) return 0
     const last = this.#chunks[this.#chunks.length - 1]
     return last.offset + last.uint8Array.length
+  }
+
+  /**
+   * On-disk / on-the-wire byte size — `byteLength` plus the 4-byte
+   * length prefix that wraps each chunk in the wire format. Use this
+   * (not `byteLength`) when comparing in-memory state to a file size
+   * or a written-byte counter; use `byteLength` for chain positions
+   * (chunk offsets, fromOffset, signedLength), which are content-only.
+   */
+  get wireByteLength () {
+    return this.byteLength + 4 * this.#chunks.length
   }
 
   /**
@@ -59,6 +75,7 @@ export class Addressifier {
    * @returns {number}
    */
   append (code) {
+    if (this.#closed) throw new Error('cannot append to a closed Addressifier')
     if (!code.length) throw new Error('chunk must not be empty')
     if (this.#contentMap.get(code) !== undefined) throw new Error('chunk already exists')
     this.#chunks.push({ uint8Array: code, offset: this.byteLength })
@@ -68,6 +85,29 @@ export class Addressifier {
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
     prev(code)
     return address
+  }
+
+  /**
+   * Signal end-of-stream. Any open `makeReadableStream` readers drain
+   * whatever's already in `#chunks` and then emit `done: true`. Future
+   * `append()` calls throw. Idempotent.
+   *
+   * The intended use is "I'm done with this streamo — drain the pipe
+   * and let me exit cleanly." For long-lived consumers (the relay)
+   * close() is never called; the readable streams stay open forever.
+   * For one-shot scripts (`seed-history`), close() is how they tell
+   * archiveSync's writer loop to wrap up before `process.exit()`.
+   */
+  close () {
+    if (this.#closed) return
+    this.#closed = true
+    const prev = this.#resolveNext
+    this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
+    prev()
+  }
+
+  get isClosed () {
+    return this.#closed
   }
 
   /**
@@ -194,7 +234,13 @@ export class Addressifier {
             }
             controller.enqueue(frame)
           }
+          // close() check after the drain loop so any chunks added
+          // before close are still delivered before we signal done.
+          if (self.#closed) { controller.close(); return }
           await self.#nextChunk
+          // close() also wakes the await above; re-check after wake so
+          // we exit promptly when close was the wake reason.
+          if (self.#closed && index >= self.#chunks.length) { controller.close(); return }
         }
       }
     })

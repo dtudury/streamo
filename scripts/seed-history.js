@@ -160,9 +160,14 @@ while (server.streamo.signedLength < server.streamo.byteLength) {
 }
 console.log(`done (${((Date.now() - start) / 1000).toFixed(1)}s)`)
 
-// Final settle for archive flush — archiveSync's writer loop runs
-// async; this gives it a window to drain the tail.
-await new Promise(r => setTimeout(r, 500))
+// Close the streamo and let archiveSync drain. Signals end-of-stream
+// to the writer loop, which finishes whatever's in the pipe and closes
+// the file handle. Replaces a 500ms `setTimeout` that was guessing
+// instead of asking — without it, `process.exit(0)` would tear down
+// the process mid-write and drop in-flight chunks (typically the SIG
+// tail, which makes the loaded `.bin` look complete but actually be
+// staged-forever-no-SIG on the next reader).
+await server.close()
 
 console.log('[seed-history] done.')
 process.exit(0)

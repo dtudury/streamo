@@ -23,7 +23,7 @@
  *     ever-reviewed cards, 0 if nothing reviewed
  */
 
-import { DEFAULT_REVIEW, applySM2 } from './sm2.js'
+import { DEFAULT_REVIEW, applySM2, retentionMultiplier, DEFAULT_RETENTION_TARGET } from './sm2.js'
 import { masteryOf }                from './mastery.js'
 import { registry, reviewRepos, state } from './state.js'
 import { homeRepo }                 from './main.js'
@@ -49,6 +49,10 @@ export function deckCards (deckId) {
 }
 
 // SM-2 state derived by folding every review event for this card.
+// After the fold, the deck's retention-target multiplier is applied
+// to the `due` time — so the deck visibly re-sorts as the user
+// slides the target. Past grades stored at their original intervals;
+// only the PROJECTED due is reinterpreted live.
 export function reviewStateForCard (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
   if (!repo) return { ...DEFAULT_REVIEW }
@@ -57,7 +61,22 @@ export function reviewStateForCard (deckId, cardIdx) {
   for (const ev of reviews) {
     if (ev.cardIdx === cardIdx) r = applySM2(r, ev.grade, ev.at)
   }
+  if (r.lastReviewAt) {
+    const target = repo.get('retentionTarget') ?? DEFAULT_RETENTION_TARGET
+    const mult = retentionMultiplier(target)
+    const rawIntervalMs = r.due - r.lastReviewAt
+    r.due = r.lastReviewAt + rawIntervalMs * mult
+  }
   return r
+}
+
+// The deck's current retention target — readable from anywhere (slot,
+// handler, render). Defaults to DEFAULT_RETENTION_TARGET when the
+// learner hasn't set one for this deck.
+export function retentionTargetFor (deckId) {
+  const repo = reviewRepos.get(deckId)
+  if (!repo) return DEFAULT_RETENTION_TARGET
+  return repo.get('retentionTarget') ?? DEFAULT_RETENTION_TARGET
 }
 
 // ── active set (partial-deck learning) ──────────────────────────────

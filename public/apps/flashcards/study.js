@@ -9,11 +9,12 @@ import { h, handle } from '../../streamo/h.js'
 import { state, time, activeDeck } from './state.js'
 import { masteryOf, masteryColor, barFor, formatTimeUntil } from './mastery.js'
 import {
-  deckCards, deckRepo, buildStudyQueue, reviewStateForCard, activeCardIds
+  deckCards, deckRepo, buildStudyQueue, reviewStateForCard, activeCardIds,
+  retentionTargetFor
 } from './derived.js'
 import {
   currentCard, currentCardIdx, revealed,
-  toggleReveal, grade, backToHome, toggleCardActive
+  toggleReveal, grade, backToHome, toggleCardActive, setRetentionTarget
 } from './main.js'
 
 export function renderStudy () {
@@ -202,6 +203,21 @@ export function renderStudy () {
             </div>
             <div class="manage-deck-expanded">
               <div class="manage-deck-inner">
+                ${() => {
+                  // Retention slider — per-deck "how hard should this
+                  // deck be?" knob. Higher target = shorter intervals
+                  // = cards come up more often = you ace the tests
+                  // (David's preference). Lower target = longer
+                  // intervals = fewer reviews. oninput fires per
+                  // drag step so the deck re-sorts live.
+                  const target = retentionTargetFor(deckId)
+                  return h`
+                    <div class="retention-control">
+                      <label>aim for <strong>${(target * 100).toFixed(0)}%</strong> retention <span class="retention-hint">${target > 0.92 ? '— ace it' : target < 0.75 ? '— skate by' : '— balanced'}</span></label>
+                      <input type="range" min="0.5" max="0.99" step="0.01" value=${target} oninput=${handle(setRetentionTarget)}>
+                    </div>
+                  `
+                }}
                 <h3 class="manage-section">active <span class="manage-count">(${activeList.length})</span><span class="manage-section-hint">click to remove</span></h3>
                 ${activeList.length === 0
                   ? h`<p class="empty">no active cards yet.</p>`

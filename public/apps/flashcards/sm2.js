@@ -21,6 +21,29 @@
 
 export const DEFAULT_REVIEW = { ease: 2.5, interval: 0, due: 0, reps: 0, lastReviewAt: 0 }
 
+// **Retention target** — the per-deck slider knob. Maps a desired
+// retention rate (e.g., 0.95 = "I want to remember 95% of cards when
+// they come due") to a multiplier applied to all due times. The
+// formula comes from the forgetting curve: if R = exp(-t/s) and we
+// want R = T at due time, then due-time = -ln(T) * s. The multiplier
+// is the ratio of the user's target to the default target.
+//
+// At T = DEFAULT (0.85), mult = 1 (no change from raw SM-2).
+// At T = 0.95, mult ≈ 0.315 (intervals shrink to 31.5% — way more
+// reviews, much higher retention).
+// At T = 0.70, mult ≈ 2.19 (intervals stretch to 219% — fewer
+// reviews, lower retention).
+//
+// Applied at READ TIME in reviewStateForCard (in derived.js), so
+// sliding the value retroactively reinterprets all stored intervals —
+// the deck visibly re-sorts as the slider moves. Past grades aren't
+// rewritten; only the projected due times change.
+export const DEFAULT_RETENTION_TARGET = 0.85
+export function retentionMultiplier (target) {
+  if (!target || target === DEFAULT_RETENTION_TARGET) return 1
+  return Math.log(target) / Math.log(DEFAULT_RETENTION_TARGET)
+}
+
 // GRADE_TO_Q maps the UI's 4-button scale onto the classical SM-2
 // quality scale (0..5). Hard is q=3 — Anki's convention — meaning
 // "got it right with serious difficulty," NOT a lapse. (q=2 would

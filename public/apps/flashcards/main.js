@@ -72,6 +72,23 @@ const signedForks = new Set()
 // isCardActive) lives in derived.js; toggleCardActive — the mutation
 // — stays here with the other user-action handlers.
 
+// Set the deck's retention target — a single number in (0, 1] that
+// affects every card's projected due time via reviewStateForCard's
+// multiplier. Stored in the reviews repo so it persists per learner
+// per deck. Called from the slider's `oninput` so every drag step
+// commits — the deck visibly re-sorts as you slide.
+function setRetentionTarget (event) {
+  const value = parseFloat(event.target.value)
+  if (!Number.isFinite(value)) return
+  const deckId = activeDeck()
+  const repo = reviewRepos.get(deckId)
+  if (!repo) return
+  const v = repo.get() ?? { deck: deckId, reviews: [] }
+  if (v.retentionTarget === value) return
+  repo.defaultMessage = `set retention target to ${(value * 100).toFixed(0)}%`
+  repo.set({ ...v, retentionTarget: value })
+}
+
 function toggleCardActive (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
   if (!repo) return
@@ -577,7 +594,7 @@ export {
   // rather than pure data derivation; kept here next to revealed
   currentCard, currentCardIdx, revealed,
   // user-action handlers wired into onclick / onsubmit
-  toggleCardActive, toggleReveal, grade,
+  toggleCardActive, setRetentionTarget, toggleReveal, grade,
   startStudy, backToHome, enterEdit, exitEdit, enterManage, exitManage,
   forkDeck, deleteFork,
   saveCard, cancelEditCard, startEditCard, deleteCard, addCard

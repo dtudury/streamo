@@ -789,6 +789,36 @@ h2 {
 .manage-deck-inner > .manage-section:first-child {
   margin-top: 1rem;
 }
+
+/* Per-deck retention slider — sits at the top of the expanded manage
+   panel. Tunes the deck's review aggressiveness; the cards visibly
+   re-sort as you drag. */
+.retention-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1rem 0 0.8rem;
+  border-bottom: 1px solid #eee;
+}
+.retention-control label {
+  font-size: 0.82rem;
+  color: #555;
+}
+.retention-control label strong {
+  font-variant-numeric: tabular-nums;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+.retention-hint {
+  color: #999;
+  font-style: italic;
+  font-weight: 400;
+}
+.retention-control input[type=range] {
+  width: 100%;
+  accent-color: #1d4ed8;
+  cursor: pointer;
+}
 .manage-deck-inner > .manage-cards:last-child,
 .manage-deck-inner > .empty:last-child {
   padding-bottom: 1rem;

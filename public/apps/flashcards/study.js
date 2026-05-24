@@ -149,10 +149,17 @@ export function renderStudy () {
         for (let i = 0; i < cards.length; i++) {
           if (!cards[i]?.deleted) allIndices.push(i)
         }
+        // Sort by time-remaining ascending: most overdue at top, then
+        // due-now (including never-reviewed cards, treated as
+        // due-this-moment), then due-soon, then due-far. Previously
+        // we sorted by `due || 0`, which put new cards at the
+        // epoch (way before anything else) — confusing.
         allIndices.sort((a, b) => {
           const ra = reviewStateForCard(deckId, a)
           const rb = reviewStateForCard(deckId, b)
-          return (ra.due || 0) - (rb.due || 0)
+          const dueA = ra.lastReviewAt ? ra.due : now
+          const dueB = rb.lastReviewAt ? rb.due : now
+          return dueA - dueB
         })
         const activeList = allIndices.filter(i => activeSet.has(i))
         const availableList = allIndices.filter(i => !activeSet.has(i))

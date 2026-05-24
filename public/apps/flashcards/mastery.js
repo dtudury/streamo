@@ -125,10 +125,13 @@ export function barFor (review, now) {
   if (intervalMs <= 0) return { kind: 'remaining', width: 100 }
   const timeUntilDueMs = review.due - now
   if (timeUntilDueMs > 0) {
-    // Pre-due: bar drains as time approaches due. Cap the drain
-    // window at 1 day (or the full interval if shorter) — long
-    // intervals are "full" until they get close.
-    const drainWindowMs = Math.min(ONE_DAY_MS, intervalMs)
+    // Pre-due: bar drains as time approaches due. Drain window is
+    // always 1 day. Cards with >= 1 day remaining stay full; cards
+    // with intervals shorter than a day (5-min lapse, 30-min ladder
+    // step) NEVER read as fully fresh — they start at whatever
+    // fraction of a day they have. David: "it should only be full
+    // if there's a day or more left."
+    const drainWindowMs = ONE_DAY_MS
     if (timeUntilDueMs >= drainWindowMs) {
       return { kind: 'remaining', width: 100 }
     }

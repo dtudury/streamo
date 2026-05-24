@@ -295,7 +295,7 @@ mount(h`
   ${() => loggedIn.get() ? h`
     <footer class="info">
       ${canWrite() ? h`<p>Double-click to edit a todo</p>` : null}
-      <p>Signed, append-only — <a class="explorer-link" href=${`../explorer/#/repo/${urlKey()}`}>see this list in the explorer →</a></p>
+      <p>Signed, append-only — <a class="explorer-link" href=${`../explorer/#/repo/${urlKey()}`}>${canWrite() ? 'explore your data' : 'explore this data'} →</a></p>
       <p>Powered by <a href="/">streamo</a></p>
     </footer>
   ` : null}

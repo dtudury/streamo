@@ -1,0 +1,90 @@
+/* streamo-specific overlay on top of the canonical TodoMVC styles
+   (loaded from CDN in index.html). The canonical styles cover the
+   todoapp container, the header/main/footer chrome, and the .info
+   footer; what's here is the bits that aren't part of canonical
+   TodoMVC — credential entry, the "explore your data" link, and
+   the "viewing someone else's list" affordance. */
+
+/* Login form — uses the canonical TodoMVC color palette but its own
+   layout, since todomvc-app-css doesn't cover credential entry.
+   Lives in the same <section class="todoapp"> container so the visual
+   continuity across sign-in is just an inner-content swap. */
+.login {
+  padding: 16px 16px 24px;
+}
+.login input {
+  width: 100%;
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 1px solid #ddd;
+  font-size: 16px;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.login button {
+  width: 100%;
+  padding: 12px;
+  background: #af5b5e;
+  color: #fff;
+  border: 0;
+  cursor: pointer;
+  font-size: 16px;
+  font-family: inherit;
+}
+.login button:hover {
+  opacity: 0.9;
+}
+.login-status {
+  margin-top: 8px;
+  color: #777;
+  font-size: 13px;
+  min-height: 1.2em;
+}
+
+/* "explore your data →" link in the info footer.
+   The canonical TodoMVC palette is intentionally muted; the brighter
+   accent (e.g. flashcards' blue) would look out of place here. So we
+   match the surrounding dim gray and just distinguish the link with
+   a dotted underline that fills in on hover — same affordance pattern
+   as flashcards, different color register. */
+.info .explorer-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px dotted;
+}
+.info .explorer-link:hover {
+  border-bottom-style: solid;
+  color: #4d4d4d;
+}
+
+/* "viewing <truncated key> · read-only" affordance, shown in the
+   header when logged in but viewing someone else's list (URL key
+   isn't your signed-in key). Same vertical real estate as the
+   new-todo input it replaces; muted color register because this
+   isn't a write affordance. The "← back to your list" link uses the
+   same accent color as the login button so it reads as the primary
+   action out of this state. */
+.viewing-other {
+  padding: 16px;
+  color: #777;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.viewing-other code {
+  background: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: #4d4d4d;
+}
+.viewing-other a {
+  color: #af5b5e;
+  text-decoration: none;
+  border-bottom: 1px dotted;
+}
+.viewing-other a:hover {
+  border-bottom-style: solid;
+}

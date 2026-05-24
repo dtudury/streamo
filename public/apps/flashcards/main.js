@@ -40,8 +40,8 @@ const state = liveObject({
   loggedIn:   false,
   connecting: false,    // true while login → connect → subscribe(deck-index)
   user:       null,     // { username, pubkey } once logged in
-  view:       'home',   // 'home' | 'study' | 'edit'
-  activeDeck: null,     // deck id while studying or editing
+  view:       'home',   // 'home' | 'study' | 'edit' | 'manage'
+  activeDeck: null,     // deck id while studying / editing / managing
   revealedCardIdx: null, // which card has been flipped (not a session-level bool)
   editingCardIdx:  null  // null = not editing; N = editing card N; -1 = adding new card
   // No studyQueue, no currentIdx — both derive from the reviews repo
@@ -129,15 +129,19 @@ function reviewStateForCard (deckId, cardIdx) {
 
 function deckStats (deckId) {
   const cards = deckCards(deckId)
-  if (!cards.length) return { due: 0, new: 0, total: 0 }
-  let due = 0, neu = 0
+  const active = activeCardIds(deckId)
+  if (!cards.length) return { due: 0, new: 0, active: 0 }
+  let due = 0, neu = 0, activeCount = 0
   const now = Date.now()
   for (let i = 0; i < cards.length; i++) {
+    if (cards[i]?.deleted) continue
+    if (active !== null && !active.has(i)) continue
+    activeCount++
     const r = reviewStateForCard(deckId, i)
     if (r.reps === 0) neu++
     else if (r.due <= now) due++
   }
-  return { due, new: neu, total: cards.length }
+  return { due, new: neu, active: activeCount }
 }
 
 // Live-derived study queue: due cards first, then truly-new (never
@@ -147,10 +151,12 @@ function deckStats (deckId) {
 // the reviews repo, not from a stateful array.
 function buildStudyQueue (deckId) {
   const cards = deckCards(deckId)
+  const active = activeCardIds(deckId)
   const due = [], neu = []
   const now = Date.now()
   for (let i = 0; i < cards.length; i++) {
-    if (cards[i]?.deleted) continue  // soft-deleted cards don't appear in study
+    if (cards[i]?.deleted) continue   // soft-deleted cards don't appear in study
+    if (active !== null && !active.has(i)) continue  // not in active set
     const r = reviewStateForCard(deckId, i)
     const everReviewed = r.due > 0  // DEFAULT_REVIEW has due=0; any grade sets a timestamp
     if (!everReviewed) neu.push(i)
@@ -158,6 +164,64 @@ function buildStudyQueue (deckId) {
     // else: in 'rest' — has reviews, not yet due. Not in the queue.
   }
   return [...due, ...neu]
+}
+
+// ── active set (partial-deck learning) ──────────────────────────────
+//
+// Per-(learner, deck) state stored in the reviews repo: which cards
+// the learner is *currently* studying. Cards not in the active set
+// are *available* (in the deck) but don't appear in the study queue.
+//
+// Legacy default: if `active` is undefined (learner has never touched
+// the manage UI), treat as "all non-deleted cards are active" — so
+// existing users see no behavior change until they explicitly opt in.
+// Returns `null` for the legacy case so callers can short-circuit.
+
+function activeCardIds (deckId) {
+  const repo = reviewRepos.get(deckId)
+  if (!repo) return null  // not ready — caller should treat as "all"
+  const active = repo.get('active')
+  if (active === undefined) return null  // legacy: all-active
+  return new Set(active)
+}
+
+function isCardActive (deckId, cardIdx) {
+  const active = activeCardIds(deckId)
+  if (active === null) return true  // legacy default
+  return active.has(cardIdx)
+}
+
+function toggleCardActive (deckId, cardIdx) {
+  const repo = reviewRepos.get(deckId)
+  if (!repo) return
+  const value = repo.get() ?? { deck: deckId, reviews: [] }
+  let activeArr = value.active
+  if (activeArr === undefined) {
+    // First touch — materialize the legacy "all" set so we can
+    // meaningfully toggle one off. Includes all non-deleted card
+    // indices for the current deck.
+    const cards = deckCards(deckId)
+    activeArr = []
+    for (let i = 0; i < cards.length; i++) {
+      if (!cards[i]?.deleted) activeArr.push(i)
+    }
+  }
+  const set = new Set(activeArr)
+  let nowActive
+  if (set.has(cardIdx)) {
+    set.delete(cardIdx)
+    nowActive = false
+  } else {
+    set.add(cardIdx)
+    nowActive = true
+  }
+  repo.defaultMessage = nowActive
+    ? `add card ${cardIdx} to active`
+    : `remove card ${cardIdx} from active`
+  repo.set({
+    ...value,
+    active: [...set].sort((a, b) => a - b)
+  })
 }
 
 // ── derived metrics ─────────────────────────────────────────────────
@@ -206,14 +270,18 @@ function formatTimeUntil (deltaMs) {
   return overdue ? `overdue ${label}` : (deltaMs <= 0 ? 'now' : `in ${label}`)
 }
 
-// Mastery for the deck as a whole — average over non-deleted, ever-
-// reviewed cards. Returns 0 if no cards have been reviewed yet.
+// Mastery for the deck's *active set* — average over non-deleted,
+// active, ever-reviewed cards. Represents "how well I know what I'm
+// currently studying," not "the whole deck's potential." Returns 0
+// if nothing's been reviewed yet.
 function deckMastery (deckId) {
   const cards = deckCards(deckId)
   if (cards.length === 0) return 0
+  const active = activeCardIds(deckId)
   let total = 0, n = 0
   for (let i = 0; i < cards.length; i++) {
     if (cards[i]?.deleted) continue
+    if (active !== null && !active.has(i)) continue
     const r = reviewStateForCard(deckId, i)
     if (r.due > 0) { total += masteryOf(r); n++ }
   }
@@ -489,6 +557,18 @@ function deleteCard (cardIdx) {
   repo.set({ ...deck, cards: newCards })
 }
 
+// ── manage view handlers ────────────────────────────────────────────
+
+function enterManage (deckId) {
+  state.set('activeDeck', deckId)
+  state.set('view', 'manage')
+}
+
+function exitManage () {
+  state.set('view', 'home')
+  state.set('activeDeck', null)
+}
+
 // ── view helpers ─────────────────────────────────────────────────────
 
 function currentCard () {
@@ -587,7 +667,8 @@ mount(h`
               <div class="deck-stats">
                 <span class="due">${s.due} due</span>
                 <span class="new">${s.new} new</span>
-                <span>${s.total} total</span>
+                <span>${s.active} active</span>
+                <button class="manage-btn" onclick=${handle((e) => { e.stopPropagation(); enterManage(id) })}>manage</button>
                 ${isFork
                   ? h`<button class="edit-btn" onclick=${handle((e) => { e.stopPropagation(); enterEdit(id) })}>edit</button>`
                   : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
@@ -607,15 +688,17 @@ mount(h`
               }}
               ${() => {
                 // Live next-up strip. Reads time.get() so it ticks
-                // every second; reads reviewRepo via deckStats helpers
-                // so it updates when grades land.
+                // every second; reads reviewRepo (via active set +
+                // reviewStateForCard) so it updates when grades land
+                // and when the manage view toggles active membership.
                 const cards = deckCards(id)
                 if (cards.length === 0) return null
-                // Find the soonest 5 due/upcoming cards (any state).
+                const active = activeCardIds(id)
                 const now = time.get()
                 const upcoming = []
                 for (let i = 0; i < cards.length; i++) {
                   if (cards[i]?.deleted) continue
+                  if (active !== null && !active.has(i)) continue  // active set only
                   const r = reviewStateForCard(id, i)
                   const due = r.due === 0 ? now : r.due  // new cards are "now"
                   upcoming.push({ idx: i, due })
@@ -782,6 +865,68 @@ mount(h`
       ${() => state.get('editingCardIdx') === -1
         ? null
         : h`<button class="add-card-btn" onclick=${handle(addCard)}>+ add card</button>`}
+    </div>
+  `)}
+
+  ${when(() => loggedIn() && view() === 'manage', h`
+    <div class="manage">
+      <div class="study-header">
+        <button class="study-back" onclick=${handle(exitManage)}>← back</button>
+        <span>${() => {
+          const deckId = activeDeck()
+          const title = deckRepo(deckId)?.get('title') ?? ''
+          return title ? `cards: ${title}` : 'cards…'
+        }}</span>
+      </div>
+      <p class="hint">tap a card to add it to or remove it from your active study set. cards in <em>available</em> stay in the deck but don't appear in study sessions until you add them back.</p>
+
+      ${() => {
+        const deckId = activeDeck()
+        const cards = deckCards(deckId)
+        if (cards.length === 0) return h`<p class="empty">no cards in this deck yet.</p>`
+
+        // Partition into active and available, preserving original indices.
+        const activeList = [], availableList = []
+        for (let i = 0; i < cards.length; i++) {
+          if (cards[i]?.deleted) continue
+          if (isCardActive(deckId, i)) activeList.push(i)
+          else availableList.push(i)
+        }
+
+        const renderCard = (i, isActive) => {
+          const card = cards[i]
+          const review = reviewStateForCard(deckId, i)
+          const mastery = masteryOf(review)
+          const masteryPct = Math.min(100, (mastery / 7) * 100)
+          return h`
+            <li class="manage-card ${isActive ? 'manage-card-active' : 'manage-card-available'}"
+                data-key=${`manage-${i}`}
+                onclick=${handle(() => toggleCardActive(deckId, i))}>
+              <div class="manage-card-content">
+                <div class="manage-card-front">${card.front || '(blank)'}</div>
+                <div class="manage-card-back">${card.back || ''}</div>
+              </div>
+              ${review.due > 0
+                ? h`<div class="manage-card-mastery" title=${`mastery: ${mastery.toFixed(1)} / 7`}>
+                     <div class="manage-card-mastery-bar" style=${`width:${masteryPct.toFixed(0)}%`}></div>
+                   </div>`
+                : null}
+              <span class="manage-card-toggle">${isActive ? 'remove' : 'add'}</span>
+            </li>
+          `
+        }
+
+        return h`
+          <h3 class="manage-section">active <span class="manage-count">(${activeList.length})</span></h3>
+          ${activeList.length === 0
+            ? h`<p class="empty">no active cards yet — tap one from <em>available</em> below to start learning it.</p>`
+            : h`<ul class="manage-cards">${activeList.map(i => renderCard(i, true))}</ul>`}
+          <h3 class="manage-section">available <span class="manage-count">(${availableList.length})</span></h3>
+          ${availableList.length === 0
+            ? h`<p class="empty">all cards in this deck are currently active.</p>`
+            : h`<ul class="manage-cards">${availableList.map(i => renderCard(i, false))}</ul>`}
+        `
+      }}
     </div>
   `)}
 `, document.body, recaller)

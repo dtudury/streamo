@@ -72,21 +72,37 @@ const signedForks = new Set()
 // isCardActive) lives in derived.js; toggleCardActive — the mutation
 // — stays here with the other user-action handlers.
 
-// Set the deck's retention target — a single number in (0, 1] that
-// affects every card's projected due time via reviewStateForCard's
-// multiplier. Stored in the reviews repo so it persists per learner
-// per deck. Called from the slider's `oninput` so every drag step
-// commits — the deck visibly re-sorts as you slide.
-function setRetentionTarget (event) {
+// Retention slider has two handlers: oninput updates only the
+// ephemeral pending value (the deck still re-sorts live because
+// retentionTargetFor() reads pending first), and onchange — fired
+// on drag release — commits the new value to the reviews repo
+// and clears pending. So a single full drag writes one commit
+// instead of fifty, without losing the live-jumping effect.
+
+function previewRetentionTarget (event) {
   const value = parseFloat(event.target.value)
   if (!Number.isFinite(value)) return
+  state.set('pendingRetentionTarget', value)
+}
+
+function commitRetentionTarget (event) {
+  const value = parseFloat(event.target.value)
+  if (!Number.isFinite(value)) {
+    state.set('pendingRetentionTarget', null)
+    return
+  }
   const deckId = activeDeck()
   const repo = reviewRepos.get(deckId)
-  if (!repo) return
+  if (!repo) {
+    state.set('pendingRetentionTarget', null)
+    return
+  }
   const v = repo.get() ?? { deck: deckId, reviews: [] }
-  if (v.retentionTarget === value) return
-  repo.defaultMessage = `set retention target to ${(value * 100).toFixed(0)}%`
-  repo.set({ ...v, retentionTarget: value })
+  if (v.retentionTarget !== value) {
+    repo.defaultMessage = `set retention target to ${(value * 100).toFixed(0)}%`
+    repo.set({ ...v, retentionTarget: value })
+  }
+  state.set('pendingRetentionTarget', null)
 }
 
 function toggleCardActive (deckId, cardIdx) {
@@ -249,8 +265,9 @@ function startStudy (deckId) {
 function backToHome () {
   state.set('view', 'home')
   state.set('activeDeck', null)
-  state.set('studyAhead', false)   // opt-in study-ahead resets between sessions
-  state.set('peekCardIdx', null)   // and so does the manage-list peek
+  state.set('studyAhead', false)           // opt-in study-ahead resets between sessions
+  state.set('peekCardIdx', null)           // and so does the manage-list peek
+  state.set('pendingRetentionTarget', null) // and any mid-drag slider preview
 }
 
 // Reveal ties the flip to the SPECIFIC card we're showing right now.
@@ -611,7 +628,8 @@ export {
   // rather than pure data derivation; kept here next to revealed
   currentCard, currentCardIdx, revealed,
   // user-action handlers wired into onclick / onsubmit
-  toggleCardActive, setRetentionTarget, toggleReveal, grade, peekCard,
+  toggleCardActive, previewRetentionTarget, commitRetentionTarget,
+  toggleReveal, grade, peekCard,
   startStudy, backToHome, enterEdit, exitEdit, enterManage, exitManage,
   forkDeck, deleteFork,
   saveCard, cancelEditCard, startEditCard, deleteCard, addCard

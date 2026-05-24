@@ -72,8 +72,13 @@ export function reviewStateForCard (deckId, cardIdx) {
 
 // The deck's current retention target — readable from anywhere (slot,
 // handler, render). Defaults to DEFAULT_RETENTION_TARGET when the
-// learner hasn't set one for this deck.
+// learner hasn't set one for this deck. While the slider is being
+// dragged, `state.pendingRetentionTarget` overrides — that's how the
+// deck re-sorts live during drag without writing a commit per pixel;
+// the commit happens once on slider release.
 export function retentionTargetFor (deckId) {
+  const pending = state.get('pendingRetentionTarget')
+  if (pending != null) return pending
   const repo = reviewRepos.get(deckId)
   if (!repo) return DEFAULT_RETENTION_TARGET
   return repo.get('retentionTarget') ?? DEFAULT_RETENTION_TARGET

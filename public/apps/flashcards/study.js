@@ -14,7 +14,8 @@ import {
 } from './derived.js'
 import {
   currentCard, currentCardIdx, revealed,
-  toggleReveal, grade, backToHome, toggleCardActive, setRetentionTarget, peekCard
+  toggleReveal, grade, backToHome, toggleCardActive, peekCard,
+  previewRetentionTarget, commitRetentionTarget
 } from './main.js'
 
 export function renderStudy () {
@@ -226,7 +227,9 @@ export function renderStudy () {
                   return h`
                     <div class="retention-control">
                       <label>aim for <strong>${(target * 100).toFixed(0)}%</strong> retention <span class="retention-hint">${target > 0.92 ? '— ace it' : target < 0.75 ? '— skate by' : '— balanced'}</span></label>
-                      <input type="range" min="0.5" max="0.99" step="0.01" value=${target} oninput=${handle(setRetentionTarget)}>
+                      <input type="range" min="0.5" max="0.99" step="0.01" value=${target}
+                             oninput=${handle(previewRetentionTarget)}
+                             onchange=${handle(commitRetentionTarget)}>
                     </div>
                   `
                 }}

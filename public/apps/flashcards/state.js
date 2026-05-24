@@ -46,11 +46,19 @@ export const state = liveObject({
                           // the learner keep grading after the algorithm
                           // says 'all caught up.' Set by clicking the
                           // all-caught-up empty state; reset on back-to-home.
-  peekCardIdx:     null   // when non-null, overrides currentCardIdx() so a
+  peekCardIdx:     null,  // when non-null, overrides currentCardIdx() so a
                           // specific card from the manage list shows in
                           // the studied slot (eye-icon "look at this one
                           // now" without waiting for the queue). Cleared
                           // on grade and on back-to-home.
+  pendingRetentionTarget: null // ephemeral drag-preview for the retention
+                               // slider. While the user is dragging, this
+                               // overrides the committed value via
+                               // retentionTargetFor() so the deck re-sorts
+                               // live without writing 50 commits to the
+                               // reviews repo. Set by `oninput`, cleared
+                               // (and the committed value updated) by
+                               // `onchange` on slider release.
   // No studyQueue, no currentIdx — both derive from the reviews repo
   // each render. The "next card" is buildStudyQueue[0]; grading commits
   // a review event and the queue shifts naturally as a side effect.

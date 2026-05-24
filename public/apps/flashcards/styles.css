@@ -316,13 +316,10 @@ h2 {
 .reveal-btn:hover { background: #1d4ed8; color: white; }
 /* Fixed-height slot for the grade buttons. Reserved even when the
    buttons aren't shown so the manage panel below doesn't move when
-   you flip / grade. Bottom margin gives the manage panel its
-   "half as far again" breathing room (so it never looks crowded
-   against the buttons or the mastery bar). */
+   you flip / grade. */
 .study-actions-slot {
   min-height: 2.6rem;
   margin-top: 0.7rem;
-  margin-bottom: 1.5rem;
 }
 .grades {
   display: grid;

@@ -56,15 +56,31 @@ const filterFromHash = () => {
   }
 }
 
-// Set after successful login. registry and session live at module
-// scope so the URL-driven subscribe watcher (below in login()) can
-// reach them. myRepo/myKey/signer drive the *write* path; the *read*
-// path goes through the URL key.
-let registry, session, myRepo, myKey
+// registry and session are created at module-load, not at login —
+// reading other people's lists is signer-agnostic at this layer.
+// myRepo/myKey/signer (only set after login) drive the *write* path;
+// the *read* path goes through the URL key and viewedRepo().
+const registry = new RepoRegistry(undefined, { recaller, name: 'todomvc' })
+const session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
+
+// Auto-subscribe to whatever key shows up in the URL. Reads `urlKey()`
+// (URL hashParts) and `registry.get(key)` (registry keys), so it
+// refires on both nav and arrival and self-quiets once the bytes land.
+// Same shape as today's explorer cold-link fix — and the reason a
+// fresh visitor can paste a friend's URL and see the list immediately,
+// without any login dance.
+recaller.watch('todomvc-url-subscribe', () => {
+  const k = urlKey()
+  if (!k) return
+  if (registry.get(k)) return
+  session.subscribe(k)
+})
+
+let myRepo, myKey  // set after login; drive the write path
 const canWrite = () => loggedIn.get() && urlKey() === myKey
 const viewedRepo = () => {
   const k = urlKey()
-  return (k && registry) ? (registry.get(k) || null) : null
+  return k ? (registry.get(k) || null) : null
 }
 
 // ── handlers ─────────────────────────────────────────────────────────
@@ -77,37 +93,27 @@ async function login (e) {
   if (!username || !password) { loginStatus.set('enter username and password'); return }
 
   f.elements.username.disabled = f.elements.password.disabled = true
-  loginStatus.set('connecting…')
+  loginStatus.set('signing in…')
 
   try {
     const signer = new Signer(username, password, 1)
     const { publicKey } = await signer.keysFor('todomvc')
     myKey = bytesToHex(publicKey)
-    registry = new RepoRegistry(undefined, { recaller, name: 'todomvc' })
-    session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
     myRepo = await registry.open(myKey)
     myRepo.attachSigner(signer, 'todomvc')
     myRepo.defaultMessage = `signed in as ${username}`
     // Explicitly subscribe to our own key so the server replays any
-    // archived bytes for this repo — that's how previous-session todos
-    // come back. registry.open creates the local Repo; this asks the
-    // relay to stream the historical chunks into it.
+    // archived bytes for this repo. The URL-watcher already handles
+    // the visited list (which might be ours, or might be someone
+    // else's) — this guarantees myKey is subscribed *regardless* of
+    // what's in the URL, so writes can flow up and history can come
+    // back from prior sessions.
     await session.subscribe(myKey)
-    // If the URL doesn't already point at a valid key (fresh visit, or
-    // user pasted a malformed URL), navigate to our own list. If the
-    // URL DOES carry a key, leave it alone — the user is here to view
-    // that specific list, even if it's not theirs.
+    // If the URL doesn't already point at a valid key (fresh visit,
+    // or user pasted a malformed URL), navigate to our own list. If
+    // the URL DOES carry a key, leave it alone — the user is here to
+    // view that specific list, even if it's not theirs.
     if (!urlKey()) loc.set('hash', `#/${myKey}`)
-    // Auto-subscribe to whatever key shows up in the URL — flashcards
-    // and explorer use the same shape. Reads `urlKey()` (URL hashParts)
-    // and `registry.get(key)` (registry keys), so it refires on both
-    // nav and arrival and self-quiets once the bytes land.
-    recaller.watch('todomvc-url-subscribe', () => {
-      const k = urlKey()
-      if (!k) return
-      if (registry.get(k)) return
-      session.subscribe(k)
-    })
     loggedIn.set(true)
   } catch (err) {
     loginStatus.set(`error: ${err.message}`)
@@ -244,7 +250,7 @@ mount(h`
       }}
     </header>
 
-    ${() => !loggedIn.get() || getTodos().length === 0 ? null : h`
+    ${() => !urlKey() || getTodos().length === 0 ? null : h`
       <section class="main">
         <input id="toggle-all" class="toggle-all" type="checkbox"
                checked=${getTodos().every(t => t.done)} disabled=${!canWrite()}
@@ -266,7 +272,7 @@ mount(h`
       </section>
     `}
 
-    ${() => !loggedIn.get() || getTodos().length === 0 ? null : h`
+    ${() => !urlKey() || getTodos().length === 0 ? null : h`
       <footer class="footer">
         <span class="todo-count">${() => {
           const remaining = getTodos().filter(t => !t.done).length
@@ -292,7 +298,7 @@ mount(h`
     `}
   </section>
 
-  ${() => loggedIn.get() ? h`
+  ${() => urlKey() ? h`
     <footer class="info">
       ${canWrite() ? h`<p>Double-click to edit a todo</p>` : null}
       <p>Signed, append-only — <a class="explorer-link" href=${`../explorer/#/repo/${urlKey()}`}>${canWrite() ? 'explore your data' : 'explore this data'} →</a></p>

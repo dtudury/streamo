@@ -290,7 +290,19 @@ function masteryColor (mastery) {
     const [m2, h2, s2, l2] = stops[i + 1]
     if (mastery <= m2) {
       const t = (mastery - m1) / (m2 - m1)
-      return `hsl(${Math.round(h1 + (h2 - h1) * t)}, ${Math.round(s1 + (s2 - s1) * t)}%, ${Math.round(l1 + (l2 - l1) * t)}%)`
+      // Shortest-arc hue interpolation: take the SHORT way around the
+      // wheel, not the long way. Critical for the red (hue 355) →
+      // red-orange (hue 20) transition — naive linear interpolation
+      // wanders through cyan (hue ~187 at t=0.5) instead of staying
+      // in the red end. David caught this with a low-mastery card
+      // rendering as bright teal-green: width 3.9% (mastery 0.27) +
+      // color hsl(174, 83%, 49%). The width was right; the color
+      // was lying about which mastery value it represented.
+      let dh = h2 - h1
+      if (dh > 180) dh -= 360
+      else if (dh < -180) dh += 360
+      const hue = ((h1 + dh * t) % 360 + 360) % 360
+      return `hsl(${Math.round(hue)}, ${Math.round(s1 + (s2 - s1) * t)}%, ${Math.round(l1 + (l2 - l1) * t)}%)`
     }
   }
   const [, h, s, l] = stops[stops.length - 1]

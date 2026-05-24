@@ -58,6 +58,18 @@ const GRADE_TO_Q = [0, 3, 4, 5]
 const HARD_MULT  = 0.5  // 'hard' multiplies the interval (back-off)
 const EASY_BONUS = 1.3  // 'easy' adds on top of the good growth
 
+// Initial learning ladder. The original SM-2 paper used 1-day and
+// 6-day for the first two good grades — but David: "if I get a
+// card right for the first time we say that it's known for a
+// day. that's not even close 😂 I'm like maybe 5 minutes." Shifted
+// the ladder down by ~300x. Storage unit is still days (so the
+// retention slider scales them naturally), but values can be
+// fractional. At default retention (T=0.85, mult=1) first-good is
+// 5 min; at "ace it" (T~0.94, mult~0.4) it's about 2 min.
+const FIRST_GOOD_DAYS  = 5  / 1440    // 5 minutes in days
+const SECOND_GOOD_DAYS = 30 / 1440    // 30 minutes in days
+const MIN_INTERVAL_DAYS = 1 / 1440    // 1-minute floor (don't go to 0)
+
 export function applySM2 (review, gradeIdx, atMs) {
   const q = GRADE_TO_Q[gradeIdx]
   const r = { ...review }
@@ -67,21 +79,23 @@ export function applySM2 (review, gradeIdx, atMs) {
     r.interval = 0
   } else if (gradeIdx === 1) {
     // 'hard' — got it right but barely. Multiplicative back-off:
-    // shrink the interval by HARD_MULT. Floor at 1 so a freshly-
-    // graduated card doesn't fall back to "due immediately." reps
+    // shrink the interval by HARD_MULT. Floor at MIN_INTERVAL_DAYS
+    // (1 minute) so we don't go to 0 from a small interval. reps
     // stays the same — hard is a slow-down, not a lapse.
-    r.interval = Math.max(1, Math.round(r.interval * HARD_MULT))
+    r.interval = Math.max(MIN_INTERVAL_DAYS, r.interval * HARD_MULT)
   } else {
     // 'good' (gradeIdx=2) or 'easy' (gradeIdx=3) — successful grade,
-    // advance per SM-2's ladder (1, 6, then interval × ease). Easy
-    // gets an extra EASY_BONUS multiplier so it's visibly distinct
-    // from good on every grade, not just over time via ease drift.
+    // advance per SM-2's ladder (5min, 30min, then interval × ease).
+    // Easy gets an extra EASY_BONUS multiplier so it's visibly
+    // distinct from good on every grade, not just over time via ease
+    // drift. Fractional days are fine — the retention multiplier and
+    // the formatTimeUntil display both handle them.
     let next
-    if (r.reps === 0)      next = 1
-    else if (r.reps === 1) next = 6
+    if (r.reps === 0)      next = FIRST_GOOD_DAYS
+    else if (r.reps === 1) next = SECOND_GOOD_DAYS
     else                   next = r.interval * r.ease
     if (gradeIdx === 3) next *= EASY_BONUS
-    r.interval = Math.max(1, Math.round(next))
+    r.interval = Math.max(MIN_INTERVAL_DAYS, next)
     r.reps += 1
   }
   // Ease adjustment — classical SM-2 formula. Drops a lot on again

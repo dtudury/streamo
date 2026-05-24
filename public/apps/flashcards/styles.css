@@ -142,18 +142,34 @@ h2 {
 }
 .deck-stats .due  { color: #b91c1c; }
 .deck-stats .new  { color: #047857; }
-.deck-stats .fork-btn {
-  margin-left: auto;
+/* Deck-action buttons on the home page (fork, edit, delete) share
+   the same bordered chip look as the edit-page's edit/delete buttons.
+   Color shifts on hover signal the action: blue for edit/fork, red
+   for delete. */
+.deck-action-btn {
   background: none;
-  border: none;
-  color: #1d4ed8;
+  border: 1px solid #ddd;
+  color: #555;
   font-size: 0.78rem;
   cursor: pointer;
-  padding: 0;
-  text-decoration: underline dotted;
+  padding: 0.25rem 0.6rem;
+  border-radius: 6px;
   font-family: inherit;
 }
-.deck-stats .fork-btn:hover { text-decoration-style: solid; }
+.deck-action-btn:hover {
+  border-color: #1d4ed8;
+  color: #1d4ed8;
+}
+.deck-action-btn.deck-action-delete:hover {
+  border-color: #b91c1c;
+  color: #b91c1c;
+}
+.deck-stats .deck-action-btn:first-of-type {
+  margin-left: auto;
+}
+.deck-stats .deck-action-btn + .deck-action-btn {
+  margin-left: 0.4rem;
+}
 .deck-badge {
   font-size: 0.65rem;
   text-transform: uppercase;
@@ -194,6 +210,7 @@ h2 {
    strip never shift when flipping. */
 .card {
   perspective: 1000px;
+  box-sizing: border-box;
   height: 13rem;
   cursor: pointer;
   position: relative;
@@ -260,7 +277,7 @@ h2 {
    (no internal gap). */
 .study-mastery-wrap {
   margin-top: 0.7rem;
-  margin-bottom: 0.8rem;
+  /* margin-bottom moved into .study-actions-slot — see below */
 }
 .study-mastery {
   position: relative;
@@ -293,6 +310,16 @@ h2 {
   font-family: inherit;
 }
 .reveal-btn:hover { background: #1d4ed8; color: white; }
+/* Fixed-height slot for the grade buttons. Reserved even when the
+   buttons aren't shown so the manage panel below doesn't move when
+   you flip / grade. Bottom margin gives the manage panel its
+   "half as far again" breathing room (so it never looks crowded
+   against the buttons or the mastery bar). */
+.study-actions-slot {
+  min-height: 2.6rem;
+  margin-top: 0.7rem;
+  margin-bottom: 1.5rem;
+}
 .grades {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -385,21 +412,6 @@ h2 {
   border-radius: 999px;
   color: #333;
 }
-
-/* edit button on a learner's forked deck — mirrors fork-btn shape
-   on bundled decks so the affordance lives in the same spot. */
-.deck-stats .edit-btn {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: #047857;
-  font-size: 0.78rem;
-  cursor: pointer;
-  padding: 0;
-  text-decoration: underline dotted;
-  font-family: inherit;
-}
-.deck-stats .edit-btn:hover { text-decoration-style: solid; }
 
 /* ── edit view ─────────────────────────────────────────────────────── */
 .edit {
@@ -520,27 +532,6 @@ h2 {
 .add-card-btn:hover {
   background: #1d4ed8;
   color: white;
-}
-
-/* manage button on a deck — third action in the deck-stats row,
-   sits next to fork or edit. Always visible for any deck since the
-   active set is a per-learner concept that applies to bundled and
-   forked decks alike. */
-.deck-stats .manage-btn {
-  margin-left: auto;
-  background: none;
-  border: none;
-  color: #1d4ed8;
-  font-size: 0.78rem;
-  cursor: pointer;
-  padding: 0;
-  text-decoration: underline dotted;
-  font-family: inherit;
-}
-.deck-stats .manage-btn:hover { text-decoration-style: solid; }
-.deck-stats .manage-btn + .edit-btn,
-.deck-stats .manage-btn + .fork-btn {
-  margin-left: 0.75rem;  /* spacing after manage when both are shown */
 }
 
 /* ── manage view ───────────────────────────────────────────────────── */
@@ -708,7 +699,7 @@ h2 {
    expansion animates to the content's natural height. */
 .manage-deck {
   position: relative;
-  margin-top: 1.5rem;
+  /* spacing comes from .study-actions-slot's margin-bottom now */
   border: 1px dashed #ddd;
   border-radius: 10px;
   background: transparent;  /* no bg in the collapsed state */
@@ -800,12 +791,14 @@ h2 {
    footprint as a real card so the layout doesn't shift between
    states. */
 .study-empty {
+  box-sizing: border-box;
   text-align: center;
   padding: 2rem 1.5rem;
   border: 1px dashed #ddd;
   border-radius: 10px;
   background: #fafafa;
-  min-height: 13rem;
+  height: 13rem;  /* match .card exactly so the studied-card slot
+                     never changes height between states */
   display: flex;
   flex-direction: column;
   align-items: center;

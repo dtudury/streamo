@@ -547,6 +547,22 @@ async function forkDeck (upstreamId) {
   // Reviews repo opens lazily on the first study-click; no eager open.
 }
 
+// Remove a fork from this learner's deck-index. The fork's Repo and
+// signed history stay on the relay — append-only means we can't truly
+// erase. What we can do is drop the reference from `myDeckIndex.decks`,
+// so the deck stops appearing in this learner's home list. (If the
+// learner re-saved the address, they could re-add it.)
+function deleteFork (deckId) {
+  if (!myDeckIndex) return
+  const repo = registry.get(deckId)
+  const title = repo?.get('title') ?? 'this fork'
+  if (!confirm(`Remove "${title}" from your decks?\n\nIts signed history stays on the relay (append-only — nothing is truly erased), but it will no longer appear here.`)) return
+  const current = myDeckIndex.get('decks') ?? []
+  const next = current.filter(addr => addr !== deckId)
+  myDeckIndex.defaultMessage = `removed fork: ${title}`
+  myDeckIndex.set({ decks: next })
+}
+
 // ── editor handlers ─────────────────────────────────────────────────
 //
 // The editor edits a fork's deck Repo. Each edit (save, delete, add)
@@ -839,8 +855,11 @@ mount(h`
                 <span class="new">${s.new} new</span>
                 <span>${s.active} active</span>
                 ${isFork
-                  ? h`<button class="edit-btn" onclick=${handle((e) => { e.stopPropagation(); enterEdit(id) })}>edit</button>`
-                  : h`<button class="fork-btn" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
+                  ? h`
+                    <button class="deck-action-btn deck-action-edit" onclick=${handle((e) => { e.stopPropagation(); enterEdit(id) })}>edit</button>
+                    <button class="deck-action-btn deck-action-delete" onclick=${handle((e) => { e.stopPropagation(); deleteFork(id) })}>delete</button>
+                  `
+                  : h`<button class="deck-action-btn deck-action-fork" onclick=${handle((e) => { e.stopPropagation(); forkDeck(id) })}>fork</button>`}
               </div>
               ${() => {
                 // Live mastery summary — climbs with elapsed time since
@@ -936,10 +955,9 @@ mount(h`
         const card = currentCard()
         const activeSet = activeCardIds(deckId)
 
-        // Studied card area: either the current queue card OR an
-        // empty-state pointing the learner at the manage panel below.
-        // Two distinct emptys — fresh deck (no active cards yet) vs.
-        // session-complete (active cards exist, none currently due).
+        // Studied-card spot: either the flip card OR an empty-state.
+        // Both share the same outer height so the layout doesn't jump
+        // when transitioning between (card → no-card → card).
         const studyArea = card
           ? h`
             <div class="card ${() => revealed() ? 'revealed' : ''}"
@@ -961,32 +979,12 @@ mount(h`
                 </div>
               </div>
             </div>
-            ${() => {
-              // Mastery strip — tied to the current queue card so the
-              // learner sees the climbing bar for what they're about
-              // to grade. Always shown; gray for no-history.
-              const idx = currentCardIdx()
-              if (idx == null) return null
-              const review = reviewStateForCard(deckId, idx)
-              const hasHistory = !!review.lastReviewAt
-              const m = masteryOf(review, time.get())
-              const pct = Math.min(100, (m / 7) * 100)
-              const color = hasHistory ? masteryColor(m) : '#aaa'
-              return h`
-                <div class="study-mastery-wrap">
-                  <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
-                    <div class="study-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
-                  </div>
-                  <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
-                </div>
-              `
-            }}
           `
           : activeSet.size === 0
             ? h`
               <div class="study-empty">
                 <h3>no cards yet</h3>
-                <p>hover over <em>manage deck</em> below and click a card to add it to your study set.</p>
+                <p>tap <em>manage deck</em> below and click a card to add it to your study set.</p>
               </div>
             `
             : h`
@@ -995,6 +993,38 @@ mount(h`
                 <p>nothing due right now — come back later, or manage your deck below to add more cards.</p>
               </div>
             `
+
+        // Mastery strip — always rendered so its presence doesn't shift
+        // the layout between card / no-card states. When there's no
+        // current card, the bar is empty and the label reads
+        // "mastery: n/a" in the same gray as a no-history card.
+        const masteryStrip = h`
+          <div class="study-mastery-wrap">
+            ${() => {
+              if (!card) {
+                return h`
+                  <div class="study-mastery" title="no cards" style="color: #aaa">
+                    <div class="study-mastery-bar" style="width:0%"></div>
+                  </div>
+                  <div class="study-mastery-label" style="color: #aaa">mastery: n/a</div>
+                `
+              }
+              const idx = currentCardIdx()
+              if (idx == null) return null
+              const review = reviewStateForCard(deckId, idx)
+              const hasHistory = !!review.lastReviewAt
+              const m = masteryOf(review, time.get())
+              const pct = Math.min(100, (m / 7) * 100)
+              const color = hasHistory ? masteryColor(m) : '#aaa'
+              return h`
+                <div class="study-mastery" title=${hasHistory ? `mastery: ${m.toFixed(4)} / 7` : 'no history yet'} style=${`color: ${color}`}>
+                  <div class="study-mastery-bar" style=${`width:${hasHistory ? pct.toFixed(0) : 0}%`}></div>
+                </div>
+                <div class="study-mastery-label" style=${`color: ${color}`}>${hasHistory ? `mastery ${m.toFixed(4)}` : 'mastery: n/a'}</div>
+              `
+            }}
+          </div>
+        `
 
         // Manage panel: collapsed pill by default; the whole deck's
         // cards revealed on hover. Sorted by due-time ascending (next
@@ -1074,23 +1104,32 @@ mount(h`
           </div>
         `
 
-        // Grades and the manage panel share the same vertical slot:
-        // when the card is flipped (revealed) the four grade buttons
-        // sit there; otherwise the manage-deck pill (which expands on
-        // hover) takes the same space. Keeps the page from jumping
-        // around as you flip/grade.
-        const gradesPanel = h`
-          <div class="grades">
-            <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
-            <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
-            <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
-            <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
+        // Grade buttons live inside a fixed-height slot that's ALWAYS
+        // present (just empty when not revealed). The manage panel
+        // sits below with extra breathing room ("half as far again")
+        // so it never visually crowds the buttons, and so it stays put
+        // when grade buttons appear/disappear.
+        const actionsSlot = h`
+          <div class="study-actions-slot">
+            ${() => (card && revealed())
+              ? h`
+                <div class="grades">
+                  <button class="grade-again" onclick=${handle(() => grade(0))}>again</button>
+                  <button class="grade-hard"  onclick=${handle(() => grade(1))}>hard</button>
+                  <button class="grade-good"  onclick=${handle(() => grade(2))}>good</button>
+                  <button class="grade-easy"  onclick=${handle(() => grade(3))}>easy</button>
+                </div>
+              `
+              : null
+            }
           </div>
         `
 
         return h`
           ${studyArea}
-          ${() => (card && revealed()) ? gradesPanel : managePanel}
+          ${masteryStrip}
+          ${actionsSlot}
+          ${managePanel}
         `
       }}
     </div>

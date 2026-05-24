@@ -4,22 +4,28 @@
     html { scrollbar-gutter: stable; }
     body { max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem; }
 
-    .header  { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.25rem; }
     /* Brand lockup: mark + wordmark, single clickable unit linking home.
        Page title ("explorer") sits beside it as a separate, lighter
-       element so the relationship reads as [home] · [you-are-here]. */
+       element so the relationship reads as [home] · [you-are-here].
+       Matches the flashcards/journal/location treatment so the
+       "streamo · <app>" line reads identically across apps — h1 as
+       the flex container with baseline alignment, so the two text
+       items share a single baseline regardless of size difference. */
+    h1 { display: flex; align-items: baseline; margin-bottom: 0.4rem; font-weight: 600; }
     .brand-lockup {
-      font-size: 1.6rem;
+      font-size: 1.4rem;
       letter-spacing: -0.02em;
       color: var(--ink);
       text-decoration: none;
     }
-    .brand-lockup img { width: 1.8rem; height: 1.8rem; vertical-align: baseline; margin-right: 0.4rem; }
+    .brand-lockup img { width: 1.6rem; height: 1.6rem; vertical-align: baseline; margin-right: 0.35rem; }
     .brand-lockup:hover { opacity: 0.8; }
     .page-title {
-      font-size: 0.95rem;
+      font-weight: 400;
+      font-size: 0.9rem;
       color: var(--ink-dim);
       letter-spacing: 0.04em;
+      margin-left: 0.5rem;
     }
     .page-title::before { content: '· '; opacity: 0.5; }
     .crumbs  { font-size: 0.85rem; color: var(--ink-dim); }

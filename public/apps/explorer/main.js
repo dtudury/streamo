@@ -192,12 +192,12 @@ recaller.watch('strip-sync', () => {
 // subscribes only to hashParts.1 + .2, so intra-repo address changes
 // don't re-run it (only at-view's inner slots wake on those).
 mount(h`
-  <div class="header">
+  <h1>
     <a class="brand-lockup" href="/" title="streamo home">
       <img src="/streamo.svg" alt="">streamo
     </a>
     <span class="page-title">explorer</span>
-  </div>
+  </h1>
   <div class=${() => ['conn', state.get('connection').status || null]}>${() => state.get('connection').text}</div>
   ${() => {
     const keyHex = getKeyHex()

@@ -61,6 +61,26 @@ Each layer carries streamo-specific properties. Records are *indelible and signe
 
 This is the shape that makes *"no server holds authority"* concrete: the records can live anywhere, the procedure can be run anywhere, and the image can be rendered by anyone — and as long as the inputs and the procedure check out, the image they hand you is verifiable on your own device. The relay is a delivery convenience, not a source of truth.
 
+### records compose by mounting other records
+
+A record's value can carry a `mounts` key — a flat map from URL path-prefixes to other records by pubkey:
+
+```js
+{
+  files: { "main.js": "…", "index.html": "…" },
+  mounts: {
+    "streamo/": { ref: "<library-key>" },             // latest of that record
+    "lib/v1/":  { ref: "<key>", dataAddress: 12345 }  // pinned to a commit
+  }
+}
+```
+
+When the relay resolves a URL inside this record, it walks `files` first, then `mounts` (longest-prefix wins), recursing into the mounted records with per-request cycle detection by pubkey. `fileSync` mirrors the same composed tree onto disk — your own files round-trip to commits; mounted records' files materialize read-only at their declared prefix paths so the editor resolves imports against the same hierarchy the URL serves.
+
+The model is git submodules' spirit (content-addressed reference at a path) plus import maps' shape (declarative key→target). Forking a record with mounts gives you a record that doesn't have to know where its dependencies physically sit; the mounted records' chains stay independent.
+
+`scripts/demo-mounts.js` shows the whole pipeline end-to-end on your disk.
+
 ## three ways to use streamo
 
 There are basically three audiences. Pick the one that's you:

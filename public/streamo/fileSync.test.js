@@ -339,22 +339,37 @@ describe(import.meta.url, ({ test }) => {
       try {
         // Confirm initial materialization
         assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'UPSTREAM')
+        // parcel/watcher batches and delays events (especially on macOS
+        // FSEvents under load). The initial create events fire some
+        // hundreds of ms after subscribe; we need to wait for that
+        // first batch to drain BEFORE tampering, otherwise our tamper
+        // write can be batched with the initial creates and the
+        // content-check sees UPSTREAM (the latest write) and decides
+        // it isn't a real edit. The 600ms grace below is enough on
+        // every platform we've observed; bump if a CI host flakes.
+        await new Promise(r => setTimeout(r, 600))
         // User edits the mounted file
         await writeFile(join(dir, 'streamo/h.js'), 'tampered')
         // Wait for the watcher to fire, log, and re-materialize.
-        // Polling rather than a fixed sleep so the test isn't brittle.
-        const deadline = Date.now() + 2000
+        // 5s deadline is generous; on a quiet machine it fires within
+        // ~100ms, on a busy macOS host (running the full suite in
+        // parallel) up to ~1.5s. Five seconds keeps the test honest
+        // without ever being the slowest part of the suite.
+        const deadline = Date.now() + 5000
         while (Date.now() < deadline) {
-          const content = await readFile(join(dir, 'streamo/h.js'), 'utf8')
-          if (content === 'UPSTREAM' && captured.some(s => s.includes('WRITE TO MOUNTED PATH'))) break
+          if (captured.some(s => s.includes('WRITE TO MOUNTED PATH'))) {
+            // Banner fired — give re-materialization a beat to land
+            await new Promise(r => setTimeout(r, 100))
+            break
+          }
           await new Promise(r => setTimeout(r, 50))
         }
-        assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'UPSTREAM',
-          'mount-path edit should have been reverted by re-materialization')
         assert.ok(captured.some(s => s.includes('WRITE TO MOUNTED PATH')),
           'expected banner to mention "WRITE TO MOUNTED PATH"')
         assert.ok(captured.some(s => s.includes('streamo/h.js')),
           'expected banner to name the affected path')
+        assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'UPSTREAM',
+          'mount-path edit should have been reverted by re-materialization')
       } finally {
         console.error = origError
         await sub.unsubscribe()

@@ -5,6 +5,91 @@ for what's next.
 
 ---
 
+## 8.8.0 — mounts: records compose like records do; todomvc deep-links
+
+**Mounts.** A record's value gains one new top-level key, parallel to
+`files`: `mounts`, mapping path-prefixes to other records by pubkey.
+Records compose at the serve layer — and at the on-disk
+materialization layer — without symlinks, import-rewriting, or any
+filesystem-level tricks. The four-phase shape that landed:
+
+```js
+{
+  files: { "main.js": "...", "index.html": "..." },
+  mounts: {
+    "streamo/": { ref: "<library-key>" },             // latest
+    "lib/v1/":  { ref: "<key>", dataAddress: 12345 }  // pinned
+  }
+}
+```
+
+- **Phase 1 — relay-side resolution.** `repoFileServer` walks `files`
+  first, then `mounts` (longest-prefix wins), recursing into mounted
+  records with per-request cycle detection by pubkey. Mount entries
+  optionally carry a `dataAddress` that pins to a specific commit of
+  the mounted record; the pin propagates only into its own subtree.
+  `serveFromRepo` accepts new `registry` + `pubkeyHex` options;
+  without them, mounts are silently ignored (files-only mode is
+  unchanged).
+
+- **Phase 2 — fileSync materializes mounts onto disk.** Mounted
+  records' files appear at their declared prefix paths on disk —
+  read-only one-way materialization. Two accepts filters keep the
+  layers clean: `acceptsForDisk` (gitignore + always-ignore — anything
+  we manage) and `acceptsForCommit` (same minus paths under any mount
+  prefix — anything we'd commit to this record's chain). Mount paths
+  pass the first, fail the second; user edits on mount paths get
+  filtered out of the commit flow.
+
+- **Phase 3 — read-only enforcement with a loud banner.** When a write
+  event hits a mount path AND the on-disk content differs from what
+  the mounted record would materialize there, fileSync logs an
+  unmissable multi-line `console.error` banner naming the path(s) and
+  immediately re-materializes from the upstream record. The user's
+  edit visibly reverts.
+
+- **Phase 4 — `followMounts: true` in registrySync.** Opt-in
+  content-driven cascade: each synced record's `mounts` table is
+  walked and every mount target is auto-subscribed, in the same
+  reactive watch pattern `follow` already uses for app-defined fields.
+  Composes with `follow`; both fire on value change. Closes the
+  "subscribe to a record with mounts → bytes for the mount targets
+  flow in too" gap.
+
+A new `scripts/demo-mounts.js` shows the whole pipeline end-to-end on
+your disk: two in-process records (library + app) compose into a
+single tree via fileSync, then a tampering attempt fires the banner
+and the file reverts. Output is a real folder you can `cd` into and
+explore.
+
+**Bonus fix surfaced en-route.** fileSync now `realpath()`s its watch
+folder up front. The new banner test exposed a latent macOS symlink
+issue (`/var/folders` ↔ `/private/var/folders`) — parcel/watcher's
+events came back with the resolved path while the existing code held
+the unresolved one, so `relative()` produced `../../private/...`
+paths that the accepts filter couldn't recognize. None of the
+previous tests exercised the watcher far enough to surface it.
+
+**todomvc grew real share-and-deep-link.** The URL now carries the
+key of the list being viewed (`#/<keyHex>`, `#/<keyHex>/active`,
+etc.) — your todomvc URL is shareable and deep-link-viewable without
+a login. Pasting a friend's URL into a fresh browser shows their list
+read-only, with an "× sign in instead" affordance at the top to clear
+the deep-link and reach login. After signing in, the URL either
+preserves the friend's key (logged-in but viewing-other, read-only)
+or navigates to your own list. Editing is gated by `canWrite()` —
+write affordances only show when the URL key matches the signed-in
+key. The same `urlKey()`/`canWrite()` pair drives every gate, so the
+state space stays clean.
+
+The explorer's `/streams/<key>/<path>` route already composed with
+the cold-link auto-subscribe shipped in 8.7.0, so the
+todomvc → explorer journey works both directions out of the box:
+follow "explore this data →" from todomvc, land on the explorer with
+the right key, watch the bytes resolve.
+
+---
+
 ## 8.7.0 — flashcards as a real app; `Addressifier.close()` lands the seed-history race
 
 **Flashcards graduated from "in progress" to a real demo.** A

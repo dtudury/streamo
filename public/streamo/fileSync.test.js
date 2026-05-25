@@ -584,4 +584,89 @@ describe(import.meta.url, ({ test }) => {
       await cleanup()
     }
   })
+
+  // ── meta strategy: merge (default) vs replace ────────────────────────────
+  // `meta: 'merge'` (default) spreads the file's keys into the existing
+  // value — keys set by other writers (seed steps, code) survive.
+  // `meta: 'replace'` mirrors the file literally — absent keys are removed.
+
+  test('recordFile + meta:merge — keys set by code coexist with keys from streamo.json', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      // Pre-existing Record has code-set meta the file doesn't know about.
+      const repo = sealedRepo({ journalists: ['alice', 'bob'] }, 'code seed')
+      // Disk: streamo.json declares mounts ONLY (no journalists key).
+      await writeFile(
+        join(dir, 'streamo.json'),
+        JSON.stringify({ mounts: { 'lib/': { key: KEY_B } } }, null, 2)
+      )
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true })  // meta default = merge
+      try {
+        // Both intents coexist on the Record's value.
+        assert.deepEqual(repo.get('journalists'), ['alice', 'bob'], 'code-set journalists preserved')
+        assert.deepEqual(repo.get('mounts'), { 'lib/': { key: KEY_B } }, 'streamo.json mounts merged in')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile + meta:merge — explicit `key: null` in streamo.json removes the key', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const repo = sealedRepo({ title: 'Old', journalists: ['alice'] })
+      await writeFile(
+        join(dir, 'streamo.json'),
+        JSON.stringify({ title: null, mounts: { 'lib/': { key: KEY_B } } }, null, 2)
+      )
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
+      try {
+        assert.equal(repo.get('title'), undefined, 'title: null removed the key')
+        assert.deepEqual(repo.get('journalists'), ['alice'], 'other code-set keys preserved')
+        assert.deepEqual(repo.get('mounts'), { 'lib/': { key: KEY_B } })
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile + meta:replace — keys absent from streamo.json are removed from the Record', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const repo = sealedRepo({ title: 'Old', journalists: ['alice'] })
+      await writeFile(
+        join(dir, 'streamo.json'),
+        JSON.stringify({ mounts: { 'lib/': { key: KEY_B } } }, null, 2)
+      )
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true, meta: 'replace' })
+      try {
+        // 'replace' is the strict-file-as-truth mode: title and journalists
+        // are absent from streamo.json, so they're gone from the Record.
+        assert.equal(repo.get('title'), undefined)
+        assert.equal(repo.get('journalists'), undefined)
+        assert.deepEqual(repo.get('mounts'), { 'lib/': { key: KEY_B } })
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('meta strategy: rejects unknown values', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const repo = new Repo()
+      await assert.rejects(
+        () => fileSync(repo, dir, dataDir, { recordFile: true, meta: 'splice' }),
+        /must be 'merge' or 'replace'/
+      )
+    } finally {
+      await cleanup()
+    }
+  })
 })

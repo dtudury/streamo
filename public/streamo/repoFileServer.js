@@ -152,10 +152,10 @@ function readFile (repo, path, atDataAddress) {
  * @param {string} pubkeyHex
  * @param {string} path
  * @param {number|undefined} atDataAddress
- * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }} registry
+ * @param {import('./RepoRegistry.js').RepoRegistry} registry
  * @param {Set<string>} visited
  */
-function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, visited) {
+async function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, visited) {
   if (visited.has(pubkeyHex)) return null
   visited.add(pubkeyHex)
 
@@ -188,8 +188,16 @@ function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, visite
   if (!/^[0-9a-f]{66}$/.test(mount.key)) return null
 
   const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-  const mountedRepo = registry.get(mount.key)
-  if (!mountedRepo) return null  // not subscribed; resolution falls through to 404
+  // `registry.open` here is the substrate's local-materialize verb (the
+  // current name of what becomes `_materialize` in the held-for-major
+  // rename — see ROADMAP). archiveSync-backed factories awaited inside
+  // `open` replay the on-disk `.bin` into the Repo before resolving,
+  // so the await below means "the bytes for this mount target are
+  // loaded by the time we recurse." For mount targets the relay has
+  // no archive for, `open` returns an empty Repo and the recursion
+  // falls through to a missing-file 404 — same end state as before,
+  // without the "did we pre-subscribe?" race.
+  const mountedRepo = await registry.open(mount.key)
 
   return resolveInRecord(
     mountedRepo,
@@ -264,7 +272,7 @@ export function serveFromRepo (repo, options = {}) {
     pubkeyHex = '__root__'
   } = options
 
-  return function repoFileMiddleware (req, res, next) {
+  return async function repoFileMiddleware (req, res, next) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return next()
 
     const path = normalize(pathFromReq(req))
@@ -272,20 +280,25 @@ export function serveFromRepo (repo, options = {}) {
 
     // Two resolution modes:
     //   - registry provided → walk files + mounts recursively, with
-    //     cycle detection. Mount targets must already be in the
-    //     registry (no on-demand subscribe in this layer; that
-    //     happens upstream via registrySync's `follow` callback).
+    //     cycle detection. Mount targets are materialized lazily via
+    //     `registry.open` inside the resolver (archiveSync-backed
+    //     factories load the on-disk .bin during the open's await), so
+    //     no startup pre-subscription is needed.
     //   - no registry → files-only on the served repo, as before.
     let resolved
-    if (registry) {
-      resolved = resolveInRecord(repo, pubkeyHex, path, undefined, registry, new Set())
-      if (!resolved) return next()
-    } else {
-      const files = readFilesMap(repo)
-      if (!files || typeof files !== 'object' || files instanceof Uint8Array) return next()
-      const value = files[path]
-      if (value === undefined) return next()
-      resolved = { repo, leafPath: path, leafDataAddress: undefined, value }
+    try {
+      if (registry) {
+        resolved = await resolveInRecord(repo, pubkeyHex, path, undefined, registry, new Set())
+        if (!resolved) return next()
+      } else {
+        const files = readFilesMap(repo)
+        if (!files || typeof files !== 'object' || files instanceof Uint8Array) return next()
+        const value = files[path]
+        if (value === undefined) return next()
+        resolved = { repo, leafPath: path, leafDataAddress: undefined, value }
+      }
+    } catch (e) {
+      return next(e)
     }
 
     let bytes = encodeForResponse(resolved.leafPath, resolved.value)

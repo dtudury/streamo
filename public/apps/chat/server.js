@@ -171,9 +171,11 @@ if (server.signer) {
 
   // Mirror the authored homepage at public/homepage/ to/from the home repo's
   // `files` key.  fileSync is bidirectional: edits on disk become commits,
-  // commits become disk writes.
+  // commits become disk writes. `recordFile: 'streamo.json'` separates the
+  // home Record's metadata (mounts, title, etc.) from the file tree so a
+  // homepage's `mounts` table can be authored on disk as plain JSON.
   const homepageDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'homepage')
-  await server.files(homepageDir)
+  await server.files(homepageDir, { recordFile: 'streamo.json' })
   console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
 }
 

@@ -419,10 +419,22 @@ function metaEqual (a, b) {
  *   `files` key. Lets you edit `mounts` and other top-level keys
  *   (`title`, `description`, `members`, etc.) in your editor as plain
  *   JSON, with the file tree continuing to own the `files` key.
+ * @param {'merge'|'replace'} [options.meta='merge']  how a streamo.json
+ *   edit composes into the Record's value. `'merge'` (default) spreads
+ *   the file's keys into the existing value — keys not mentioned in
+ *   streamo.json are preserved (e.g., journalists set by code, files
+ *   set by the tree). Use `key: null` in streamo.json to explicitly
+ *   remove a key. `'replace'` mirrors the file literally: any key not
+ *   in streamo.json is removed from the Record's meta. Pick `replace`
+ *   when streamo.json is the sole authority for meta (no other writers
+ *   contribute keys); `merge` otherwise.
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
-  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false } = options
+  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, meta: metaStrategy = 'merge' } = options
+  if (metaStrategy !== 'merge' && metaStrategy !== 'replace') {
+    throw new Error(`fileSync: meta option must be 'merge' or 'replace', got: ${metaStrategy}`)
+  }
   const recordFile = resolveRecordFileName(recordFileOpt)
   // Resolve symlinks in the folder path up front so the watcher's
   // event paths (which come back resolved on some OSes — notably
@@ -458,17 +470,30 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     if (working.get() === undefined) return working.set({ [FILES_KEY]: files })
     return working.set(FILES_KEY, files)
   }
-  // setRecordMeta replaces the WHOLE value with a fresh object that
-  // carries the new meta keys + the current files key (preserved). Any
-  // top-level keys that were present but aren't in the new meta get
-  // dropped — that's the right semantic when the user edits
-  // streamo.json: removing a key from the JSON means removing it from
-  // the record.
+  // setRecordMeta composes the streamo.json edit into the Record's
+  // value, per `metaStrategy`:
+  //   - 'merge' (default): spread the file's keys into the existing
+  //     value. Keys not mentioned in streamo.json survive (other
+  //     writers — seed steps, code — keep their keys). A `null` value
+  //     in streamo.json explicitly removes that key from the Record.
+  //   - 'replace': the file is the sole truth for meta; keys absent
+  //     from streamo.json are removed. `files` is always preserved
+  //     (it's owned by the file tree, not the meta channel).
   const setRecordMeta = (working, meta) => {
-    const currentFiles = working.get(FILES_KEY)
-    const next = { ...(meta ?? {}) }
-    if (currentFiles !== undefined) next[FILES_KEY] = currentFiles
-    working.set(next)
+    if (metaStrategy === 'replace') {
+      const currentFiles = working.get(FILES_KEY)
+      const next = { ...(meta ?? {}) }
+      if (currentFiles !== undefined) next[FILES_KEY] = currentFiles
+      working.set(next)
+    } else {
+      const current = working.get() ?? {}
+      const next = { ...current }
+      for (const [k, v] of Object.entries(meta ?? {})) {
+        if (v === null) delete next[k]
+        else next[k] = v
+      }
+      working.set(next)
+    }
   }
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)

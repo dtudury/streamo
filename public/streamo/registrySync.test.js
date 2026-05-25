@@ -360,7 +360,7 @@ describe(import.meta.url, ({ test }) => {
     libRepo.set({ files: { 'h.js': 'library' } })
     rootRepo.set({
       files: { 'main.js': 'app' },
-      mounts: { 'streamo/': { ref: libKey } }
+      mounts: { 'streamo/': { key: libKey } }
     })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
@@ -394,7 +394,7 @@ describe(import.meta.url, ({ test }) => {
     rootRepo.set({
       members: [aliceKey],
       files: {},
-      mounts: { 'lib/': { ref: libKey } }
+      mounts: { 'lib/': { key: libKey } }
     })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)

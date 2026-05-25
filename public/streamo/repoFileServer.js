@@ -81,8 +81,8 @@ function readFilesMap (repo, filesKey) {
  * (a sibling of `files`). Returns undefined when the repo has no mounts
  * or the structure isn't an object.
  *
- * A mount entry is `{ ref: <pubkeyHex>, dataAddress?: number }`. The
- * `ref` is the pubkey of the record to mount; `dataAddress`, when
+ * A mount entry is `{ key: <pubkeyHex>, dataAddress?: number }`. The
+ * `key` is the pubkey of the record to mount; `dataAddress`, when
  * present, pins to a specific commit (otherwise we serve the mounted
  * record's latest content).
  *
@@ -186,16 +186,16 @@ function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, filesK
   if (!bestPrefix) return null
 
   const mount = mounts[bestPrefix]
-  if (!mount || typeof mount !== 'object' || typeof mount.ref !== 'string') return null
-  if (!/^[0-9a-f]{66}$/.test(mount.ref)) return null
+  if (!mount || typeof mount !== 'object' || typeof mount.key !== 'string') return null
+  if (!/^[0-9a-f]{66}$/.test(mount.key)) return null
 
   const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-  const mountedRepo = registry.get(mount.ref)
+  const mountedRepo = registry.get(mount.key)
   if (!mountedRepo) return null  // not subscribed; resolution falls through to 404
 
   return resolveInRecord(
     mountedRepo,
-    mount.ref,
+    mount.key,
     innerPath || 'index.html',
     typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
     registry,

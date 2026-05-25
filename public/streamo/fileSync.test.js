@@ -12,9 +12,21 @@ import { join } from 'path'
 async function makeSandbox () {
   const dir = await mkdtemp(join(tmpdir(), 'fs-test-'))
   const dataDir = await mkdtemp(join(tmpdir(), 'fs-test-data-'))
+  // Robust cleanup: rm with retry+delay because parcel/watcher's async
+  // finalization can race with the rmdir and produce ENOTEMPTY. A small
+  // pause + one retry absorbs that without leaking handles or files.
+  const tryRm = async path => {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try { await rm(path, { recursive: true, force: true }); return }
+      catch (e) {
+        if (e.code !== 'ENOTEMPTY' || attempt === 2) throw e
+        await new Promise(r => setTimeout(r, 100))
+      }
+    }
+  }
   const cleanup = async () => {
-    await rm(dir, { recursive: true, force: true })
-    await rm(dataDir, { recursive: true, force: true })
+    await tryRm(dir)
+    await tryRm(dataDir)
   }
   return { dir, dataDir, cleanup }
 }
@@ -170,7 +182,7 @@ describe(import.meta.url, ({ test }) => {
       const b = sealedRepo({ files: { 'h.js': 'export const h = …' } })
       const a = sealedRepo({
         files: { 'main.js': "import { h } from '../streamo/h.js'" },
-        mounts: { 'streamo/': { ref: KEY_B } }
+        mounts: { 'streamo/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
         filesKey: 'files',
@@ -199,7 +211,7 @@ describe(import.meta.url, ({ test }) => {
       const b = sealedRepo({ files: { 'h.js': 'B-version' } })
       const a = sealedRepo({
         files: { 'main.js': 'mine' },
-        mounts: { 'streamo/': { ref: KEY_B } }
+        mounts: { 'streamo/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
         filesKey: 'files',
@@ -233,7 +245,7 @@ describe(import.meta.url, ({ test }) => {
 
       const a = sealedRepo({
         files: { 'index.html': 'A' },
-        mounts: { 'lib/': { ref: KEY_B, dataAddress: v1Addr } }
+        mounts: { 'lib/': { key: KEY_B, dataAddress: v1Addr } }
       })
       const sub = await fileSync(a, dir, dataDir, {
         filesKey: 'files',
@@ -260,11 +272,11 @@ describe(import.meta.url, ({ test }) => {
     try {
       const b = sealedRepo({
         files: { 'b-file.txt': 'B' },
-        mounts: { 'a/': { ref: KEY_A } }
+        mounts: { 'a/': { key: KEY_A } }
       })
       const a = sealedRepo({
         files: { 'a-file.txt': 'A' },
-        mounts: { 'b/': { ref: KEY_B } }
+        mounts: { 'b/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
         filesKey: 'files',
@@ -291,11 +303,11 @@ describe(import.meta.url, ({ test }) => {
       const c = sealedRepo({ files: { 'leaf.txt': 'deep' } })
       const b = sealedRepo({
         files: { 'mid.txt': 'middle' },
-        mounts: { 'c/': { ref: KEY_C } }
+        mounts: { 'c/': { key: KEY_C } }
       })
       const a = sealedRepo({
         files: { 'top.txt': 'top' },
-        mounts: { 'b/': { ref: KEY_B } }
+        mounts: { 'b/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
         filesKey: 'files',
@@ -324,7 +336,7 @@ describe(import.meta.url, ({ test }) => {
       const b = sealedRepo({ files: { 'h.js': 'UPSTREAM' } })
       const a = sealedRepo({
         files: { 'main.js': 'mine' },
-        mounts: { 'streamo/': { ref: KEY_B } }
+        mounts: { 'streamo/': { key: KEY_B } }
       })
       // Capture console.error output so the test can assert the banner
       // fired without polluting test output.
@@ -387,7 +399,7 @@ describe(import.meta.url, ({ test }) => {
     try {
       const a = sealedRepo({
         files: { 'main.js': 'mine' },
-        mounts: { 'streamo/': { ref: KEY_B } }
+        mounts: { 'streamo/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, { filesKey: 'files' })
       try {
@@ -395,6 +407,201 @@ describe(import.meta.url, ({ test }) => {
         let exists = false
         try { await readFile(join(dir, 'streamo/h.js'), 'utf8'); exists = true } catch {}
         assert.ok(!exists, 'mount should NOT materialize without registry option')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── recordFile (streamo.json) sync — meta editor ─────────────────────────
+  // Opt-in via `recordFile: true`. fileSync syncs a JSON file at the
+  // folder root ↔ the record's value MINUS the `files` key. Lets users
+  // edit `mounts`, `title`, etc. in their editor as plain JSON.
+
+  test('recordFile: writes streamo.json on first sync when repo has meta', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const a = sealedRepo({
+        files: { 'index.html': '<h1>x</h1>' },
+        title: 'My App',
+        mounts: { 'streamo/': { key: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files', recordFile: true })
+      try {
+        const raw = await readFile(join(dir, 'streamo.json'), 'utf8')
+        const parsed = JSON.parse(raw)
+        assert.equal(parsed.title, 'My App')
+        assert.deepEqual(parsed.mounts, { 'streamo/': { key: KEY_B } })
+        assert.ok(!('files' in parsed), 'streamo.json should NOT contain files key')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: disk-wins when streamo.json exists and is newer than the commit', async ({ assert }) => {
+    // Bootstrap path: user writes streamo.json with mounts/etc, fileSync
+    // commits the meta into the record on first sync.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(
+        join(dir, 'streamo.json'),
+        JSON.stringify({
+          title: 'Bootstrap',
+          mounts: { 'lib/': { key: KEY_B } }
+        }, null, 2)
+      )
+
+      const repo = new Repo()  // fresh, no prior commit
+      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      try {
+        assert.equal(repo.get('title'), 'Bootstrap')
+        assert.deepEqual(repo.get('mounts'), { 'lib/': { key: KEY_B } })
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: streamo.json path is excluded from the `files` key', async ({ assert }) => {
+    // Critical: streamo.json must not bleed into the file tree's
+    // commit, otherwise the user's meta data would also appear under
+    // `files`. acceptsForCommit excludes it.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(join(dir, 'index.html'), '<page>')
+      await writeFile(
+        join(dir, 'streamo.json'),
+        JSON.stringify({ title: 'Combined' }, null, 2)
+      )
+
+      const repo = new Repo()
+      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      try {
+        assert.equal(repo.get('files', 'index.html'), '<page>')
+        assert.equal(repo.get('title'), 'Combined')
+        const files = repo.get('files')
+        assert.ok(!('streamo.json' in files),
+          'streamo.json must NOT appear in the files key')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: a `files` key inside streamo.json is dropped with a warning', async ({ assert }) => {
+    // streamo.json is for everything-except-files. If a `files` key
+    // appears, it's user error or a bad import — ignore + warn.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(
+        join(dir, 'streamo.json'),
+        JSON.stringify({ title: 'OK', files: { 'should-not-land.txt': 'X' } }, null, 2)
+      )
+      const origWarn = console.warn
+      const warnings = []
+      console.warn = (...args) => warnings.push(args.join(' '))
+
+      const repo = new Repo()
+      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      try {
+        assert.equal(repo.get('title'), 'OK')
+        // The bad files entry MUST NOT land — the file tree is authoritative
+        const repoFiles = repo.get('files')
+        assert.ok(!repoFiles || !('should-not-land.txt' in repoFiles),
+          'files key from streamo.json must NOT bleed into the record')
+        assert.ok(warnings.some(w => w.includes('files')),
+          'expected a warning about the files key being ignored')
+      } finally {
+        console.warn = origWarn
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: invalid JSON skips the commit (mid-edit grace)', async ({ assert }) => {
+    // Saving mid-edit produces transient invalid JSON. fileSync should
+    // warn and skip, not crash; next valid save commits cleanly.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(join(dir, 'streamo.json'), '{ broken json oops')
+      const origWarn = console.warn
+      const warnings = []
+      console.warn = (...args) => warnings.push(args.join(' '))
+
+      const repo = new Repo()
+      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      try {
+        // No commit; repo's value should still be undefined / empty
+        assert.equal(repo.lastCommit, null, 'no commit on invalid streamo.json')
+        assert.ok(warnings.some(w => w.includes('parse error')),
+          'expected a parse-error warning')
+      } finally {
+        console.warn = origWarn
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: disabled by default (no streamo.json appears)', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const a = sealedRepo({
+        files: { 'index.html': '<x>' },
+        mounts: { 'streamo/': { key: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files' })  // recordFile NOT set
+      try {
+        let exists = false
+        try { await readFile(join(dir, 'streamo.json'), 'utf8'); exists = true } catch {}
+        assert.ok(!exists, 'streamo.json should NOT appear without recordFile option')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: editing streamo.json commits the updated meta', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const a = sealedRepo({
+        files: { 'index.html': '<x>' },
+        title: 'Original'
+      })
+      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files', recordFile: true })
+      try {
+        // Give parcel/watcher a beat to settle on initial materialization
+        // before we tamper.
+        await new Promise(r => setTimeout(r, 600))
+        // User edits streamo.json
+        await writeFile(
+          join(dir, 'streamo.json'),
+          JSON.stringify({ title: 'Edited', mounts: { 'lib/': { key: KEY_B } } }, null, 2) + '\n'
+        )
+        // Wait for the watcher to commit
+        const deadline = Date.now() + 5000
+        while (Date.now() < deadline) {
+          if (a.get('title') === 'Edited') break
+          await new Promise(r => setTimeout(r, 50))
+        }
+        assert.equal(a.get('title'), 'Edited', 'meta should commit')
+        assert.deepEqual(a.get('mounts'), { 'lib/': { key: KEY_B } })
+        // files key preserved
+        assert.equal(a.get('files', 'index.html'), '<x>')
       } finally {
         await sub.unsubscribe()
       }

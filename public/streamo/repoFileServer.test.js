@@ -304,7 +304,7 @@ describe(import.meta.url, ({ test }) => {
     // If `files` has the requested path, the mount shouldn't be
     // consulted at all — even though a mount entry could otherwise
     // claim the same prefix.
-    const a = makeRepo({ files: { 'index.html': 'A-root' }, mounts: { 'index.html/': { ref: KEY_B } } })
+    const a = makeRepo({ files: { 'index.html': 'A-root' }, mounts: { 'index.html/': { key: KEY_B } } })
     const b = makeRepo({ files: { 'index.html': 'B-content' } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
@@ -317,7 +317,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: serves through a single mount to another record', ({ assert }) => {
-    const a = makeRepo({ files: { 'index.html': 'A' }, mounts: { 'lib/': { ref: KEY_B } } })
+    const a = makeRepo({ files: { 'index.html': 'A' }, mounts: { 'lib/': { key: KEY_B } } })
     const b = makeRepo({ files: { 'foo.js': 'console.log("from B")' } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
@@ -333,7 +333,7 @@ describe(import.meta.url, ({ test }) => {
   test('mounts: longest matching prefix wins', ({ assert }) => {
     const a = makeRepo({
       files: {},
-      mounts: { 'lib/': { ref: KEY_B }, 'lib/v2/': { ref: KEY_C } }
+      mounts: { 'lib/': { key: KEY_B }, 'lib/v2/': { key: KEY_C } }
     })
     const b = makeRepo({ files: { 'x.js': 'B-version' } })
     const c = makeRepo({ files: { 'x.js': 'C-version' } })
@@ -351,7 +351,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: missing file in mounted record falls through (404)', ({ assert }) => {
-    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: KEY_B } } })
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { key: KEY_B } } })
     const b = makeRepo({ files: { 'x.js': 'exists' } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
@@ -363,7 +363,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: missing mount target (not in registry) falls through', ({ assert }) => {
-    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: KEY_B } } })
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { key: KEY_B } } })
     // KEY_B is referenced but not in the registry
     const mw = serveFromRepo(a, {
       injectImportMap: false,
@@ -375,8 +375,8 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: cycle (A → B → A) returns 404, not infinite recursion', ({ assert }) => {
-    const a = makeRepo({ files: {}, mounts: { 'b/': { ref: KEY_B } } })
-    const b = makeRepo({ files: {}, mounts: { 'a/': { ref: KEY_A } } })
+    const a = makeRepo({ files: {}, mounts: { 'b/': { key: KEY_B } } })
+    const b = makeRepo({ files: {}, mounts: { 'a/': { key: KEY_A } } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
       registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
@@ -388,7 +388,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: self-mount (A → A) returns 404 on the would-loop path', ({ assert }) => {
-    const a = makeRepo({ files: { 'top.js': 'self' }, mounts: { 'me/': { ref: KEY_A } } })
+    const a = makeRepo({ files: { 'top.js': 'self' }, mounts: { 'me/': { key: KEY_A } } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
       registry: makeStubRegistry([[KEY_A, a]]),
@@ -403,8 +403,8 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: nested mount-through-mount works (A → B → C)', ({ assert }) => {
-    const a = makeRepo({ files: {}, mounts: { 'b/': { ref: KEY_B } } })
-    const b = makeRepo({ files: {}, mounts: { 'c/': { ref: KEY_C } } })
+    const a = makeRepo({ files: {}, mounts: { 'b/': { key: KEY_B } } })
+    const b = makeRepo({ files: {}, mounts: { 'c/': { key: KEY_C } } })
     const c = makeRepo({ files: { 'deep.txt': 'three levels' } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
@@ -429,7 +429,7 @@ describe(import.meta.url, ({ test }) => {
     w.set({ files: { 'x.txt': 'v2' } })
     b.commit(w, 'v2')
 
-    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: KEY_B, dataAddress: v1DataAddress } } })
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { key: KEY_B, dataAddress: v1DataAddress } } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
       registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
@@ -440,7 +440,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: are ignored when registry is not provided (files-only)', ({ assert }) => {
-    const a = makeRepo({ files: { 'top.txt': 'A' }, mounts: { 'lib/': { ref: KEY_B } } })
+    const a = makeRepo({ files: { 'top.txt': 'A' }, mounts: { 'lib/': { key: KEY_B } } })
     const mw = serveFromRepo(a, { injectImportMap: false })  // no registry
     const r1 = callMiddleware(mw, { path: '/top.txt' })
     assert.equal(bodyAsString(r1.body), 'A')
@@ -449,7 +449,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('mounts: invalid ref shape (not hex) falls through safely', ({ assert }) => {
-    const a = makeRepo({ files: {}, mounts: { 'lib/': { ref: 'not-a-key' } } })
+    const a = makeRepo({ files: {}, mounts: { 'lib/': { key: 'not-a-key' } } })
     const mw = serveFromRepo(a, {
       injectImportMap: false,
       registry: makeStubRegistry([[KEY_A, a]]),

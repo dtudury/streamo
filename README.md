@@ -69,8 +69,8 @@ A record's value can carry a `mounts` key — a flat map from URL path-prefixes 
 {
   files: { "main.js": "…", "index.html": "…" },
   mounts: {
-    "streamo/": { ref: "<library-key>" },             // latest of that record
-    "lib/v1/":  { ref: "<key>", dataAddress: 12345 }  // pinned to a commit
+    "streamo/": { key: "<library-key>" },             // latest of that record
+    "lib/v1/":  { key: "<key>", dataAddress: 12345 }  // pinned to a commit
   }
 }
 ```
@@ -78,6 +78,8 @@ A record's value can carry a `mounts` key — a flat map from URL path-prefixes 
 When the relay resolves a URL inside this record, it walks `files` first, then `mounts` (longest-prefix wins), recursing into the mounted records with per-request cycle detection by pubkey. `fileSync` mirrors the same composed tree onto disk — your own files round-trip to commits; mounted records' files materialize read-only at their declared prefix paths so the editor resolves imports against the same hierarchy the URL serves.
 
 The model is git submodules' spirit (content-addressed reference at a path) plus import maps' shape (declarative key→target). Forking a record with mounts gives you a record that doesn't have to know where its dependencies physically sit; the mounted records' chains stay independent.
+
+For local editing, fileSync's `recordFile: true` option syncs a `streamo.json` file at your folder root ↔ everything in the record's value *except* `files`. So your `mounts`, `title`, etc. are editable in your editor as plain JSON; the file tree still owns `files`. Bidirectional, with JSON parse errors tolerated mid-edit. Saved as the *"edit your record's non-files data the same way you'd edit any other JSON file"* affordance.
 
 `scripts/demo-mounts.js` shows the whole pipeline end-to-end on your disk.
 

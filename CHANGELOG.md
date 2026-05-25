@@ -17,8 +17,8 @@ filesystem-level tricks. The four-phase shape that landed:
 {
   files: { "main.js": "...", "index.html": "..." },
   mounts: {
-    "streamo/": { ref: "<library-key>" },             // latest
-    "lib/v1/":  { ref: "<key>", dataAddress: 12345 }  // pinned
+    "streamo/": { key: "<library-key>" },             // latest
+    "lib/v1/":  { key: "<key>", dataAddress: 12345 }  // pinned
   }
 }
 ```
@@ -55,6 +55,26 @@ filesystem-level tricks. The four-phase shape that landed:
   Composes with `follow`; both fire on value change. Closes the
   "subscribe to a record with mounts → bytes for the mount targets
   flow in too" gap.
+
+**`streamo.json` — edit your record's non-files data as JSON.** Opt-in
+`recordFile: true` on fileSync syncs a `streamo.json` file at the
+folder root ↔ the record's value MINUS the `files` key. Lets you
+edit `mounts`, `title`, `description`, `members` — whatever
+top-level keys an app stashes on the record's value — in your editor
+as plain JSON, while the file tree continues to own `files`.
+Bidirectional: write `streamo.json` and a commit fires; the record's
+non-files keys change and the file rewrites. JSON parse errors during
+saves are tolerated (warn + skip, mid-edit grace). A `files` key in
+streamo.json is stripped with a warning so the file tree's authority
+isn't accidentally challenged. Disabled by default; opt in with
+`recordFile: true` or `recordFile: 'custom-name.json'`.
+
+**Field rename `ref` → `key`.** In a mount entry, the pubkey of the
+mounted record is now `key` rather than `ref`. Matches the rest of
+streamo's vocabulary (`keyHex` everywhere; `registry.get(key)`;
+`session.subscribe(key)`). Pure naming change — 8.8.0 isn't on npm
+yet, so no migration. The `dataAddress` field (the optional commit
+pin) is unchanged.
 
 A new `scripts/demo-mounts.js` shows the whole pipeline end-to-end on
 your disk: two in-process records (library + app) compose into a

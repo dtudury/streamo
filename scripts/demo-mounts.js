@@ -74,7 +74,7 @@ app.attachSigner(appSigner, 'app')
       'main.js':    "// app code that imports from the mounted library\nimport { h, mount } from './streamo/h.js'\nconsole.log('app booted', h(), mount)\n"
     },
     mounts: {
-      'streamo/': { ref: libKeyHex }
+      'streamo/': { key: libKeyHex }
     }
   })
   app.commit(w, 'seed app + mount')

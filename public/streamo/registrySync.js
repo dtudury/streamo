@@ -290,9 +290,9 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           if (mounts && typeof mounts === 'object' && !(mounts instanceof Uint8Array)) {
             for (const mount of Object.values(mounts)) {
               if (!mount || typeof mount !== 'object') continue
-              if (typeof mount.ref !== 'string') continue
-              if (!/^[0-9a-f]{66}$/.test(mount.ref)) continue
-              subscribeToKey(mount.ref)
+              if (typeof mount.key !== 'string') continue
+              if (!/^[0-9a-f]{66}$/.test(mount.key)) continue
+              subscribeToKey(mount.key)
             }
           }
         }

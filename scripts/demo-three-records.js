@@ -141,8 +141,10 @@ await writeFile(
 
 // ── Print the three commands to copy/paste into three terminals ────────
 
+// -y auto-accepts npx's "install this?" prompt — without it, npx silently
+// falls back to PATH and you get `sh: streamo: command not found`.
 const cmd = (record, password, extra) =>
-  `npx @dtudury/streamo \\
+  `npx -y @dtudury/streamo \\
       --name ${record} --username demo --password ${password} \\
       --data-dir ./demo/${record} --files ./demo/${record}/files \\
       --key-iterations 1 ${extra}`

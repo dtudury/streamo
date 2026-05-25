@@ -1,5 +1,5 @@
 import { subscribe } from '@parcel/watcher'
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, unlink, writeFile } from 'fs/promises'
 import { existsSync, readFileSync } from 'fs'
 import { dirname, join, relative } from 'path'
 import { compile } from '@gerhobbelt/gitignore-parser'
@@ -332,6 +332,13 @@ function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes) {
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
   const { filesKey = null, registry = null, pubkeyHex = null } = options
+  // Resolve symlinks in the folder path up front so the watcher's
+  // event paths (which come back resolved on some OSes — notably
+  // macOS, where `/tmp` → `/private/tmp`) line up with our own
+  // relative() calls. Without this, `relative(folder, e.path)`
+  // produces a `../../private/...` path that the accepts filter
+  // can't match against gitignore entries.
+  try { folder = await realpath(folder) } catch { /* path may not exist yet */ }
   const acceptsForDisk = buildFilter(folder, dataDir)
 
   // Two filters, two jobs:
@@ -430,8 +437,44 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // Disk → repo: fires when the filesystem changes. Uses
   // acceptsForCommit so events under mount prefixes never trigger
   // commits — mounted files are read-only at this layer.
+  //
+  // Read-only enforcement on mount paths: any event that
+  // acceptsForDisk admits but acceptsForCommit rejects (i.e., we'd
+  // manage this path but it falls under a mount prefix) is treated as
+  // a write-to-read-only-territory. We log a loud banner naming the
+  // paths and immediately re-materialize from the upstream mounted
+  // record — the user's edit visibly reverts, making the read-only
+  // contract impossible to miss.
   const subscription = await subscribe(folder, (err, events) => {
     if (err) { console.error('fileSync watcher error:', err); return }
+
+    // Edits that hit a mount path — read-only territory.
+    const mountEdits = events.filter(e => {
+      const rel = relative(folder, e.path)
+      return acceptsForDisk(rel) && !acceptsForCommit(rel)
+    })
+    if (mountEdits.length > 0) {
+      const paths = mountEdits.map(e => relative(folder, e.path))
+      console.error('\n' + '━'.repeat(72))
+      console.error('⚠️  WRITE TO MOUNTED PATH IGNORED')
+      console.error('━'.repeat(72))
+      console.error('You edited a path that is materialized from a mounted record.')
+      console.error('That record has its own signed chain; this fileSync does not')
+      console.error('own those bytes. Your edit will be reverted on the next sync.')
+      console.error('')
+      console.error('Affected path(s):')
+      for (const p of paths) console.error('  • ' + p)
+      console.error('')
+      console.error('To edit those files, fork the mounted record into one you own')
+      console.error('and update this record\'s mounts table to reference your fork.')
+      console.error('━'.repeat(72) + '\n')
+      // Re-materialize immediately so the edit visibly reverts. Cheap
+      // (writes the same bytes the mounted record had); ensures the
+      // disk doesn't carry a misleading state past the banner.
+      flushToDisk()
+    }
+
+    // Own-file edits — the commit path.
     const relevant = events.filter(e => acceptsForCommit(relative(folder, e.path)))
     if (!relevant.length) return
     if (committingFromDisk) return

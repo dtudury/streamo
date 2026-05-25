@@ -314,6 +314,56 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  test('mounts: editing a mounted path logs a banner and reverts the file', async ({ assert }) => {
+    // Read-only enforcement: an edit to a mount path triggers a loud
+    // console.error banner AND triggers a re-materialization that
+    // overwrites the user's edit. The disk-resident bytes return to
+    // the upstream mounted record's content.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const b = sealedRepo({ files: { 'h.js': 'UPSTREAM' } })
+      const a = sealedRepo({
+        files: { 'main.js': 'mine' },
+        mounts: { 'streamo/': { ref: KEY_B } }
+      })
+      // Capture console.error output so the test can assert the banner
+      // fired without polluting test output.
+      const origError = console.error
+      const captured = []
+      console.error = (...args) => captured.push(args.join(' '))
+      const sub = await fileSync(a, dir, dataDir, {
+        filesKey: 'files',
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        // Confirm initial materialization
+        assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'UPSTREAM')
+        // User edits the mounted file
+        await writeFile(join(dir, 'streamo/h.js'), 'tampered')
+        // Wait for the watcher to fire, log, and re-materialize.
+        // Polling rather than a fixed sleep so the test isn't brittle.
+        const deadline = Date.now() + 2000
+        while (Date.now() < deadline) {
+          const content = await readFile(join(dir, 'streamo/h.js'), 'utf8')
+          if (content === 'UPSTREAM' && captured.some(s => s.includes('WRITE TO MOUNTED PATH'))) break
+          await new Promise(r => setTimeout(r, 50))
+        }
+        assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'UPSTREAM',
+          'mount-path edit should have been reverted by re-materialization')
+        assert.ok(captured.some(s => s.includes('WRITE TO MOUNTED PATH')),
+          'expected banner to mention "WRITE TO MOUNTED PATH"')
+        assert.ok(captured.some(s => s.includes('streamo/h.js')),
+          'expected banner to name the affected path')
+      } finally {
+        console.error = origError
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('mounts: disabled when registry/pubkeyHex not provided (files-only)', async ({ assert }) => {
     // Backward compat: without registry+pubkeyHex options, mounts are
     // completely inert — nothing materializes, own files behave as

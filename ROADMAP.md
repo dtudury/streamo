@@ -714,6 +714,69 @@ fresh.
 
 ---
 
+### retire `filesKey: null` — one shape for Record values
+
+Sister issue to the static-fallback removal above, surfaced the same
+night for the same reason: it's pre-mount scaffolding the mounts
+system made obsolete.
+
+A streamo Record's value can hold files in one of two shapes today:
+
+1. **`filesKey: null` (legacy)** — the value IS the files map.
+   `Record.value = { 'h.js': '...', 'mount.js': '...' }`. Pre-mounts,
+   this was clean and direct.
+2. **`filesKey: 'files'` (mounts-aware)** — files live under a key,
+   leaving room for sibling metadata. `Record.value = { files: { ... },
+   mounts: { ... }, title: '...', ... }`.
+
+When mounts shipped, the second shape became necessary — there's no
+room for a `mounts` table next to files in the first shape without
+the table being indistinguishable from a file named `mounts`. So the
+CLI grew `--files-key` to opt into the second shape, and the
+`recordFile` (streamo.json) sync that populates `value.mounts` from
+disk was gated on `filesKey !== null`. The first shape stayed as the
+default for back-compat.
+
+**The footgun we hit on 2026-05-24:** a user (us) running
+`npx @dtudury/streamo --files ./files` with a `streamo.json` in the
+directory but *without* `--files-key` gets:
+  - files at value root (legacy shape)
+  - streamo.json synced as a regular file, NOT as `value.mounts`
+  - mount resolver finds no mounts table, falls through to the
+    static fallback
+  - no error, no warning. Silent papering.
+
+The fix: **rip out the `filesKey: null` branch entirely.** One shape,
+one place files live (`value.files`), one place metadata lives (sibling
+keys on the value). The `recordFile is only on when filesKey is
+non-null` gating clause disappears because there's no null mode to
+gate. The footgun dissolves because the only shape is the right shape.
+
+Migration touch-list (small, because the legacy user base is *us*):
+
+1. **CLI:** flip `filesKey: options.filesKey || null` to default to
+   `'files'`, or remove the option entirely if there's never a reason
+   to override.
+2. **`fileSync` / `serveFromRepo` / `repoFileServer`:** remove the
+   `filesKey === null` branches. `readFilesMap`, `readFile`, etc.
+   simplify to one path.
+3. **`recordFile` sync:** unconditional. The gating clause goes away.
+4. **Records to migrate** — streamo.dev's homepage, the chat room,
+   the flashcards reviews repos, the `streamo-history` Record, our
+   local forks. One signed commit per Record (fileSync writes the
+   new shape; the chain absorbs it).
+5. **Docs:** FIRST_STEPS.md, README, any reference to `--files-key`
+   becomes unnecessary.
+
+Bundles naturally with the static-fallback removal — same major
+bump, same migration window for streamo.dev's Records, same "we're
+retiring scaffolding now that the better way is real" framing.
+Together they read as one arc: *every Record uses the structured
+shape, every URL resolves through the mount system, no scaffolding
+left from the pre-mount era.*
+
+---
+
 ### multi-device write conflict recovery *(detection landed in 8.0; UX is the open thread)*
 
 Streamo streams are byte arrays addressed by **absolute offset**. This makes a

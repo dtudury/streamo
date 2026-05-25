@@ -42,7 +42,20 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
 
   if (serveRepoFiles && serveRepoFiles.repo) {
     const { repo, ...serveOpts } = serveRepoFiles
-    app.use(serveFromRepo(repo, serveOpts))
+    // Auto-thread registry + primaryKeyHex so serveFromRepo's mount
+    // resolver fires. Without these, serveFromRepo silently falls into
+    // files-only mode (value.mounts ignored entirely), and the static
+    // fallback masks the gap because the bundled package ships the
+    // same paths the mount table would have resolved. Discovered during
+    // the three-record demo on 2026-05-24: every "compose via mounts"
+    // claim was actually express.static serving from publicDir. The
+    // caller can still override by passing registry/pubkeyHex
+    // explicitly in serveRepoFiles.
+    app.use(serveFromRepo(repo, {
+      registry,
+      pubkeyHex: primaryKeyHex,
+      ...serveOpts
+    }))
   }
 
   // Multi-home file serving: any repo the registry holds is addressable at

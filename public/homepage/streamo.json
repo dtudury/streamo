@@ -2,6 +2,18 @@
   "mounts": {
     "streamo/": {
       "key": "02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a"
+    },
+    "apps/chat/": {
+      "key": "039678087054203b8a99c0a36a1b57aed64fe8827c2e07cf88f289372ad244e5f3"
+    },
+    "apps/flashcards/": {
+      "key": "0256214d4b5e17250e857dcab82cfeb84576879888de2b2324df95ff23ead57845"
+    },
+    "apps/explorer/": {
+      "key": "0248901ec1f6d61266346dd35277c27760523a701cf6882ab8dfd3a7389a1d4b02"
+    },
+    "apps/todomvc/": {
+      "key": "0237b6d9aa6586d993db948d4bf9fe66526d9c7ffe9fe105e69c7230d37cd7cdf0"
     }
   }
 }

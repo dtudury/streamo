@@ -654,6 +654,66 @@ pays for all three.
 
 ---
 
+### remove the `public/*` static fallback — the site composes from Records
+
+The relay's web server ends its middleware chain with
+`app.use(express.static(publicDir))` — when the homepage Record's
+mount resolver misses, the request falls through to the installed
+package's `public/` folder, which contains the real streamo lib
+(`public/streamo/*`) and all the bundled apps (`public/apps/*`).
+That fallback was scaffolding from before mounts existed: a forked
+homepage Record could rely on the relay's install to supply the
+library and apps for free.
+
+**The mounts system supersedes this.** A homepage Record that wants
+a library now declares a `streamo.json` with
+`mounts: { "streamo/": { key: "<library-pubkey>" } }` — content-
+addressed, signed lineage, explicit declaration of which library
+version is being composed in. The static fallback's silent
+"whatever the npm install happened to ship" becomes the mount's
+loud "this specific Record, signed by this specific key." That's
+honest. The current state isn't *wrong*, but it's hiding what mounts
+are *for* — see the three-record demo's static-fallback discovery
+session (2026-05-24) for the moment this became unignorable.
+
+Migration path (each step is a precondition of the next, not parallel):
+
+1. **Stand up a canonical library Record** — sign it, commit
+   `public/streamo/*` into its `files` key, persist on streamo.dev.
+   Open question: who signs it? Claude, David, or a new
+   `streamo-org` identity created for this purpose?
+2. **Migrate the streamo.dev homepage Record** to declare
+   `mounts: { "streamo/": { key: "<library-key>" } }` in its
+   `streamo.json`. The relay's mount resolver now serves
+   `/streamo/h.js` from the library Record — same bytes today,
+   different (and explicit) provenance.
+3. **Promote each bundled app to its own Record.** `chat`,
+   `flashcards`, `explorer`, `todomvc` each become signed,
+   addressable Records. The streamo.dev homepage's mounts table
+   grows to compose each at `apps/<name>/`.
+4. **Remove `app.use(express.static(publicDir))`** from
+   `webSync.js`. The relay no longer serves any bytes from the
+   package's `public/` folder. Every URL is now resolved through
+   the Record + mount chain.
+5. **Tighten the npm tarball** — `public/` no longer needs to ship
+   the homepage/apps as servable static assets (the lib still does,
+   because it's what authors import). The `files` field shrinks.
+
+Breaking for every fork of the homepage that relies on the static
+fallback for the library or apps. Migration is "add a `streamo.json`
+with the right mounts" — mechanical but non-zero, and forks in the
+wild won't get a deprecation warning. The major bump is the place to
+own that.
+
+What this enables: *"the entire site is a composition of Records,
+and the git repo is the place that procedure is documented +
+reproducible"* (David, 2026-05-24, on the page-as-Repo arc taken to
+its logical conclusion). See [EXPLORATION-three-records.md](./EXPLORATION-three-records.md)
+for the topology + open questions captured while the discovery was
+fresh.
+
+---
+
 ### multi-device write conflict recovery *(detection landed in 8.0; UX is the open thread)*
 
 Streamo streams are byte arrays addressed by **absolute offset**. This makes a

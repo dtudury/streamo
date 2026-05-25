@@ -24,3 +24,6 @@ node_modules/
 
 # the true price of a pretty laptop
 **/.DS_Store
+
+# three-record demo scaffolding — built by scripts/demo-three-records.js
+demo/

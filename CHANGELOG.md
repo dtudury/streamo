@@ -5,6 +5,62 @@ for what's next.
 
 ---
 
+## 10.0.0 — lock up our footguns
+
+Four held-for-major items that the names couldn't enforce on their
+own. Each closes a silent-failure mode by making the broken-call
+shape impossible to misread.
+
+**`registry.open` retired — `_materialize` + `subscribe` replace it.**
+The `open` verb was the project's longest-standing footgun: clients
+reached for it because the English meaning was right ("open this
+record"), got back a not-subscribed local Repo, and read undefined
+forever — bytes only arrived via side-effect cascades. The fix
+removes the name entirely. The substrate-internal verb is now
+`registry._materialize` (underscore-prefixed to flag "you almost
+certainly want `session.subscribe` instead"). Client code that
+wants bytes to flow over the wire uses `session.subscribe` (which
+materializes locally AND fires the wire subscribe). Three latent
+bugs surfaced + fixed in the migration: flashcards, todomvc, and
+chat/cli had been calling `registry.open` and relying on the
+home-repo cascade to subscribe for them by side effect; they now
+call `session.subscribe` directly.
+
+**`new StreamoRecordRegistry({ recaller })` is required.** Pre-10.0.0,
+omitting the recaller silently created a fresh per-registry one —
+the silent-stale-slot footgun: views read repos on a Recaller
+different from the one mount was watching, and slots went silently
+stale (no error, just "huh, why isn't this updating"). The
+constructor now takes a single options object `{ recaller, factory?,
+name? }` and throws `TypeError` on missing recaller, with a pointer
+to the rationale.
+
+**`repo.update(updateFn)` — the conflict-safe write primitive (MVP).**
+New verb. Replaces the `const c = repo.get(); repo.set({...c, x})`
+pattern that races against concurrent writers (same user, two
+devices/tabs writing concurrently; one write silently loses). The
+substrate plumbed: `repo.relayChainHash` surfaces the chain-hash the
+relay has confirmed, `repo._awaitChainHash(target)` races ack vs
+rejection, `repo._attachSession` gives Repos a back-reference to
+their session for resync, `session._resyncRepo` handles the wire-
+level reset+re-subscribe dance. Happy path tested + working;
+multi-conflict auto-retry has the substrate pieces in place but its
+interaction with WS connection lifecycle needs more work — tracked
+as 10.0.x follow-up. The MVP closes the read-stale-then-write race
+for the no-conflict case (the await closes the ack window) and
+makes conflicts loud (explicit throw vs today's silent overwrite).
+
+**`Repo` → `StreamoRecord` (the graduation).** The class name was
+generic and bumped against git semantics. Renaming it makes the
+code-side name match the project's vocabulary — *records* are
+signed, indelible, single-author, no force-push. Same pattern
+applied to `RepoRegistry` → `StreamoRecordRegistry` and
+`RepoSerializer` → `StreamoRecordSerializer`. ~50 files touched,
+mechanical rename; the graduation moves on the new name.
+
+270 tests passing. Migration is one-way (no back-compat shims);
+the held-for-major framing was always "we pay the cost once."
+
 ## 9.0.1 — FolderRecord arc completion (apps as Records + static fallback gone)
 
 After shipping 9.0.0 (the FolderRecord shape), the 9.x arc landed two

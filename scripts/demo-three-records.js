@@ -198,20 +198,19 @@ await writeFile(
 // the seeded directory and (since 9.0.0) auto-enables --record-file
 // streamo.json so value.mounts gets populated from disk.
 //
-// `npx -y @dtudury/streamo@9.0.1` pins the published version the demo
+// `npx -y @dtudury/streamo@10.0.0` pins the published version the demo
 // is known to work with — defensive against version drift (the demo
 // stays good even if a future minor changes default behavior), and a
-// clean test point: "does the demo still work with 10.0.0? drop the
-// pin and re-run." 9.0.1 is the no-static-fallback world: until the
-// library terminal starts, /streamo/* genuinely 404s (the previous
-// 9.0.0 demo passed `library bytes` via the static fallback before
-// library started; now both `library bytes` and `mount-proof` fail
-// until library is up — honest signal). If you want to test an
-// unpublished local build, substitute `node /path/to/streamo/bin/streamo.js`
+// clean test point: "does the demo still work with 11.0.0? drop the
+// pin and re-run." 10.0.0 is the lock-up-the-footguns release
+// (StreamoRecord rename + recaller-required + registry.open removed +
+// repo.update MVP); the demo's surface didn't change but the runtime
+// path now resolves through the renamed substrate. If you want to test
+// an unpublished local build, substitute `node /path/to/streamo/bin/streamo.js`
 // for the npx call.
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
-      npx -y @dtudury/streamo@9.0.1 --name ${record} --username ${username} \\
+      npx -y @dtudury/streamo@10.0.0 --name ${record} --username ${username} \\
         --files ./files ${extra}`
 
 console.log('\n' + RULE)

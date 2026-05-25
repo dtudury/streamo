@@ -199,12 +199,17 @@ await writeFile(
 // system: without it, the streamo.json on disk doesn't sync into
 // value.mounts (the recordFile sync only fires when filesKey is non-
 // null), so the mount resolver finds no mounts table and falls
-// through to the static fallback — silently. Every Record uses the
-// same filesKey so the resolver's descent into mounted records finds
-// their files in the same place.
+// through to the static fallback — silently.
+//
+// Using `node <repo>/bin/streamo.js` instead of `npx @dtudury/streamo`
+// for now: the published 8.8.0 CLI doesn't expose --record-file (or
+// auto-enable it from --files-key), so npx-based runs can never
+// populate value.mounts. Local CLI has the fix; will switch back to
+// npx once 8.9.0 publishes.
+const localCli = join(repoRoot, 'bin', 'streamo.js')
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
-      npx @dtudury/streamo --name ${record} --username ${username} \\
+      node ${localCli} --name ${record} --username ${username} \\
         --files ./files --files-key files ${extra}`
 
 console.log('\n' + RULE)

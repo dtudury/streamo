@@ -56,6 +56,14 @@ program
       .env('STREAMO_FILES_KEY')
   )
   .addOption(
+    new Option('--record-file [name]', 'sync a JSON file on disk (default: streamo.json) into the record\'s value MINUS the files key. Lets you author mounts and other top-level metadata as plain JSON. Auto-enabled when --files-key is set; use --no-record-file to disable.')
+      .env('STREAMO_RECORD_FILE')
+      .preset('streamo.json')
+  )
+  .addOption(
+    new Option('--no-record-file', 'disable the streamo.json sync even when --files-key is set')
+  )
+  .addOption(
     new Option('--merge-from <url>', 'on first run only (empty repo), fork from this URL or host. Accepts http(s)://host[:port]/streams/<keyHex> or just "host[:port]" (uses /api/info to find the primary key). Idempotent — skipped on subsequent runs.')
       .env('STREAMO_MERGE_FROM')
   )
@@ -229,8 +237,18 @@ if (options.mergeFrom) {
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'
   const filesKey = options.filesKey || null
-  await server.files(folder, { filesKey })
-  console.log(`\x1b[32mmirroring files: ${folder}${filesKey ? ` (at value.${filesKey})` : ''}\x1b[0m`)
+  // recordFile defaults coupling: when --files-key is set, the user wants
+  // the structured Record shape, which includes streamo.json sync. Auto-
+  // enable to remove the silent-failure mode where mounts authored on disk
+  // never reach value.mounts. --no-record-file explicitly disables.
+  const recordFile = options.recordFile !== undefined
+    ? options.recordFile
+    : (filesKey ? 'streamo.json' : false)
+  await server.files(folder, { filesKey, recordFile })
+  const recordFileNote = recordFile
+    ? ` (recordFile: ${recordFile === true ? 'streamo.json' : recordFile})`
+    : ''
+  console.log(`\x1b[32mmirroring files: ${folder}${filesKey ? ` (at value.${filesKey})` : ''}${recordFileNote}\x1b[0m`)
 }
 
 if (options.stateFile) {

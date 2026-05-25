@@ -222,7 +222,13 @@ async function login (e) {
   // (same, for forks; also needed for the fork-action's write path).
   // No further awaitFields here — slots fill in as bytes arrive.
   const info = await fetch('/api/info').then(r => r.json())
-  homeRepo = await registry.open(info.primaryKeyHex)
+  // `session.subscribe` (not the registry's local-materialize) — the
+  // browser needs the bytes to actually flow over the wire. Pre-10.0.0
+  // this site called `registry.open` and was a latent footgun: the
+  // Repo was created locally but no wire-subscribe ever fired, and
+  // bytes only arrived because the `follow` cascade on home.journalists
+  // was subscribing for us as a side effect.
+  homeRepo = await session.subscribe(info.primaryKeyHex)
 
   const idxStream = 'flashcards:deck-index'
   const { publicKey: idxPub } = await signer.keysFor(idxStream)

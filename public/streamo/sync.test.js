@@ -21,7 +21,7 @@ async function ensureKey () {
 
 async function openSigned (registry) {
   const key = await ensureKey()
-  const repo = await registry.open(key)
+  const repo = await registry._materialize(key)
   repo.attachSigner(SIGNER, NAME)
   return repo
 }
@@ -54,7 +54,7 @@ describe(import.meta.url, ({ test }) => {
     const { port } = wss.address()
 
     const clientRegistry = new StreamRegistry()
-    const clientStream = await clientRegistry.open(await ensureKey())
+    const clientStream = await clientRegistry._materialize(await ensureKey())
     const ws = await originSync(clientStream, KEY, 'localhost', port)
 
     await waitFor(clientStream, s => s.get('hello') === 'world')
@@ -76,7 +76,7 @@ describe(import.meta.url, ({ test }) => {
     clientStream.set({ from: 'client' })
 
     const ws = await originSync(clientStream, KEY, 'localhost', port)
-    const serverStream = await serverRegistry.open(KEY)
+    const serverStream = await serverRegistry._materialize(KEY)
 
     await waitFor(serverStream, s => s.get('from') === 'client')
     assert.equal(serverStream.get('from'), 'client', 'server received client data')
@@ -112,7 +112,7 @@ describe(import.meta.url, ({ test }) => {
     const ws1 = await originSync(s1, KEY, 'localhost', port)
     const ws2 = await originSync(s2, KEY, 'localhost', port)
 
-    const serverStream = await serverRegistry.open(KEY)
+    const serverStream = await serverRegistry._materialize(KEY)
     await waitFor(serverStream, s => s.byteLength >= s1.byteLength && s.byteLength >= s2.byteLength)
     await waitFor(s1, s => s.byteLength >= serverStream.byteLength)
     await waitFor(s2, s => s.byteLength >= serverStream.byteLength)
@@ -138,7 +138,7 @@ describe(import.meta.url, ({ test }) => {
     // The relay never calls set() or commit() — it only accumulates and re-serves
     // the byte stream it receives.
     const relayRegistry = new StreamRegistry()
-    const relayStream = await relayRegistry.open(await ensureKey())
+    const relayStream = await relayRegistry._materialize(await ensureKey())
     await originSync(relayStream, KEY, 'localhost', serverPort)
     const relayWss = outletSync(relayRegistry, 0)
     await new Promise(resolve => relayWss.on('listening', resolve))

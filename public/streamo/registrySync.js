@@ -210,7 +210,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
    * the relay's accumulator dedupes echoes via `alreadyHave`.
    */
   async function syncKey (keyHex, readerFromOffset = 0) {
-    const repo = await registry.open(keyHex)
+    const repo = await registry._materialize(keyHex)
 
     // We → peer: replay all existing chunks then stream new ones
     if (!readers.has(keyHex)) {
@@ -306,7 +306,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
    * Subscribe to keyHex from the peer: open the local Repo if not yet opened,
    * announce intent over the wire, and set up bidirectional sync. Returns the
    * Repo — this is the canonical "I want this key live" verb, collapsing
-   * `registry.open` (storage layer) and wire setup in one call.
+   * `registry._materialize` (storage layer) and wire setup in one call.
    *
    * The subscribe message carries `{ fromOffset, fromChainHash }` — the local
    * Repo's `signedLength` and `committedChainHash` — so the peer can skip
@@ -319,13 +319,13 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
    */
   async function subscribeToKey (keyHex) {
     if (!writers.has(keyHex)) {
-      const repo = await registry.open(keyHex)
+      const repo = await registry._materialize(keyHex)
       const fromOffset = repo.signedLength ?? 0
       const fromChainHash = bytesToHex(repo.committedChainHash ?? new Uint8Array(32))
       sendJson({ type: 'subscribe', key: keyHex, fromOffset, fromChainHash })
       await syncKey(keyHex)
     }
-    return await registry.open(keyHex)
+    return await registry._materialize(keyHex)
   }
 
   // Identity announcement. The remote side auto-subscribes to `home` when
@@ -368,7 +368,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           //     data flows back up through the serializer, which still
           //     chain-checks at the SIG arrival).
           // Missing fields (older clients) default to (0, 32-zeros).
-          const repo = await registry.open(msg.key)
+          const repo = await registry._materialize(msg.key)
           const fromOffset = msg.fromOffset ?? 0
           const fromChainHash = msg.fromChainHash ? hexToBytes(msg.fromChainHash) : new Uint8Array(32)
           let valid = true
@@ -514,7 +514,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  * @property {(key: string) => Promise<import('./Repo.js').Repo>} subscribe
  *   Open the Repo for `key` if not yet opened, set up bidirectional wire
  *   sync, and return the Repo. The everyday "I want this key live" verb —
- *   collapses `registry.open` + wire setup into one call.
+ *   collapses `registry._materialize` + wire setup into one call.
  */
 
 /**
@@ -682,7 +682,7 @@ export function registrySync (registry, host, port, options = {}) {
      */
     subscribe (key) {
       subscribed.add(key)
-      return peer ? peer.subscribe(key) : registry.open(key)
+      return peer ? peer.subscribe(key) : registry._materialize(key)
     }
   }
 

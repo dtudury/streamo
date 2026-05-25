@@ -23,7 +23,7 @@ async function realKey (n) {
 }
 async function openWriter (registry, n) {
   const { name, hex } = await realKey(n)
-  const repo = await registry.open(hex)
+  const repo = await registry._materialize(hex)
   repo.attachSigner(SIGNER, name)
   return { repo, hex }
 }
@@ -64,11 +64,11 @@ function startServer (registry, homeKey = null) {
 }
 
 describe(import.meta.url, ({ test }) => {
-  test('onOpen fires after registry.open resolves', async ({ assert }) => {
+  test('onOpen fires after registry._materialize resolves', async ({ assert }) => {
     const registry = new RepoRegistry()
     const calls = []
     registry.onOpen((key, repo) => calls.push({ key, repo }))
-    const repo = await registry.open('abc')
+    const repo = await registry._materialize('abc')
     assert.equal(calls.length, 1)
     assert.equal(calls[0].key, 'abc')
     assert.ok(calls[0].repo === repo)
@@ -79,9 +79,9 @@ describe(import.meta.url, ({ test }) => {
     let count = 0
     const cb = () => count++
     registry.onOpen(cb)
-    await registry.open('x')
+    await registry._materialize('x')
     registry.offOpen(cb)
-    await registry.open('y')
+    await registry._materialize('y')
     assert.equal(count, 1)
   })
 
@@ -89,7 +89,7 @@ describe(import.meta.url, ({ test }) => {
     const registry = new RepoRegistry()
     let count = 0
     registry.onOpen(() => count++)
-    await Promise.all([registry.open('k'), registry.open('k'), registry.open('k')])
+    await Promise.all([registry._materialize('k'), registry._materialize('k'), registry._materialize('k')])
     assert.equal(count, 1)
   })
 

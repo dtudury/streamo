@@ -36,7 +36,7 @@ const SIGNER = new Signer('push-test', 'pw', 1)
 async function chatRepo (registry, name) {
   const { publicKey } = await SIGNER.keysFor(name)
   const hex = bytesToHex(publicKey)
-  const repo = await registry.open(hex)
+  const repo = await registry._materialize(hex)
   repo.attachSigner(SIGNER, name)
   return { repo, hex }
 }

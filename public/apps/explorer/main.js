@@ -144,8 +144,9 @@ function repoCard (keyHex, repo, extraClass = null) {
   const last = repo.lastCommit
   const name = repo.get('name')
   // Bytes column is always visible; "syncing…" only during the
-  // grace window after registry.open, then falls back to "0 b" /
-  // "N b" so 0-byte-but-loaded repos read as truly empty.
+  // grace window after a key first lands in the registry, then
+  // falls back to "0 b" / "N b" so 0-byte-but-loaded repos read
+  // as truly empty.
   const pendingSync = repo.byteLength === 0 && isSyncing(keyHex)
   return h`
     <div class=${['row', 'repo-card', extraClass]} data-key=${keyHex} data-action="open-repo">

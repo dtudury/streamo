@@ -188,16 +188,15 @@ async function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, 
   if (!/^[0-9a-f]{66}$/.test(mount.key)) return null
 
   const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-  // `registry.open` here is the substrate's local-materialize verb (the
-  // current name of what becomes `_materialize` in the held-for-major
-  // rename — see ROADMAP). archiveSync-backed factories awaited inside
-  // `open` replay the on-disk `.bin` into the Repo before resolving,
-  // so the await below means "the bytes for this mount target are
-  // loaded by the time we recurse." For mount targets the relay has
-  // no archive for, `open` returns an empty Repo and the recursion
-  // falls through to a missing-file 404 — same end state as before,
+  // `registry._materialize` is the substrate's local-materialize verb.
+  // archiveSync-backed factories awaited inside it replay the on-disk
+  // `.bin` into the Repo before resolving, so the await below means
+  // "the bytes for this mount target are loaded by the time we
+  // recurse." For mount targets the relay has no archive for,
+  // `_materialize` returns an empty Repo and the recursion falls
+  // through to a missing-file 404 — same end state as before,
   // without the "did we pre-subscribe?" race.
-  const mountedRepo = await registry.open(mount.key)
+  const mountedRepo = await registry._materialize(mount.key)
 
   return resolveInRecord(
     mountedRepo,
@@ -281,9 +280,9 @@ export function serveFromRepo (repo, options = {}) {
     // Two resolution modes:
     //   - registry provided → walk files + mounts recursively, with
     //     cycle detection. Mount targets are materialized lazily via
-    //     `registry.open` inside the resolver (archiveSync-backed
-    //     factories load the on-disk .bin during the open's await), so
-    //     no startup pre-subscription is needed.
+    //     `registry._materialize` inside the resolver (archiveSync-
+    //     backed factories load the on-disk .bin during the
+    //     materialize's await), so no startup pre-subscription is needed.
     //   - no registry → files-only on the served repo, as before.
     let resolved
     try {
@@ -383,7 +382,7 @@ export function serveFromRegistry (registry, options = {}) {
     if (!/^[0-9a-f]{66}$/.test(keyhex)) return next()
     let repo
     try {
-      repo = await registry.open(keyhex)
+      repo = await registry._materialize(keyhex)
     } catch {
       return next()
     }

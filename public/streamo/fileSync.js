@@ -197,12 +197,12 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
   const inner = new Set(visited)
   inner.add(targetKey)
 
-  // `registry.open` (not `.get`) so archived mount targets materialize
-  // lazily — the archiveSync-backed factory's await loads on-disk bytes
+  // `registry._materialize` (not `.get`) so archived mount targets load
+  // lazily — the archiveSync-backed factory's await reads on-disk bytes
   // before the Repo is returned. Same shape as repoFileServer's resolver
   // (Phase C). `get` here was a footgun: cold-cache call sites would
   // silently return `undefined` and the mount would no-op without trace.
-  const targetRepo = await registry.open(targetKey)
+  const targetRepo = await registry._materialize(targetKey)
   if (!targetRepo) return {}
 
   let value

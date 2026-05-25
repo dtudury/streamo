@@ -73,7 +73,7 @@ if (server.signer) {
   // repo's `journalists` so cascade discovery finds it on connect.
   const historyKey = await server.signer.keysFor('streamo-history')
   const historyKeyHex = bytesToHex(historyKey.publicKey)
-  const historyRepo = await server.registry.open(historyKeyHex)
+  const historyRepo = await server.registry._materialize(historyKeyHex)
   const historyCommits = [...historyRepo.history()].length
   console.log(`[chat] history key: ${historyKeyHex} (${historyCommits} commits)`)
 
@@ -86,7 +86,7 @@ if (server.signer) {
   // Idempotent: only seeds if byteLength is 0.
   const tarotKey = await server.signer.keysFor('tarot')
   const tarotKeyHex = bytesToHex(tarotKey.publicKey)
-  const tarotRepo = await server.registry.open(tarotKeyHex)
+  const tarotRepo = await server.registry._materialize(tarotKeyHex)
   if (tarotRepo.byteLength === 0) {
     // Repo.set() auto-commits (checkout → working.set → this.commit), which
     // we DON'T want — we want a no-commits Streamo. Bypass the Repo
@@ -111,7 +111,7 @@ if (server.signer) {
       const content = JSON.parse(await readFile(join(flashcardsDecksDir, file), 'utf8'))
       const deckKey = await server.signer.keysFor(`flashcards-deck:${id}`)
       const deckKeyHex = bytesToHex(deckKey.publicKey)
-      const deckRepo = await server.registry.open(deckKeyHex)
+      const deckRepo = await server.registry._materialize(deckKeyHex)
       deckRepo.attachSigner(server.signer, `flashcards-deck:${id}`)
       // Idempotent: only commit when content actually differs.
       if (JSON.stringify(deckRepo.get() ?? null) !== JSON.stringify(content)) {

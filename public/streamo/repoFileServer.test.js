@@ -272,9 +272,9 @@ describe(import.meta.url, ({ test }) => {
    */
   function makeStubRegistry (entries) {
     const map = new Map(entries)
-    // Mount resolver calls `registry.open` (async, local-materialize).
+    // Mount resolver calls `registry._materialize` (async, local-materialize).
     // For the test stub, both forms read from the same map.
-    return { get: k => map.get(k), open: async k => map.get(k) }
+    return { get: k => map.get(k), _materialize: async k => map.get(k) }
   }
 
   // The 66-hex shape is just a plausible-looking pubkey for testing

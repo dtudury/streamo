@@ -72,20 +72,30 @@ export class RepoRegistry {
    * this is the first call for that key.
    *
    * The repository is registered immediately (before the factory resolves)
-   * so concurrent open() calls always return the same instance. Once the
+   * so concurrent calls always return the same instance. Once the
    * factory resolves, the repo's recaller is bridged into ours.
    *
-   * **For clients that want bytes to flow over the wire, prefer
-   * `session.subscribe(publicKeyHex)`** (from a `registrySync(...)` return
-   * value) or the `follow` cascade. `open` alone makes a *local* Repo only —
-   * it doesn't send a subscribe message to the relay, so the bytes for this
-   * key won't be pushed. See CLAUDE.md's footguns section for the full
-   * rationale.
+   * Underscore-prefixed because **this is the substrate's local-materialize
+   * verb, not what most callers want.** Client code that wants bytes to
+   * flow over the wire wants `session.subscribe(publicKeyHex)` (from a
+   * `registrySync(...)` return value) or the `follow` cascade. `_materialize`
+   * alone makes a *local* Repo only — it doesn't send a subscribe message
+   * to the relay, so the bytes for this key won't be pushed.
+   *
+   * Legitimate callers of `_materialize`:
+   *   - the relay's own startup seed (`StreamoServer.create`)
+   *   - mount resolution (repoFileServer, fileSync's collectMountedFiles)
+   *   - registrySync's chunk-arrival path (a new key arriving over the
+   *     wire needs a local Repo to write into)
+   *   - tests that exercise the registry directly
+   *
+   * If your call site doesn't match one of those, you almost certainly
+   * want `session.subscribe` instead.
    *
    * @param {string} publicKeyHex
    * @returns {Promise<Repo>}
    */
-  async open (publicKeyHex) {
+  async _materialize (publicKeyHex) {
     if (this.#streams.has(publicKeyHex)) return this.#streams.get(publicKeyHex)
     let resolve
     const placeholder = new Promise(r => { resolve = r })

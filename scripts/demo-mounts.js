@@ -89,8 +89,8 @@ const registry = new RepoRegistry(async (keyHex) => {
   if (keyHex === appKeyHex) return app
   return new Repo()
 })
-await registry.open(libKeyHex)
-await registry.open(appKeyHex)
+await registry._materialize(libKeyHex)
+await registry._materialize(appKeyHex)
 
 // ── fileSync the app to a temp folder, mounts enabled ───────────────────
 

@@ -58,9 +58,9 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
 
       let streamo
       try {
-        streamo = await registry.open(publicKeyHex)
+        streamo = await registry._materialize(publicKeyHex)
       } catch (e) {
-        console.error(`[${label}] failed to open streamo ${publicKeyHex.slice(0, 8)}...: ${e.message}`)
+        console.error(`[${label}] failed to materialize streamo ${publicKeyHex.slice(0, 8)}...: ${e.message}`)
         ws.close()
         return
       }

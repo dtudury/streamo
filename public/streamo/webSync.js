@@ -83,7 +83,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
       if (typeof path !== 'string' || typeof content !== 'string') {
         return res.status(400).json({ error: 'path and content must be strings' })
       }
-      const repo = await registry.open(primaryKeyHex)
+      const repo = await registry._materialize(primaryKeyHex)
       const working = repo.checkout()
       // Store JSON files as parsed objects so they round-trip cleanly with fileSync
       let value = content
@@ -101,7 +101,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // Current value of the primary streamo as JSON
   app.get('/', async (req, res) => {
     try {
-      const streamo = await registry.open(primaryKeyHex)
+      const streamo = await registry._materialize(primaryKeyHex)
       res.json(streamo.byteLength > 0 ? streamo.get() : null)
     } catch (e) {
       res.status(500).json({ error: e.message })
@@ -111,7 +111,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // Current value of any streamo as JSON
   app.get('/streams/:key', async (req, res) => {
     try {
-      const streamo = await registry.open(req.params.key)
+      const streamo = await registry._materialize(req.params.key)
       res.json(streamo.byteLength > 0 ? streamo.get() : null)
     } catch (e) {
       res.status(500).json({ error: e.message })
@@ -123,7 +123,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // so both sides share the same address space.
   app.get('/streams/:key/raw', async (req, res) => {
     try {
-      const streamo = await registry.open(req.params.key)
+      const streamo = await registry._materialize(req.params.key)
       res.set('Content-Type', 'application/octet-stream')
       const target = streamo.byteLength  // snapshot length; stop here
       if (target === 0) { res.end(); return }

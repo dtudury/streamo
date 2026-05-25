@@ -91,7 +91,7 @@ export class StreamoServer {
       archiveClosers.set(key, close)
       return repo
     })
-    const streamo = await registry.open(resolvedPublicKeyHex)
+    const streamo = await registry._materialize(resolvedPublicKeyHex)
     if (signer) streamo.attachSigner(signer, name)
 
     const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })

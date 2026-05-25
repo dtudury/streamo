@@ -63,10 +63,12 @@ const session = await registrySync(registry, host, port, {
   }
 })
 
-// Open my own repo and attach our signer so commits go out signed —
+// Subscribe to my own repo and attach our signer so commits go out signed —
 // "every write is provably yours" only holds if we actually sign. Set
-// profile on first run.
-const myRepo = await registry.open(myKey)
+// profile on first run. `session.subscribe` (not the registry's local-
+// materialize) so the wire actually subscribes — pre-10.0.0 this used
+// `registry.open` and bytes arrived only via side-effect cascades.
+const myRepo = await session.subscribe(myKey)
 myRepo.attachSigner(signer, 'chat')
 if (!myRepo.get('name')) {
   myRepo.defaultMessage = `joined as ${username} (cli)`

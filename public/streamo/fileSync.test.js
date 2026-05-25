@@ -142,10 +142,10 @@ describe(import.meta.url, ({ test }) => {
    */
   function makeStubRegistry (entries) {
     const map = new Map(entries)
-    // collectMountedFiles uses `registry.open` (async, local-materialize)
+    // collectMountedFiles uses `registry._materialize` (async, local-materialize)
     // so archived mount targets lazy-load. For the test stub, both forms
     // read from the same map.
-    return { get: k => map.get(k), open: async k => map.get(k) }
+    return { get: k => map.get(k), _materialize: async k => map.get(k) }
   }
   const KEY_A = 'a'.repeat(66)
   const KEY_B = 'b'.repeat(66)

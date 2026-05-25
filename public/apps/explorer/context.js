@@ -47,8 +47,9 @@ export const hovered = liveValue(null, { recaller, name: 'hovered' })
 export const loc = liveLocation({ recaller, name: 'location' })
 
 // Per-repo "recently opened" tracker — drives repoCard's
-// "syncing… vs 0 b" distinction. When registry.open fires for a
-// key, mark it; clear after a grace window. Imperfect (the wire has
+// "syncing… vs 0 b" distinction. When the registry's onOpen
+// callback fires for a key, mark it; clear after a grace window.
+// Imperfect (the wire has
 // no "I'm done sending existing bytes" signal), but human-invisible:
 // by the time a user's gaze lands on a row, 1100ms has passed and
 // the display has settled to the actual byte count.

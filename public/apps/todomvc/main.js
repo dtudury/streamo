@@ -99,16 +99,19 @@ async function login (e) {
     const signer = new Signer(username, password, 1)
     const { publicKey } = await signer.keysFor('todomvc')
     myKey = bytesToHex(publicKey)
-    myRepo = await registry.open(myKey)
+    // `session.subscribe` opens locally AND fires the wire subscribe,
+    // so the server replays any archived bytes for this repo. The
+    // URL-watcher already handles the visited list (which might be
+    // ours, or might be someone else's); this guarantees myKey is
+    // subscribed *regardless* of what's in the URL, so writes can
+    // flow up and history can come back from prior sessions.
+    //
+    // Pre-10.0.0 this was two lines (`registry.open` + a separate
+    // `subscribe`) — the open did nothing the subscribe didn't, and
+    // the open's name was a footgun. Now one verb.
+    myRepo = await session.subscribe(myKey)
     myRepo.attachSigner(signer, 'todomvc')
     myRepo.defaultMessage = `signed in as ${username}`
-    // Explicitly subscribe to our own key so the server replays any
-    // archived bytes for this repo. The URL-watcher already handles
-    // the visited list (which might be ours, or might be someone
-    // else's) — this guarantees myKey is subscribed *regardless* of
-    // what's in the URL, so writes can flow up and history can come
-    // back from prior sessions.
-    await session.subscribe(myKey)
     // If the URL doesn't already point at a valid key (fresh visit,
     // or user pasted a malformed URL), navigate to our own list. If
     // the URL DOES carry a key, leave it alone — the user is here to

@@ -5,10 +5,23 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## next session's exploration
+
+**Three-record composed-website demo.** See
+[EXPLORATION-three-records.md](./EXPLORATION-three-records.md) — a
+handoff doc with the topology sketch, open questions, tarot, and
+the bigger frame David named (*"a few .gitignore files and we can
+check in a harness for maintaining the Procedure by which a set of
+Records are transformed into our website"*). Start there before
+anything else; it carries texture today-us had that tomorrow-us
+won't reconstruct from logs alone.
+
+---
+
 ## current state
 
-Streamo is at **8.6.0**, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. **234 tests
+Streamo is at **8.8.0**, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. **265 tests
 passing.** The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, the in-progress
 flashcards demo, and the `streamo-history` repo on one port.

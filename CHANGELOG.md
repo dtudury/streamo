@@ -13,6 +13,33 @@ predate mounts and the structured Record shape. See ROADMAP's *9.0.0
 — the mounts arc* section for the full phase plan. This entry will
 fill in as the arc lands.
 
+**Phase C — async mount resolver + meta merge + homepage mounts
+declaration.** *(landed 2026-05-25; awaiting deploy)*
+
+Three threads converged on the same shape — *lazy materialization at
+the boundary instead of eager pre-population*. (1) `repoFileServer.js`'s
+mount resolver became async and uses `await registry.open` so
+archived mount targets materialize lazily at first request. No
+startup pre-subscription needed; archiveSync's startup-load
+guarantees bytes are in the Repo before `open` resolves. Express 5
+handles async middleware natively. (2) `fileSync.js`'s
+`setRecordMeta` gained a `meta: 'merge' | 'replace'` strategy
+(default `merge`). The previous replace semantic was correct only
+when streamo.json was the single writer; with chat/server.js's
+seed step also writing to the home Record's value, replace silently
+destroyed the seed step's keys on every fileSync init. Merge spreads
+streamo.json's keys into the existing value — keys set by other
+writers survive, `key: null` explicitly removes. (3)
+`public/homepage/streamo.json` declares the library mount;
+`chat/server.js` opts into the streamo.json sync via
+`server.files(homepageDir, { recordFile: 'streamo.json' })`. On the
+prod box's next deploy, `streamo.dev/streamo/<path>` will resolve
+through the library Record (Phase B's chain at 02e771…b93a) instead
+of falling through to `express.static`.
+
+266 tests passing (+4 covering merge keeps code-set keys, null-as-
+delete, replace mode wipes absent keys, unknown strategy throws).
+
 **Phase B — canonical library Record live on streamo.dev.** *(landed
 2026-05-25)*
 

@@ -13,6 +13,19 @@ predate mounts and the structured Record shape. See ROADMAP's *9.0.0
 — the mounts arc* section for the full phase plan. This entry will
 fill in as the arc lands.
 
+**Phase B — canonical library Record live on streamo.dev.** *(landed
+2026-05-25)*
+
+The `streamo-library` identity (cryptopotamus recipe
+`streamo.dev,streamo-library,32,,,`) signs a Record at pubkey
+**`02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a`**.
+Its `files` key holds `index.js` plus the 31 runtime files under
+`public/streamo/` (tests + `utils/testing.js` + `utils/mockDOM.js`
+excluded, matching the npm tarball). Persisted on streamo.dev,
+addressable at `https://streamo.dev/streams/02e771…/<path>` — Phase C
+will mount it at `streamo/` on the homepage Record. Identity recovery
+recipe lives in project memory; the password itself is never on disk.
+
 **Phase A — `filesKey: null` retirement (code-only).** *(landed; no
 release yet)*
 

@@ -5,117 +5,135 @@ for what's next.
 
 ---
 
-## 9.0.0 — *in progress*
+## 9.0.0 — the FolderRecord arc
 
-We're retiring scaffolding now that the better way is real: the
-`public/*` static fallback and the `filesKey: null` legacy shape both
-predate mounts and the structured Record shape. See ROADMAP's *9.0.0
-— the mounts arc* section for the full phase plan. This entry will
-fill in as the arc lands.
+The arc that names the shape we've been working with all along.
 
-**Phase C.1 — streamo.json is a first-class file in value.files
-(FolderRecord shape).** *(landed 2026-05-25; awaiting deploy)*
+A streamo Record that backs a directory has always had two kinds of
+data in it — files (the tree) and meta (mounts, journalists, title,
+…). 8.x called them out separately but treated them with subtly
+different rules: files lived under `value.files`, meta lived at the
+value root, and `streamo.json` on disk was a third category — an
+"editor sidecar" we kept outside `value.files` on purpose. The arc
+through 9.0.0 dissolves the third category. There are two things now:
+**the Record's value** (canonical), and **the folder on disk** (a
+faithful view of value, with `value.files` keys appearing as files
+and the meta appearing as `streamo.json`).
 
-A small reshape with a big framing payoff. Pre-C.1: fileSync
-*excluded* streamo.json from `value.files`, treating it as an
-"editor sidecar" outside the file tree. Post-C.1: streamo.json is
-a regular file in `value.files`, and its parsed content mirrors
-`value-top-level-minus-files`. The redundancy invariant is
-machine-checkable on the Record alone (no disk needed) and is
-enforced by fileSync's commit paths.
+We're calling this shape a **FolderRecord** — a Record whose value
+has a `files` key (a folder tree, including its own `streamo.json`
+metadata sidecar) and whose top-level meta mirrors
+`value.files["streamo.json"]`. Most Records aren't this shape (chat
+messages, raw bytestreams, non-Repo Streamos); naming the shape
+gives the FolderRecord-specific invariants and (future) optimizations
+a place to live.
 
-This makes the *FolderRecord* shape explicit: a Record whose
-`value.files` is a folder tree (including its own metadata
-sidecar) and whose top-level meta mirrors `value.files[streamo.json]`.
-Most Records aren't this shape (chat messages, raw bytestreams,
-non-Repo Streamos). Naming the shape gives us:
-- A vocabulary that doesn't always say "Records that happen to
-  have a files key"
-- A clean place for shape-specific constraints to live
-- A future target for shape-specific optimizations (custom
-  serialization, AST storage for .js, dedup across same-content
-  files) that wouldn't make sense on a generic Record
+### what landed
 
-Concrete changes:
-- `buildOwnFilesFilter` no longer excludes `recordFile` — it
-  passes through like any other file
-- The watcher's separate recordFile-edit branch is folded into
-  own-file-edit: a single commit captures both the file change
-  *and* the parsed-meta application
-- `flushToDisk` drops its separate writeRecordFile call;
-  streamo.json flows to disk through `writeToFolder` like any
-  other file
-- A new `healMetaInvariant` helper detects + warns + heals when
-  code-driven `repo.set()` calls bypass fileSync and leave the
-  invariant temporarily broken (e.g., chat/server.js's seed step
-  pattern). Heals via a fix-up commit so `value.files[streamo.json]`
-  catches back up with top-level meta. Idempotent and no-op when
-  the invariant holds.
-- Mid-edit grace preserved differently: invalid JSON in streamo.json
-  no longer skips the entire commit. The broken entry is dropped
-  from `value.files` (top-level meta stays unchanged); other file
-  edits in the same event batch still commit. Cleaner; doesn't
-  block unrelated work on a transient parse error.
+- **`filesKey: null` retired.** The `filesKey` option is gone from
+  `fileSync` and `serveFromRepo`; files always live at `value.files`.
+  CLI lost `--files-key`; `--files` auto-enables `--record-file
+  streamo.json` (use `--no-record-file` to opt out). The null
+  branches inside `readRepoFiles`, `readFile`, `readFilesMap`,
+  `readRepoRecordMeta`, `setRepoFiles`, and `setRecordMeta` collapsed
+  to single paths.
 
-268 tests passing (+2 covering the invariant: sealed-Repo heals on
-init, code-driven bypass auto-heals via flushToDisk).
+- **Canonical library Record live on streamo.dev.** The
+  `streamo-library` identity (cryptopotamus recipe
+  `streamo.dev,streamo-library,32,,,`) signs a Record at pubkey
+  **`02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a`**.
+  `value.files` holds `index.js` plus the 31 runtime files under
+  `public/streamo/` (tests + `utils/testing.js` + `utils/mockDOM.js`
+  excluded, matching the npm tarball). Addressable at
+  `https://streamo.dev/streams/02e771…/<path>`.
 
-**Phase C — async mount resolver + meta merge + homepage mounts
-declaration.** *(landed 2026-05-25; awaiting deploy)*
+- **Async mount resolver — lazy materialize via `await
+  registry.open`.** `repoFileServer.js`'s mount resolver became async
+  and uses `await registry.open` instead of `registry.get` for mount
+  targets. archiveSync-backed factories load on-disk bytes during
+  the open's await, so "the bytes are loaded by the time we recurse."
+  No startup pre-subscription required. Express 5 handles async
+  middleware natively. The same fix landed in `fileSync.js`'s
+  `collectMountedFiles` (the disk-materialization path).
 
-Three threads converged on the same shape — *lazy materialization at
-the boundary instead of eager pre-population*. (1) `repoFileServer.js`'s
-mount resolver became async and uses `await registry.open` so
-archived mount targets materialize lazily at first request. No
-startup pre-subscription needed; archiveSync's startup-load
-guarantees bytes are in the Repo before `open` resolves. Express 5
-handles async middleware natively. (2) `fileSync.js`'s
-`setRecordMeta` gained a `meta: 'merge' | 'replace'` strategy
-(default `merge`). The previous replace semantic was correct only
-when streamo.json was the single writer; with chat/server.js's
-seed step also writing to the home Record's value, replace silently
-destroyed the seed step's keys on every fileSync init. Merge spreads
-streamo.json's keys into the existing value — keys set by other
-writers survive, `key: null` explicitly removes. (3)
-`public/homepage/streamo.json` declares the library mount;
-`chat/server.js` opts into the streamo.json sync via
-`server.files(homepageDir, { recordFile: 'streamo.json' })`. On the
-prod box's next deploy, `streamo.dev/streamo/<path>` will resolve
-through the library Record (Phase B's chain at 02e771…b93a) instead
-of falling through to `express.static`.
+- **`setRecordMeta` defaults to merge.** `fileSync` gained a `meta:
+  'merge' | 'replace'` strategy on `setRecordMeta`. Under `merge`
+  (the new default), streamo.json's keys spread into the existing
+  value — keys not in streamo.json survive (other writers — seed
+  steps, code — keep their keys). `null` values explicitly remove.
+  Under `replace`, the file is the sole truth for meta. The previous
+  replace semantic was correct only when streamo.json was the single
+  writer; chat/server.js's seed step (also writing meta) made replace
+  silently destroy keys on every fileSync init.
 
-266 tests passing (+4 covering merge keeps code-set keys, null-as-
-delete, replace mode wipes absent keys, unknown strategy throws).
+- **streamo.json is a first-class file in `value.files`.** Pre-9.0.0,
+  fileSync's `acceptsForCommit` filter explicitly excluded the
+  recordFile path, keeping streamo.json out of the file tree.
+  Post-9.0.0, it passes through like any other file; its parsed
+  content mirrors `value-top-level-minus-files`. A new
+  `healMetaInvariant` helper detects + warns + heals when code-driven
+  `repo.set()` calls bypass fileSync and leave the invariant
+  temporarily broken (e.g., chat/server.js's seed step pattern).
+  Heals via a fix-up commit; idempotent; warn fires only on REAL
+  divergence (a non-empty file entry that differs), not on initial
+  population. Mid-edit grace preserved: invalid JSON in streamo.json
+  drops just that file from `newFiles` (top-level meta stays
+  unchanged); other file edits in the same event batch still commit.
 
-**Phase B — canonical library Record live on streamo.dev.** *(landed
-2026-05-25)*
+- **`public/homepage/streamo.json` declares the library mount.**
+  `chat/server.js` opts into the streamo.json sync via
+  `server.files(homepageDir, { recordFile: 'streamo.json' })`. On
+  streamo.dev, `/streamo/<path>` resolves through the library Record
+  (ETag `"527338-h.js"` matches the direct route, proving same
+  dataAddress). `/streamo.json` serves the homepage Record's full
+  meta as a JSON file — a concrete proof of the redundancy invariant.
 
-The `streamo-library` identity (cryptopotamus recipe
-`streamo.dev,streamo-library,32,,,`) signs a Record at pubkey
-**`02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a`**.
-Its `files` key holds `index.js` plus the 31 runtime files under
-`public/streamo/` (tests + `utils/testing.js` + `utils/mockDOM.js`
-excluded, matching the npm tarball). Persisted on streamo.dev,
-addressable at `https://streamo.dev/streams/02e771…/<path>` — Phase C
-will mount it at `streamo/` on the homepage Record. Identity recovery
-recipe lives in project memory; the password itself is never on disk.
+### breaking changes
 
-**Phase A — `filesKey: null` retirement (code-only).** *(landed; no
-release yet)*
+- **`filesKey` option removed** from `fileSync()` and
+  `serveFromRepo()`. Callers that passed `filesKey: 'files'` should
+  drop the option (it's the only mode now); callers that relied on
+  `filesKey: null` (the legacy value-IS-files shape) need to migrate
+  to the structured shape — one signed commit per Record reframes
+  the value as `{ files: {...}, ...meta }`.
 
-The `filesKey` option is gone from `fileSync` and `serveFromRepo`;
-files always live at `value.files`. The CLI lost `--files-key`;
-`--files` now auto-enables `--record-file streamo.json` so the
-mounts/metadata channel is on by default (use `--no-record-file` to
-opt out). The null branches inside `readRepoFiles`, `readFile`,
-`readFilesMap`, `readRepoRecordMeta`, `setRepoFiles`, and
-`setRecordMeta` collapsed to single paths.
+- **`--files-key` CLI flag removed.** `npx @dtudury/streamo --files
+  ./dir` now defaults to the structured shape and auto-enables
+  `--record-file streamo.json`; pass `--no-record-file` to opt out.
 
-Breaking for any caller that explicitly passes `filesKey` or relies on
-the value-IS-files shape. Migration is small (we are the legacy user
-base); each in-the-wild Record gets a one-commit migration in Phase G.
-262 tests passing (down from 265 — the 3 deleted tests covered
-removed legacy behavior).
+- **`setRecordMeta` defaults to merge** (was: implicit replace).
+  Most call sites are unaffected (merge and replace converge when
+  streamo.json holds the full meta), but code that authored partial
+  streamo.json files relying on "absent key = removed key" will need
+  `meta: 'replace'` explicitly. Removing a key under merge: set it
+  to `null` in streamo.json.
+
+- **streamo.json appears in `value.files`** for any
+  fileSync-managed Record with `recordFile` set. This adds bytes to
+  the chain (the JSON serialization, ~tens to hundreds of bytes per
+  meta-change commit) and exposes the file via HTTP if the Record
+  is served. Records with private meta should not serve via
+  serveFromRepo (or should put private fields elsewhere — though
+  there isn't a clean elsewhere right now; this is a known gap).
+
+- **Mount target lookup is now async.** `serveFromRepo`'s middleware
+  awaits a promise per request that hits a mount; serveFromRegistry
+  similarly. Express 5 handles this natively, but if you've wrapped
+  the middleware in custom adapters, confirm they propagate async.
+
+### what's next
+
+The static-fallback retirement (the relay's
+`express.static(publicDir)`) was the headline goal in early framing
+but wasn't load-bearing for 9.0.0 — it can land in 9.x as the apps
+each become signed Records. See ROADMAP. **10.0.0 is the named next
+major: "lock up our footguns"** — `registry.open` → retrieve-only +
+`_materialize` for internals, `RepoRegistry` requires an explicit
+`recaller`, `Repo` → `StreamoRecord`, `repo.merge(updateFn)` for
+stale-state-safe writes. The migration touch-lists overlap; doing
+them together amortises the cost.
+
+268 tests passing.
 
 ---
 

@@ -5,31 +5,44 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
-## 9.0.0 — the mounts arc *(in progress)*
+## 10.0.0 — lock up our footguns *(named next major)*
 
-We're retiring scaffolding now that the better way is real: the
-`public/*` static fallback (the relay's "if mounts miss, serve whatever
-the npm install shipped") and the `filesKey: null` legacy shape (value
-IS files, no room for `mounts` or sibling metadata) both predate mounts
-and the structured Record shape. Together they hid the moment when
-mounts stopped working in production — see the static-fallback section
-below for the discovery story.
+The held-for-major items, bundled as one cohesive arc of API hygiene
+whose names couldn't enforce themselves alone. Each is small
+individually; the migration touch-list overlaps (every import, every
+doc reference, every `Repo` typename), so doing them together
+amortises the cost. See the *held for a major bump* section below
+for substantive descriptions.
 
-**Phases:**
+- `registry.open` → retrieve-only + `_materialize` for internals (the
+  open-vs-subscribe footgun)
+- `RepoRegistry` requires an explicit `recaller` arg (the silent-
+  stale-slot footgun)
+- `Repo` → `StreamoRecord` (the git-baggage-naming footgun)
+- `repo.merge(updateFn)` for stale-state-safe writes (the read-stale-
+  then-write race)
 
-- **A — `filesKey: null` retirement (code-only).** *(shipped — no release yet, awaiting B+)* The `filesKey` option is gone from `fileSync` and `serveFromRepo`; files always live at `value.files`. CLI lost `--files-key`; `--files` auto-enables `--record-file streamo.json` (use `--no-record-file` to opt out). 262 tests passing.
-- **B — canonical library Record live on streamo.dev.** *(shipped 2026-05-25)* The `streamo-library` identity (cryptopotamus `streamo.dev,streamo-library,32,,,`) signs a Record at pubkey **`02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a`** whose `files` key holds `index.js` plus all 31 runtime files under `public/streamo/` (tests + test-utils excluded, matching the npm tarball). Served from `https://streamo.dev/streams/02e771…/<path>`. Identity recovery recipe is in Claude's memory (`project_streamo_library_identity.md`) — the password itself is never written to disk; re-derive via cryptopotamus when needed.
-- **C — async mount resolver + meta merge + homepage mounts declaration.** *(shipped 2026-05-25)* Three threads converged: (1) `repoFileServer.js`'s mount resolver became async and uses `await registry.open` so archived mount targets materialize lazily at first request — no startup pre-subscription. (2) `fileSync.js`'s `setRecordMeta` gained a `meta: 'merge' | 'replace'` strategy (default `merge`) so streamo.json edits compose with code-side writes (chat's seed step) instead of clobbering them. (3) `public/homepage/streamo.json` declares the library mount; `chat/server.js` opts into the streamo.json sync. Deploy verified — `streamo.dev/streamo/h.js` resolves through the library Record (ETag `"527338-h.js"` matches the direct route, proving same dataAddress).
-- **C.1 — streamo.json is a first-class file in value.files (FolderRecord shape).** *(shipped 2026-05-25)* fileSync no longer excludes `recordFile` from `value.files`; streamo.json is now a regular file whose parsed content mirrors `value-top-level-minus-files`. A new `healMetaInvariant` helper detects + warns + heals when code-driven `repo.set()` bypasses fileSync. Names the *FolderRecord* shape — a Record whose `value.files` is a folder tree (including its own streamo.json metadata sidecar) and whose top-level meta mirrors `value.files[streamo.json]`. Deploy verified — `streamo.dev/streamo.json` returns the homepage Record's full meta as a JSON file.
-- **D — promote each bundled app** (chat, flashcards, explorer, todomvc) to its own signed Record. The homepage's mounts table grows to compose each at `apps/<name>/`.
-- **E — remove `app.use(express.static(publicDir))`** from `webSync.js`. The breaking line. Every URL now resolves through Record + mounts.
-- **F — tighten the npm tarball.** `public/` no longer ships homepage/apps as servable assets.
-- **G — migrate other in-the-wild Records** (chat room, flashcards reviews, streamo-history, local forks) to the structured shape.
+Not blocking on anything specific; ready when we are.
 
-Substantive descriptions of why each piece exists are below under
-*held for a major bump* → *remove the `public/*` static fallback*
-and *retire `filesKey: null`*. As phases land, this checklist tracks
-progress; when 9.0.0 ships, the whole arc moves to CHANGELOG.
+---
+
+## post-9.0.0 follow-ups *(static fallback retirement, etc.)*
+
+The 9.0.0 arc shipped the FolderRecord shape but stopped short of
+fully retiring the relay's `public/*` static fallback. The pieces
+that fall out from here are useful but don't require a major bump:
+
+- **Promote each bundled app** (chat, flashcards, explorer, todomvc)
+  to its own signed Record. The homepage's mounts table grows to
+  compose each at `apps/<name>/`. Once all four are mounted, the
+  static fallback becomes unreachable for app paths.
+- **Remove `app.use(express.static(publicDir))`** from `webSync.js`.
+  The breaking line. Every URL resolves through Record + mounts.
+- **Tighten the npm tarball.** `public/` no longer needs to ship
+  homepage/apps as servable static assets (the lib still does,
+  because it's what authors import).
+- **Migrate other in-the-wild Records** (chat room, flashcards
+  reviews, streamo-history, local forks) to the structured shape.
 
 **Known operational friction:** runtime flushToDisk writes the
 homepage Record's full meta (journalists, entries, flashcardsDecks,
@@ -47,8 +60,8 @@ remains intact through code → flushToDisk).
 
 ## current state
 
-Streamo is at **8.9.0**, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. **265 tests
+Streamo is at **9.0.0**, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. **268 tests
 passing.** The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, the in-progress
 flashcards demo, and the `streamo-history` repo on one port.

@@ -162,6 +162,131 @@ function readRepoFiles (repo, filesKey) {
 }
 
 /**
+ * Read this repo's `mounts` table — declarative composition: each entry
+ * maps a path-prefix to another record's pubkey (optionally pinned to a
+ * specific `dataAddress`). Returns an empty object when there are no
+ * mounts.
+ */
+function readRepoMounts (repo) {
+  const m = repo.get('mounts')
+  if (!m || typeof m !== 'object' || m instanceof Uint8Array) return {}
+  return m
+}
+
+/**
+ * Recursively collect the files a single mounted record contributes —
+ * its own `files` plus its own nested mounts (with their files prefixed
+ * by each nested mount's path).
+ *
+ * Cycle detection by pubkey set: each record can appear at most once on
+ * the walk from the *initial* outer repo. The caller passes a `visited`
+ * set already containing the outer repo's pubkey; nested recursion
+ * extends a copy of that set. *Diamonds* (the same record reached by two
+ * top-level mounts) are not cycles — handled by the caller starting a
+ * fresh `visited` set per top-level mount.
+ *
+ * Pin-aware: when `atDataAddress` is set, reads the mounted record's
+ * value at that specific commit instead of HEAD.
+ *
+ * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }} registry
+ * @param {string} targetKey
+ * @param {number|undefined} atDataAddress
+ * @param {Set<string>} visited
+ * @returns {Promise<Object>} flat map of rel-path → value
+ */
+async function collectMountedFiles (registry, targetKey, atDataAddress, visited) {
+  if (visited.has(targetKey)) return {}
+  const inner = new Set(visited)
+  inner.add(targetKey)
+
+  const targetRepo = registry.get(targetKey)
+  if (!targetRepo) return {}
+
+  let value
+  if (atDataAddress != null) {
+    try { value = targetRepo.decode(atDataAddress) } catch { return {} }
+  } else {
+    if (!targetRepo.lastCommit) return {}
+    value = targetRepo.get()
+  }
+  if (!value || typeof value !== 'object') return {}
+
+  const collected = {}
+
+  if (value.files && typeof value.files === 'object' && !(value.files instanceof Uint8Array)) {
+    for (const [rel, v] of Object.entries(value.files)) collected[rel] = v
+  }
+
+  if (value.mounts && typeof value.mounts === 'object') {
+    for (const [prefix, mount] of Object.entries(value.mounts)) {
+      if (!mount || typeof mount !== 'object' || typeof mount.ref !== 'string') continue
+      if (!/^[0-9a-f]{66}$/.test(mount.ref)) continue
+      const nested = await collectMountedFiles(
+        registry,
+        mount.ref,
+        typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
+        inner
+      )
+      for (const [rel, v] of Object.entries(nested)) collected[prefix + rel] = v
+    }
+  }
+
+  return collected
+}
+
+/**
+ * Walk this repo's top-level mounts, producing a flat map of
+ * mount-prefixed paths to their materialized file values. Returns an
+ * empty object when mounts are disabled (no registry / no pubkeyHex)
+ * or when this repo has no mounts.
+ *
+ * Each top-level mount gets its OWN `visited` set seeded with the outer
+ * repo's pubkey — so cycles back to the outer repo are detected, but
+ * the same record appearing at two different top-level mount paths
+ * (the diamond case) is correctly materialized at both locations.
+ *
+ * @param {import('./Repo.js').Repo} repo
+ * @param {string|null} ownKey
+ * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }|null} registry
+ */
+async function collectAllMounted (repo, ownKey, registry) {
+  if (!registry || !ownKey) return {}
+  const mounts = readRepoMounts(repo)
+  const out = {}
+  for (const [prefix, mount] of Object.entries(mounts)) {
+    if (!mount || typeof mount !== 'object' || typeof mount.ref !== 'string') continue
+    if (!/^[0-9a-f]{66}$/.test(mount.ref)) continue
+    const files = await collectMountedFiles(
+      registry,
+      mount.ref,
+      typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
+      new Set([ownKey])
+    )
+    for (const [rel, v] of Object.entries(files)) out[prefix + rel] = v
+  }
+  return out
+}
+
+/**
+ * Wrap an accepts filter so it ALSO rejects paths under any current
+ * mount prefix. Used for "what counts as own-files" decisions —
+ * commits, watcher events, and the disk-reads-for-commit pass.
+ *
+ * Reads mount prefixes fresh on every call so the filter tracks the
+ * repo's current mounts table without needing to be rebuilt.
+ */
+function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes) {
+  return rel => {
+    if (!acceptsForDisk(rel)) return false
+    for (const prefix of getMountPrefixes()) {
+      const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
+      if (rel === bare || rel.startsWith(prefix)) return false
+    }
+    return true
+  }
+}
+
+/**
  * Two-way sync between a folder and a Repo.
  *
  * Initial state (startup authority via timestamps):
@@ -179,15 +304,53 @@ function readRepoFiles (repo, filesKey) {
  * `journalists`, `entries`, etc.) are preserved across writes. The default
  * (null) keeps the legacy "value IS files" behavior.
  *
+ * **Mounts (when both `registry` and `pubkeyHex` are provided).** This
+ * repo's `mounts` table — declarative composition referring to other
+ * records by pubkey — is materialized one-way (read-only) onto disk.
+ * Mount files appear at the prefix paths the table declares, so the
+ * editor sees the composed tree (e.g. `./streamo/h.js` from a mounted
+ * library record), but writes to those paths are silently filtered out
+ * of the disk→repo commit path. Your record's chain only signs your
+ * own files; the mounted records' chains stay independent.
+ *
+ * Cycle detection during materialization stops at loops (own key
+ * marked visited; mounts back to it short-circuit). Diamonds (same
+ * record at two top-level paths) materialize at both locations.
+ *
  * @param {import('./Repo.js').Repo} repo
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
- * @param {{ filesKey?: string|null }} [options]
+ * @param {object} [options]
+ * @param {string|null} [options.filesKey=null]
+ * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }|null} [options.registry=null]
+ *   registry whose stored Repos provide the bytes for any mounted record.
+ *   When unset, mount materialization is disabled (files-only behavior).
+ * @param {string|null} [options.pubkeyHex=null]  the pubkey of `repo`,
+ *   used as the cycle-detection seed for mount materialization.
+ *   Required alongside `registry` for mounts to take effect.
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
-  const { filesKey = null } = options
-  const accepts = buildFilter(folder, dataDir)
+  const { filesKey = null, registry = null, pubkeyHex = null } = options
+  const acceptsForDisk = buildFilter(folder, dataDir)
+
+  // Two filters, two jobs:
+  //   - acceptsForDisk:    gitignore + always-ignore. Used for "is this
+  //                        path one fileSync materializes here, or is
+  //                        it the user's own thing on the side?"
+  //                        Mount paths PASS (we wrote them; we manage
+  //                        their deletion).
+  //   - acceptsForCommit:  acceptsForDisk MINUS paths under any current
+  //                        mount prefix. The set we'd actually commit to
+  //                        this repo's chain. Mount paths FAIL — they
+  //                        belong to other records' chains, not ours.
+  // The mount-prefix list is read fresh from the repo's value on every
+  // call, so the filter tracks the current mounts table dynamically.
+  const getMountPrefixes = () => {
+    if (!registry || !pubkeyHex) return []
+    return Object.keys(readRepoMounts(repo))
+  }
+  const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
 
   // Local helpers that respect filesKey.  Encapsulating the branching here
   // keeps the body below readable as one flow.
@@ -200,22 +363,30 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     return working.set(filesKey, files)
   }
 
-  const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, accepts)
+  const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)
   const lastCommit = repo.lastCommit
   const commitTime = lastCommit ? lastCommit.date.getTime() : 0
   const repoFiles = getRepoFiles()
 
   if (lastCommit && repoFiles && diskMtime <= commitTime) {
-    // Repo wins: write committed files to disk
-    const toDelete = Object.keys(diskFiles).filter(k => !(k in repoFiles))
-    await writeToFolder(folder, repoFiles)
+    // Repo wins: write committed files to disk + materialize mounts
+    const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
+    const target = { ...mountedFiles, ...repoFiles }  // own files override mounted on collision
+    const { files: managed } = await readFolder(folder, acceptsForDisk)
+    const toDelete = Object.keys(managed).filter(k => !(k in target))
+    await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
   } else if (Object.keys(diskFiles).length > 0) {
     // Disk wins: commit current disk state.  When filesKey is set, this
     // adds (or replaces) only that subkey — siblings on the value survive.
+    // diskFiles is already filtered to own files (mount paths excluded
+    // by acceptsForCommit), so the mounted-records' files don't bleed
+    // into this repo's chain.
     const working = repo.checkout()
     setRepoFiles(working, diskFiles)
     repo.commit(working, filesKey ? `seed ${filesKey}` : 'initial')
+    // After the commit lands, the repo→disk watcher (below) will fire
+    // and materialize any mounts.
   }
 
   // Repo → disk: retries if a write is in progress so no commit is ever dropped
@@ -227,12 +398,16 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     writingToDisk = true
     pendingDiskFlush = false
     try {
-      const files = getRepoFiles()
-      if (!files) return
-      const { files: current } = await readFolder(folder, accepts)
-      if (filesEqual(current, files)) return
-      const toDelete = Object.keys(current).filter(k => !(k in files))
-      await writeToFolder(folder, files)
+      const ownFiles = getRepoFiles() ?? {}
+      const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
+      const target = { ...mountedFiles, ...ownFiles }
+      // Read EVERYTHING we manage on disk (both own + mounted) so the
+      // toDelete set covers removed mounts too — when a mount entry is
+      // dropped from the table, its materialized files vanish from disk.
+      const { files: managed } = await readFolder(folder, acceptsForDisk)
+      if (filesEqual(managed, target)) return
+      const toDelete = Object.keys(managed).filter(k => !(k in target))
+      await writeToFolder(folder, target)
       await deleteFromFolder(folder, toDelete)
     } finally {
       writingToDisk = false
@@ -252,16 +427,18 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     flushToDisk()
   })
 
-  // Disk → repo: fires when the filesystem changes
+  // Disk → repo: fires when the filesystem changes. Uses
+  // acceptsForCommit so events under mount prefixes never trigger
+  // commits — mounted files are read-only at this layer.
   const subscription = await subscribe(folder, (err, events) => {
     if (err) { console.error('fileSync watcher error:', err); return }
-    const relevant = events.filter(e => accepts(relative(folder, e.path)))
+    const relevant = events.filter(e => acceptsForCommit(relative(folder, e.path)))
     if (!relevant.length) return
     if (committingFromDisk) return
     committingFromDisk = true
     ;(async () => {
       try {
-        const { files: newFiles } = await readFolder(folder, accepts)
+        const { files: newFiles } = await readFolder(folder, acceptsForCommit)
         const current = getRepoFiles() ?? {}
         if (filesEqual(current, newFiles)) return
         const working = repo.checkout()

@@ -140,4 +140,201 @@ describe(import.meta.url, ({ test }) => {
       await cleanup()
     }
   })
+
+  // ── mounts: materialization onto disk (read-only one-way) ────────────────
+
+  /**
+   * A minimal in-memory registry stub matching the get(key) shape
+   * fileSync's mount resolver uses.
+   */
+  function makeStubRegistry (entries) {
+    const map = new Map(entries)
+    return { get: k => map.get(k) }
+  }
+  const KEY_A = 'a'.repeat(66)
+  const KEY_B = 'b'.repeat(66)
+  const KEY_C = 'c'.repeat(66)
+
+  /** Build a sealed Repo with a single commit of the given value. */
+  function sealedRepo (value, msg = 'seed') {
+    const r = new Repo()
+    const w = r.checkout()
+    w.set(value)
+    r.commit(w, msg)
+    return r
+  }
+
+  test('mounts: materializes mounted files at their prefix paths on disk', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const b = sealedRepo({ files: { 'h.js': 'export const h = …' } })
+      const a = sealedRepo({
+        files: { 'main.js': "import { h } from '../streamo/h.js'" },
+        mounts: { 'streamo/': { ref: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        filesKey: 'files',
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal((await readFile(join(dir, 'main.js'), 'utf8')),
+          "import { h } from '../streamo/h.js'")
+        assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')),
+          'export const h = …')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('mounts: edits to mounted paths do NOT commit to this repo (filter excludes them)', async ({ assert }) => {
+    // Read-only semantics at the chain layer: the disk→repo watcher's
+    // acceptsForCommit filter rejects events under any mount prefix,
+    // so the mounted files never bleed into this repo's `files` key.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const b = sealedRepo({ files: { 'h.js': 'B-version' } })
+      const a = sealedRepo({
+        files: { 'main.js': 'mine' },
+        mounts: { 'streamo/': { ref: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        filesKey: 'files',
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'B-version')
+        const files = a.get('files')
+        assert.ok(!('streamo/h.js' in files), 'mount file did NOT leak into own files')
+        assert.deepEqual(Object.keys(files).sort(), ['main.js'])
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('mounts: pinned dataAddress materializes the record at that specific commit', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const b = new Repo()
+      let w = b.checkout()
+      w.set({ files: { 'x.txt': 'v1' } })
+      b.commit(w, 'v1')
+      const v1Addr = b.lastCommit.dataAddress
+      w = b.checkout()
+      w.set({ files: { 'x.txt': 'v2' } })
+      b.commit(w, 'v2')
+
+      const a = sealedRepo({
+        files: { 'index.html': 'A' },
+        mounts: { 'lib/': { ref: KEY_B, dataAddress: v1Addr } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        filesKey: 'files',
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal((await readFile(join(dir, 'lib/x.txt'), 'utf8')), 'v1',
+          'pinned mount should materialize v1, not the latest v2')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('mounts: cycle detection — A→B→A stops at the loop', async ({ assert }) => {
+    // A mounts B at b/; B mounts A at a/. Materializing A should NOT
+    // recurse infinitely. A's content at b/ should include B's content,
+    // and B's a/ mount should be detected as cycling back to A and
+    // stopped — so nothing materializes at b/a/.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const b = sealedRepo({
+        files: { 'b-file.txt': 'B' },
+        mounts: { 'a/': { ref: KEY_A } }
+      })
+      const a = sealedRepo({
+        files: { 'a-file.txt': 'A' },
+        mounts: { 'b/': { ref: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        filesKey: 'files',
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal((await readFile(join(dir, 'a-file.txt'), 'utf8')), 'A')
+        assert.equal((await readFile(join(dir, 'b/b-file.txt'), 'utf8')), 'B')
+        let exists = false
+        try { await readFile(join(dir, 'b/a/a-file.txt'), 'utf8'); exists = true } catch {}
+        assert.ok(!exists, 'expected cycle detection — b/a/a-file.txt should NOT exist')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('mounts: nested mount-through-mount materializes A→B→C', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const c = sealedRepo({ files: { 'leaf.txt': 'deep' } })
+      const b = sealedRepo({
+        files: { 'mid.txt': 'middle' },
+        mounts: { 'c/': { ref: KEY_C } }
+      })
+      const a = sealedRepo({
+        files: { 'top.txt': 'top' },
+        mounts: { 'b/': { ref: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        filesKey: 'files',
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, b], [KEY_C, c]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal((await readFile(join(dir, 'top.txt'), 'utf8')), 'top')
+        assert.equal((await readFile(join(dir, 'b/mid.txt'), 'utf8')), 'middle')
+        assert.equal((await readFile(join(dir, 'b/c/leaf.txt'), 'utf8')), 'deep')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('mounts: disabled when registry/pubkeyHex not provided (files-only)', async ({ assert }) => {
+    // Backward compat: without registry+pubkeyHex options, mounts are
+    // completely inert — nothing materializes, own files behave as
+    // they always have.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const a = sealedRepo({
+        files: { 'main.js': 'mine' },
+        mounts: { 'streamo/': { ref: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files' })
+      try {
+        assert.equal((await readFile(join(dir, 'main.js'), 'utf8')), 'mine')
+        let exists = false
+        try { await readFile(join(dir, 'streamo/h.js'), 'utf8'); exists = true } catch {}
+        assert.ok(!exists, 'mount should NOT materialize without registry option')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
 })

@@ -445,33 +445,68 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // paths and immediately re-materialize from the upstream mounted
   // record — the user's edit visibly reverts, making the read-only
   // contract impossible to miss.
+  /**
+   * Compare on-disk bytes for a mount-path event against the bytes the
+   * mounted record would materialize there. Returns true iff the disk
+   * content DIFFERS — i.e., this is a *real* user edit, not just our
+   * own re-materialization writes coming back through the watcher.
+   *
+   * Without this content check, the banner would fire twice on every
+   * user edit: once for the edit itself, once for the re-materialization
+   * write the banner triggers. Comparing content cuts the false-positive
+   * cleanly — only one banner per actual divergence.
+   */
+  async function isRealMountEdit (rel, mounted) {
+    const expected = mounted[rel]
+    if (expected === undefined) return false  // mount entry was removed
+    let onDisk
+    try { onDisk = await readFile(join(folder, rel)) } catch { return false }
+    const encoded = encodeFile(rel, expected)
+    if (encoded === null) return false
+    const expectedBytes = typeof encoded === 'string' ? new TextEncoder().encode(encoded) : encoded
+    if (onDisk.length !== expectedBytes.byteLength) return true
+    for (let i = 0; i < onDisk.length; i++) {
+      if (onDisk[i] !== expectedBytes[i]) return true
+    }
+    return false
+  }
+
   const subscription = await subscribe(folder, (err, events) => {
     if (err) { console.error('fileSync watcher error:', err); return }
 
-    // Edits that hit a mount path — read-only territory.
-    const mountEdits = events.filter(e => {
+    // Events on mount paths — read-only territory candidates. We still
+    // have to content-check before banner'ing (see isRealMountEdit).
+    const candidates = events.filter(e => {
       const rel = relative(folder, e.path)
       return acceptsForDisk(rel) && !acceptsForCommit(rel)
     })
-    if (mountEdits.length > 0) {
-      const paths = mountEdits.map(e => relative(folder, e.path))
-      console.error('\n' + '━'.repeat(72))
-      console.error('⚠️  WRITE TO MOUNTED PATH IGNORED')
-      console.error('━'.repeat(72))
-      console.error('You edited a path that is materialized from a mounted record.')
-      console.error('That record has its own signed chain; this fileSync does not')
-      console.error('own those bytes. Your edit will be reverted on the next sync.')
-      console.error('')
-      console.error('Affected path(s):')
-      for (const p of paths) console.error('  • ' + p)
-      console.error('')
-      console.error('To edit those files, fork the mounted record into one you own')
-      console.error('and update this record\'s mounts table to reference your fork.')
-      console.error('━'.repeat(72) + '\n')
-      // Re-materialize immediately so the edit visibly reverts. Cheap
-      // (writes the same bytes the mounted record had); ensures the
-      // disk doesn't carry a misleading state past the banner.
-      flushToDisk()
+    if (candidates.length > 0) {
+      ;(async () => {
+        const mounted = await collectAllMounted(repo, pubkeyHex, registry)
+        const realEdits = []
+        for (const event of candidates) {
+          const rel = relative(folder, event.path)
+          if (await isRealMountEdit(rel, mounted)) realEdits.push(rel)
+        }
+        if (realEdits.length === 0) return  // our own writes echoing back; ignore
+        console.error('\n' + '━'.repeat(72))
+        console.error('⚠️  WRITE TO MOUNTED PATH IGNORED')
+        console.error('━'.repeat(72))
+        console.error('You edited a path that is materialized from a mounted record.')
+        console.error('That record has its own signed chain; this fileSync does not')
+        console.error('own those bytes. Your edit will be reverted on the next sync.')
+        console.error('')
+        console.error('Affected path(s):')
+        for (const p of realEdits) console.error('  • ' + p)
+        console.error('')
+        console.error('To edit those files, fork the mounted record into one you own')
+        console.error('and update this record\'s mounts table to reference your fork.')
+        console.error('━'.repeat(72) + '\n')
+        // Re-materialize so the edit visibly reverts. Cheap (the bytes
+        // already match the mounted record's content); ensures disk is
+        // consistent past the banner.
+        flushToDisk()
+      })()
     }
 
     // Own-file edits — the commit path.

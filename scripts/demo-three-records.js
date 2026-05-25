@@ -193,15 +193,19 @@ await writeFile(
 
 // ── Print the three commands to copy/paste into three terminals ────────
 
-// Each terminal cd's into its Record's subdir, so `--data-dir` defaults to
-// `.streamo` IN that subdir (per-Record isolation) and `--files ./files`
-// finds the seeded directory. No --key-iterations because the script and
-// the CLI both default to 100000. No --password because the CLI will
-// prompt for it interactively.
+// Each terminal cd's into its Record's subdir. --data-dir defaults to
+// `.streamo` per CWD (per-Record isolation). --files ./files finds the
+// seeded directory. --files-key files is LOAD-BEARING for the mount
+// system: without it, the streamo.json on disk doesn't sync into
+// value.mounts (the recordFile sync only fires when filesKey is non-
+// null), so the mount resolver finds no mounts table and falls
+// through to the static fallback — silently. Every Record uses the
+// same filesKey so the resolver's descent into mounted records finds
+// their files in the same place.
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
       npx @dtudury/streamo --name ${record} --username ${username} \\
-        --files ./files ${extra}`
+        --files ./files --files-key files ${extra}`
 
 console.log('\n' + RULE)
 console.log('ready — run these in three separate terminals')

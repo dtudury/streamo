@@ -5,6 +5,44 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
+## repo-free deploy *(natural follow-on to 10.0.0)*
+
+The 9.x arc moved every byte streamo.dev serves into signed Records.
+10.0.0 cleaned the substrate names. Together those land the
+architecture for *the relay holds no source* — `npx -y
+@dtudury/streamo@<version> --home-key <hex> --web 443 --data-dir
+/path/to/archive` is enough to serve the homepage + library + apps,
+because every URL resolves through the archive's Records.
+
+What's left to make it real:
+
+- **Extract `chat/server.js`'s seed step into one-shot npx
+  invocations** — each existing seed (history, tarot, flashcards
+  decks) becomes a script you run once from your laptop with the
+  signing identity, `--origin streamo.dev`. The archive captures
+  the bytes; never need to seed again on restart. Removes the
+  "all-or-nothing startup" coupling; each Record is independent.
+- **Web Push as a CLI flag on the main binary** — push routes are
+  already factored behind `webSync`'s `routes` hook and
+  `notifyOnMessages` watcher. `bin/streamo.js` grows
+  `--enable-push` (with `STREAMO_VAPID_PUBLIC` / `_PRIVATE` /
+  `_SUBJECT` env vars). Single binary, single process, optional
+  feature.
+- **Retire `chat/server.js` as a separate entry point.** Once the
+  seed step is extracted and push is a CLI flag, the systemd unit's
+  `ExecStart` changes from `node public/apps/chat/server.js
+  --env-file .env.prod` to `npx -y @dtudury/streamo@<v> --home-key
+  <hex> --web 443 --data-dir <path> --enable-push --env-file .env.prod`.
+  The repo is no longer needed on the prod box.
+
+**Graceful partial setup is the architectural prize.** If the journal
+seed never runs, the journal section is empty — nothing else
+breaks. If push isn't configured, push doesn't fire — nothing else
+breaks. Forks of streamo.dev can bring up a bare relay first, then
+seed pieces as they want them. The npm package becomes a *toolkit
+for assembling a streamo deployment*, not a prescription for one
+specific seeded startup.
+
 ## 10.0.0 — lock up our footguns *(named next major)*
 
 The held-for-major items, bundled as one cohesive arc of API hygiene

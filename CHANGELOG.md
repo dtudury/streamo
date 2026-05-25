@@ -5,6 +5,43 @@ for what's next.
 
 ---
 
+## unreleased — 9.x post-publish (FolderRecord arc completion)
+
+After shipping 9.0.0 (the FolderRecord shape), the 9.x arc landed two
+more pieces on streamo.dev:
+
+- **Phase D — bundled apps promoted to signed Records.** Five new
+  per-app identities (signed by Claude, recipes
+  `streamo.dev,streamo-<app>,32,,,`): streamo-chat, streamo-flashcards,
+  streamo-explorer, streamo-todomvc, streamo-styles. Each Record's
+  `value.files` holds the app's frontend; the homepage Record's
+  `streamo.json` mounts them at `/apps/<name>/`. `scripts/promote-bundled-apps.js`
+  automates the stage+push cycle for any future bundled-app promotion.
+- **Phase E — static fallback ripped.** `webSync.js` no longer mounts
+  `express.static(publicDir)`. Every URL served by a webSync relay
+  resolves through Record + mount (via serveFromRepo) or
+  `/streams/<key>/<path>` (via serveFromRegistry) or 404. There is no
+  third path. *"No server holds authority"* now applies at the request
+  path itself — for any byte the browser receives from streamo.dev,
+  there is a signed chain it came from.
+
+Side-effects of the same arc:
+- `public/streamo.svg` moved to `public/homepage/streamo.svg` — the
+  homepage Record now owns the project's favicon/logo. Framing:
+  *"the homepage Record's value.files IS the root URL space; mounts
+  carve out subpath zones inside it."*
+- Dropped `public/apps/hoops/`, `public/apps/journal/`, `public/apps/location/`
+  from the repo — placeholders / unused experiments. Records on prod
+  for those paths are now gone; requests 404 cleanly.
+- A latent bug surfaced + auto-healed: the prod's
+  `value.files['sw.js']` had been empty bytes (likely from a flushToDisk
+  timing artifact during a Phase C.1 deploy cycle). Phase E's deploy
+  ran fileSync's disk-wins init against the freshly-git-pulled sw.js
+  and committed proper bytes. The static fallback had been masking
+  this for some time via ETag confusion.
+
+268 tests still passing. 9.0.x patch publish queued.
+
 ## 9.0.0 — the FolderRecord arc
 
 The arc that names the shape we've been working with all along.

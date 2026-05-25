@@ -26,35 +26,44 @@ Not blocking on anything specific; ready when we are.
 
 ---
 
-## post-9.0.0 follow-ups *(static fallback retirement, etc.)*
+## 9.x — what's left
 
-The 9.0.0 arc shipped the FolderRecord shape but stopped short of
-fully retiring the relay's `public/*` static fallback. The pieces
-that fall out from here are useful but don't require a major bump:
+The 9.x arc shipped through Phase E (no more static fallback on
+streamo.dev — every byte served comes from a signed Record's chain).
+Two small threads remain, neither blocking:
 
-- **Promote each bundled app** (chat, flashcards, explorer, todomvc)
-  to its own signed Record. The homepage's mounts table grows to
-  compose each at `apps/<name>/`. Once all four are mounted, the
-  static fallback becomes unreachable for app paths.
-- **Remove `app.use(express.static(publicDir))`** from `webSync.js`.
-  The breaking line. Every URL resolves through Record + mounts.
-- **Tighten the npm tarball.** `public/` no longer needs to ship
-  homepage/apps as servable static assets (the lib still does,
-  because it's what authors import).
-- **Migrate other in-the-wild Records** (chat room, flashcards
-  reviews, streamo-history, local forks) to the structured shape.
+- **Phase F — tighten the npm tarball.** `public/apps/*` and
+  `public/homepage/*` no longer need to ship in the npm package
+  (their bytes live in Records on streamo.dev now; the homepage
+  Record's value.files is what serves them). `public/streamo/*` still
+  ships — that's the lib that authors import. Adjust `package.json`'s
+  `files` field. ~15 min, doesn't change observable behavior, just
+  shrinks `npm install`.
+- **Phase G — migrate other in-the-wild Records.** Mostly already-
+  moot post-Phase A (the API rejects the legacy shape). For Records
+  that exist (chat room, flashcards reviews, streamo-history, local
+  forks), watch for migration surprises. Closer to "monitor" than
+  "phase of work."
 
-**Known operational friction:** runtime flushToDisk writes the
-homepage Record's full meta (journalists, entries, flashcardsDecks,
-mounts) to `public/homepage/streamo.json`, diverging from the
-git-tracked minimal `{mounts}` slice. `npm run deploy`'s clean-
-working-tree precheck aborts until the prod side's local change is
-discarded with `git checkout public/homepage/streamo.json`. Worth a
-small fix when convenient — either teach deploy.sh to discard
-expected runtime-written files automatically, or move the homepage's
-mount declaration into the seed step (eliminating the git-tracked
-streamo.json for this Record entirely; FolderRecord's invariant
-remains intact through code → flushToDisk).
+## known operational friction
+
+- **`npm run deploy`'s precheck** aborts on a dirty working tree.
+  The prod runtime's flushToDisk writes the full meta to
+  `public/homepage/streamo.json` (and may rewrite other homepage
+  files like sw.js after a fresh deploy). Manually discarding with
+  `ssh streamo@streamo.dev 'cd ~/apps/streamo && git checkout
+  public/homepage/'` clears it. Worth a small fix when convenient —
+  teach deploy.sh to discard expected runtime-written files
+  automatically (stash + drop), or move the homepage's mount
+  declaration into the seed step (no git-tracked streamo.json for
+  this Record; FolderRecord's invariant remains intact via code →
+  flushToDisk).
+- **Investigate-when-bored:** the prod's `value.files['sw.js']`
+  was empty bytes before Phase E's deploy — Phase E's disk-wins
+  init committed fresh bytes from git's just-pulled version. Some
+  earlier deploy cycle truncated it; worth tracing how if it
+  reoccurs. The static fallback was masking it via ETag confusion
+  (the mount-path ETag was present but the body was 0 bytes).
 
 ---
 

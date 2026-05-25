@@ -348,6 +348,74 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('followMounts: auto-subscribes to mount targets in the synced repo\'s `mounts` table', async ({ assert }) => {
+    // Same cascade shape as `follow`, but for the `mounts` key — each
+    // mount entry's `ref` (the mounted record's pubkey) is subscribed
+    // automatically, so a client/relay holding a record with mounts
+    // also pulls the mounted records' bytes without out-of-band setup.
+    const serverRegistry = new RepoRegistry()
+    const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 30)
+    const { repo: libRepo,  hex: libKey  } = await openWriter(serverRegistry, 31)
+
+    libRepo.set({ files: { 'h.js': 'library' } })
+    rootRepo.set({
+      files: { 'main.js': 'app' },
+      mounts: { 'streamo/': { ref: libKey } }
+    })
+
+    const { wss, port } = await startServer(serverRegistry, rootKey)
+    const clientRegistry = new RepoRegistry()
+    const session = await registrySync(clientRegistry, 'localhost', port, {
+      followMounts: true
+    })
+
+    // Root subscribes via hello; lib cascades via followMounts.
+    await waitFor(() => clientRegistry.get(libKey)?.get('files', 'h.js') === 'library')
+
+    assert.equal(clientRegistry.get(rootKey).get('files', 'main.js'), 'app')
+    assert.equal(clientRegistry.get(libKey).get('files', 'h.js'), 'library')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('followMounts: composes with follow — both fire on value change', async ({ assert }) => {
+    // A record can carry both `members` (custom field a follow callback
+    // walks) and `mounts` (the standard composition key). Both
+    // subscriptions should fire when followMounts: true is paired with
+    // a custom follow that handles members.
+    const serverRegistry = new RepoRegistry()
+    const { repo: rootRepo,  hex: rootKey  } = await openWriter(serverRegistry, 32)
+    const { repo: aliceRepo, hex: aliceKey } = await openWriter(serverRegistry, 33)
+    const { repo: libRepo,   hex: libKey   } = await openWriter(serverRegistry, 34)
+
+    aliceRepo.set({ name: 'alice' })
+    libRepo.set({ files: { 'h.js': 'L' } })
+    rootRepo.set({
+      members: [aliceKey],
+      files: {},
+      mounts: { 'lib/': { ref: libKey } }
+    })
+
+    const { wss, port } = await startServer(serverRegistry, rootKey)
+    const clientRegistry = new RepoRegistry()
+    const session = await registrySync(clientRegistry, 'localhost', port, {
+      follow: (k, repo, subscribe) => {
+        for (const m of repo.get('members') ?? []) subscribe(m)
+      },
+      followMounts: true
+    })
+
+    await waitFor(() => clientRegistry.get(aliceKey)?.get('name') === 'alice')
+    await waitFor(() => clientRegistry.get(libKey)?.get('files', 'h.js') === 'L')
+
+    assert.equal(clientRegistry.get(aliceKey).get('name'), 'alice')
+    assert.equal(clientRegistry.get(libKey).get('files', 'h.js'), 'L')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
   test('follow: re-runs when home changes and discovers newly added refs', async ({ assert }) => {
     const serverRegistry = new RepoRegistry()
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 13)

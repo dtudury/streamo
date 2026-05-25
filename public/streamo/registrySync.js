@@ -85,6 +85,14 @@ const RECONNECT_RESET_MS = 30000
  *
  *   `subscribe` is idempotent and safe to call for already-synced repos.
  *
+ * @property {boolean} [followMounts]
+ *   When `true`, synced records' `mounts` tables are walked automatically —
+ *   each mount entry's `ref` (the mounted record's pubkey) is subscribed in
+ *   the same content-driven cascade as `follow`. Composes with `follow`: both
+ *   run on every value change. Use this on any client or relay that wants to
+ *   resolve mounts end-to-end without managing each mount target's
+ *   subscription out of band. Defaults to `false`.
+ *
  * @property {(key: string, topic: string) => void} [onAnnounce]
  *   Called when a remote peer announces a repository as related to a topic.
  *   `key` is the announced repository's hex public key; `topic` is the hex key
@@ -174,7 +182,7 @@ const RECONNECT_RESET_MS = 30000
  * @param {string} [label]  prefix for log messages
  */
 export function handleRegistryPeer (ws, registry, options = {}, label = 'registry', routing = null) {
-  const { follow = null, onAnnounce = null, onHello = null, home = null, isAuthority = false } = options
+  const { follow = null, followMounts = false, onAnnounce = null, onHello = null, home = null, isAuthority = false } = options
 
   const readers = new Map()        // keyHex → ReadableStreamDefaultReader (we → peer)
   const writers = new Map()        // keyHex → WritableStreamDefaultWriter (peer → us)
@@ -267,8 +275,28 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     // Content-driven discovery: watch this repo's value and subscribe to any
     // keys the `follow` callback extracts from it.  Runs immediately (to catch
     // existing data) and re-runs whenever the repo's value changes.
-    if (follow && !followFns.has(keyHex)) {
-      const fn = () => follow(keyHex, repo, key => subscribeToKey(key))
+    //
+    // `followMounts: true` adds an extra walk over the repo's `mounts` table
+    // (composition references — each entry's `ref` is the pubkey of another
+    // record this one composes in). Auto-subscribing means a relay or client
+    // that holds a record with mounts also pulls the mounted records' bytes,
+    // so the relay's serve path and fileSync's materialization both have
+    // what they need without any out-of-band coordination.
+    if ((follow || followMounts) && !followFns.has(keyHex)) {
+      const fn = () => {
+        if (follow) follow(keyHex, repo, key => subscribeToKey(key))
+        if (followMounts) {
+          const mounts = repo.get('mounts')
+          if (mounts && typeof mounts === 'object' && !(mounts instanceof Uint8Array)) {
+            for (const mount of Object.values(mounts)) {
+              if (!mount || typeof mount !== 'object') continue
+              if (typeof mount.ref !== 'string') continue
+              if (!/^[0-9a-f]{66}$/.test(mount.ref)) continue
+              subscribeToKey(mount.ref)
+            }
+          }
+        }
+      }
       followFns.set(keyHex, fn)
       repo.recaller.watch(`registry-follow:${keyHex}`, fn)
     }

@@ -20,8 +20,12 @@
  *
  * Then follow the printed three commands.
  *
- * Re-running wipes ../streamo-three-record-demo/ and rebuilds —
- * safe to use as a reset.
+ * Re-running wipes ../streamo-three-record-demo/ and rebuilds — safe
+ * to use as a reset. If you re-run while a CLI terminal still has the
+ * demo dir as CWD, that shell's working-directory inode disappears
+ * out from under it and subsequent commands die with
+ * `ENOENT: no such file or directory, uv_cwd`. Fix: `cd` back into
+ * the (newly-recreated) directory to refresh the shell's CWD reference.
  *
  * Why a sibling directory and not ./demo/ inside the repo? Because
  * running `npx @dtudury/streamo ...` inside a directory whose
@@ -38,6 +42,7 @@ import { bytesToHex } from '../public/streamo/utils.js'
 import { cp, mkdir, rm, writeFile } from 'fs/promises'
 import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
+import { question } from 'readline-sync'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = dirname(here)
@@ -48,25 +53,39 @@ console.log('\n' + RULE)
 console.log('streamo three-record demo — setup')
 console.log(RULE)
 
-// ── Pre-derive deterministic pubkeys ───────────────────────────────────
-// iterations=1 keeps the demo snappy; the npx commands include
-// --key-iterations 1 so the runtime derivation matches. Don't ship
-// credentials this weak for anything real.
+// ── Interactive: who's the author? ─────────────────────────────────────
+// The username + password define ONE identity. The three Records share
+// that identity but have different stream names (library, explorer,
+// homepage). That's the streamo model — pubkey = derive(username,
+// password, streamName). Same person, three streams.
 
-const ITERATIONS = 1
-const records = [
-  { record: 'library',  name: 'library',  username: 'demo', password: 'lib-pw' },
-  { record: 'explorer', name: 'explorer', username: 'demo', password: 'exp-pw' },
-  { record: 'homepage', name: 'homepage', username: 'demo', password: 'hp-pw' }
-]
+console.log(`
+The three Records share ONE author identity. You'll type a username and
+password now; the npx commands will prompt for the same password three
+times (one per Record).`)
 
-console.log('\n  deriving pubkeys (iterations=1):')
+const username = (question('\n  Username (demo): ') || 'demo').trim()
+const password = question('  Password (demo, hidden): ', {
+  hideEchoBack: true,
+  mask: ''
+}) || 'demo'
+
+// ── Pre-derive deterministic pubkeys at the CLI's default iteration count ──
+// 100000 matches what `npx @dtudury/streamo` does without --key-iterations,
+// so the commands stay minimal (no flag to keep in sync). The derivation
+// takes ~1s here and again at each CLI startup; that's the production
+// experience, not a demo shortcut.
+
+const ITERATIONS = 100000
+const records = ['library', 'explorer', 'homepage']
+
+console.log('\n  deriving pubkeys (iterations=100000, takes a moment)…')
+const signer = new Signer(username, password, ITERATIONS)
 const keys = {}
 for (const r of records) {
-  const signer = new Signer(r.username, r.password, ITERATIONS)
-  const { publicKey } = await signer.keysFor(r.name)
-  keys[r.record] = bytesToHex(publicKey)
-  console.log(`    ${r.record.padEnd(10)} ${keys[r.record].slice(0, 16)}…`)
+  const { publicKey } = await signer.keysFor(r)
+  keys[r] = bytesToHex(publicKey)
+  console.log(`    ${r.padEnd(10)} ${keys[r].slice(0, 16)}…`)
 }
 
 // ── Reset ./demo/ and build the directory layout ───────────────────────
@@ -174,35 +193,36 @@ await writeFile(
 
 // ── Print the three commands to copy/paste into three terminals ────────
 
-// Commands use relative paths from inside demoDir, so the user runs the
-// printed `cd` first. -y skips npx's install confirmation, which would
-// otherwise need a TTY response on a fresh machine.
-const cmd = (record, password, extra) =>
-  `npx -y @dtudury/streamo \\
-      --name ${record} --username demo --password ${password} \\
-      --data-dir ./${record} --files ./${record}/files \\
-      --key-iterations 1 ${extra}`
+// Each terminal cd's into its Record's subdir, so `--data-dir` defaults to
+// `.streamo` IN that subdir (per-Record isolation) and `--files ./files`
+// finds the seeded directory. No --key-iterations because the script and
+// the CLI both default to 100000. No --password because the CLI will
+// prompt for it interactively.
+const cmd = (record, extra) =>
+  `cd ${join(demoDir, record)} && \\
+      npx @dtudury/streamo --name ${record} --username ${username} \\
+        --files ./files ${extra}`
 
 console.log('\n' + RULE)
 console.log('ready — run these in three separate terminals')
 console.log(RULE)
 console.log(`
-  First, cd into the demo directory (so npx is OUTSIDE the streamo repo
-  — see header comment for why):
-
-    cd ${demoDir}
+You'll be prompted for "Password (hidden):" in each terminal. Type the
+same password you just entered above. (First-time npx will also ask
+"Need to install... Ok to proceed?" — press y once and it's cached for
+the other two.)
 
   Terminal 1 — homepage (the web + WS relay):
 
-    ${cmd('homepage', 'hp-pw', '--web 8080')}
+    ${cmd('homepage', '--web 8080')}
 
   Terminal 2 — library author (joins the relay over origin):
 
-    ${cmd('library',  'lib-pw', '--origin localhost:8080')}
+    ${cmd('library',  '--origin localhost:8080')}
 
   Terminal 3 — explorer author (joins the relay over origin):
 
-    ${cmd('explorer', 'exp-pw', '--origin localhost:8080')}
+    ${cmd('explorer', '--origin localhost:8080')}
 
 Then visit:
 

@@ -20,13 +20,26 @@ won't reconstruct from logs alone.
 
 ## current state
 
-Streamo is at **8.8.0**, published to npm as `@dtudury/streamo`, and
+Streamo is at **8.9.0**, published to npm as `@dtudury/streamo`, and
 live on streamo.dev as the canonical reference deployment. **265 tests
 passing.** The all-in-one server (`npm run dev` / `npm run prod`)
 hosts the homepage, chat, explorer, todomvc, the in-progress
 flashcards demo, and the `streamo-history` repo on one port.
 
 ### recent releases
+
+- **8.9.0** — mounts: the wiring fix the demo demanded. 8.8.0 shipped
+  mounts as a feature, but `webSync` never threaded the registry +
+  pubkeyHex through to `serveFromRepo` (so the mount resolver was
+  silently in files-only mode, hidden by the static-file fallback),
+  and the CLI never exposed `--record-file` (so authoring mounts via
+  npx couldn't populate `value.mounts`). 8.9.0 closes both gaps —
+  mounts now actually fire in production. Discovered during the
+  three-record composed-website demo, where a `mount-proof.js`
+  marker file (present in the library Record, absent from the
+  package's static fallback) made the previously-invisible failure
+  unfalsifiable.
+
 
 - **8.6.0** — service worker + hand-rolled Web Push. The homepage
   registers a network-first `/sw.js`, and a chat message can reach

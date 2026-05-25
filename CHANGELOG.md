@@ -5,6 +5,59 @@ for what's next.
 
 ---
 
+## 8.9.0 — mounts: the wiring fix the demo demanded
+
+8.8.0 shipped the mounts feature: relay-side resolution, fileSync
+materialization, read-only enforcement, registrySync's `followMounts`,
+and the `streamo.json` recordFile sync. Each piece was tested in
+isolation and each one worked. **But when we tried to compose all of
+them end-to-end via the published `npx @dtudury/streamo` for the
+first time — building a three-record demo on 2026-05-24 — we
+discovered the public CLI surface had never actually been exercised
+against the feature.** Three gaps surfaced in one session.
+
+- **`webSync` now auto-threads `registry` + `primaryKeyHex` into
+  `serveFromRepo`.** Without these, the mount resolver silently falls
+  into files-only mode and `value.mounts` is ignored entirely. The
+  static-file fallback (`express.static(publicDir)`) was serving the
+  same paths the mount table would have resolved, so the failure
+  mode was invisible end-to-end. streamo.dev's homepage relay had
+  been running in files-only mode since 8.8.0 shipped — "composition
+  via mounts" was an express.static performance the whole time. This
+  fix is the one that actually lets the feature do work in production.
+
+- **The `streamo` CLI now exposes `--record-file [name]` and
+  auto-enables it when `--files-key` is set.** 8.8.0's library
+  supported `recordFile: true` for the streamo.json sync, but
+  `bin/streamo.js` never exposed the option. Anyone trying to author
+  a record with mounts via npx hit a silent failure: their
+  streamo.json on disk became a regular file in `value.files`, the
+  mounts table never reached `value.mounts`, the resolver found
+  nothing, and the static fallback papered over the gap. Now,
+  `--files-key files` auto-implies `--record-file streamo.json`
+  (use `--no-record-file` to disable). The startup banner shows the
+  recordFile name when the sync is on.
+
+- **The diagnostic technique that made all of this visible:** a
+  `mount-proof.js` marker file injected into a library Record at
+  setup, but absent from the published `@dtudury/streamo` package's
+  `public/streamo/`. When `/streamo/h.js` returns 200 it doesn't
+  tell you which path served it — both the mount and the static
+  fallback have the same bytes. `mount-proof.js` is the *one* file
+  the fallback cannot fake, so a 200 on it proves the mount resolver
+  did the work. This idiom — *"design the check around what the
+  wrong path can't do, not what the right path can"* — surfaces in
+  `scripts/demo-three-records.js` and is the technique worth keeping.
+
+None of these changes are breaking. Existing code keeps working;
+mounts just *actually* work now where they couldn't before. The
+fuller cleanup — removing the static fallback entirely, retiring
+`filesKey: null`, migrating streamo.dev to declare its library and
+apps as composed Records — is queued for 9.0.0 under "held for a
+major bump" in ROADMAP.
+
+---
+
 ## 8.8.0 — mounts: records compose like records do; todomvc deep-links
 
 **Mounts.** A record's value gains one new top-level key, parallel to

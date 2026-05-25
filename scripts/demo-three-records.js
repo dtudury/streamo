@@ -195,21 +195,15 @@ await writeFile(
 
 // Each terminal cd's into its Record's subdir. --data-dir defaults to
 // `.streamo` per CWD (per-Record isolation). --files ./files finds the
-// seeded directory. --files-key files is LOAD-BEARING for the mount
-// system: without it, the streamo.json on disk doesn't sync into
-// value.mounts (the recordFile sync only fires when filesKey is non-
-// null), so the mount resolver finds no mounts table and falls
-// through to the static fallback — silently.
-//
-// Using `node <repo>/bin/streamo.js` instead of `npx @dtudury/streamo`
-// for now: the published 8.8.0 CLI doesn't expose --record-file (or
-// auto-enable it from --files-key), so npx-based runs can never
-// populate value.mounts. Local CLI has the fix; will switch back to
-// npx once 8.9.0 publishes.
-const localCli = join(repoRoot, 'bin', 'streamo.js')
+// seeded directory. --files-key files is required for the mount system —
+// in 8.9.0 it auto-enables --record-file streamo.json (which populates
+// value.mounts from the file on disk). Earlier 8.x versions (8.8.0 and
+// before) silently failed because the CLI didn't expose --record-file
+// and webSync didn't thread registry through to serveFromRepo. Use
+// 8.9.0+.
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
-      node ${localCli} --name ${record} --username ${username} \\
+      npx @dtudury/streamo --name ${record} --username ${username} \\
         --files ./files --files-key files ${extra}`
 
 console.log('\n' + RULE)

@@ -194,15 +194,19 @@ await writeFile(
 // ── Print the three commands to copy/paste into three terminals ────────
 
 // Each terminal cd's into its Record's subdir. --data-dir defaults to
-// `.streamo` per CWD (per-Record isolation). --files ./files finds the
-// seeded directory and (in 9.0.0+) auto-enables --record-file
-// streamo.json so value.mounts gets populated from disk. Use 9.0.0+
-// — earlier versions silently failed because the CLI didn't expose
-// --record-file and webSync didn't thread registry through to
-// serveFromRepo.
+// `.streamo` per CWD (per-Record isolation). --files ./files finds
+// the seeded directory and (since 9.0.0) auto-enables --record-file
+// streamo.json so value.mounts gets populated from disk.
+//
+// `npx -y @dtudury/streamo@9.0.0` pins the published version the demo
+// is known to work with — defensive against version drift (the demo
+// stays good even if a future minor changes default behavior), and a
+// clean test point: "does the demo still work with 10.0.0? drop the
+// pin and re-run." If you want to test an unpublished local build,
+// substitute `node /path/to/streamo/bin/streamo.js` for the npx call.
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
-      npx @dtudury/streamo --name ${record} --username ${username} \\
+      npx -y @dtudury/streamo@9.0.0 --name ${record} --username ${username} \\
         --files ./files ${extra}`
 
 console.log('\n' + RULE)

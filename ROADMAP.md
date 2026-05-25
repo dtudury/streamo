@@ -19,7 +19,8 @@ below for the discovery story.
 
 - **A — `filesKey: null` retirement (code-only).** *(shipped — no release yet, awaiting B+)* The `filesKey` option is gone from `fileSync` and `serveFromRepo`; files always live at `value.files`. CLI lost `--files-key`; `--files` auto-enables `--record-file streamo.json` (use `--no-record-file` to opt out). 262 tests passing.
 - **B — canonical library Record live on streamo.dev.** *(shipped 2026-05-25)* The `streamo-library` identity (cryptopotamus `streamo.dev,streamo-library,32,,,`) signs a Record at pubkey **`02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a`** whose `files` key holds `index.js` plus all 31 runtime files under `public/streamo/` (tests + test-utils excluded, matching the npm tarball). Served from `https://streamo.dev/streams/02e771…/<path>`. Identity recovery recipe is in Claude's memory (`project_streamo_library_identity.md`) — the password itself is never written to disk; re-derive via cryptopotamus when needed.
-- **C — async mount resolver + meta merge + homepage mounts declaration.** *(committed; awaiting deploy)* Three threads converged: (1) `repoFileServer.js`'s mount resolver became async and uses `await registry.open` so archived mount targets materialize lazily at first request — no startup pre-subscription. (2) `fileSync.js`'s `setRecordMeta` gained a `meta: 'merge' | 'replace'` strategy (default `merge`) so streamo.json edits compose with code-side writes (chat's seed step) instead of clobbering them. (3) `public/homepage/streamo.json` declares the library mount; `chat/server.js` opts into the streamo.json sync. After deploy, `streamo.dev/streamo/<path>` resolves through the library Record instead of falling through to `express.static`.
+- **C — async mount resolver + meta merge + homepage mounts declaration.** *(shipped 2026-05-25)* Three threads converged: (1) `repoFileServer.js`'s mount resolver became async and uses `await registry.open` so archived mount targets materialize lazily at first request — no startup pre-subscription. (2) `fileSync.js`'s `setRecordMeta` gained a `meta: 'merge' | 'replace'` strategy (default `merge`) so streamo.json edits compose with code-side writes (chat's seed step) instead of clobbering them. (3) `public/homepage/streamo.json` declares the library mount; `chat/server.js` opts into the streamo.json sync. Deploy verified — `streamo.dev/streamo/h.js` resolves through the library Record (ETag `"527338-h.js"` matches the direct route, proving same dataAddress).
+- **C.1 — streamo.json is a first-class file in value.files (FolderRecord shape).** *(shipped 2026-05-25)* fileSync no longer excludes `recordFile` from `value.files`; streamo.json is now a regular file whose parsed content mirrors `value-top-level-minus-files`. A new `healMetaInvariant` helper detects + warns + heals when code-driven `repo.set()` bypasses fileSync. Names the *FolderRecord* shape — a Record whose `value.files` is a folder tree (including its own streamo.json metadata sidecar) and whose top-level meta mirrors `value.files[streamo.json]`. Deploy verified — `streamo.dev/streamo.json` returns the homepage Record's full meta as a JSON file.
 - **D — promote each bundled app** (chat, flashcards, explorer, todomvc) to its own signed Record. The homepage's mounts table grows to compose each at `apps/<name>/`.
 - **E — remove `app.use(express.static(publicDir))`** from `webSync.js`. The breaking line. Every URL now resolves through Record + mounts.
 - **F — tighten the npm tarball.** `public/` no longer ships homepage/apps as servable assets.
@@ -29,6 +30,18 @@ Substantive descriptions of why each piece exists are below under
 *held for a major bump* → *remove the `public/*` static fallback*
 and *retire `filesKey: null`*. As phases land, this checklist tracks
 progress; when 9.0.0 ships, the whole arc moves to CHANGELOG.
+
+**Known operational friction:** runtime flushToDisk writes the
+homepage Record's full meta (journalists, entries, flashcardsDecks,
+mounts) to `public/homepage/streamo.json`, diverging from the
+git-tracked minimal `{mounts}` slice. `npm run deploy`'s clean-
+working-tree precheck aborts until the prod side's local change is
+discarded with `git checkout public/homepage/streamo.json`. Worth a
+small fix when convenient — either teach deploy.sh to discard
+expected runtime-written files automatically, or move the homepage's
+mount declaration into the seed step (eliminating the git-tracked
+streamo.json for this Record entirely; FolderRecord's invariant
+remains intact through code → flushToDisk).
 
 ---
 

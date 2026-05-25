@@ -15,7 +15,7 @@
  * **Streamo is identity-blind.** It doesn't sign, verify, track chain
  * state, or hold a signer. Everything signed-chain-related — the
  * `signedLength` / `committedChainHash` bookkeeping, sign(), verify(),
- * makeRelayInboundStream + its reactive flags — lives on Repo, which
+ * makeRelayInboundStream + its reactive flags — lives on StreamoRecord, which
  * extends Streamo and overrides `append` + `valueAddress` to thread the
  * chain through.
  *
@@ -34,7 +34,7 @@ import { CodecRegistry } from './CodecRegistry.js'
  * so the comparison cannot append chunks. Without this, calling
  * changedPaths during Streamo.set could materialize inline children as
  * separate chunks AFTER the new commit, moving valueAddress past the
- * commit and corrupting Repo.lastCommit.
+ * commit and corrupting StreamoRecord.lastCommit.
  *
  * Tradeoff: asRefs returns `undefined` for inline children's addresses,
  * so changedPaths can't see differences that happen entirely inside
@@ -74,7 +74,7 @@ export function * changedPaths (streamo, addrA, addrB, path = []) {
  *   - CodecRegistry: encode/decode any JS value to/from bytes
  *   - Recaller: fine-grained reactive dependency tracking (watch/get/set)
  *
- * Signing, verification, and chain bookkeeping live on Repo — Streamo
+ * Signing, verification, and chain bookkeeping live on StreamoRecord — Streamo
  * is intentionally identity-blind.
  */
 export class Streamo extends CodecRegistry {
@@ -303,7 +303,7 @@ export class Streamo extends CodecRegistry {
    * fresh or cloned streamo), falls back to byteLength-1.
    *
    * Streamo is SIG-blind — if the last chunk happens to be a SIGNATURE,
-   * valueAddress points at it. Subclasses (Repo) that track signed chains
+   * valueAddress points at it. Subclasses (StreamoRecord) that track signed chains
    * override this to walk past trailing SIGs.
    */
   get valueAddress () {

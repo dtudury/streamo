@@ -1,12 +1,12 @@
 import { describe } from './utils/testing.js'
-import { Repo } from './Repo.js'
+import { StreamoRecord } from './StreamoRecord.js'
 import { serveFromRepo } from './repoFileServer.js'
 
 /**
- * Build a Repo seeded with a single commit of the given value.
+ * Build a StreamoRecord seeded with a single commit of the given value.
  */
 function makeRepo (value) {
-  const repo = new Repo()
+  const repo = new StreamoRecord()
   const working = repo.checkout()
   working.set(value)
   repo.commit(working, 'seed')
@@ -90,7 +90,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('falls through when repo has no commit', async ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const mw = serveFromRepo(repo, { injectImportMap: false })
     const r = await callMiddleware(mw, { path: '/' })
     assert.equal(r.nextCalled, true)
@@ -265,10 +265,10 @@ describe(import.meta.url, ({ test }) => {
   // and supports pinning a mount to a specific dataAddress.
 
   /**
-   * A minimal in-memory registry stub: a Map from pubkeyHex → Repo,
-   * with a `get(key)` accessor that mirrors the real RepoRegistry's
+   * A minimal in-memory registry stub: a Map from pubkeyHex → StreamoRecord,
+   * with a `get(key)` accessor that mirrors the real StreamoRecordRegistry's
    * synchronous-get shape. Sufficient for the resolver, which only
-   * uses .get(key) and the Repo's value-read API.
+   * uses .get(key) and the StreamoRecord's value-read API.
    */
   function makeStubRegistry (entries) {
     const map = new Map(entries)
@@ -403,7 +403,7 @@ describe(import.meta.url, ({ test }) => {
     // Build a record that goes through two commits; pin the mount to
     // the first commit's dataAddress and confirm the served content
     // matches the pinned commit, not HEAD.
-    const b = new Repo()
+    const b = new StreamoRecord()
     let w = b.checkout()
     w.set({ files: { 'x.txt': 'v1' } })
     b.commit(w, 'v1')

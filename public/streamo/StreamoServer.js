@@ -1,5 +1,5 @@
-import { Repo } from './Repo.js'
-import { RepoRegistry } from './RepoRegistry.js'
+import { StreamoRecord } from './StreamoRecord.js'
+import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { Signer } from './Signer.js'
 import { archiveSync } from './archiveSync.js'
@@ -18,7 +18,7 @@ import { webSync } from './webSync.js'
  *   - `ws://host[:port]` / `wss://host[:port]` — explicit URL shape
  *   - `host:port` shorthand — `:443` → wss, any other port → ws
  *   - `host` shorthand (no port) — wss (production default; same
- *      heuristic `Repo.merge`'s URL parser uses)
+ *      heuristic `StreamoRecord.merge`'s URL parser uses)
  *
  * Defaults the missing port from the protocol (wss → 443, ws → 80).
  * Exported so `bin/streamo.js`, alternative entry points, and tests
@@ -87,10 +87,10 @@ export class StreamoServer {
 
     const archiveClosers = new Map()
     const recaller = new Recaller(`server:${name ?? resolvedPublicKeyHex.slice(0, 8)}`)
-    const registry = new RepoRegistry({
+    const registry = new StreamoRecordRegistry({
       recaller,
       factory: async key => {
-        const repo = new Repo({ recaller })
+        const repo = new StreamoRecord({ recaller })
         const { close } = await archiveSync(repo, dataDir, key)
         archiveClosers.set(key, close)
         return repo

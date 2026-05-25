@@ -8,7 +8,7 @@ import WebSocket from 'ws'
  *   remote → local: trust+append (the upstream relay is the chain
  *                   authority for this repo's canonical chain)
  *
- * @param {import('./Repo.js').Repo} stream
+ * @param {import('./StreamoRecord.js').StreamoRecord} stream
  * @param {string} publicKeyHex  hex-encoded public key identifying this stream
  * @param {string} host
  * @param {number} port

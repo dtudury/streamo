@@ -11,7 +11,7 @@ import { h }              from '../../streamo/h.js'
 import { mount }          from '../../streamo/mount.js'
 import { Signer }         from '../../streamo/Signer.js'
 import { Recaller }       from '../../streamo/utils/Recaller.js'
-import { RepoRegistry }   from '../../streamo/RepoRegistry.js'
+import { StreamoRecordRegistry }   from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync }   from '../../streamo/registrySync.js'
 import { liveValue }      from '../../streamo/LiveSource.js'
 import { bytesToHex }     from '../../streamo/utils.js'
@@ -231,7 +231,7 @@ async function login (e) {
     const { publicKey } = await signer.keysFor('chat')
     myKey  = bytesToHex(publicKey)
     myName = username
-    registry = new RepoRegistry({ recaller, name: 'chat' })
+    registry = new StreamoRecordRegistry({ recaller, name: 'chat' })
 
     // Track who we've already announced ourselves back to, so we don't
     // ping-pong forever. Without this set, every peer-back ricochets into
@@ -255,7 +255,7 @@ async function login (e) {
       }
     })
 
-    // session.subscribe opens the Repo locally AND plumbs it to the wire,
+    // session.subscribe opens the StreamoRecord locally AND plumbs it to the wire,
     // so the relay starts streaming our own history down to this tab.
     // Without going through session.subscribe (or having it tripped via
     // another tab's announce), our own bytes would sit unsynced.
@@ -284,7 +284,7 @@ async function login (e) {
         try { rejectedValue = myRepo.decode(flag.dataAddress) } catch {}
       }
       // Wipe local state (bytes + flags) and tear down the old WS so the
-      // fresh sync starts from a clean empty Repo.
+      // fresh sync starts from a clean empty StreamoRecord.
       myRepo._reset()
       // session.close() — not session.ws.close() — so the old session
       // doesn't auto-reconnect and race the fresh one we build below.

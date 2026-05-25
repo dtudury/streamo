@@ -4,7 +4,7 @@
 // having to thread them through factory calls.
 //
 //   recaller     the one Recaller every reactive thing shares
-//   registry     RepoRegistry — exposes its own dep/fire via shared recaller
+//   registry     StreamoRecordRegistry — exposes its own dep/fire via shared recaller
 //   state        cross-view UI state (currently just connection-pill)
 //   homeKey      the relay's home repo key (set by main.js from `hello`)
 //   hovered      live-preview hover address — a single-value LiveSource
@@ -18,10 +18,10 @@
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { liveObject, liveValue } from '../../streamo/LiveSource.js'
 import { liveLocation } from '../../streamo/liveLocation.js'
-import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 
 export const recaller = new Recaller('explorer')
-export const registry = new RepoRegistry({ recaller, name: 'explorer' })
+export const registry = new StreamoRecordRegistry({ recaller, name: 'explorer' })
 
 // Cross-view UI state. Currently just the connection pill —
 // registrySync writes it, the conn pill in main.js's mount template

@@ -1,5 +1,5 @@
 // Type-guards and small classifiers used across explorer views.
-// Pure inspection — no Repo or DOM dependencies.
+// Pure inspection — no StreamoRecord or DOM dependencies.
 
 export function isCommitShape (v) {
   return v && typeof v === 'object' && !Array.isArray(v) &&

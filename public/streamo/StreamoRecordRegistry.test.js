@@ -1,15 +1,15 @@
 import { describe } from './utils/testing.js'
 import { Streamo } from './Streamo.js'
-import { Repo } from './Repo.js'
-import { RepoRegistry } from './RepoRegistry.js'
+import { StreamoRecord } from './StreamoRecord.js'
+import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { archiveSync } from './archiveSync.js'
 
-const newRegistry = (factory) => new RepoRegistry({ recaller: new Recaller('test'), factory })
+const newRegistry = (factory) => new StreamoRecordRegistry({ recaller: new Recaller('test'), factory })
 
 function archiveRegistry (dir) {
   return newRegistry(async key => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     await archiveSync(repo, dir, key)
     return repo
   })
@@ -17,15 +17,15 @@ function archiveRegistry (dir) {
 
 describe(import.meta.url, ({ test }) => {
   test('rejects construction without a recaller', ({ assert }) => {
-    assert.throws(() => new RepoRegistry(), /recaller.*required/)
-    assert.throws(() => new RepoRegistry({}), /recaller.*required/)
-    assert.throws(() => new RepoRegistry({ name: 'oops' }), /recaller.*required/)
+    assert.throws(() => new StreamoRecordRegistry(), /recaller.*required/)
+    assert.throws(() => new StreamoRecordRegistry({}), /recaller.*required/)
+    assert.throws(() => new StreamoRecordRegistry({ name: 'oops' }), /recaller.*required/)
   })
 
   test('plain registry creates in-memory repositories with no factory', async ({ assert }) => {
     const registry = newRegistry()
     const s = await registry._materialize('anykey')
-    assert.ok(s instanceof Repo)
+    assert.ok(s instanceof StreamoRecord)
     s.set({ x: 1 })
     assert.equal(s.get('x'), 1)
   })
@@ -55,7 +55,7 @@ describe(import.meta.url, ({ test }) => {
     const registry = newRegistry(async () => {
       created++
       await new Promise(r => setTimeout(r, 10))
-      return new Repo()
+      return new StreamoRecord()
     })
     const [s1, s2, s3] = await Promise.all([
       registry._materialize('k'),

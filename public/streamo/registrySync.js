@@ -17,7 +17,7 @@
 const WS = globalThis.WebSocket ?? (await import('ws')).default
 
 import { hexToBytes, bytesToHex } from './utils.js'
-import { RepoSerializer, ConnectionAccumulator } from './RepoSerializer.js'
+import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 
 function arraysEqual (a, b) {
   if (a.length !== b.length) return false
@@ -71,7 +71,7 @@ const RECONNECT_RESET_MS = 30000
 /**
  * @typedef {Object} RegistrySyncOptions
  *
- * @property {(keyHex: string, repo: import('./Repo.js').Repo, subscribe: (keyHex: string) => void) => void} [follow]
+ * @property {(keyHex: string, repo: import('./StreamoRecord.js').StreamoRecord, subscribe: (keyHex: string) => void) => void} [follow]
  *   Called reactively whenever a synced repository's value changes.  Use this
  *   to extract repository keys embedded in the data and call `subscribe(key)`
  *   on each one.  The registry will then sync that repo too, and `follow` will
@@ -150,7 +150,7 @@ const RECONNECT_RESET_MS = 30000
  *     Request to sync a repository bidirectionally.  The sender will stream
  *     its copy of the repo to the peer AND expects the peer to stream back.
  *     Relay-side (isAuthority): route incoming chunks through a per-repo
- *     RepoSerializer (chain check + crypto check, atomic accept/reject).
+ *     StreamoRecordSerializer (chain check + crypto check, atomic accept/reject).
  *     Client-side: trust+append via makeRelayInboundStream (alignment check
  *     only — the relay's chain is authoritative).
  *
@@ -177,7 +177,7 @@ const RECONNECT_RESET_MS = 30000
  * from content — no out-of-band catalog is needed.
  *
  * @param {WebSocket} ws
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {RegistrySyncOptions} [options]
  * @param {string} [label]  prefix for log messages
  */
@@ -237,7 +237,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     //
     // Two modes:
     //   - isAuthority (relay-side): incoming chunks are *pushes* from a
-    //     client. Route through the per-repo RepoSerializer via a
+    //     client. Route through the per-repo StreamoRecordSerializer via a
     //     per-connection ConnectionAccumulator. On reject, send a
     //     `{type: 'reject', key, reason}` control message back to the
     //     submitting peer instead of just closing.
@@ -253,7 +253,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
         const publicKey = hexToBytes(keyHex)
         let serializer = routing?.serializers?.get(keyHex)
         if (!serializer) {
-          serializer = new RepoSerializer(repo, publicKey)
+          serializer = new StreamoRecordSerializer(repo, publicKey)
           routing?.serializers?.set(keyHex, serializer)
         }
         writer = new ConnectionAccumulator(serializer, (result) => {
@@ -303,13 +303,13 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   }
 
   /**
-   * Subscribe to keyHex from the peer: open the local Repo if not yet opened,
+   * Subscribe to keyHex from the peer: open the local StreamoRecord if not yet opened,
    * announce intent over the wire, and set up bidirectional sync. Returns the
-   * Repo — this is the canonical "I want this key live" verb, collapsing
+   * StreamoRecord — this is the canonical "I want this key live" verb, collapsing
    * `registry._materialize` (storage layer) and wire setup in one call.
    *
    * The subscribe message carries `{ fromOffset, fromChainHash }` — the local
-   * Repo's `signedLength` and `committedChainHash` — so the peer can skip
+   * StreamoRecord's `signedLength` and `committedChainHash` — so the peer can skip
    * bytes we already have. The peer validates the anchor: if our claimed
    * `fromChainHash` matches the SIG ending at `fromOffset` on their chain, they
    * stream from there. If not, they `reject` with `chain-mismatch`.
@@ -418,7 +418,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // offer Send-merged / Discard recovery.
           //
           // `registry.get` (not `.open`) is correct here: we pushed bytes
-          // for this key, so the Repo MUST already be materialized in the
+          // for this key, so the StreamoRecord MUST already be materialized in the
           // registry — that's an invariant of the push protocol.
           const repo = registry.get(msg.key)
           if (repo) {
@@ -488,10 +488,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     /** Announce `key` as related to `topic` — routed to all peers interested in that topic. */
     announce (key, topic) { sendJson({ type: 'announce', key, topic }) },
     /**
-     * Subscribe to a specific repo key. Opens the Repo locally if not yet
-     * opened, sets up bidirectional wire sync, and returns the Repo.
+     * Subscribe to a specific repo key. Opens the StreamoRecord locally if not yet
+     * opened, sets up bidirectional wire sync, and returns the StreamoRecord.
      * The everyday "I want this key live" verb.
-     * @returns {Promise<import('./Repo.js').Repo>}
+     * @returns {Promise<import('./StreamoRecord.js').StreamoRecord>}
      */
     subscribe (key) { return subscribeToKey(key) }
   }
@@ -511,14 +511,14 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *   Announce a repository as related to `topic`.  The server fans this out to
  *   all other connected peers that have called `interest(topic)`.  Ephemeral —
  *   no persistence, only routes to currently-connected interested peers.
- * @property {(key: string) => Promise<import('./Repo.js').Repo>} subscribe
- *   Open the Repo for `key` if not yet opened, set up bidirectional wire
- *   sync, and return the Repo. The everyday "I want this key live" verb —
+ * @property {(key: string) => Promise<import('./StreamoRecord.js').StreamoRecord>} subscribe
+ *   Open the StreamoRecord for `key` if not yet opened, set up bidirectional wire
+ *   sync, and return the StreamoRecord. The everyday "I want this key live" verb —
  *   collapses `registry._materialize` + wire setup into one call.
  */
 
 /**
- * Connect a local RepoRegistry to a remote one and sync repositories.
+ * Connect a local StreamoRecordRegistry to a remote one and sync repositories.
  *
  * Sends `"registry"` as the WebSocket handshake.  The server responds with
  * a `hello` message carrying its `home` key; we auto-subscribe to that, and
@@ -565,7 +565,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *   const session = await registrySync(myRegistry, 'localhost', 8080)
  *   session.subscribe(privateKeySharedOutOfBand)
  *
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {string} host
  * @param {number} port
  * @param {RegistrySyncOptions} [options]
@@ -674,17 +674,17 @@ export function registrySync (registry, host, port, options = {}) {
       peer?.announce(key, topic)
     },
     /**
-     * Subscribe to a specific repo key: open the Repo locally, plumb the
-     * wire, and return the Repo. While reconnecting there is no live peer —
-     * the Repo still opens locally and the wire plumbing replays once the
+     * Subscribe to a specific repo key: open the StreamoRecord locally, plumb the
+     * wire, and return the StreamoRecord. While reconnecting there is no live peer —
+     * the StreamoRecord still opens locally and the wire plumbing replays once the
      * connection returns.
-     * @returns {Promise<import('./Repo.js').Repo>}
+     * @returns {Promise<import('./StreamoRecord.js').StreamoRecord>}
      */
     async subscribe (key) {
       subscribed.add(key)
       const repo = await (peer ? peer.subscribe(key) : registry._materialize(key))
       // Back-reference so `repo.merge()` can request a session-level
-      // resync after a rejected push. Streamos that aren't Repos (e.g.,
+      // resync after a rejected push. Streamos that aren't StreamoRecords (e.g.,
       // the tarot demo) don't implement `_attachSession`; the optional
       // chain skips them gracefully.
       repo._attachSession?.(session)
@@ -695,11 +695,11 @@ export function registrySync (registry, host, port, options = {}) {
      * from offset 0. Used by `repo.merge()` between retry attempts after
      * a rejected push:
      *
-     *   1. Caller has already `_reset()`'d the Repo (local bytes wiped,
+     *   1. Caller has already `_reset()`'d the StreamoRecord (local bytes wiped,
      *      flags cleared).
      *   2. This closes the existing reader (it would send stale local
      *      bytes that no longer exist) and writer (its alignment state
-     *      expects bytes the local Repo no longer has).
+     *      expects bytes the local StreamoRecord no longer has).
      *   3. Sends a fresh `subscribe` JSON with `fromOffset: 0` so the
      *      relay streams its authoritative chain from the start.
      *   4. Re-creates reader + writer via `syncKey`.

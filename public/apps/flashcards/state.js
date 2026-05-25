@@ -15,7 +15,7 @@
  *     deckId. Opened lazily on first study-click.
  *   - `state` — liveObject of UI state (view, activeDeck,
  *     revealedCardIdx, managePinned, etc.).
- *   - `registry` — the RepoRegistry, late-bound. Created in main.js's
+ *   - `registry` — the StreamoRecordRegistry, late-bound. Created in main.js's
  *     login() flow; reassigned via `setRegistry()` because ES module
  *     bindings are read-only to importers. Live binding means
  *     importers see the new value after a login without re-importing.
@@ -69,7 +69,7 @@ export const state = liveObject({
 // it (live binding) without main.js owning the declaration. The
 // setter exists because only the source module can reassign an
 // exported `let`; main.js uses setRegistry() to swap in a fresh
-// RepoRegistry on each login.
+// StreamoRecordRegistry on each login.
 export let registry = null
 export function setRegistry (r) { registry = r }
 

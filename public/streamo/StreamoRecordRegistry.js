@@ -1,12 +1,12 @@
 import { Streamo } from './Streamo.js'
-import { Repo } from './Repo.js'
+import { StreamoRecord } from './StreamoRecord.js'
 import { Recaller } from './utils/Recaller.js'
 
 /**
- * Manages a collection of Repos keyed by hex-encoded public key. Every
+ * Manages a collection of StreamoRecords keyed by hex-encoded public key. Every
  * registry has a shared Recaller — its reactive coordination point —
  * which **must be provided by the caller**. The default factory creates
- * Repos that share this Recaller, so reading any repo's state inside a
+ * StreamoRecords that share this Recaller, so reading any repo's state inside a
  * reactive cell auto-subscribes the cell to chunk arrivals.
  *
  * Iteration, `get(keyHex)`, and `size` all report access on
@@ -14,8 +14,8 @@ import { Recaller } from './utils/Recaller.js'
  * to new-repo opens. `_materialize()` fires the same key when a repo lands.
  *
  * Custom factories that don't pass the registry's Recaller through
- * (e.g. `async key => { const r = new Repo(); await archiveSync(r); }`)
- * still get a fallback bridge — RepoRegistry watches their per-repo
+ * (e.g. `async key => { const r = new StreamoRecord(); await archiveSync(r); }`)
+ * still get a fallback bridge — StreamoRecordRegistry watches their per-repo
  * Recaller and forwards chunk arrivals onto our 'keys' key. Coarser
  * than the shared-Recaller path (every iteration-touching slot wakes
  * on every chunk arrival from any non-shared repo), but it works.
@@ -32,22 +32,22 @@ import { Recaller } from './utils/Recaller.js'
  *
  *   // plain in-memory, sharing the app's Recaller:
  *   const recaller = new Recaller('app')
- *   const registry = new RepoRegistry({ recaller, name: 'app' })
+ *   const registry = new StreamoRecordRegistry({ recaller, name: 'app' })
  *   mount(h`${() => {
  *     for (const [k, r] of registry) ...   // auto-subscribes
  *   }}`, document.body, recaller)
  *
  *   // archive-backed:
- *   const registry = new RepoRegistry({
+ *   const registry = new StreamoRecordRegistry({
  *     recaller,
  *     factory: async key => {
- *       const repo = new Repo({ recaller })
+ *       const repo = new StreamoRecord({ recaller })
  *       await archiveSync(repo, dataDir, key)
  *       return repo
  *     }
  *   })
  */
-export class RepoRegistry {
+export class StreamoRecordRegistry {
   /** The Recaller this registry's reactive events fire on. */
   recaller
   #streams = new Map()
@@ -60,10 +60,10 @@ export class RepoRegistry {
    * @param {Recaller} options.recaller  **Required.** The shared Recaller
    *   this registry fires reactive events on. Pass your app's Recaller —
    *   the one your slots / mount are watching — so opens here wake them.
-   * @param {(publicKeyHex: string) => Repo | Promise<Repo>} [options.factory]
-   *   If omitted, the default factory creates plain in-memory Repos
+   * @param {(publicKeyHex: string) => StreamoRecord | Promise<StreamoRecord>} [options.factory]
+   *   If omitted, the default factory creates plain in-memory StreamoRecords
    *   that share `recaller`. Custom factories that want the same effect
-   *   should pass `registry.recaller` into their `new Repo(...)` call;
+   *   should pass `registry.recaller` into their `new StreamoRecord(...)` call;
    *   otherwise the registry bridges their per-repo recaller onto its
    *   own.
    * @param {string} [options.name='registry']  Used in watch names for
@@ -72,8 +72,8 @@ export class RepoRegistry {
   constructor (options = {}) {
     if (!options || !options.recaller) {
       throw new TypeError(
-        'RepoRegistry: `recaller` is required. Pass your app\'s Recaller via ' +
-        '`new RepoRegistry({ recaller, factory?, name? })`. Pre-10.0.0 a fresh ' +
+        'StreamoRecordRegistry: `recaller` is required. Pass your app\'s Recaller via ' +
+        '`new StreamoRecordRegistry({ recaller, factory?, name? })`. Pre-10.0.0 a fresh ' +
         'Recaller was silently created when omitted — the silent-stale-slot ' +
         'footgun. See CLAUDE.md for the rationale.'
       )
@@ -81,11 +81,11 @@ export class RepoRegistry {
     const { recaller, factory, name = 'registry' } = options
     this.#name = name
     this.recaller = recaller
-    this.#factory = factory ?? (() => new Repo({ recaller: this.recaller }))
+    this.#factory = factory ?? (() => new StreamoRecord({ recaller: this.recaller }))
   }
 
   /**
-   * Return the Repo for `publicKeyHex`, creating it via the factory if
+   * Return the StreamoRecord for `publicKeyHex`, creating it via the factory if
    * this is the first call for that key.
    *
    * The repository is registered immediately (before the factory resolves)
@@ -96,21 +96,21 @@ export class RepoRegistry {
    * verb, not what most callers want.** Client code that wants bytes to
    * flow over the wire wants `session.subscribe(publicKeyHex)` (from a
    * `registrySync(...)` return value) or the `follow` cascade. `_materialize`
-   * alone makes a *local* Repo only — it doesn't send a subscribe message
+   * alone makes a *local* StreamoRecord only — it doesn't send a subscribe message
    * to the relay, so the bytes for this key won't be pushed.
    *
    * Legitimate callers of `_materialize`:
    *   - the relay's own startup seed (`StreamoServer.create`)
    *   - mount resolution (repoFileServer, fileSync's collectMountedFiles)
    *   - registrySync's chunk-arrival path (a new key arriving over the
-   *     wire needs a local Repo to write into)
+   *     wire needs a local StreamoRecord to write into)
    *   - tests that exercise the registry directly
    *
    * If your call site doesn't match one of those, you almost certainly
    * want `session.subscribe` instead.
    *
    * @param {string} publicKeyHex
-   * @returns {Promise<Repo>}
+   * @returns {Promise<StreamoRecord>}
    */
   async _materialize (publicKeyHex) {
     if (this.#streams.has(publicKeyHex)) return this.#streams.get(publicKeyHex)
@@ -118,8 +118,8 @@ export class RepoRegistry {
     const placeholder = new Promise(r => { resolve = r })
     this.#streams.set(publicKeyHex, placeholder)
     const stream = await this.#factory(publicKeyHex)
-    // The Repo's own pubkey-hex is the key the registry stored it under.
-    // Exposing it lets clients ask the Repo "what address are you?" without
+    // The StreamoRecord's own pubkey-hex is the key the registry stored it under.
+    // Exposing it lets clients ask the StreamoRecord "what address are you?" without
     // a reverse-lookup or a side-channel stash on the instance.
     stream.publicKeyHex = publicKeyHex
     this.#streams.set(publicKeyHex, stream)
@@ -150,11 +150,11 @@ export class RepoRegistry {
   offOpen (cb) { this.#openCallbacks.delete(cb) }
 
   /**
-   * Return an already-open Repo, or undefined if not opened yet.
+   * Return an already-open StreamoRecord, or undefined if not opened yet.
    * Reports access on `(registry, 'keys')` so the calling reactive
    * cell re-runs when the set of open repos changes.
    * @param {string} publicKeyHex
-   * @returns {Repo|undefined}
+   * @returns {StreamoRecord|undefined}
    */
   get (publicKeyHex) {
     this.recaller.reportKeyAccess(this, 'keys')
@@ -169,7 +169,7 @@ export class RepoRegistry {
   }
 
   /**
-   * Iterate over [publicKeyHex, Repo] pairs (only fully-opened).
+   * Iterate over [publicKeyHex, StreamoRecord] pairs (only fully-opened).
    * Reports access — slots iterating the registry auto-subscribe to
    * new-repo opens.
    */

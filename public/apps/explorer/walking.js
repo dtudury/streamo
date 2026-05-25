@@ -1,6 +1,6 @@
-// Repo-walking helpers — read a Repo's byte stream and yield/return
-// structured data. No DOM, no h. Each function takes a Repo as its
-// first arg and uses only Repo's public surface (resolve, decode,
+// StreamoRecord-walking helpers — read a StreamoRecord's byte stream and yield/return
+// structured data. No DOM, no h. Each function takes a StreamoRecord as its
+// first arg and uses only StreamoRecord's public surface (resolve, decode,
 // asRefs, directReferences, footerToCodec, byteLength).
 
 import { truncHex } from './format.js'

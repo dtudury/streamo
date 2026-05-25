@@ -3,7 +3,7 @@
  * HTTP routes that let chat clients register for OS notifications.
  *
  * Subscriptions live in a plain JSON file in the data dir — deliberately
- * NOT a streamo Repo: a Repo in the registry is servable at
+ * NOT a streamo StreamoRecord: a StreamoRecord in the registry is servable at
  * `/streams/<key>`, and push subscriptions (endpoint URLs, keys) must
  * stay private. So this is a private file, off the registry.
  *
@@ -99,7 +99,7 @@ const NOTIFY_WINDOW_MS = 120000
  * in the past. The author is skipped via the chat pubkey stored alongside
  * each subscription.
  *
- * @param {import('../../streamo/RepoRegistry.js').RepoRegistry} registry
+ * @param {import('../../streamo/StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {PushStore} store
  * @param {{ publicKey: string, privateKey: string, subject: string }} vapid
  * @param {{ send?: typeof sendWebPush }} [opts]  `send` is injectable for tests

@@ -11,7 +11,7 @@ import { join } from 'path'
  * Then opens the file for writing and pipes `makeReadableStream()` into
  * it. Two paths:
  *
- *   - **Append** (Repos, and fresh starts where the in-memory wire
+ *   - **Append** (StreamoRecords, and fresh starts where the in-memory wire
  *     bytes match the file size). We open with `'a'` and start the
  *     reader at `fromOffset = byteLength` — only NEW chunks get written,
  *     the existing on-disk bytes stay untouched. Mirrors how

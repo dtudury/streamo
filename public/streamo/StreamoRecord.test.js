@@ -1,9 +1,9 @@
 import { describe } from './utils/testing.js'
-import { Repo } from './Repo.js'
+import { StreamoRecord } from './StreamoRecord.js'
 
 describe(import.meta.url, ({ test }) => {
   test('commit stores message, date, and a reference to the data', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ a: 1 })
     const commitAddr = repo.commit(working, 'first commit')
@@ -15,7 +15,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('checkout starts with last committed value', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ a: 1 })
     repo.commit(working, 'first')
@@ -24,13 +24,13 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('checkout of empty repo returns empty stream', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     assert.equal(working.byteLength, 0)
   })
 
   test('working stream modifications do not affect the repository', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ v: 1 })
     repo.commit(working, 'first')
@@ -40,14 +40,14 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(repo.decode(repo.lastCommit.dataAddress), { v: 1 })
   })
 
-  test('Repo.set toggling between two values via Repo.set persists each one', ({ assert }) => {
-    // Regression: when Repo.set encodes a value whose outermost subcode
+  test('StreamoRecord.set toggling between two values via StreamoRecord.set persists each one', ({ assert }) => {
+    // Regression: when StreamoRecord.set encodes a value whose outermost subcode
     // already exists in working's content map (toggling back to a state the
     // repo has previously held), copyFrom must use working.valueAddress
     // (which Streamo.set updates explicitly) — NOT working.byteLength-1,
     // which would be unchanged in the dedup case and cite the wrong data.
     // This was the bug that broke todomvc toggle.
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const valueA = { items: [{ id: 1, done: true }] }
     const valueB = { items: [{ id: 1, done: false }] }
 
@@ -69,7 +69,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('multiple commits produce a linked history via parent', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ v: 1 })
     repo.commit(working, 'first')
@@ -84,7 +84,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('first commit has no parent', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ x: 1 })
     repo.commit(working, 'root')
@@ -92,7 +92,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('unchanged data reuses the same address across commits', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ x: 42 })
     repo.commit(working, 'first')
@@ -103,7 +103,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('throws when working stream is empty', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     assert.throws(() => repo.commit(working, 'nothing here'))
   })
@@ -111,7 +111,7 @@ describe(import.meta.url, ({ test }) => {
   // ── remoteParent: citing another author's value ────────────────────────
 
   test('commit without options has no remoteParent (backward compat)', ({ assert }) => {
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ a: 1 })
     repo.commit(working, 'unmarked')
@@ -121,7 +121,7 @@ describe(import.meta.url, ({ test }) => {
   test('pure-copy commit: empty repo + remoteParent → no parent, has remoteParent', ({ assert }) => {
     // The fork-start shape: my chain begins with someone else's value.
     const remote = { host: 'streamo.dev', repo: 'aabbccdd', dataAddress: 42 }
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ forked: 'value' })
     repo.commit(working, 'fork', { remoteParent: remote })
@@ -134,7 +134,7 @@ describe(import.meta.url, ({ test }) => {
   test('mixed commit: existing repo + remoteParent → both parent and remoteParent set', ({ assert }) => {
     // The pull-from-upstream shape: chain continues, footnoting a remote citation.
     const remote = { host: 'streamo.dev', repo: 'aabbccdd', dataAddress: 87 }
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ v: 1 })
     repo.commit(working, 'first')
@@ -148,7 +148,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('remoteParent survives history() iteration', ({ assert }) => {
     const remote = { host: 'streamo.dev', repo: 'deadbeef', dataAddress: 13 }
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ v: 1 })
     repo.commit(working, 'plain')
@@ -164,7 +164,7 @@ describe(import.meta.url, ({ test }) => {
     // OBJECT encodes only present keys, so a plain commit's decoded record
     // should not even have a `remoteParent` property — old chunks stay
     // bit-identical and the field doesn't pollute every commit.
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ x: 1 })
     repo.commit(working, 'plain')
@@ -174,7 +174,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('commit accepts a custom date via options (back-stamping for history replay)', ({ assert }) => {
     const oldDate = new Date('2020-01-15T12:00:00Z')
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     const working = repo.checkout()
     working.set({ x: 1 })
     repo.commit(working, 'recovered', { date: oldDate })
@@ -184,12 +184,12 @@ describe(import.meta.url, ({ test }) => {
   // ── merge: replace-policy (Mode A) ────────────────────────────────────
 
   test('merge into empty target: pure-copy fork — no parent, has remoteParent', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ files: { 'index.html': '<h1>upstream</h1>' } })
     source.commit(sw, 'upstream content')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, {
       remoteParent: { host: 'upstream.test', repo: '03aaaaaaaabbbbbbbbcccc' }
     })
@@ -203,12 +203,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge into non-empty target: mixed — both parent and remoteParent set', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ files: { 'a.html': '<a>' } })
     source.commit(sw, 'src')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     const tw = target.checkout()
     tw.set({ existing: 'value' })
     target.commit(tw, 'initial')
@@ -226,12 +226,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge with from path slices source', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ files: { 'index.html': '<x>' }, members: ['alice'] })
     source.commit(sw, 'src')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, {
       from: ['files'],
       remoteParent: { host: 'h', repo: 'r' }
@@ -241,12 +241,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge with from and into differing paths', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ original_files: { 'a.html': '<a>' } })
     source.commit(sw, 'src')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, {
       from: ['original_files'],
       into: ['my_files'],
@@ -256,23 +256,23 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge with from=[] takes the whole value', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ a: 1, b: 2 })
     source.commit(sw, 'src')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, { remoteParent: { host: 'h', repo: 'r' } })
     assert.deepEqual(target.get(), { a: 1, b: 2 })
   })
 
   test('merge accepts string shorthand for from/into', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ files: { 'x': 'y' } })
     source.commit(sw, 'src')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, {
       from: 'files',
       into: 'files',
@@ -282,7 +282,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge with explicit remoteParent.dataAddress cites a historical address', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ v: 1 })
     source.commit(sw, 'first')
@@ -291,7 +291,7 @@ describe(import.meta.url, ({ test }) => {
     sw.set('v', 2)
     source.commit(sw, 'second')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, {
       remoteParent: { host: 'h', repo: 'r', dataAddress: firstAddr }
     })
@@ -301,30 +301,30 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge requires options.remoteParent', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ x: 1 })
     source.commit(sw, 's')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await assert.rejects(() => target.merge(source, {}))
   })
 
   test('merge requires source to have commits (when dataAddress is not given)', async ({ assert }) => {
-    const source = new Repo()
-    const target = new Repo()
+    const source = new StreamoRecord()
+    const target = new StreamoRecord()
     await assert.rejects(() => target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' }
     }))
   })
 
   test('merge throws clearly for not-yet-implemented policies', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ x: 1 })
     source.commit(sw, 's')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await assert.rejects(() => target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' },
       policy: 'theirs'
@@ -340,12 +340,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge throws when source path does not exist', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ a: 1 })
     source.commit(sw, 's')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await assert.rejects(() => target.merge(source, {
       from: ['nonexistent'],
       remoteParent: { host: 'h', repo: 'r' }
@@ -353,12 +353,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('merge accepts a custom message', async ({ assert }) => {
-    const source = new Repo()
+    const source = new StreamoRecord()
     const sw = source.checkout()
     sw.set({ x: 1 })
     source.commit(sw, 's')
 
-    const target = new Repo()
+    const target = new StreamoRecord()
     await target.merge(source, {
       remoteParent: { host: 'h', repo: 'r' },
       message: 'because I said so'

@@ -1,14 +1,14 @@
 import { describe } from './utils/testing.js'
-import { RepoRegistry } from './RepoRegistry.js'
+import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { outletSync } from './outletSync.js'
 import { originSync } from './originSync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-const newRegistry = () => new RepoRegistry({ recaller: new Recaller('sync-test') })
+const newRegistry = () => new StreamoRecordRegistry({ recaller: new Recaller('sync-test') })
 
-// Under the relay-as-authority model, the relay's RepoSerializer gates every
+// Under the relay-as-authority model, the relay's StreamoRecordSerializer gates every
 // incoming batch via chain + crypto checks — so these end-to-end sync tests
 // need a real keypair whose hex matches the repo's KEY, and a signer attached
 // so the writer's set() auto-emits a signature that the relay can verify.

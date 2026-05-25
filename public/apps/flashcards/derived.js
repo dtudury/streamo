@@ -10,7 +10,7 @@
  *
  *   - **addrFor(deckId)** — bundled-deck id → address; forks have no
  *     separate id so the deckId IS the address
- *   - **deckRepo(deckId)** — the deck Repo for this id (via registry)
+ *   - **deckRepo(deckId)** — the deck StreamoRecord for this id (via registry)
  *   - **deckCards(deckId)** — the cards array (`[] if loading)
  *   - **reviewStateForCard(deckId, cardIdx)** — SM-2 state for one
  *     card, derived by folding all review events
@@ -28,7 +28,7 @@ import { masteryOf }                from './mastery.js'
 import { registry, reviewRepos, state } from './state.js'
 import { homeRepo }                 from './main.js'
 
-// Translate a deckId into the address of its deck Repo. Bundled decks
+// Translate a deckId into the address of its deck StreamoRecord. Bundled decks
 // have a human-readable id ('greek-alphabet') and live at the address
 // listed in homeRepo.flashcardsDecks. Forks have no separate id —
 // their address IS their id. All reads here are recaller-tracked, so

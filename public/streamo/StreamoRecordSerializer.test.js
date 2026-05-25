@@ -1,9 +1,9 @@
 import { describe } from './utils/testing.js'
-import { Repo } from './Repo.js'
-import { RepoSerializer } from './RepoSerializer.js'
+import { StreamoRecord } from './StreamoRecord.js'
+import { StreamoRecordSerializer } from './StreamoRecordSerializer.js'
 import { Signer } from './Signer.js'
 
-// Helpers: extract a batch (chunks + sig) from a Repo's bytestream
+// Helpers: extract a batch (chunks + sig) from a StreamoRecord's bytestream
 // covering everything since the last sig.
 function extractBatch (repo) {
   const chunks = []
@@ -28,14 +28,14 @@ describe(import.meta.url, ({ test }) => {
     const { publicKey } = await signer.keysFor('serializer-test')
 
     // Build a batch by having an author write + sign locally
-    const author = new Repo()
+    const author = new StreamoRecord()
     author.set({ v: 1 })
     await author.sign(signer, 'serializer-test')
     const batch = extractBatch(author)
 
     // Target relay (fresh, empty)
-    const relay = new Repo()
-    const serializer = new RepoSerializer(relay, publicKey)
+    const relay = new StreamoRecord()
+    const serializer = new StreamoRecordSerializer(relay, publicKey)
     const result = await serializer.submit(batch)
     assert.equal(result.accepted, true, 'first batch on empty repo must be accepted')
     assert.equal(relay.byteLength, author.byteLength, 'relay now mirrors the author batch')
@@ -47,15 +47,15 @@ describe(import.meta.url, ({ test }) => {
     const { publicKey } = await signer.keysFor('race-test')
 
     // Both authors start fresh and both write commit_1 — they're racing
-    const a = new Repo()
+    const a = new StreamoRecord()
     a.set({ v: 'apple' })
     await a.sign(signer, 'race-test')
-    const b = new Repo()
+    const b = new StreamoRecord()
     b.set({ v: 'banana' })
     await b.sign(signer, 'race-test')
 
-    const relay = new Repo()
-    const serializer = new RepoSerializer(relay, publicKey)
+    const relay = new StreamoRecord()
+    const serializer = new StreamoRecordSerializer(relay, publicKey)
     const first = await serializer.submit(extractBatch(a))
     assert.equal(first.accepted, true, 'A wins the race')
     const second = await serializer.submit(extractBatch(b))
@@ -71,15 +71,15 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'pass', 1)
     const { publicKey } = await signer.keysFor('concurrent')
 
-    const a = new Repo()
+    const a = new StreamoRecord()
     a.set({ v: 'apple' })
     await a.sign(signer, 'concurrent')
-    const b = new Repo()
+    const b = new StreamoRecord()
     b.set({ v: 'banana' })
     await b.sign(signer, 'concurrent')
 
-    const relay = new Repo()
-    const serializer = new RepoSerializer(relay, publicKey)
+    const relay = new StreamoRecord()
+    const serializer = new StreamoRecordSerializer(relay, publicKey)
 
     // Submit both without awaiting — they should be processed in order
     const [resultA, resultB] = await Promise.all([
@@ -97,7 +97,7 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'pass', 1)
     const { publicKey } = await signer.keysFor('pipeline')
 
-    const author = new Repo()
+    const author = new StreamoRecord()
     author.set({ v: 1 })
     await author.sign(signer, 'pipeline')
     const batch1ByteLengthEnd = author.byteLength
@@ -131,8 +131,8 @@ describe(import.meta.url, ({ test }) => {
       return { chunks, sig }
     })()
 
-    const relay = new Repo()
-    const serializer = new RepoSerializer(relay, publicKey)
+    const relay = new StreamoRecord()
+    const serializer = new StreamoRecordSerializer(relay, publicKey)
     const [r1, r2] = await Promise.all([
       serializer.submit(batch1),
       serializer.submit(batch2)
@@ -146,7 +146,7 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'pass', 1)
     const { publicKey } = await signer.keysFor('forge-test')
 
-    const author = new Repo()
+    const author = new StreamoRecord()
     author.set({ v: 1 })
     await author.sign(signer, 'forge-test')
     const batch = extractBatch(author)
@@ -156,8 +156,8 @@ describe(import.meta.url, ({ test }) => {
     badSig[40] ^= 0xff
     const badBatch = { chunks: batch.chunks, sig: badSig }
 
-    const relay = new Repo()
-    const serializer = new RepoSerializer(relay, publicKey)
+    const relay = new StreamoRecord()
+    const serializer = new StreamoRecordSerializer(relay, publicKey)
     const result = await serializer.submit(badBatch)
     assert.equal(result.accepted, false)
     assert.equal(result.reason, 'verification-failed')

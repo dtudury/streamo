@@ -61,8 +61,8 @@ export function AtView ({ keyHex }) {
     }
 
     return h`
-      <a class="back" data-action="back-registry">← <strong>Repo Registry</strong></a>
-      <h2>Repo</h2>
+      <a class="back" data-action="back-registry">← <strong>StreamoRecord Registry</strong></a>
+      <h2>StreamoRecord</h2>
       <p class="subtext">
         <a class="repo-link" data-action="back-repo" data-keyhex=${keyHex}>${truncKey(keyHex)}</a>
         <span class="dim"> @ ${() => getAddress()}</span>

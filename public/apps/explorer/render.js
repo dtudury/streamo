@@ -1,5 +1,5 @@
 // Generic value-rendering primitives — produce h-vnodes from a value.
-// No Repo, no view-state, no event handlers — just value-in, vnode-out.
+// No StreamoRecord, no view-state, no event handlers — just value-in, vnode-out.
 //
 // typedValue: a streamo-typed value renderer that gives each value a
 // visual identity matching its underlying codec (string → quoted, date

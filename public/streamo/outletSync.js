@@ -1,7 +1,7 @@
 import { WebSocketServer } from 'ws'
 import { hexToBytes } from './utils.js'
 import { handleRegistryPeer } from './registrySync.js'
-import { RepoSerializer, ConnectionAccumulator } from './RepoSerializer.js'
+import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 
 /**
  * Attach the streamo sync protocol to an existing WebSocketServer.
@@ -17,7 +17,7 @@ import { RepoSerializer, ConnectionAccumulator } from './RepoSerializer.js'
  * dedup). Invalid signature chunks close the connection.
  *
  * @param {WebSocketServer} wss
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {string} [label]  prefix for log messages
  */
 export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {}) {
@@ -27,7 +27,7 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
   // (replayed to peers who express interest after the fact, so a newcomer
   // discovers existing announcers without anyone heartbeating). Entries are
   // cleaned up on disconnect — "live" = "by a currently-connected peer."
-  // serializers: keyHex → RepoSerializer, one per repo across all connections
+  // serializers: keyHex → StreamoRecordSerializer, one per repo across all connections
   // to this WSS. The relay is the chain authority; all incoming pushes for
   // a given repo queue against the same serializer regardless of which
   // client sent them.
@@ -86,7 +86,7 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
       const publicKey = hexToBytes(publicKeyHex)
       let serializer = routing.serializers.get(publicKeyHex)
       if (!serializer) {
-        serializer = new RepoSerializer(streamo, publicKey)
+        serializer = new StreamoRecordSerializer(streamo, publicKey)
         routing.serializers.set(publicKeyHex, serializer)
       }
       const accumulator = new ConnectionAccumulator(serializer, (result) => {
@@ -118,9 +118,9 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
 }
 
 /**
- * Start a standalone WebSocket server that syncs streamos from a RepoRegistry.
+ * Start a standalone WebSocket server that syncs streamos from a StreamoRecordRegistry.
  *
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {number} port
  * @returns {WebSocketServer}
  */

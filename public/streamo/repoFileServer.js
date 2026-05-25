@@ -1,23 +1,23 @@
 /**
- * @file repoFileServer — Express middleware that serves files from a Repo.
+ * @file repoFileServer — Express middleware that serves files from a StreamoRecord.
  *
  * The inverse of fileSync's read pass: where fileSync turns a folder into a
- * flat { relPath: value } map and commits it to a Repo, this middleware
+ * flat { relPath: value } map and commits it to a StreamoRecord, this middleware
  * reads that same shape back out and responds to HTTP requests.
  *
- * Repo shape is `{ files: { ...flatMap } }` — a `files` key inside the
+ * StreamoRecord shape is `{ files: { ...flatMap } }` — a `files` key inside the
  * value, leaving room for other metadata (`mounts`, `title`, `members`,
  * etc.) alongside it.
  *
  * HTML responses optionally get an importmap injected that resolves
  * `@dtudury/streamo` and `@dtudury/streamo/*` to URLs the host can serve
- * the library from. This is the seam that lets a homepage Repo's HTML stay
+ * the library from. This is the seam that lets a homepage StreamoRecord's HTML stay
  * truly host-agnostic — the page writes bare specifiers, the relay binds
  * them at serve time.
  *
  * ETag is strong, derived from `lastCommit.dataAddress + path` — content-
  * addressed identity. Browsers cache forever and re-fetch only when the
- * Repo's value actually changes.
+ * StreamoRecord's value actually changes.
  */
 import { extname } from 'path'
 
@@ -49,7 +49,7 @@ const MIME = {
 }
 
 /**
- * Normalize an HTTP request path to a Repo files-map key.
+ * Normalize an HTTP request path to a StreamoRecord files-map key.
  * - leading `/` stripped, trailing `/` → `index.html`
  * - reject `..` and `.` segments (path traversal)
  * - reject null bytes
@@ -68,8 +68,8 @@ function normalize (urlPath) {
 }
 
 /**
- * Read the files-map out of a Repo — `repo.value.files`.
- * @param {import('./Repo.js').Repo} repo
+ * Read the files-map out of a StreamoRecord — `repo.value.files`.
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  */
 function readFilesMap (repo) {
   if (!repo.lastCommit) return undefined
@@ -77,7 +77,7 @@ function readFilesMap (repo) {
 }
 
 /**
- * Read the mounts table out of a Repo. Conventionally at `value.mounts`
+ * Read the mounts table out of a StreamoRecord. Conventionally at `value.mounts`
  * (a sibling of `files`). Returns undefined when the repo has no mounts
  * or the structure isn't an object.
  *
@@ -86,7 +86,7 @@ function readFilesMap (repo) {
  * present, pins to a specific commit (otherwise we serve the mounted
  * record's latest content).
  *
- * @param {import('./Repo.js').Repo} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {number} [atDataAddress]  if set, read mounts from this
  *   specific commit's data instead of HEAD (for pinned-mount chains).
  */
@@ -107,7 +107,7 @@ function readMounts (repo, atDataAddress) {
  * record's content as it was at a specific commit. Returns undefined
  * when the file isn't in the map.
  *
- * @param {import('./Repo.js').Repo} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {string} path
  * @param {number} [atDataAddress]
  */
@@ -148,11 +148,11 @@ function readFile (repo, path, atDataAddress) {
  * Returns null if the path can't be resolved (no matching file, no
  * matching mount, mount target not in registry, or cycle detected).
  *
- * @param {import('./Repo.js').Repo} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {string} pubkeyHex
  * @param {string} path
  * @param {number|undefined} atDataAddress
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {Set<string>} visited
  */
 async function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, visited) {
@@ -190,10 +190,10 @@ async function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, 
   const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
   // `registry._materialize` is the substrate's local-materialize verb.
   // archiveSync-backed factories awaited inside it replay the on-disk
-  // `.bin` into the Repo before resolving, so the await below means
+  // `.bin` into the StreamoRecord before resolving, so the await below means
   // "the bytes for this mount target are loaded by the time we
   // recurse." For mount targets the relay has no archive for,
-  // `_materialize` returns an empty Repo and the recursion falls
+  // `_materialize` returns an empty StreamoRecord and the recursion falls
   // through to a missing-file 404 — same end state as before,
   // without the "did we pre-subscribe?" race.
   const mountedRepo = await registry._materialize(mount.key)
@@ -236,9 +236,9 @@ function injectImportMap (html, importMap) {
 }
 
 /**
- * Express middleware factory: serve files from a Repo.
+ * Express middleware factory: serve files from a StreamoRecord.
  *
- * @param {import('./Repo.js').Repo} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {object} [options]
  * @param {boolean} [options.injectImportMap=true]  inject an importmap into
  *   HTML responses so bare specifiers like `@dtudury/streamo` resolve
@@ -250,7 +250,7 @@ function injectImportMap (html, importMap) {
  *   path is derived from the request — defaults to `req.path`. Used by
  *   `serveFromRegistry` to feed in the wildcard tail instead of the full
  *   URL path.
- * @param {import('./RepoRegistry.js').RepoRegistry} [options.registry]
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} [options.registry]
  *   optional registry — when provided, the middleware resolves through
  *   the repo's `mounts` table to other records the registry holds.
  *   Without a registry, mounts are ignored (files-only).
@@ -370,7 +370,7 @@ export function serveFromRepo (repo, options = {}) {
  * URL. The relay didn't have to be configured for it; the author just
  * needed to push their bytes via origin sync.
  *
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {object} [options]  same shape as serveFromRepo's options
  *   (injectImportMap, libraryPath, libraryPackageName)
  * @returns {(req, res, next) => Promise<void>} Express middleware

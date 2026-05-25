@@ -9,7 +9,7 @@
 // mechanism, no `dep()` call needed at the call site.
 //
 // `kindBanner`, `verifyLabel`, `verifyBadge` are pure h-emitting renders
-// over a status value — no Repo, no async, no state.
+// over a status value — no StreamoRecord, no async, no state.
 
 import { h } from '../../streamo/h.js'
 import { hexToBytes } from '../../streamo/utils.js'

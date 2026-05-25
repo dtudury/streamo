@@ -115,7 +115,7 @@ export function makeSections ({ verifyStatus }) {
     `
   }
 
-  // Repo-wide "other storage chunks" list — Duples, raw OBJECTs, ARRAYs,
+  // StreamoRecord-wide "other storage chunks" list — Duples, raw OBJECTs, ARRAYs,
   // STRINGs, etc. The chunks underneath the commit graph. Tucked into a
   // closed <details> so it doesn't compete with primary content. Unsigned
   // commits already appear in the selector dropdown (with a pending badge),

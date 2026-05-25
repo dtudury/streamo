@@ -28,7 +28,7 @@ function pushAsRefs (stack, refs) {
 // asRefs). A chunk that shows up in 10 commits "earned" 9 free reuses;
 // without dedup, those 9 reuses would've cost chunk.length each.
 //
-// Repo rollup: naiveBytes = Σ(chunk.length × uses) is what the stream
+// StreamoRecord rollup: naiveBytes = Σ(chunk.length × uses) is what the stream
 // would've cost without dedup; actualReusable = Σ(chunk.length) over
 // the reachable chunks is what streamo actually stores. Leverage =
 // naiveBytes / actualReusable — "this many effective bytes per actual

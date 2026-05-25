@@ -1,6 +1,6 @@
 // Public API. Most users want named imports from here:
 //
-//   import { Repo, Signer, registrySync } from '@dtudury/streamo'
+//   import { StreamoRecord, Signer, registrySync } from '@dtudury/streamo'
 //
 // For advanced/internal use, subpath imports also work:
 //
@@ -13,10 +13,10 @@
 //   import { StreamoComponent, defineComponent } from '@dtudury/streamo/StreamoComponent.js'
 
 export { Streamo, changedPaths } from './public/streamo/Streamo.js'
-export { Repo } from './public/streamo/Repo.js'
+export { StreamoRecord } from './public/streamo/StreamoRecord.js'
 export { Signer, verifySignature } from './public/streamo/Signer.js'
 export { Signature } from './public/streamo/Signature.js'
-export { RepoRegistry } from './public/streamo/RepoRegistry.js'
+export { StreamoRecordRegistry } from './public/streamo/StreamoRecordRegistry.js'
 export { registrySync, handleRegistryPeer } from './public/streamo/registrySync.js'
 export { archiveSync } from './public/streamo/archiveSync.js'
 export { fileSync } from './public/streamo/fileSync.js'

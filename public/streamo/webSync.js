@@ -5,7 +5,7 @@ import { attachStreamSync } from './outletSync.js'
 import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
 
 /**
- * Start an HTTP + WebSocket server that exposes a RepoRegistry to browsers
+ * Start an HTTP + WebSocket server that exposes a StreamoRecordRegistry to browsers
  * and other peers.
  *
  * HTTP endpoints:
@@ -17,12 +17,12 @@ import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
  *   Uses the same handshake + full-duplex wire protocol as outletSync, so any
  *   originSync client can connect here directly.
  *
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {string} primaryKeyHex   public key of the "main" streamo for GET /
  * @param {number} port
  * @param {object} [peerOptions.serveRepoFiles]  optional config to serve a
- *   homepage Repo's files via serveFromRepo: `{ repo, ...serveOpts }`. When
- *   set, the middleware serves any path present in the Repo (via files +
+ *   homepage StreamoRecord's files via serveFromRepo: `{ repo, ...serveOpts }`. When
+ *   set, the middleware serves any path present in the StreamoRecord (via files +
  *   mounts); misses fall through to the legacy /streams/<key>/<path> routes
  *   and then 404. There is no static-file fallback — every URL on a
  *   webSync server resolves through Record + mount chain.

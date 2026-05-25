@@ -1,7 +1,7 @@
 /**
- * @file Repo — Streamo + signed commits + the verified writer.
+ * @file StreamoRecord — Streamo + signed commits + the verified writer.
  *
- * **Repo extends Streamo** with two layers of "smarts" Streamo intentionally
+ * **StreamoRecord extends Streamo** with two layers of "smarts" Streamo intentionally
  * doesn't have:
  *
  * 1. **Commit semantics.** Every `set()` becomes a signed commit — a
@@ -13,7 +13,7 @@
  * 2. **The relay-inbound writer** (`makeRelayInboundStream`) and the
  *    reactive flags it raises (`conflictDetected`, `pushRejected`).
  *    "What comes down is always from the top, always correct" — the
- *    relay's RepoSerializer (see RepoSerializer.js) is the chain
+ *    relay's StreamoRecordSerializer (see StreamoRecordSerializer.js) is the chain
  *    authority; clients receiving wire bytes trust them and append.
  *    The only thing the receiver still has to catch is the push-in-
  *    flight race (local content past last shared sig conflicts with
@@ -24,12 +24,12 @@
  * address — `{ host, repo, dataAddress }`. It's informational (a soft
  * cryptographic footnote), not a sync dependency. Two natural shapes:
  *   - *Fork commit*  (no local parent, remoteParent set) — start of a
- *     new Repo from someone else's value
+ *     new StreamoRecord from someone else's value
  *   - *Merge commit* (both parent and remoteParent set) — combine values
- *     from this Repo and somewhere else; the new commit doesn't depend
+ *     from this StreamoRecord and somewhere else; the new commit doesn't depend
  *     on the source from then on
  *
- * **Conflicts** are not states the Repo carries by design — they're
+ * **Conflicts** are not states the StreamoRecord carries by design — they're
  * runtime "these bytes can't be appended" failures detected at the
  * verified writer. The `conflictDetected` flag is the reactive surfacing
  * of that failure for UI; the chain itself stays clean (rejected batches
@@ -41,7 +41,7 @@ import { Streamo, changedPaths } from './Streamo.js'
 import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
 
-// Chain-hash helpers — Repo-internal, since Streamo is identity-blind and
+// Chain-hash helpers — StreamoRecord-internal, since Streamo is identity-blind and
 // doesn't know about signatures.
 const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
 async function sha256 (bytes) {
@@ -57,7 +57,7 @@ function arraysEqual (a, b) {
  * appended since:
  *   next = sha256(prev || sha256(newBytes))
  * Two sha256 calls, independent of how many chunks newBytes contains.
- * The chain seed is `new Uint8Array(32)` (32 zeros) for an empty Repo.
+ * The chain seed is `new Uint8Array(32)` (32 zeros) for an empty StreamoRecord.
  */
 async function chainHashOf (prev, newBytes) {
   const newBytesHash = await sha256(newBytes)
@@ -68,8 +68,8 @@ async function chainHashOf (prev, newBytes) {
 }
 
 /**
- * Fetch a Repo snapshot from an HTTP source URL or host shorthand.
- * Returns `{ repo, host, keyHex }` — the loaded Repo plus enough context
+ * Fetch a StreamoRecord snapshot from an HTTP source URL or host shorthand.
+ * Returns `{ repo, host, keyHex }` — the loaded StreamoRecord plus enough context
  * to construct a `remoteParent` citation automatically.
  *
  * Accepted inputs:
@@ -122,7 +122,7 @@ async function fetchSnapshot (input) {
     return r.arrayBuffer()
   })
 
-  const repo = new Repo()
+  const repo = new StreamoRecord()
   const writer = repo.makeWritableStream().getWriter()
   await writer.write(new Uint8Array(buf))
 
@@ -145,7 +145,7 @@ async function fetchSnapshot (input) {
  * archives. checkout() returns a working Streamo at any commit's dataAddress
  * for read-only inspection or direct use with the explicit commit() API.
  */
-export class Repo extends Streamo {
+export class StreamoRecord extends Streamo {
   #signer      = null
   #signerName  = null
   #signing     = false
@@ -175,11 +175,11 @@ export class Repo extends Streamo {
   // that's the ack signal `merge()` awaits.
   #relayChainHash = null
 
-  // Optional back-reference to the session that subscribed this Repo
+  // Optional back-reference to the session that subscribed this StreamoRecord
   // over the wire. Set by `session.subscribe`; used by `merge()` to
   // request a session-level resync when a push is rejected (resync =
   // _reset + send fresh subscribe + wait for relay's anchoring stream).
-  // Repos materialized without a session (e.g., archive-only on the
+  // StreamoRecords materialized without a session (e.g., archive-only on the
   // relay side, or tests) leave this null; merge then rejects loudly
   // on conflict since it has no path to retry.
   #session = null
@@ -469,7 +469,7 @@ export class Repo extends Streamo {
    *   - *Fork*  — merge into an empty repo → no local parent + remoteParent
    *   - *Pull-overwrite* — merge into an existing chain → both set
    *
-   * @param {Repo|string} source — the repo to read from.  When a string,
+   * @param {StreamoRecord|string} source — the repo to read from.  When a string,
    *   resolves as an HTTP URL (`http(s)://host[:port]/streams/<keyHex>`)
    *   or a host shorthand (`host[:port]`, with `/api/info` discovering
    *   the primary key).  URL form auto-fills `remoteParent.host` and
@@ -485,7 +485,7 @@ export class Repo extends Streamo {
    *   implemented in this version
    * @param {{ host: string, repo: string, dataAddress?: number }}
    *   options.remoteParent — REQUIRED.  `host` and `repo` describe the
-   *   source's location and identity (the Repo class doesn't store either
+   *   source's location and identity (the StreamoRecord class doesn't store either
    *   itself, so callers provide them).  `dataAddress` defaults to
    *   `source.lastCommit.dataAddress` (the citation points at source's
    *   most recent value).
@@ -494,7 +494,7 @@ export class Repo extends Streamo {
    * @returns {number} address of the new commit record
    */
   async merge (source, options = {}) {
-    // URL-source: resolve to an in-memory Repo, and auto-fill the
+    // URL-source: resolve to an in-memory StreamoRecord, and auto-fill the
     // remoteParent context from the URL itself.  The URL form encodes
     // enough about the source (host + keyHex) that requiring the caller
     // to also pass remoteParent would be redundant — but they can
@@ -514,10 +514,10 @@ export class Repo extends Streamo {
     const { policy = 'replace', remoteParent, message } = options
 
     if (policy !== 'replace') {
-      throw new Error(`Repo.merge: policy '${policy}' is reserved but not yet implemented; only 'replace' is supported in this version`)
+      throw new Error(`StreamoRecord.merge: policy '${policy}' is reserved but not yet implemented; only 'replace' is supported in this version`)
     }
     if (!remoteParent || typeof remoteParent !== 'object' || !remoteParent.host || !remoteParent.repo) {
-      throw new Error('Repo.merge: options.remoteParent is required as { host, repo, dataAddress? }')
+      throw new Error('StreamoRecord.merge: options.remoteParent is required as { host, repo, dataAddress? }')
     }
 
     // Citation: the address on source's stream we're incorporating from.
@@ -525,7 +525,7 @@ export class Repo extends Streamo {
     // a specific historical address via remoteParent.dataAddress.
     const sourceLast = source.lastCommit
     if (!sourceLast && remoteParent.dataAddress === undefined) {
-      throw new Error('Repo.merge: source has no commits and no explicit remoteParent.dataAddress given')
+      throw new Error('StreamoRecord.merge: source has no commits and no explicit remoteParent.dataAddress given')
     }
     const citationAddress = remoteParent.dataAddress ?? sourceLast.dataAddress
     const citation = { host: remoteParent.host, repo: remoteParent.repo, dataAddress: citationAddress }
@@ -534,12 +534,12 @@ export class Repo extends Streamo {
     let sourceValue = source.decode(citationAddress)
     for (const key of from) {
       if (sourceValue == null || typeof sourceValue !== 'object') {
-        throw new Error(`Repo.merge: source has no value at path [${from.join('.')}]`)
+        throw new Error(`StreamoRecord.merge: source has no value at path [${from.join('.')}]`)
       }
       sourceValue = sourceValue[key]
     }
     if (sourceValue === undefined) {
-      throw new Error(`Repo.merge: source has no value at path [${from.join('.')}]`)
+      throw new Error(`StreamoRecord.merge: source has no value at path [${from.join('.')}]`)
     }
 
     // Apply 'replace': set our value at `into` to source's slice.  Empty
@@ -565,7 +565,7 @@ export class Repo extends Streamo {
     return this.commit(working, message ?? defaultMessage, { remoteParent: citation })
   }
 
-  // ── Signing / verification (identity-aware; lives on Repo, not Streamo) ──
+  // ── Signing / verification (identity-aware; lives on StreamoRecord, not Streamo) ──
   // Streamo is the codec; it doesn't know about keys, sigs, or who signed.
   // Everything that takes a Signer / Signature / pubkey lives here.
 
@@ -594,7 +594,7 @@ export class Repo extends Streamo {
   /**
    * Stateless crypto-check: is `sig` a valid signature over `sig.chainHash`
    * by `publicKey`? Doesn't re-verify chain consistency — that's the
-   * RepoSerializer's job at the relay (chain check happens there before
+   * StreamoRecordSerializer's job at the relay (chain check happens there before
    * any incoming batch lands).
    *
    * @param {Signature} sig
@@ -606,7 +606,7 @@ export class Repo extends Streamo {
   }
 
   // ── The relay-inbound writer ───────────────────────────────────────────
-  // Receives wire bytes from a trusted relay. The relay's RepoSerializer
+  // Receives wire bytes from a trusted relay. The relay's StreamoRecordSerializer
   // has already chain-verified and crypto-verified, so this writer skips
   // those checks. The only thing it catches is the push-in-flight race
   // (local content past last shared sig + incoming bytes whose refs
@@ -618,7 +618,7 @@ export class Repo extends Streamo {
    * (a push-in-flight race: we wrote locally, the relay sent down other
    * bytes before knowing about our push, our push will likely be
    * rejected). This is a *conflict*, not a fork — a fork is a deliberate
-   * new Repo with a lineage note; a conflict is the runtime "these bytes
+   * new StreamoRecord with a lineage note; a conflict is the runtime "these bytes
    * can't be appended" failure.
    */
   get conflictDetected () {
@@ -643,7 +643,7 @@ export class Repo extends Streamo {
 
   /**
    * Setter for the registry-sync layer to call when a reject message lands.
-   * Not part of the user-facing Repo API; named with a leading underscore
+   * Not part of the user-facing StreamoRecord API; named with a leading underscore
    * by convention. Pass `null` to clear (e.g. after a successful recovery).
    */
   _setPushRejected (value) {
@@ -654,7 +654,7 @@ export class Repo extends Streamo {
   /**
    * Reactive: the 32-byte chainHash the upstream relay has confirmed up
    * to. Null until the first SIG from the relay's inbound stream lands
-   * (or stays null for Repos with no wire connection). After each SIG
+   * (or stays null for StreamoRecords with no wire connection). After each SIG
    * the wire delivers — including the broadcast-back of our own pushed
    * bytes — this advances to that SIG's chainHash. `merge()` uses this
    * to detect "the relay accepted my push" without needing a new wire
@@ -669,7 +669,7 @@ export class Repo extends Streamo {
 
   /**
    * Setter for makeRelayInboundStream to call as it processes SIGs.
-   * Internal — not part of the user-facing Repo API.
+   * Internal — not part of the user-facing StreamoRecord API.
    */
   _setRelayChainHash (value) {
     this.#relayChainHash = value
@@ -677,9 +677,9 @@ export class Repo extends Streamo {
   }
 
   /**
-   * Back-reference to the session that subscribed this Repo. Set by
+   * Back-reference to the session that subscribed this StreamoRecord. Set by
    * `session.subscribe`; `merge()` uses it to request a session-level
-   * resync after a rejected push. Null on Repos that aren't attached
+   * resync after a rejected push. Null on StreamoRecords that aren't attached
    * to a wire (server-side archive-only, tests, etc.).
    */
   _attachSession (session) {
@@ -822,7 +822,7 @@ export class Repo extends Streamo {
    * from a trusted relay.
    *
    * "What comes down is always from the top, and always correct" — the
-   * relay's RepoSerializer has already validated the chain and the
+   * relay's StreamoRecordSerializer has already validated the chain and the
    * signatures, so we don't repeat that work here. The only thing the
    * client *can't* know without local context is whether the incoming
    * batch will land at the right byte position: if the client has
@@ -906,7 +906,7 @@ export class Repo extends Streamo {
             if (!alreadyHave) self.append(code)
             // Advance: the SIG chunk's first 32 bytes are its chainHash.
             // No decode needed — read the bytes directly. Surface to the
-            // Repo as `relayChainHash` so `merge()` can await round-trip
+            // StreamoRecord as `relayChainHash` so `merge()` can await round-trip
             // confirmation of pushed bytes (the broadcast-back lands a
             // SIG here whose chainHash matches our just-signed local SIG).
             pendingChainHash = code.slice(0, 32)

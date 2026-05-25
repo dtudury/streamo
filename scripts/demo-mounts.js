@@ -2,7 +2,7 @@
 /**
  * @file demo-mounts — show the mounts feature end-to-end on disk.
  *
- * Builds two in-process Repos:
+ * Builds two in-process StreamoRecords:
  *   - `library`: a fake "streamo library" with a few .js files
  *   - `app`:     a fake app whose `mounts.streamo/` points at library,
  *                with an `index.html` / `main.js` that imports from
@@ -14,8 +14,8 @@
  *
  *   $ node scripts/demo-mounts.js
  */
-import { Repo } from '../public/streamo/Repo.js'
-import { RepoRegistry } from '../public/streamo/RepoRegistry.js'
+import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
+import { StreamoRecordRegistry } from '../public/streamo/StreamoRecordRegistry.js'
 import { Recaller } from '../public/streamo/utils/Recaller.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { Signer } from '../public/streamo/Signer.js'
@@ -46,7 +46,7 @@ console.log(`  app record      ${appKeyHex.slice(0, 16)}…`)
 // `h.js`, `mount.js`, etc. — content doesn't matter for the demo, just
 // that they're distinct files we can prove arrived via the mount.
 
-const lib = new Repo()
+const lib = new StreamoRecord()
 lib.attachSigner(libSigner, 'lib')
 {
   const w = lib.checkout()
@@ -54,7 +54,7 @@ lib.attachSigner(libSigner, 'lib')
     files: {
       'h.js':    '// fake h.js — tagged template literal parser\nexport function h () { return "(stub)" }\n',
       'mount.js': '// fake mount.js — reactive DOM renderer\nexport function mount () { /* … */ }\n',
-      'Repo.js': '// fake Repo.js — the signed-chain wrapper\nexport class Repo {}\n'
+      'StreamoRecord.js': '// fake StreamoRecord.js — the signed-chain wrapper\nexport class StreamoRecord {}\n'
     }
   })
   lib.commit(w, 'seed library')
@@ -65,7 +65,7 @@ lib.attachSigner(libSigner, 'lib')
 // The app's `main.js` imports from `./streamo/h.js` as if streamo were
 // a sibling folder — the mount makes that path real.
 
-const app = new Repo()
+const app = new StreamoRecord()
 app.attachSigner(appSigner, 'app')
 {
   const w = app.checkout()
@@ -85,12 +85,12 @@ app.attachSigner(appSigner, 'app')
 // `registry.get(key)` is the lookup the mount-resolver uses; the factory
 // is the lazy-open path. We pre-open both so the resolver finds them.
 
-const registry = new RepoRegistry({
+const registry = new StreamoRecordRegistry({
   recaller: new Recaller('demo-mounts'),
   factory: async (keyHex) => {
     if (keyHex === libKeyHex) return lib
     if (keyHex === appKeyHex) return app
-    return new Repo()
+    return new StreamoRecord()
   }
 })
 await registry._materialize(libKeyHex)

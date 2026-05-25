@@ -289,7 +289,7 @@ export function h (strings, ...values) {
  *
  * **Safety contract:** the wrapped function's body must NOT read reactive
  * state (no `.get()` on a Recaller-backed source, no `liveValue.get()`,
- * no `Repo.get(...)`). If it does, memoizing by props alone returns a
+ * no `StreamoRecord.get(...)`). If it does, memoizing by props alone returns a
  * stale tree when reactive state changes without props changing — there's
  * no per-component subscription tracking to invalidate the cache. It IS
  * safe to compose a memoized component with non-memoized children: inner

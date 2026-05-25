@@ -1,17 +1,17 @@
 // flashcards — spaced-repetition demo on streamo.
 //
-// Step 3: decks are real signed Repos on the relay too. The home
+// Step 3: decks are real signed StreamoRecords on the relay too. The home
 // repo's `flashcardsDecks` field maps deck-id → pubkey-hex; the
-// client reads it at login, opens each deck Repo via the registry,
+// client reads it at login, opens each deck StreamoRecord via the registry,
 // and reads title/description/cards reactively. The relay's home
 // identity is the deck author for bundled decks; fork-a-deck (step
-// 4) will let any learner mint their own deck Repo with the same
+// 4) will let any learner mint their own deck StreamoRecord with the same
 // keysFor-subkey mechanism.
 
 import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
-import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
 
@@ -45,7 +45,7 @@ const revealed = () => state.get('revealedCardIdx') === currentCardIdx()
 let signer = null
 let session = null
 let homeRepo = null     // the relay's home repo, source of bundled-deck addresses
-let myDeckIndex = null  // learner's deck-index Repo: { decks: [<pubkey-hex>, ...] }
+let myDeckIndex = null  // learner's deck-index StreamoRecord: { decks: [<pubkey-hex>, ...] }
 
 // Set of fork deck-repo addresses that have had their signer re-attached
 // this session. The signer is attached at fork-creation time inside
@@ -162,7 +162,7 @@ function toggleCardActive (deckId, cardIdx) {
 
 // ── repo opening ─────────────────────────────────────────────────────
 
-// Lazily open the reviews Repo for (this learner, this deck), fired
+// Lazily open the reviews StreamoRecord for (this learner, this deck), fired
 // by the 'ensure-reviews-for-active-deck' watcher when activeDeck
 // becomes set. The deck-scoped stream name derives a fresh keypair
 // from the learner's root credentials; same login, different repo
@@ -202,7 +202,7 @@ async function login (e) {
   // the deck-index doesn't have `flashcardsDecks`, so each clause
   // applies cleanly to its source. From here, discovery is *reactive*:
   // bytes flow in, the home view re-renders.
-  setRegistry(new RepoRegistry({ recaller, name: 'flashcards' }))
+  setRegistry(new StreamoRecordRegistry({ recaller, name: 'flashcards' }))
   session = await registrySync(
     registry,
     location.hostname,
@@ -225,7 +225,7 @@ async function login (e) {
   // `session.subscribe` (not the registry's local-materialize) — the
   // browser needs the bytes to actually flow over the wire. Pre-10.0.0
   // this site called `registry.open` and was a latent footgun: the
-  // Repo was created locally but no wire-subscribe ever fired, and
+  // StreamoRecord was created locally but no wire-subscribe ever fired, and
   // bytes only arrived because the `follow` cascade on home.journalists
   // was subscribing for us as a side effect.
   homeRepo = await session.subscribe(info.primaryKeyHex)
@@ -330,7 +330,7 @@ function grade (gradeIdx) {
 // Fork a deck: derive a fresh keypair for this learner's fork, copy
 // the upstream's cards into it, cite the upstream by address as a
 // value-level `forkedFrom` field, and append the new address to the
-// learner's deck-index Repo. Returns the new deck's id (pubkey-hex).
+// learner's deck-index StreamoRecord. Returns the new deck's id (pubkey-hex).
 //
 // Same key-derivation trick that gives one-login-many-reviews-repos
 // also gives one-login-many-decks-repos: a per-fork stream name
@@ -371,7 +371,7 @@ async function forkDeck (upstreamId) {
   // Reviews repo opens lazily on the first study-click; no eager open.
 }
 
-// Remove a fork from this learner's deck-index. The fork's Repo and
+// Remove a fork from this learner's deck-index. The fork's StreamoRecord and
 // signed history stay on the relay — append-only means we can't truly
 // erase. What we can do is drop the reference from `myDeckIndex.decks`,
 // so the deck stops appearing in this learner's home list. (If the
@@ -389,7 +389,7 @@ function deleteFork (deckId) {
 
 // ── editor handlers ─────────────────────────────────────────────────
 //
-// The editor edits a fork's deck Repo. Each edit (save, delete, add)
+// The editor edits a fork's deck StreamoRecord. Each edit (save, delete, add)
 // is a signed commit on the fork; the home view's mastery/schedule
 // strips and the study view's queue all re-render reactively.
 //
@@ -612,7 +612,7 @@ mount(h`
     </a>
     <span class="page-title">flashcards</span>
   </h1>
-  <p class="tagline">Tiny spaced-repetition where decks are real signed Repos on the relay and your reviews are a signed Repo you own. Each deck lives at its own address — bookmarkable, forkable, yours forever.</p>
+  <p class="tagline">Tiny spaced-repetition where decks are real signed StreamoRecords on the relay and your reviews are a signed StreamoRecord you own. Each deck lives at its own address — bookmarkable, forkable, yours forever.</p>
 
   ${when(() => !loggedIn() && !connecting(), h`
     <h2>identity</h2>

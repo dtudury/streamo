@@ -33,7 +33,7 @@ const extraJournalists = (process.env.STREAMO_JOURNALISTS ?? process.env.STREAMO
 //   (b) STREAMO_HOME_KEY only → pure relay: open archive by pubkey, serve bytes,
 //                                no seed, no fileSync. Bytes arrive via origin sync
 //                                from an author process elsewhere.
-// Both shapes ultimately call server.web() with the page-as-Repo middleware.
+// Both shapes ultimately call server.web() with the page-as-StreamoRecord middleware.
 // The mode is logged so it's obvious in the output.
 const isRelayOnly = !!homeKeyEnv && !username
 
@@ -77,7 +77,7 @@ if (server.signer) {
   const historyCommits = [...historyRepo.history()].length
   console.log(`[chat] history key: ${historyKeyHex} (${historyCommits} commits)`)
 
-  // The tarot demo: a non-Repo Streamo. Deterministic key from the same
+  // The tarot demo: a non-StreamoRecord Streamo. Deterministic key from the same
   // credentials, opened so the registry serves it like any other repo —
   // but seeded via repo.set() WITHOUT commit() or sign(). The byte stream
   // contains data chunks (Duples, OBJECTs, STRINGs, ARRAYs) but no
@@ -88,8 +88,8 @@ if (server.signer) {
   const tarotKeyHex = bytesToHex(tarotKey.publicKey)
   const tarotRepo = await server.registry._materialize(tarotKeyHex)
   if (tarotRepo.byteLength === 0) {
-    // Repo.set() auto-commits (checkout → working.set → this.commit), which
-    // we DON'T want — we want a no-commits Streamo. Bypass the Repo
+    // StreamoRecord.set() auto-commits (checkout → working.set → this.commit), which
+    // we DON'T want — we want a no-commits Streamo. Bypass the StreamoRecord
     // override by calling Streamo's prototype set directly. This appends
     // data chunks to the byte stream without writing a commit record.
     Streamo.prototype.set.call(tarotRepo, buildTarotData())
@@ -98,7 +98,7 @@ if (server.signer) {
   console.log(`[chat] tarot key: ${tarotKeyHex} (${tarotRepo.byteLength} bytes, ${[...tarotRepo.history()].length} commits)`)
 
   // Bundled flashcards decks: each JSON in public/apps/flashcards/decks/
-  // becomes a signed Repo whose author is this relay's home identity.
+  // becomes a signed StreamoRecord whose author is this relay's home identity.
   // Deterministic per-deck subkey via `flashcards-deck:<id>`. The home
   // repo's `flashcardsDecks` field will map id → pubkey-hex so the
   // client can discover them at runtime — no hardcoded addresses.

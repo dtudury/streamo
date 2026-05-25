@@ -1,5 +1,5 @@
 /**
- * @file RepoSerializer — the chain authority for a repo at the relay layer.
+ * @file StreamoRecordSerializer — the chain authority for a repo at the relay layer.
  *
  * At the relay there is *one* serializer per repo, shared across every
  * client that's connected to that repo's key. Clients accumulate their
@@ -23,7 +23,7 @@
 import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
 
-// ── chain-hash helpers (mirror Repo's private helpers) ─────────────────
+// ── chain-hash helpers (mirror StreamoRecord's private helpers) ─────────────────
 const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
 async function sha256 (bytes) {
   return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
@@ -41,8 +41,8 @@ async function chainHashOf (prev, newBytes) {
   return await sha256(combined)
 }
 
-export class RepoSerializer {
-  /** @param {import('./Repo.js').Repo} repo
+export class StreamoRecordSerializer {
+  /** @param {import('./StreamoRecord.js').StreamoRecord} repo
    *  @param {Uint8Array} publicKey  the repo's signer pubkey */
   constructor (repo, publicKey) {
     this.repo = repo
@@ -123,7 +123,7 @@ export class RepoSerializer {
  * a given repo.
  */
 export class ConnectionAccumulator {
-  /** @param {RepoSerializer} serializer
+  /** @param {StreamoRecordSerializer} serializer
    *  @param {(result: { accepted: boolean, reason?: string }) => void} onBatchResult
    *    callback invoked with the serializer's result after each batch submit;
    *    use it to send accept/reject control messages back to the connection. */

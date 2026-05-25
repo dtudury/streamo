@@ -1,5 +1,5 @@
 // streamo todomvc — the canonical add/edit/complete/filter shape on top
-// of a Repo. Same identity model as chat: username + password derives a
+// of a StreamoRecord. Same identity model as chat: username + password derives a
 // keypair; your todos are stored under your own pubkey, at name='todomvc'.
 // Open in two tabs as the same user → live sync. Different users get
 // different lists. Append-only history, every edit signed.
@@ -8,7 +8,7 @@ import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
-import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { liveValue }    from '../../streamo/LiveSource.js'
 import { liveLocation } from '../../streamo/liveLocation.js'
@@ -26,7 +26,7 @@ const loginStatus = liveValue('',    { recaller, name: 'loginStatus' })
 
 // While editing a single todo inline (double-click on label → input
 // replaces label), this holds that todo's id. null = nobody editing.
-// Lives outside the Repo because it's per-tab UI state, not persisted.
+// Lives outside the StreamoRecord because it's per-tab UI state, not persisted.
 const editingId = liveValue(null, { recaller, name: 'editingId' })
 
 // URL hash drives both *which list* and *which filter* —
@@ -60,7 +60,7 @@ const filterFromHash = () => {
 // reading other people's lists is signer-agnostic at this layer.
 // myRepo/myKey/signer (only set after login) drive the *write* path;
 // the *read* path goes through the URL key and viewedRepo().
-const registry = new RepoRegistry({ recaller, name: 'todomvc' })
+const registry = new StreamoRecordRegistry({ recaller, name: 'todomvc' })
 const session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
 
 // Auto-subscribe to whatever key shows up in the URL. Reads `urlKey()`
@@ -124,8 +124,8 @@ async function login (e) {
   }
 }
 
-// Reads target the URL's Repo (viewedRepo), so visiting someone else's
-// list shows their todos. Writes target *your own* Repo (myRepo) — and
+// Reads target the URL's StreamoRecord (viewedRepo), so visiting someone else's
+// list shows their todos. Writes target *your own* StreamoRecord (myRepo) — and
 // only fire when canWrite() (URL's key matches your signed-in key);
 // the UI already hides write affordances in that case, but the guard
 // here is the truth-of-the-matter safety net.

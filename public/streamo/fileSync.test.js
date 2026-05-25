@@ -1,5 +1,5 @@
 import { describe } from './utils/testing.js'
-import { Repo } from './Repo.js'
+import { StreamoRecord } from './StreamoRecord.js'
 import { fileSync } from './fileSync.js'
 import { mkdtemp, rm, writeFile, readFile } from 'fs/promises'
 import { tmpdir } from 'os'
@@ -39,7 +39,7 @@ describe(import.meta.url, ({ test }) => {
     try {
       await writeFile(join(dir, 'index.html'), '<h1>hi</h1>')
 
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const working = repo.checkout()
       working.set({ members: ['alice'], journalists: ['bob'] })
       repo.commit(working, 'seed')
@@ -68,7 +68,7 @@ describe(import.meta.url, ({ test }) => {
     try {
       await writeFile(join(dir, 'index.html'), '<authored>')
 
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const working = repo.checkout()
       working.set({ entries: ['hi'] })
       repo.commit(working, 'seed')
@@ -93,7 +93,7 @@ describe(import.meta.url, ({ test }) => {
   test('repo wins when disk is empty but repo has files at value.files', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const working = repo.checkout()
       working.set({ files: { 'a.html': '<a>' }, members: ['alice'] })
       repo.commit(working, 'seed with files')
@@ -122,7 +122,7 @@ describe(import.meta.url, ({ test }) => {
     try {
       await writeFile(join(dir, 'index.html'), '<fresh>')
 
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const sub = await fileSync(repo, dir, dataDir)
       try {
         assert.equal(repo.get('files', 'index.html'), '<fresh>')
@@ -151,9 +151,9 @@ describe(import.meta.url, ({ test }) => {
   const KEY_B = 'b'.repeat(66)
   const KEY_C = 'c'.repeat(66)
 
-  /** Build a sealed Repo with a single commit of the given value. */
+  /** Build a sealed StreamoRecord with a single commit of the given value. */
   function sealedRepo (value, msg = 'seed') {
-    const r = new Repo()
+    const r = new StreamoRecord()
     const w = r.checkout()
     w.set(value)
     r.commit(w, msg)
@@ -216,7 +216,7 @@ describe(import.meta.url, ({ test }) => {
   test('mounts: pinned dataAddress materializes the record at that specific commit', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const b = new Repo()
+      const b = new StreamoRecord()
       let w = b.checkout()
       w.set({ files: { 'x.txt': 'v1' } })
       b.commit(w, 'v1')
@@ -434,7 +434,7 @@ describe(import.meta.url, ({ test }) => {
         }, null, 2)
       )
 
-      const repo = new Repo()  // fresh, no prior commit
+      const repo = new StreamoRecord()  // fresh, no prior commit
       const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         assert.equal(repo.get('title'), 'Bootstrap')
@@ -460,7 +460,7 @@ describe(import.meta.url, ({ test }) => {
         JSON.stringify({ title: 'Combined' }, null, 2)
       )
 
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         assert.equal(repo.get('files', 'index.html'), '<page>')
@@ -495,7 +495,7 @@ describe(import.meta.url, ({ test }) => {
       const warnings = []
       console.warn = (...args) => warnings.push(args.join(' '))
 
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         assert.equal(repo.get('title'), 'OK')
@@ -524,7 +524,7 @@ describe(import.meta.url, ({ test }) => {
       const warnings = []
       console.warn = (...args) => warnings.push(args.join(' '))
 
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         // No commit; repo's value should still be undefined / empty
@@ -670,8 +670,8 @@ describe(import.meta.url, ({ test }) => {
   // ── invariant: value.files[recordFile] mirrors top-level meta ────────────
   // (the FolderRecord redundancy invariant — fileSync maintains it)
 
-  test('recordFile: sealed-Repo with top-level meta heals invariant on first sync (init)', async ({ assert }) => {
-    // A Repo created by code (sealedRepo here) has top-level meta but
+  test('recordFile: sealed-StreamoRecord with top-level meta heals invariant on first sync (init)', async ({ assert }) => {
+    // A StreamoRecord created by code (sealedRepo here) has top-level meta but
     // no streamo.json in value.files yet. fileSync's init runs a heal
     // commit so value.files[recordFile] mirrors top-level meta. After
     // init, the on-disk streamo.json reflects the full meta.
@@ -750,7 +750,7 @@ describe(import.meta.url, ({ test }) => {
   test('meta strategy: rejects unknown values', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const repo = new Repo()
+      const repo = new StreamoRecord()
       await assert.rejects(
         () => fileSync(repo, dir, dataDir, { recordFile: true, meta: 'splice' }),
         /must be 'merge' or 'replace'/

@@ -186,7 +186,7 @@ function readRepoMounts (repo) {
  * Pin-aware: when `atDataAddress` is set, reads the mounted record's
  * value at that specific commit instead of HEAD.
  *
- * @param {import('./RepoRegistry.js').RepoRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {string} targetKey
  * @param {number|undefined} atDataAddress
  * @param {Set<string>} visited
@@ -199,7 +199,7 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
 
   // `registry._materialize` (not `.get`) so archived mount targets load
   // lazily — the archiveSync-backed factory's await reads on-disk bytes
-  // before the Repo is returned. Same shape as repoFileServer's resolver
+  // before the StreamoRecord is returned. Same shape as repoFileServer's resolver
   // (Phase C). `get` here was a footgun: cold-cache call sites would
   // silently return `undefined` and the mount would no-op without trace.
   const targetRepo = await registry._materialize(targetKey)
@@ -248,9 +248,9 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
  * the same record appearing at two different top-level mount paths
  * (the diamond case) is correctly materialized at both locations.
  *
- * @param {import('./Repo.js').Repo} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {string|null} ownKey
- * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }|null} registry
+ * @param {{ get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined }|null} registry
  */
 async function collectAllMounted (repo, ownKey, registry) {
   if (!registry || !ownKey) return {}
@@ -359,7 +359,7 @@ function metaEqual (a, b) {
 }
 
 /**
- * Two-way sync between a folder and a Repo.
+ * Two-way sync between a folder and a StreamoRecord.
  *
  * Initial state (startup authority via timestamps):
  *   - repo has files at `value.files` AND no disk file is newer than the
@@ -368,7 +368,7 @@ function metaEqual (a, b) {
  *     the last commit → disk wins
  *
  * Ongoing:
- *   - Repo changes (new commit from peer/archive) → write changed files to disk
+ *   - StreamoRecord changes (new commit from peer/archive) → write changed files to disk
  *   - Disk changes → checkout, update files, commit to repo
  *
  * The sync is mounted at `repo.value.files` — other top-level keys on the
@@ -388,12 +388,12 @@ function metaEqual (a, b) {
  * marked visited; mounts back to it short-circuit). Diamonds (same
  * record at two top-level paths) materialize at both locations.
  *
- * @param {import('./Repo.js').Repo} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
  * @param {object} [options]
- * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }|null} [options.registry=null]
- *   registry whose stored Repos provide the bytes for any mounted record.
+ * @param {{ get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined }|null} [options.registry=null]
+ *   registry whose stored StreamoRecords provide the bytes for any mounted record.
  *   When unset, mount materialization is disabled (files-only behavior).
  * @param {string|null} [options.pubkeyHex=null]  the pubkey of `repo`,
  *   used as the cycle-detection seed for mount materialization.
@@ -472,7 +472,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     if (!hasTopLevel) return false
     if (filesEntryIsValidMeta && metaEqual(filesEntry, topLevelMeta)) return false
     // Warn only on REAL divergence (a non-empty file entry that doesn't
-    // match) — initial population from a sealed-Repo with no entry yet
+    // match) — initial population from a sealed-StreamoRecord with no entry yet
     // is expected and noiseless.
     if (filesEntryIsValidMeta && Object.keys(filesEntry).length > 0) {
       console.warn(`fileSync: ${recordFile} out of sync with top-level meta; healing`)
@@ -518,11 +518,11 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   const maxDiskMtime = diskMtime
 
   if (lastCommit && repoFiles && maxDiskMtime <= commitTime) {
-    // Repo wins: write committed files to disk + materialize mounts.
+    // StreamoRecord wins: write committed files to disk + materialize mounts.
     // streamo.json is a regular file in value.files now — writeToFolder
     // handles it like any other file. Heal the invariant first if the
     // Record's value has top-level meta but value.files[recordFile] is
-    // missing or stale (e.g., sealed Repos authored by code that didn't
+    // missing or stale (e.g., sealed StreamoRecords authored by code that didn't
     // go through fileSync).
     healMetaInvariant('init')
     const refreshedRepoFiles = getRepoFiles() ?? {}
@@ -559,7 +559,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     }
   }
 
-  // Repo → disk: retries if a write is in progress so no commit is ever dropped
+  // StreamoRecord → disk: retries if a write is in progress so no commit is ever dropped
   let writingToDisk = false
   let pendingDiskFlush = false
 
@@ -604,7 +604,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // naturally re-triggered by the repo watch that follows the commit
   let committingFromDisk = false
 
-  // Repo → disk: fires when a new commit lands (from peer, archive, or local commit)
+  // StreamoRecord → disk: fires when a new commit lands (from peer, archive, or local commit)
   repo.recaller.watch('fileSync:repo→disk', () => {
     if (committingFromDisk) return
     const commit = repo.lastCommit

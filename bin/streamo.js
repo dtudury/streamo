@@ -7,8 +7,8 @@ import { config } from 'dotenv'
 import { question } from 'readline-sync'
 import { start as startRepl } from 'repl'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
-import { Repo } from '../public/streamo/Repo.js'
-import { RepoRegistry } from '../public/streamo/RepoRegistry.js'
+import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
+import { StreamoRecordRegistry } from '../public/streamo/StreamoRecordRegistry.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { outletSync } from '../public/streamo/outletSync.js'
@@ -264,7 +264,7 @@ if (options.s3Bucket) {
 if (options.web) {
   const webOptions = {}
   // When the user is mirroring a folder into the streamo, serve those
-  // bytes via the repo on the same port — the page-as-Repo shape.
+  // bytes via the repo on the same port — the page-as-StreamoRecord shape.
   // Misses fall through to express.static so the streamo lib + bundled
   // apps still work for forks that don't override them.
   if (options.files) {
@@ -309,7 +309,7 @@ if (options.interactive) {
     // sync modules
     archiveSync, fileSync, s3Sync,
     // class
-    Repo, RepoRegistry,
+    StreamoRecord, StreamoRecordRegistry,
   })
 
   console.log(`\x1b[36m

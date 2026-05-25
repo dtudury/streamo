@@ -1,6 +1,6 @@
 import { describe } from './utils/testing.js'
 import { Streamo, changedPaths } from './Streamo.js'
-import { Repo } from './Repo.js'
+import { StreamoRecord } from './StreamoRecord.js'
 import { Signer } from './Signer.js'
 import { Signature } from './Signature.js'
 
@@ -187,7 +187,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('sign and verify', async ({ assert }) => {
-    const s = new Repo()
+    const s = new StreamoRecord()
     s.set({ hello: 'world' })
     s.set('hello', 'signed')
 
@@ -287,7 +287,7 @@ describe(import.meta.url, ({ test }) => {
     // Two sha256 calls per sig regardless of chunk count. This test
     // independently reconstructs the chainHash and proves the SIG signs
     // exactly that 32-byte commitment.
-    const s = new Repo()
+    const s = new StreamoRecord()
     const signer = new Signer('alice', 'hunter2', 1)
     s.set({ msg: 'hello, world' })
     const beforeSig = s.byteLength
@@ -337,14 +337,14 @@ describe(import.meta.url, ({ test }) => {
     }
 
     // Set up a "shared" history: both sides agree on this prefix.
-    const shared = new Repo()
+    const shared = new StreamoRecord()
     shared.set({ v: 'one' })
     await shared.sign(signer, name)
     const sharedChunks = readChunks(shared)
 
     // Client: has shared + local-pending (banana, signed locally, not yet
     // accepted by any relay)
-    const client = new Repo()
+    const client = new StreamoRecord()
     const inA = client.makeRelayInboundStream().getWriter()
     for (const c of sharedChunks) await inA.write(frame(c))
     client.set({ v: 'banana' })
@@ -356,7 +356,7 @@ describe(import.meta.url, ({ test }) => {
     // chunks include a date; reconstructing via set() would produce
     // different bytes), copy shared's actual chunks into the relay via the
     // unverified writer, then extend with cherry on top.
-    const relay = new Repo()
+    const relay = new StreamoRecord()
     const relayLoader = relay.makeWritableStream().getWriter()
     for (const c of sharedChunks) await relayLoader.write(frame(c))
     relay.set({ v: 'cherry' })
@@ -390,7 +390,7 @@ describe(import.meta.url, ({ test }) => {
     const name = 'from-offset-reader'
     const { publicKey: _ } = await signer.keysFor(name)
 
-    const repo = new Repo()
+    const repo = new StreamoRecord()
     repo.set({ v: 'one' })
     await repo.sign(signer, name)
     const offsetAfterFirstSig = repo.signedLength
@@ -447,7 +447,7 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'secret')
     const name = 'load-derives-signedLength'
 
-    const original = new Repo()
+    const original = new StreamoRecord()
     original.set({ a: 1 })
     await original.sign(signer, name)
     const cursorAfterFirstSig = original.signedLength
@@ -455,9 +455,9 @@ describe(import.meta.url, ({ test }) => {
     await original.sign(signer, name)
     assert.ok(original.signedLength > cursorAfterFirstSig, 'sanity: cursor advances within one session')
 
-    // Replay all bytes into a fresh Repo via the unverified makeWritableStream
+    // Replay all bytes into a fresh StreamoRecord via the unverified makeWritableStream
     // (the path archiveSync uses on startup).
-    const replay = new Repo()
+    const replay = new StreamoRecord()
     const writer = replay.makeWritableStream().getWriter()
     let addr = original.byteLength - 1
     const chunks = []

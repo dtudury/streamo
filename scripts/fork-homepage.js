@@ -3,10 +3,10 @@
  * @file fork-homepage — fork the homepage of a running streamo relay
  * into your own signed local repo.
  *
- * Thin shell around `Repo.merge(url, { from: 'files' })`: prompt for
+ * Thin shell around `StreamoRecord.merge(url, { from: 'files' })`: prompt for
  * credentials, derive a keypair, open the local archive, call merge,
  * print the next-step command.  All the HTTP fetch + pure-copy commit
- * machinery now lives in `Repo.merge` itself.
+ * machinery now lives in `StreamoRecord.merge` itself.
  *
  * Mechanics:
  *
@@ -39,7 +39,7 @@
  */
 import { question } from 'readline-sync'
 import { Signer } from '../public/streamo/Signer.js'
-import { Repo } from '../public/streamo/Repo.js'
+import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { bytesToHex } from '../public/streamo/utils.js'
 
@@ -84,12 +84,12 @@ console.log(`    ${myKeyHex}`)
 console.log('')
 
 // ── open local fork repo ──────────────────────────────────────────
-const myRepo = new Repo()
+const myRepo = new StreamoRecord()
 await archiveSync(myRepo, dataDir, myKeyHex)
 myRepo.attachSigner(signer, streamName)
 
 // ── merge ─────────────────────────────────────────────────────────
-// Repo.merge does the HTTP fetch, snapshot load, pure-copy commit
+// StreamoRecord.merge does the HTTP fetch, snapshot load, pure-copy commit
 // with auto-filled remoteParent.  The `from: 'files'` slice means
 // we incorporate the relay's homepage content (not its chat/journal
 // state) — leaving room for our fork to grow its own siblings.

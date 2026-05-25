@@ -18,10 +18,10 @@
  * - `set(...path, value)`: mutates the value at the given path, then
  *   calls recaller.reportKeyMutation for the affected key(s).
  *
- * **Already implementing the contract:** `Streamo` and `Repo`. Their
+ * **Already implementing the contract:** `Streamo` and `StreamoRecord`. Their
  * existing `streamo.get(...path)` / `streamo.set([address,] ...path,
  * value)` / `streamo.recaller` match the shape directly. Nothing else
- * is needed to pass a Streamo or Repo into a mount() call that wants
+ * is needed to pass a Streamo or StreamoRecord into a mount() call that wants
  * a LiveSource.
  *
  * **Wrap anything else:** `liveObject` below for plain objects;
@@ -207,7 +207,7 @@ export function liveTime (options = {}) {
 
 /**
  * Runtime check: does this value satisfy the LiveSource contract?
- * Structural, not nominal — `Streamo`, `Repo`, `liveObject` return
+ * Structural, not nominal — `Streamo`, `StreamoRecord`, `liveObject` return
  * values, and any custom factory that exposes the shape all pass.
  *
  * @param {any} x

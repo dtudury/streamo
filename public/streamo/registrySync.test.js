@@ -1,17 +1,17 @@
 import { WebSocketServer } from 'ws'
 import { describe } from './utils/testing.js'
-import { RepoRegistry } from './RepoRegistry.js'
+import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { attachStreamSync } from './outletSync.js'
 import { registrySync } from './registrySync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-// 10.0.0 makes RepoRegistry's `recaller` required (locks the silent-
+// 10.0.0 makes StreamoRecordRegistry's `recaller` required (locks the silent-
 // stale-slot footgun). Tests use a fresh per-test Recaller via this helper.
-const newRegistry = (opts = {}) => new RepoRegistry({ recaller: new Recaller('test'), ...opts })
+const newRegistry = (opts = {}) => new StreamoRecordRegistry({ recaller: new Recaller('test'), ...opts })
 
-// Under the relay-as-authority model, the RepoSerializer at the relay gates
+// Under the relay-as-authority model, the StreamoRecordSerializer at the relay gates
 // every incoming batch — fake keys can no longer carry data. Each "slot"
 // that flows data gets a real keypair derived deterministically from the
 // shared Signer and a stable name; `openWriter(registry, N)` opens the repo
@@ -294,10 +294,10 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
-  test('session.subscribe returns the live Repo (open + wire-plumb in one verb)', async ({ assert }) => {
+  test('session.subscribe returns the live StreamoRecord (open + wire-plumb in one verb)', async ({ assert }) => {
     // The everyday "I want this key live" pattern: subscribe opens locally,
-    // sets up the wire, and hands you the Repo. Idempotent — calling twice
-    // returns the same Repo, no double-subscription side effects.
+    // sets up the wire, and hands you the StreamoRecord. Idempotent — calling twice
+    // returns the same StreamoRecord, no double-subscription side effects.
     const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 20)
     serverRepo.set({ greeting: 'hi from the server' })
@@ -307,15 +307,15 @@ describe(import.meta.url, ({ test }) => {
     const session = await registrySync(clientRegistry, 'localhost', port)
 
     const repo = await session.subscribe(key)
-    assert.ok(repo, 'subscribe should resolve to a Repo')
-    assert.ok(repo === clientRegistry.get(key), 'returned Repo is the same instance the registry holds')
+    assert.ok(repo, 'subscribe should resolve to a StreamoRecord')
+    assert.ok(repo === clientRegistry.get(key), 'returned StreamoRecord is the same instance the registry holds')
 
     await waitFor(() => repo.get('greeting') === 'hi from the server')
     assert.equal(repo.get('greeting'), 'hi from the server')
 
-    // Idempotent: a second subscribe returns the same Repo without churn.
+    // Idempotent: a second subscribe returns the same StreamoRecord without churn.
     const repo2 = await session.subscribe(key)
-    assert.ok(repo === repo2, 'second subscribe returns the same Repo instance')
+    assert.ok(repo === repo2, 'second subscribe returns the same StreamoRecord instance')
 
     session.close()
     await new Promise(r => wss.close(r))
@@ -907,7 +907,7 @@ describe(import.meta.url, ({ test }) => {
   // The intended behavior is below — two clients writing concurrently both
   // see their changes land via the substrate's resync-and-reapply path.
   // The substrate has the pieces (relayChainHash, _attachSession,
-  // _resyncRepo, the retry loop inside Repo.update), but the conflict's
+  // _resyncRepo, the retry loop inside StreamoRecord.update), but the conflict's
   // interaction with WS connection lifecycle (conflictDetected appears to
   // tear down the connection in the receive path) means the resync send
   // can race against an in-flight close. Landing the multi-conflict story

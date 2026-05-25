@@ -7,8 +7,8 @@
 // get the live bytes, so a stale cached asset can never trap you; the
 // cache is purely the offline fallback.
 //
-// Later steps replace this with Repo-backed serving — the worker syncs
-// the homepage Repo and serves files straight out of it. There,
+// Later steps replace this with StreamoRecord-backed serving — the worker syncs
+// the homepage StreamoRecord and serves files straight out of it. There,
 // content-addressing makes cache-first safe (immutable bytes, the
 // address IS the key). This step just proves the pipeline.
 

@@ -3,7 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { rmSync, writeFileSync } from 'fs'
 import { Recaller } from '../../streamo/utils/Recaller.js'
-import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { Signer } from '../../streamo/Signer.js'
 import { bytesToHex } from '../../streamo/utils.js'
 import { PushStore, notifyOnMessages } from './push.js'
@@ -114,7 +114,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages pushes when a fresh message lands', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new RepoRegistry({ recaller: new Recaller("push-test") })
+      const registry = new StreamoRecordRegistry({ recaller: new Recaller("push-test") })
       const sent = []
       const send = async (subscription, payload) => { sent.push({ subscription, payload }); return 201 }
 
@@ -136,7 +136,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages does not notify a message\'s own author', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new RepoRegistry({ recaller: new Recaller("push-test") })
+      const registry = new StreamoRecordRegistry({ recaller: new Recaller("push-test") })
       const sent = []
       const send = async () => { sent.push(1); return 201 }
 
@@ -156,7 +156,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages ignores an old message (history, not news)', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new RepoRegistry({ recaller: new Recaller("push-test") })
+      const registry = new StreamoRecordRegistry({ recaller: new Recaller("push-test") })
       const sent = []
       const send = async () => { sent.push(1); return 201 }
 

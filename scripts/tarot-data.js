@@ -1,7 +1,7 @@
 /**
  * Tarot demo dataset.
  *
- * Used by the chat dev server to seed a non-Repo Streamo — `repo.set(data)`
+ * Used by the chat dev server to seed a non-StreamoRecord Streamo — `repo.set(data)`
  * with no `.commit()` — so the byte stream contains data chunks but no
  * commit/signature chunks. The explorer's no-head case is what surfaces
  * this. Theme is just for flavor; the shape is what matters: nested
@@ -245,7 +245,7 @@ const READINGS = [
 ]
 
 const NOTES = {
-  about: 'A small structured tarot deck + sample readings. The data here is a non-Repo Streamo: the bytes were written via repo.set() without commit() or sign(), so the byte stream contains data chunks but no commit/signature records. The explorer\'s no-head case is what surfaces this — see at-view.js:104.',
+  about: 'A small structured tarot deck + sample readings. The data here is a non-StreamoRecord Streamo: the bytes were written via repo.set() without commit() or sign(), so the byte stream contains data chunks but no commit/signature records. The explorer\'s no-head case is what surfaces this — see at-view.js:104.',
   source: 'Card descriptions paraphrased from the Rider-Waite-Smith tradition (1909, public domain). No claim to esoteric authority — these are study notes, not prescriptions.',
   shape: 'Three top-level collections (majorArcana: array, minorArcana: array, spreads: array, readings: array) plus a few primitive fields. Designed to exercise the explorer\'s storage tree at depth and have something interesting to read.',
   cardCount: { major: MAJOR_ARCANA.length, minor: MINOR_ARCANA.length, total: MAJOR_ARCANA.length + MINOR_ARCANA.length }

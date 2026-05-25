@@ -104,7 +104,7 @@ registrySync(registry, location.hostname, port, {
   .catch(e => state.set('connection', { status: 'err', text: `connection failed: ${e.message}` }))
 
 // Paste-a-key form handler. Accepts a 66-char hex public key, asks the
-// session to subscribe, then navigates to that repo's at-view. Repos
+// session to subscribe, then navigates to that repo's at-view. StreamoRecords
 // the relay hasn't endorsed aren't enumerated to anyone — this is the
 // door for everything off the public list (private repos, repos on
 // other relays you know about out-of-band).
@@ -126,7 +126,7 @@ async function subscribeToPastedKey (e) {
 
 // A clickable repo row used by both the home card and the members
 // cascade. `extraClass` lets home call attention to itself (the green
-// border treatment). Repo may be undefined if subscription is open but
+// border treatment). StreamoRecord may be undefined if subscription is open but
 // no bytes have arrived yet; we show the key + a quiet status.
 function repoCard (keyHex, repo, extraClass = null) {
   if (!repo) {
@@ -205,7 +205,7 @@ mount(h`
     if (!keyHex) return h`
       <section class="view" data-key="view-registry">
         <div class="registry-stats">
-          <strong>Repo Registry</strong>
+          <strong>StreamoRecord Registry</strong>
           <span class="dim">·</span>
           ${() => {
             // Iterating registry registers (registry, 'keys') for new-repo

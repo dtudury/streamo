@@ -680,9 +680,70 @@ export function registrySync (registry, host, port, options = {}) {
      * connection returns.
      * @returns {Promise<import('./Repo.js').Repo>}
      */
-    subscribe (key) {
+    async subscribe (key) {
       subscribed.add(key)
-      return peer ? peer.subscribe(key) : registry._materialize(key)
+      const repo = await (peer ? peer.subscribe(key) : registry._materialize(key))
+      // Back-reference so `repo.merge()` can request a session-level
+      // resync after a rejected push. Streamos that aren't Repos (e.g.,
+      // the tarot demo) don't implement `_attachSession`; the optional
+      // chain skips them gracefully.
+      repo._attachSession?.(session)
+      return repo
+    },
+    /**
+     * Drop the current subscription state for `keyHex` and re-subscribe
+     * from offset 0. Used by `repo.merge()` between retry attempts after
+     * a rejected push:
+     *
+     *   1. Caller has already `_reset()`'d the Repo (local bytes wiped,
+     *      flags cleared).
+     *   2. This closes the existing reader (it would send stale local
+     *      bytes that no longer exist) and writer (its alignment state
+     *      expects bytes the local Repo no longer has).
+     *   3. Sends a fresh `subscribe` JSON with `fromOffset: 0` so the
+     *      relay streams its authoritative chain from the start.
+     *   4. Re-creates reader + writer via `syncKey`.
+     *   5. Waits for the first SIG from the relay to land (re-anchoring
+     *      `relayChainHash`), at which point the caller's update can
+     *      re-apply against fresh state.
+     *
+     * Underscore-prefixed because this is substrate-internal — apps
+     * should use `repo.merge()`, which orchestrates the full retry.
+     */
+    async _resyncRepo (keyHex) {
+      // Tear down per-key wire state. Errors during close are best-effort;
+      // we're about to recreate everything anyway.
+      const oldReader = readers.get(keyHex)
+      if (oldReader) {
+        oldReader.cancel().catch(() => {})
+        readers.delete(keyHex)
+      }
+      const oldWriter = writers.get(keyHex)
+      if (oldWriter) {
+        try { await oldWriter.close() } catch {}
+        writers.delete(keyHex)
+      }
+      pendingChunks.delete(keyHex)
+      // Fresh subscribe — fromOffset 0 because we just `_reset()`'d.
+      sendJson({
+        type: 'subscribe',
+        key: keyHex,
+        fromOffset: 0,
+        fromChainHash: bytesToHex(new Uint8Array(32))
+      })
+      await syncKey(keyHex, 0)
+      // Wait for the first SIG from the relay to land — that's the
+      // "we're anchored again" signal.
+      const repo = await registry._materialize(keyHex)
+      await new Promise(resolve => {
+        const fn = () => {
+          if (repo.relayChainHash) {
+            repo.recaller.unwatch(fn)
+            resolve()
+          }
+        }
+        repo.recaller.watch('session:resync-wait-anchor', fn)
+      })
     }
   }
 

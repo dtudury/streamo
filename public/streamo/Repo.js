@@ -168,6 +168,22 @@ export class Repo extends Streamo {
   #conflictDetected = null
   #pushRejected     = null
 
+  // The chainHash the upstream relay has confirmed up to — surfaced from
+  // makeRelayInboundStream's `pendingChainHash`. Null until the first SIG
+  // from the wire lands. When this matches `committedChainHash` of a SIG
+  // we just signed locally, the relay has received-and-accepted our push;
+  // that's the ack signal `merge()` awaits.
+  #relayChainHash = null
+
+  // Optional back-reference to the session that subscribed this Repo
+  // over the wire. Set by `session.subscribe`; used by `merge()` to
+  // request a session-level resync when a push is rejected (resync =
+  // _reset + send fresh subscribe + wait for relay's anchoring stream).
+  // Repos materialized without a session (e.g., archive-only on the
+  // relay side, or tests) leave this null; merge then rejects loudly
+  // on conflict since it has no path to retry.
+  #session = null
+
   /**
    * Walk back from the tail to the most recent SIGNATURE chunk. Returns
    * its starting address (the byte at which it begins), or -1 if there
@@ -636,18 +652,169 @@ export class Repo extends Streamo {
   }
 
   /**
+   * Reactive: the 32-byte chainHash the upstream relay has confirmed up
+   * to. Null until the first SIG from the relay's inbound stream lands
+   * (or stays null for Repos with no wire connection). After each SIG
+   * the wire delivers — including the broadcast-back of our own pushed
+   * bytes — this advances to that SIG's chainHash. `merge()` uses this
+   * to detect "the relay accepted my push" without needing a new wire
+   * message: when `relayChainHash` matches the chainHash of the SIG we
+   * just signed locally, the round-trip completed and the relay is in
+   * sync with our local top.
+   */
+  get relayChainHash () {
+    this.recaller.reportKeyAccess(this, 'relayChainHash')
+    return this.#relayChainHash
+  }
+
+  /**
+   * Setter for makeRelayInboundStream to call as it processes SIGs.
+   * Internal — not part of the user-facing Repo API.
+   */
+  _setRelayChainHash (value) {
+    this.#relayChainHash = value
+    this.recaller.reportKeyMutation(this, 'relayChainHash')
+  }
+
+  /**
+   * Back-reference to the session that subscribed this Repo. Set by
+   * `session.subscribe`; `merge()` uses it to request a session-level
+   * resync after a rejected push. Null on Repos that aren't attached
+   * to a wire (server-side archive-only, tests, etc.).
+   */
+  _attachSession (session) {
+    this.#session = session
+  }
+
+  /**
+   * Wait for `committedChainHash` of the upstream relay to reach
+   * `target` — i.e., the relay confirmed the bytes that produced that
+   * chainHash. Resolves on match. Rejects if `pushRejected` fires
+   * (the relay said no) or `conflictDetected` fires (local alignment
+   * caught divergence on incoming bytes).
+   *
+   * Internal helper; used by `merge()` to await push acceptance.
+   *
+   * @param {Uint8Array} target  the 32-byte chainHash to wait for
+   */
+  _awaitChainHash (target) {
+    return new Promise((resolve, reject) => {
+      const fn = () => {
+        // Read all reactive deps up front so the watcher subscribes to
+        // each (recaller tracks via reportKeyAccess inside the getters).
+        const rejected = this.pushRejected
+        const conflict = this.conflictDetected
+        const relayHash = this.relayChainHash
+        if (rejected) {
+          this.recaller.unwatch(fn)
+          const err = new Error(`push rejected: ${rejected.reason ?? 'unknown reason'}`)
+          err.pushRejected = rejected
+          reject(err)
+          return
+        }
+        if (conflict) {
+          this.recaller.unwatch(fn)
+          const err = new Error('local store diverged from incoming chain')
+          err.conflictDetected = conflict
+          reject(err)
+          return
+        }
+        if (relayHash && arraysEqual(relayHash, target)) {
+          this.recaller.unwatch(fn)
+          resolve()
+        }
+      }
+      this.recaller.watch('repo:_awaitChainHash', fn)
+    })
+  }
+
+  /**
+   * Apply `updateFn` to the Record's current value, set the result,
+   * await the relay's ack. On conflict (`pushRejected`), reset local
+   * state via the attached session's resync, await re-anchor from the
+   * relay's authoritative stream, re-apply against the new current,
+   * retry. Up to `retries` times.
+   *
+   * The conflict-safe write primitive. Replaces the
+   * `const c = repo.get(); repo.set({...c, x})` pattern that races
+   * against concurrent writers: another tab or device committing
+   * between the read and the set would land first; this client's set
+   * would be a stale-anchored push that the relay rejects, and (under
+   * the old pattern) the user's change would silently disappear.
+   *
+   * Under `update`, the substrate handles the read-stale-then-write
+   * race: if the push is rejected, we re-read the now-current value
+   * (the one that beat us), re-run the user's update function against
+   * it, and push again. For additive updates (appending to a list,
+   * incrementing a counter, adding a key) the retry is invisibly
+   * correct. For destructive updates the retry still happens but
+   * `onConflict` lets apps reason about it explicitly if needed.
+   *
+   * Naming: `set(value)` is ultra-clobber (no merge intent),
+   * `merge(source)` is fork-lineage combination (a different verb
+   * in streamo's vocabulary), and `update(fn)` is conflict-safe
+   * write-with-a-function — the conflict-handling sibling of `set`.
+   *
+   * Requires a session attached via `_attachSession` (set by
+   * `session.subscribe`). Without one, throws on the first conflict
+   * since there's no path to retry.
+   *
+   * @param {(current: any) => any} updateFn
+   * @param {object} [options]
+   * @param {number} [options.retries=3]  max retry attempts on conflict
+   * @param {(state: { pushRejected: any, attempts: number }) => any} [options.onConflict]
+   *   called after retries exhaust; return value is what `update` returns
+   *   (lets apps fall back to manual recovery without re-throwing)
+   * @returns {Promise<void>}
+   */
+  async update (updateFn, options = {}) {
+    const { retries = 3, onConflict = null } = options
+    let lastError = null
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      const current = this.get()
+      const next = updateFn(current)
+      this.set(next)
+      // After set, committedChainHash IS the chainHash of the SIG we
+      // just signed — the value we want the relay to confirm.
+      const target = this.committedChainHash
+      try {
+        await this._awaitChainHash(target)
+        return  // ack received; we're in sync with the relay
+      } catch (err) {
+        lastError = err
+        if (attempt === retries) break
+        if (!this.#session) break  // no path to retry without a session
+        // Reset local-only state, then ask the session to drop its
+        // subscription state for this key and re-subscribe so the
+        // relay's authoritative stream re-anchors us from offset 0.
+        this._reset()
+        await this.#session._resyncRepo(this.publicKeyHex)
+        // Loop: re-read current (now the relay's view), re-apply updateFn.
+      }
+    }
+    const finalState = { pushRejected: this.pushRejected, attempts: retries + 1 }
+    if (onConflict) return onConflict(finalState)
+    const err = new Error(
+      `repo.update: exhausted ${retries + 1} attempts; ${lastError?.message ?? 'unknown'}` +
+      (this.#session ? '' : ' (no session attached — update requires session.subscribe for retry path)')
+    )
+    err.pushRejected = this.pushRejected
+    throw err
+  }
+
+  /**
    * @override Wipes local bytes (via Streamo._reset) AND clears the
-   * divergence flags. Used by recovery-UX orchestration: an app stashes
-   * `repo.decode(repo.{push,conflict}.dataAddress)` first, then calls
-   * `_reset()` to drop the local-only state, then re-subscribes to take
-   * the relay's view, then re-applies the stashed value via `set()`.
+   * divergence flags. Used by recovery-UX orchestration AND by
+   * `merge()` between retry attempts.
    */
   _reset () {
     super._reset()
     this.#conflictDetected = null
     this.#pushRejected = null
+    this.#relayChainHash = null
     this.recaller.reportKeyMutation(this, 'conflictDetected')
     this.recaller.reportKeyMutation(this, 'pushRejected')
+    this.recaller.reportKeyMutation(this, 'relayChainHash')
   }
 
   /**
@@ -738,8 +905,12 @@ export class Repo extends Streamo {
             staged = []
             if (!alreadyHave) self.append(code)
             // Advance: the SIG chunk's first 32 bytes are its chainHash.
-            // No decode needed — read the bytes directly.
+            // No decode needed — read the bytes directly. Surface to the
+            // Repo as `relayChainHash` so `merge()` can await round-trip
+            // confirmation of pushed bytes (the broadcast-back lands a
+            // SIG here whose chainHash matches our just-signed local SIG).
             pendingChainHash = code.slice(0, 32)
+            self._setRelayChainHash(pendingChainHash)
           } else if (!alreadyHave) {
             staged.push(code)
           }

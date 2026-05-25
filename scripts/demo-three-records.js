@@ -161,17 +161,17 @@ const indexHtml = `<!doctype html>
   try {
     const { h } = await import('./streamo/h.js')
     $bytes.className = 'ok'
-    $bytes.textContent = '✓ /streamo/h.js loaded (may be via mount OR static fallback)'
+    $bytes.textContent = '✓ /streamo/h.js loaded — library Record served via mount'
     void h
   } catch (err) {
     $bytes.className = 'fail'
-    $bytes.textContent = '✗ /streamo/h.js failed — ' + err.message
+    $bytes.textContent = '✗ /streamo/h.js — library Record not connected'
   }
 
   try {
     const { MOUNT_SOURCE } = await import('./streamo/mount-proof.js')
     $mount.className = 'ok'
-    $mount.textContent = '✓ mount resolver serving: ' + MOUNT_SOURCE
+    $mount.textContent = '✓ mount-proof.js loaded: ' + MOUNT_SOURCE
   } catch (err) {
     $mount.className = 'fail'
     $mount.textContent = '✗ mount-proof.js not served — library Record not connected'
@@ -198,15 +198,20 @@ await writeFile(
 // the seeded directory and (since 9.0.0) auto-enables --record-file
 // streamo.json so value.mounts gets populated from disk.
 //
-// `npx -y @dtudury/streamo@9.0.0` pins the published version the demo
+// `npx -y @dtudury/streamo@9.0.1` pins the published version the demo
 // is known to work with — defensive against version drift (the demo
 // stays good even if a future minor changes default behavior), and a
 // clean test point: "does the demo still work with 10.0.0? drop the
-// pin and re-run." If you want to test an unpublished local build,
-// substitute `node /path/to/streamo/bin/streamo.js` for the npx call.
+// pin and re-run." 9.0.1 is the no-static-fallback world: until the
+// library terminal starts, /streamo/* genuinely 404s (the previous
+// 9.0.0 demo passed `library bytes` via the static fallback before
+// library started; now both `library bytes` and `mount-proof` fail
+// until library is up — honest signal). If you want to test an
+// unpublished local build, substitute `node /path/to/streamo/bin/streamo.js`
+// for the npx call.
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
-      npx -y @dtudury/streamo@9.0.0 --name ${record} --username ${username} \\
+      npx -y @dtudury/streamo@9.0.1 --name ${record} --username ${username} \\
         --files ./files ${extra}`
 
 console.log('\n' + RULE)
@@ -236,24 +241,24 @@ Then visit:
     http://localhost:8080/apps/explorer/  — explorer composed with library
 
 What to watch on the homepage's smoke tests:
-  • "library bytes" — checks /streamo/h.js loads. This ALMOST ALWAYS
-    passes, because the relay falls through to express.static(publicDir)
-    when the mount resolver misses. h.js is in the installed
-    @dtudury/streamo package, so this check passes even without library
-    running. It only tells you bytes are *somewhere*.
-  • "mount resolver" — checks /streamo/mount-proof.js loads. This file
-    exists ONLY in the library Record (the setup script injects it).
-    The static fallback cannot serve it. Passing this check means the
-    mount is actually doing the work.
+  • "library bytes" — checks /streamo/h.js loads. Under 9.0.1 there
+    is NO static fallback; the only way this loads is if the library
+    Record is connected and the mount resolver is doing the work.
+  • "mount-proof.js" — a file that exists ONLY in the library Record
+    (this setup script injects it). Redundant signal under 9.0.1
+    (both checks now mean "library Record is up") but kept as a
+    concrete demonstration of what's in the library Record vs the
+    homepage Record vs other Records.
 
-  Start only homepage → reload → "bytes" ✓ (via static fallback),
-    "mount" ✗ (library Record not connected). This is the surprise:
-    the page looks fine because the package supplied the bytes.
-  Start library → reload → "mount" ✓: real composition is now live.
-  Start explorer → visit /apps/explorer/ → the explorer loads. Its
-    \`../../streamo/h.js\` imports may resolve through EITHER the mount
-    OR the static fallback — bytes are identical, you can't tell from
-    the explorer alone. But the homepage's mount-proof test settles it
-    for the whole page.
+  Start only homepage → reload → both checks ✗ (library not up).
+    Under 9.0.0 the first check would have passed via the static
+    fallback, leaving a confusing "page looks fine" surface; 9.0.1
+    is honest about what's actually missing.
+  Start library → reload → both checks ✓. The library Record's bytes
+    are now flowing through the homepage's mount resolver.
+  Start explorer → visit /apps/explorer/ → the explorer loads (from
+    the explorer Record, with its own \`../../streamo/h.js\` imports
+    resolving through the homepage's library mount — composition
+    end-to-end).
 `)
 console.log(RULE)

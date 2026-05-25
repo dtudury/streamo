@@ -416,6 +416,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // store; `dataAddress` points at the rejected commit's value so
           // the app can decode it for "your write didn't make it" UX and
           // offer Send-merged / Discard recovery.
+          //
+          // `registry.get` (not `.open`) is correct here: we pushed bytes
+          // for this key, so the Repo MUST already be materialized in the
+          // registry — that's an invariant of the push protocol.
           const repo = registry.get(msg.key)
           if (repo) {
             repo._setPushRejected({

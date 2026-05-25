@@ -186,7 +186,7 @@ function readRepoMounts (repo) {
  * Pin-aware: when `atDataAddress` is set, reads the mounted record's
  * value at that specific commit instead of HEAD.
  *
- * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }} registry
+ * @param {import('./RepoRegistry.js').RepoRegistry} registry
  * @param {string} targetKey
  * @param {number|undefined} atDataAddress
  * @param {Set<string>} visited
@@ -197,7 +197,12 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
   const inner = new Set(visited)
   inner.add(targetKey)
 
-  const targetRepo = registry.get(targetKey)
+  // `registry.open` (not `.get`) so archived mount targets materialize
+  // lazily — the archiveSync-backed factory's await loads on-disk bytes
+  // before the Repo is returned. Same shape as repoFileServer's resolver
+  // (Phase C). `get` here was a footgun: cold-cache call sites would
+  // silently return `undefined` and the mount would no-op without trace.
+  const targetRepo = await registry.open(targetKey)
   if (!targetRepo) return {}
 
   let value

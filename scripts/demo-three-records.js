@@ -89,6 +89,19 @@ await cp(
   { recursive: true }
 )
 
+// Inject a marker file the static-file fallback cannot serve. The relay's
+// web server falls through to express.static(publicDir) — the installed
+// package's public/ folder — after the repo+mount resolver fails. Real lib
+// files (h.js, mount.js) exist there too, so a working smoke test on those
+// proves only that the bytes are *available*, not that the mount is doing
+// the work. This file exists ONLY in the library Record. If the homepage
+// can import it, the mount resolver is the one serving.
+console.log('  injecting mount-proof.js into library Record …')
+await writeFile(
+  join(demoDir, 'library', 'files', 'mount-proof.js'),
+  "export const MOUNT_SOURCE = 'library-record-via-mount'\n"
+)
+
 console.log('  seeding explorer Record from public/apps/explorer/ …')
 await cp(
   join(repoRoot, 'public', 'apps', 'explorer'),
@@ -118,22 +131,31 @@ const indexHtml = `<!doctype html>
 <ul>
   <li><a href="/apps/explorer/">open the explorer →</a></li>
 </ul>
-<p id="smoke" class="pending">loading library mount…</p>
+<p id="bytes" class="pending">checking library bytes…</p>
+<p id="mount" class="pending">checking mount resolver…</p>
 <script type="module">
-  const el = document.getElementById('smoke')
+  // Two signals: bytes-available (which the static-file fallback can fake),
+  // and mount-actually-serving (which only the library Record can satisfy).
+  const $bytes = document.getElementById('bytes')
+  const $mount = document.getElementById('mount')
+
   try {
-    const { h }     = await import('./streamo/h.js')
-    const { mount } = await import('./streamo/mount.js')
-    if (typeof h === 'function' && typeof mount === 'function') {
-      el.className = 'ok'
-      el.textContent = '✓ library mounted — imported h() and mount() from ./streamo/'
-    } else {
-      el.className = 'fail'
-      el.textContent = '✗ library mount resolved but exports are not functions'
-    }
+    const { h } = await import('./streamo/h.js')
+    $bytes.className = 'ok'
+    $bytes.textContent = '✓ /streamo/h.js loaded (may be via mount OR static fallback)'
+    void h
   } catch (err) {
-    el.className = 'fail'
-    el.textContent = '✗ library mount not yet available — ' + err.message
+    $bytes.className = 'fail'
+    $bytes.textContent = '✗ /streamo/h.js failed — ' + err.message
+  }
+
+  try {
+    const { MOUNT_SOURCE } = await import('./streamo/mount-proof.js')
+    $mount.className = 'ok'
+    $mount.textContent = '✓ mount resolver serving: ' + MOUNT_SOURCE
+  } catch (err) {
+    $mount.className = 'fail'
+    $mount.textContent = '✗ mount-proof.js not served — library Record not connected'
   }
 </script>
 `
@@ -187,13 +209,25 @@ Then visit:
     http://localhost:8080/                — homepage (library mount smoke test)
     http://localhost:8080/apps/explorer/  — explorer composed with library
 
-What to watch:
-  • Start only homepage first → reload page → smoke test fails (✗): the
-    mount points at a key the relay doesn't have bytes for yet.
-  • Start library → reload → smoke test goes ✓: bytes arrived via origin,
-    the mount resolver lights up live.
-  • Start explorer → visit /apps/explorer/ → the explorer loads, and its
-    \`../../streamo/h.js\` imports resolve through the homepage's library
-    mount. One URL hierarchy composed from three signed chains.
+What to watch on the homepage's smoke tests:
+  • "library bytes" — checks /streamo/h.js loads. This ALMOST ALWAYS
+    passes, because the relay falls through to express.static(publicDir)
+    when the mount resolver misses. h.js is in the installed
+    @dtudury/streamo package, so this check passes even without library
+    running. It only tells you bytes are *somewhere*.
+  • "mount resolver" — checks /streamo/mount-proof.js loads. This file
+    exists ONLY in the library Record (the setup script injects it).
+    The static fallback cannot serve it. Passing this check means the
+    mount is actually doing the work.
+
+  Start only homepage → reload → "bytes" ✓ (via static fallback),
+    "mount" ✗ (library Record not connected). This is the surprise:
+    the page looks fine because the package supplied the bytes.
+  Start library → reload → "mount" ✓: real composition is now live.
+  Start explorer → visit /apps/explorer/ → the explorer loads. Its
+    \`../../streamo/h.js\` imports may resolve through EITHER the mount
+    OR the static fallback — bytes are identical, you can't tell from
+    the explorer alone. But the homepage's mount-proof test settles it
+    for the whole page.
 `)
 console.log(RULE)

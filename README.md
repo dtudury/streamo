@@ -135,7 +135,7 @@ streamo --env-file .env
 | `STREAMO_PASSWORD` | `--password` | signing password |
 | `STREAMO_DATA_DIR` | `--data-dir` | archive directory (default `.streamo`) |
 | `STREAMO_FILES` | `--files` | mirror local files |
-| `STREAMO_FILES_KEY` | `--files-key` | mount file sync at `value[key]` (preserves sibling state) |
+| `STREAMO_RECORD_FILE` | `--record-file` | sync `streamo.json` (mounts + metadata) alongside files |
 | `STREAMO_MERGE_FROM` | `--merge-from` | on first run only (empty repo), fork from this URL or host |
 | `STREAMO_MERGE_FROM_KEY` | `--merge-from-key` | only incorporate this sub-key from the merge source (e.g. `files`) |
 | `STREAMO_WEB` | `--web` | HTTP + WebSocket server port |
@@ -145,16 +145,15 @@ streamo --env-file .env
 
 ### serving a site from a repo
 
-If your streamo's value is (or contains) a flat path→content map, the
-`--web` flag automatically serves those files over HTTP. Combined with
-`--files`, this is **live-edit your public site**:
+A streamo record's value carries files under `value.files`, leaving room
+for sibling metadata (`mounts`, `members`, `title`, …) alongside. With
+`--web` and `--files`, the `value.files` map is served live over HTTP:
 
 ```bash
 streamo \
   --name my-site \
   --username alice \
   --files ./public \
-  --files-key files \
   --web 8080
 ```
 
@@ -163,10 +162,10 @@ next request. The streamo's signed commit log IS your site's history.
 ETags are strong, derived from the content address — browsers cache
 forever and re-fetch only when bytes change.
 
-`--files-key files` mounts file sync at `value.files` so the same
-streamo can hold sibling data (member list, journal entries, etc.)
-without leaking onto the web. Drop the flag and the whole value is
-the file tree.
+A `streamo.json` alongside your files holds the record's metadata
+(`mounts`, `title`, etc.) — siblings of `value.files` on the chain.
+fileSync keeps it bidirectional: edit `mounts` in your editor as plain
+JSON, and the next save commits it.
 
 HTML responses get an importmap injected that maps `@dtudury/streamo`
 and `@dtudury/streamo/*` to the relay's `/streamo/` path. Your pages
@@ -188,7 +187,6 @@ npx @dtudury/streamo \
   --merge-from streamo.dev \
   --merge-from-key files \
   --files ./mysite \
-  --files-key files \
   --web 8081
 ```
 

@@ -63,7 +63,7 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // req.url before serveFromRegistry / serveFromRepo run. The middleware
   // skips the bare `/streams/<keyhex>` (→ JSON view) and `/streams/<keyhex>/raw`
   // (→ raw-bytes endpoint) so the legacy routes below keep working.
-  app.use('/streams/:keyhex', serveFromRegistry(registry, { filesKey: 'files' }))
+  app.use('/streams/:keyhex', serveFromRegistry(registry))
 
   app.use(express.static(publicDir))
 

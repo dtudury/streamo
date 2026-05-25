@@ -116,7 +116,6 @@ command. There's no signup flow."
      --merge-from streamo.dev \
      --merge-from-key files \
      --files ./mysite \
-     --files-key files \
      --web 8081
    ```
 

@@ -42,9 +42,9 @@ function callMiddleware (mw, { method = 'GET', path = '/', headers = {} } = {}) 
 const bodyAsString = body => body == null ? '' : Buffer.isBuffer(body) ? body.toString('utf8') : String(body)
 
 describe(import.meta.url, ({ test }) => {
-  // ── namespaced shape (default: filesKey='files') ─────────────────────────
+  // ── default shape: files at value.files ──────────────────────────────────
 
-  test('serves index.html for / (namespaced shape)', ({ assert }) => {
+  test('serves index.html for /', ({ assert }) => {
     const repo = makeRepo({ files: { 'index.html': '<!doctype html><html></html>' } })
     const mw = serveFromRepo(repo, { injectImportMap: false })
     const r = callMiddleware(mw, { path: '/' })
@@ -79,25 +79,6 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(bodyAsString(r.body), '<p>docs</p>')
   })
 
-  // ── root shape (filesKey: null) ──────────────────────────────────────────
-
-  test('serves from root-shape Repo when filesKey is null', ({ assert }) => {
-    const repo = makeRepo({ 'index.html': '<h1>root</h1>' })
-    const mw = serveFromRepo(repo, { filesKey: null, injectImportMap: false })
-    const r = callMiddleware(mw, { path: '/' })
-    assert.equal(r.statusCode, 200)
-    assert.equal(bodyAsString(r.body), '<h1>root</h1>')
-  })
-
-  test('root-shape ignores non-file siblings naturally', ({ assert }) => {
-    // In root mode, a key like `title` is just another path lookup;
-    // since req.path normalize() never produces `title`, it's untouched.
-    const repo = makeRepo({ 'index.html': '<h1>hi</h1>' })
-    const mw = serveFromRepo(repo, { filesKey: null, injectImportMap: false })
-    const r = callMiddleware(mw, { path: '/' })
-    assert.equal(r.statusCode, 200)
-  })
-
   // ── fallthrough ──────────────────────────────────────────────────────────
 
   test('falls through (next) when path not in files map', ({ assert }) => {
@@ -115,7 +96,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(r.nextCalled, true)
   })
 
-  test('falls through when filesKey missing from value', ({ assert }) => {
+  test('falls through when files key missing from value', ({ assert }) => {
     const repo = makeRepo({ members: [] })  // no `files` key
     const mw = serveFromRepo(repo, { injectImportMap: false })
     const r = callMiddleware(mw, { path: '/' })

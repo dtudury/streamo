@@ -5,11 +5,9 @@
  * flat { relPath: value } map and commits it to a Repo, this middleware
  * reads that same shape back out and responds to HTTP requests.
  *
- * Default Repo shape is `{ files: { ...flatMap } }` — a `files` key inside
- * the value, leaving room for other metadata (`title`, `members`, etc.)
- * alongside it. Pass `filesKey: null` to treat the whole value as the
- * flat map (the "value IS the file tree" shape — generic, anyone with a
- * directory-shaped Repo gets a server for free).
+ * Repo shape is `{ files: { ...flatMap } }` — a `files` key inside the
+ * value, leaving room for other metadata (`mounts`, `title`, `members`,
+ * etc.) alongside it.
  *
  * HTML responses optionally get an importmap injected that resolves
  * `@dtudury/streamo` and `@dtudury/streamo/*` to URLs the host can serve
@@ -22,6 +20,10 @@
  * Repo's value actually changes.
  */
 import { extname } from 'path'
+
+// The structured-record shape: files live under `value.files`. Hardcoded
+// since 9.0.0 — the legacy "value IS files" mode is gone (see fileSync.js).
+const FILES_KEY = 'files'
 
 const MIME = {
   '.html':  'text/html; charset=utf-8',
@@ -66,14 +68,12 @@ function normalize (urlPath) {
 }
 
 /**
- * Read the files-map out of a Repo according to filesKey.
+ * Read the files-map out of a Repo — `repo.value.files`.
  * @param {import('./Repo.js').Repo} repo
- * @param {string|null} filesKey
  */
-function readFilesMap (repo, filesKey) {
+function readFilesMap (repo) {
   if (!repo.lastCommit) return undefined
-  if (filesKey === null) return repo.files
-  return repo.get(filesKey)
+  return repo.get(FILES_KEY)
 }
 
 /**
@@ -108,20 +108,19 @@ function readMounts (repo, atDataAddress) {
  * when the file isn't in the map.
  *
  * @param {import('./Repo.js').Repo} repo
- * @param {string|null} filesKey
  * @param {string} path
  * @param {number} [atDataAddress]
  */
-function readFile (repo, filesKey, path, atDataAddress) {
+function readFile (repo, path, atDataAddress) {
   if (atDataAddress != null) {
     try {
       const value = repo.decode(atDataAddress)
       if (!value || typeof value !== 'object') return undefined
-      const map = filesKey === null ? value : value[filesKey]
+      const map = value[FILES_KEY]
       return (map && typeof map === 'object') ? map[path] : undefined
     } catch { return undefined }
   }
-  const map = readFilesMap(repo, filesKey)
+  const map = readFilesMap(repo)
   if (!map || typeof map !== 'object' || map instanceof Uint8Array) return undefined
   return map[path]
 }
@@ -154,15 +153,14 @@ function readFile (repo, filesKey, path, atDataAddress) {
  * @param {string} path
  * @param {number|undefined} atDataAddress
  * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }} registry
- * @param {string|null} filesKey
  * @param {Set<string>} visited
  */
-function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, filesKey, visited) {
+function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, visited) {
   if (visited.has(pubkeyHex)) return null
   visited.add(pubkeyHex)
 
   // Files-first lookup on the current record.
-  const value = readFile(repo, filesKey, path, atDataAddress)
+  const value = readFile(repo, path, atDataAddress)
   if (value !== undefined) {
     return { repo, leafPath: path, leafDataAddress: atDataAddress, value }
   }
@@ -199,7 +197,6 @@ function resolveInRecord (repo, pubkeyHex, path, atDataAddress, registry, filesK
     innerPath || 'index.html',
     typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
     registry,
-    filesKey,
     visited
   )
 }
@@ -236,8 +233,6 @@ function injectImportMap (html, importMap) {
  *
  * @param {import('./Repo.js').Repo} repo
  * @param {object} [options]
- * @param {string|null} [options.filesKey='files']  key under value to look up;
- *   null means value IS the files map
  * @param {boolean} [options.injectImportMap=true]  inject an importmap into
  *   HTML responses so bare specifiers like `@dtudury/streamo` resolve
  * @param {string} [options.libraryPath='/streamo/']  URL prefix the
@@ -261,7 +256,6 @@ function injectImportMap (html, importMap) {
  */
 export function serveFromRepo (repo, options = {}) {
   const {
-    filesKey = 'files',
     injectImportMap: doInject = true,
     libraryPath = '/streamo/',
     libraryPackageName = '@dtudury/streamo',
@@ -284,10 +278,10 @@ export function serveFromRepo (repo, options = {}) {
     //   - no registry → files-only on the served repo, as before.
     let resolved
     if (registry) {
-      resolved = resolveInRecord(repo, pubkeyHex, path, undefined, registry, filesKey, new Set())
+      resolved = resolveInRecord(repo, pubkeyHex, path, undefined, registry, new Set())
       if (!resolved) return next()
     } else {
-      const files = readFilesMap(repo, filesKey)
+      const files = readFilesMap(repo)
       if (!files || typeof files !== 'object' || files instanceof Uint8Array) return next()
       const value = files[path]
       if (value === undefined) return next()
@@ -343,7 +337,7 @@ export function serveFromRepo (repo, options = {}) {
  *
  * Mount via a prefix so Express strips it from req.url before delegating:
  *
- *   app.use('/streams/:keyhex', serveFromRegistry(registry, { filesKey: 'files' }))
+ *   app.use('/streams/:keyhex', serveFromRegistry(registry))
  *
  * Then `/streams/<66-hex>/index.html` serves `repo.get('files', 'index.html')`,
  * `/streams/<66-hex>/foo.css` serves `repo.get('files', 'foo.css')`, etc.
@@ -366,7 +360,7 @@ export function serveFromRepo (repo, options = {}) {
  *
  * @param {import('./RepoRegistry.js').RepoRegistry} registry
  * @param {object} [options]  same shape as serveFromRepo's options
- *   (filesKey, injectImportMap, libraryPath, libraryPackageName)
+ *   (injectImportMap, libraryPath, libraryPackageName)
  * @returns {(req, res, next) => Promise<void>} Express middleware
  */
 export function serveFromRegistry (registry, options = {}) {

@@ -60,7 +60,6 @@ npx @dtudury/streamo \
   --merge-from-key files \
   --origin streamo.dev \
   --files ./mysite \
-  --files-key files \
   --web 8081
 ```
 

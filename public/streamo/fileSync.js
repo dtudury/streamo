@@ -143,20 +143,18 @@ function filesEqual (a, b) {
   return true
 }
 
+// The structured-record shape: files live under `value.files`, leaving
+// room for sibling keys (`mounts`, `title`, `members`, ...). Hardcoded
+// since 9.0.0 — the legacy "value IS files" mode is gone.
+const FILES_KEY = 'files'
+
 /**
- * Read the files-map this fileSync owns according to filesKey:
- *   - null  → the whole repo value IS the files map
- *   - other → repo.value[filesKey] is the files map; siblings are untouched
- * Returns a plain map (possibly empty), or null if the repo has no files at
- * this key (lastCommit may still exist for other sibling state).
+ * Read the files-map this fileSync owns — `repo.value.files`.
+ * Returns a plain map (possibly empty), or null if the repo has no files
+ * at the key (lastCommit may still exist for other sibling state).
  */
-function readRepoFiles (repo, filesKey) {
-  if (filesKey === null) {
-    const v = repo.files
-    if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null
-    return v
-  }
-  const v = repo.get(filesKey)
+function readRepoFiles (repo) {
+  const v = repo.get(FILES_KEY)
   if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null
   return v
 }
@@ -336,16 +334,15 @@ async function readRecordFileMeta (folder, recordFile) {
 
 /**
  * Read the record's meta from the repo's in-memory value — everything
- * except the `files` key. Returns null in legacy (`filesKey: null`)
- * mode, since the whole value IS files there and there's no meta.
+ * except the `files` key. Returns null when the repo has no commit yet
+ * or the value isn't an object.
  */
-function readRepoRecordMeta (repo, filesKey) {
-  if (filesKey === null) return null
+function readRepoRecordMeta (repo) {
   if (!repo.lastCommit) return null
   const value = repo.get()
   if (!value || typeof value !== 'object' || value instanceof Uint8Array) return null
   const meta = { ...value }
-  delete meta[filesKey]
+  delete meta[FILES_KEY]
   return meta
 }
 
@@ -380,19 +377,18 @@ function metaEqual (a, b) {
  * Two-way sync between a folder and a Repo.
  *
  * Initial state (startup authority via timestamps):
- *   - repo has files at filesKey AND no disk file is newer than the last
- *     commit → repo wins
- *   - repo has no files at filesKey, OR any disk file is newer than the
- *     last commit → disk wins
+ *   - repo has files at `value.files` AND no disk file is newer than the
+ *     last commit → repo wins
+ *   - repo has no files at `value.files`, OR any disk file is newer than
+ *     the last commit → disk wins
  *
  * Ongoing:
  *   - Repo changes (new commit from peer/archive) → write changed files to disk
  *   - Disk changes → checkout, update files, commit to repo
  *
- * When `filesKey` is non-null, the sync is mounted at `repo.value[filesKey]`
- * — other top-level keys on the value (the chat home's `members`,
- * `journalists`, `entries`, etc.) are preserved across writes. The default
- * (null) keeps the legacy "value IS files" behavior.
+ * The sync is mounted at `repo.value.files` — other top-level keys on the
+ * value (the chat home's `members`, `journalists`, `entries`, etc.) are
+ * preserved across writes.
  *
  * **Mounts (when both `registry` and `pubkeyHex` are provided).** This
  * repo's `mounts` table — declarative composition referring to other
@@ -411,7 +407,6 @@ function metaEqual (a, b) {
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
  * @param {object} [options]
- * @param {string|null} [options.filesKey=null]
  * @param {{ get: (k: string) => import('./Repo.js').Repo|undefined }|null} [options.registry=null]
  *   registry whose stored Repos provide the bytes for any mounted record.
  *   When unset, mount materialization is disabled (files-only behavior).
@@ -423,17 +418,12 @@ function metaEqual (a, b) {
  *   string to override the name) to the record's value MINUS the
  *   `files` key. Lets you edit `mounts` and other top-level keys
  *   (`title`, `description`, `members`, etc.) in your editor as plain
- *   JSON, with the file tree continuing to own the `files` key. Only
- *   takes effect when `filesKey` is non-null — legacy
- *   (value-IS-files) mode has no meta to sync.
+ *   JSON, with the file tree continuing to own the `files` key.
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
-  const { filesKey = null, registry = null, pubkeyHex = null, recordFile: recordFileOpt = false } = options
-  // recordFile only makes sense when there IS a meta — i.e., a
-  // namespaced filesKey. In legacy null-filesKey mode the value IS the
-  // files map; there's nothing to put in streamo.json.
-  const recordFile = filesKey !== null ? resolveRecordFileName(recordFileOpt) : null
+  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false } = options
+  const recordFile = resolveRecordFileName(recordFileOpt)
   // Resolve symlinks in the folder path up front so the watcher's
   // event paths (which come back resolved on some OSes — notably
   // macOS, where `/tmp` → `/private/tmp`) line up with our own
@@ -461,15 +451,12 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   }
   const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes, recordFile)
 
-  // Local helpers that respect filesKey.  Encapsulating the branching here
-  // keeps the body below readable as one flow.
-  const getRepoFiles = () => readRepoFiles(repo, filesKey)
+  const getRepoFiles = () => readRepoFiles(repo)
   const setRepoFiles = (working, files) => {
-    if (filesKey === null) return working.set(files)
     // On a fresh checkout (no prior commits), there's no parent object for
     // path-set to navigate into.  Materialize the wrapping object explicitly.
-    if (working.get() === undefined) return working.set({ [filesKey]: files })
-    return working.set(filesKey, files)
+    if (working.get() === undefined) return working.set({ [FILES_KEY]: files })
+    return working.set(FILES_KEY, files)
   }
   // setRecordMeta replaces the WHOLE value with a fresh object that
   // carries the new meta keys + the current files key (preserved). Any
@@ -478,10 +465,9 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // streamo.json: removing a key from the JSON means removing it from
   // the record.
   const setRecordMeta = (working, meta) => {
-    if (filesKey === null) return
-    const currentFiles = working.get(filesKey)
+    const currentFiles = working.get(FILES_KEY)
     const next = { ...(meta ?? {}) }
-    if (currentFiles !== undefined) next[filesKey] = currentFiles
+    if (currentFiles !== undefined) next[FILES_KEY] = currentFiles
     working.set(next)
   }
 
@@ -491,7 +477,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   const lastCommit = repo.lastCommit
   const commitTime = lastCommit ? lastCommit.date.getTime() : 0
   const repoFiles = getRepoFiles()
-  const repoRecordMeta = readRepoRecordMeta(repo, filesKey)
+  const repoRecordMeta = readRepoRecordMeta(repo)
   // Disk-wins iff ANY part of disk (file tree OR recordFile) is newer
   // than the last commit. recordFile and tree share one decision so we
   // never get into the "commit half the disk, overwrite the other half"
@@ -506,7 +492,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     const { files: managed } = await readFolder(folder, acceptsForDisk)
     // Exclude recordFile from toDelete — it's managed by writeRecordFile,
     // not by the files-tree writer. Same reason it's excluded from
-    // acceptsForCommit (it's not a "file" in the files-key sense).
+    // acceptsForCommit (it's metadata, not one of value.files).
     const toDelete = Object.keys(managed).filter(k => !(k in target) && k !== recordFile)
     await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
@@ -514,15 +500,15 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       await writeRecordFile(folder, recordFile, repoRecordMeta)
     }
   } else if (Object.keys(diskFiles).length > 0 || (recordFile && diskRecordMeta)) {
-    // Disk wins: commit current disk state.  When filesKey is set, this
-    // adds (or replaces) only that subkey — siblings on the value survive.
-    // diskFiles is already filtered to own files (mount paths and the
-    // recordFile path both excluded by acceptsForCommit), so they don't
-    // bleed into this repo's chain.
+    // Disk wins: commit current disk state. setRepoFiles writes to the
+    // `files` subkey — siblings on the value survive. diskFiles is
+    // already filtered to own files (mount paths and the recordFile
+    // path both excluded by acceptsForCommit), so they don't bleed
+    // into this repo's chain.
     const working = repo.checkout()
     if (recordFile && diskRecordMeta) setRecordMeta(working, diskRecordMeta)
     setRepoFiles(working, diskFiles)
-    repo.commit(working, filesKey ? `seed ${filesKey}` : 'initial')
+    repo.commit(working, `seed ${FILES_KEY}`)
     // After the commit lands, the repo→disk watcher (below) will fire
     // and materialize any mounts.
   }
@@ -557,7 +543,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       // it differs from what's on disk. Idempotent (matches → no write),
       // so the cost when nothing changed is one read + one JSON compare.
       if (recordFile) {
-        const meta = readRepoRecordMeta(repo, filesKey)
+        const meta = readRepoRecordMeta(repo)
         if (meta) {
           const onDisk = await readRecordFileMeta(folder, recordFile)
           if (!metaEqual(onDisk, meta)) {
@@ -580,7 +566,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   async function isRealRecordFileEdit () {
     if (!recordFile) return false
     const diskMeta = await readRecordFileMeta(folder, recordFile)
-    const repoMeta = readRepoRecordMeta(repo, filesKey) ?? {}
+    const repoMeta = readRepoRecordMeta(repo) ?? {}
     return !metaEqual(diskMeta, repoMeta)
   }
 

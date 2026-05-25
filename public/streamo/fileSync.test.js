@@ -32,28 +32,9 @@ async function makeSandbox () {
 }
 
 describe(import.meta.url, ({ test }) => {
-  // ── legacy mode (no filesKey: value IS the files map) ────────────────────
+  // ── default shape: files at value.files, siblings preserved ─────────────
 
-  test('legacy mode: disk content commits as the whole repo value', async ({ assert }) => {
-    const { dir, dataDir, cleanup } = await makeSandbox()
-    try {
-      await writeFile(join(dir, 'page.html'), '<page>')
-
-      const repo = new Repo()
-      const sub = await fileSync(repo, dir, dataDir)
-      try {
-        assert.equal(repo.get('page.html'), '<page>')
-      } finally {
-        await sub.unsubscribe()
-      }
-    } finally {
-      await cleanup()
-    }
-  })
-
-  // ── filesKey: disk wins, siblings preserved ──────────────────────────────
-
-  test('filesKey: disk content lands at the subkey; sibling state preserved', async ({ assert }) => {
+  test('disk content lands at value.files; sibling state preserved', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
       await writeFile(join(dir, 'index.html'), '<h1>hi</h1>')
@@ -63,7 +44,7 @@ describe(import.meta.url, ({ test }) => {
       working.set({ members: ['alice'], journalists: ['bob'] })
       repo.commit(working, 'seed')
 
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files' })
+      const sub = await fileSync(repo, dir, dataDir)
       try {
         // Siblings preserved
         assert.deepEqual(repo.get('members'), ['alice'])
@@ -78,7 +59,7 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('filesKey: lastCommit exists but no files at key → disk still wins (does not wipe)', async ({ assert }) => {
+  test('lastCommit exists but no files at value.files → disk still wins (does not wipe)', async ({ assert }) => {
     // This is the chat-server-on-first-startup edge: the home repo already
     // has `{ members, journalists, entries }` from the seed, but no `files`
     // key yet.  The repo-wins branch must NOT fire (it would write {} to
@@ -92,7 +73,7 @@ describe(import.meta.url, ({ test }) => {
       working.set({ entries: ['hi'] })
       repo.commit(working, 'seed')
 
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files' })
+      const sub = await fileSync(repo, dir, dataDir)
       try {
         // Disk file survives (wasn't wiped by "repo wins with empty files map")
         const onDisk = await readFile(join(dir, 'index.html'), 'utf8')
@@ -109,7 +90,7 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('filesKey: repo wins when disk is empty but repo has files at the key', async ({ assert }) => {
+  test('repo wins when disk is empty but repo has files at value.files', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
       const repo = new Repo()
@@ -120,7 +101,7 @@ describe(import.meta.url, ({ test }) => {
       // Pretend disk content is older
       await new Promise(r => setTimeout(r, 30))
 
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files' })
+      const sub = await fileSync(repo, dir, dataDir)
       try {
         const content = await readFile(join(dir, 'a.html'), 'utf8')
         assert.equal(content, '<a>')
@@ -134,7 +115,7 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('filesKey: fresh repo (no prior commit) + disk content → committed at subkey', async ({ assert }) => {
+  test('fresh repo (no prior commit) + disk content → committed at value.files', async ({ assert }) => {
     // No seed, no prior commits.  setRepoFiles must materialize the
     // wrapping object before path-set can navigate.
     const { dir, dataDir, cleanup } = await makeSandbox()
@@ -142,7 +123,7 @@ describe(import.meta.url, ({ test }) => {
       await writeFile(join(dir, 'index.html'), '<fresh>')
 
       const repo = new Repo()
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files' })
+      const sub = await fileSync(repo, dir, dataDir)
       try {
         assert.equal(repo.get('files', 'index.html'), '<fresh>')
       } finally {
@@ -185,7 +166,6 @@ describe(import.meta.url, ({ test }) => {
         mounts: { 'streamo/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
-        filesKey: 'files',
         registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
         pubkeyHex: KEY_A
       })
@@ -214,7 +194,6 @@ describe(import.meta.url, ({ test }) => {
         mounts: { 'streamo/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
-        filesKey: 'files',
         registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
         pubkeyHex: KEY_A
       })
@@ -248,7 +227,6 @@ describe(import.meta.url, ({ test }) => {
         mounts: { 'lib/': { key: KEY_B, dataAddress: v1Addr } }
       })
       const sub = await fileSync(a, dir, dataDir, {
-        filesKey: 'files',
         registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
         pubkeyHex: KEY_A
       })
@@ -279,7 +257,6 @@ describe(import.meta.url, ({ test }) => {
         mounts: { 'b/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
-        filesKey: 'files',
         registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
         pubkeyHex: KEY_A
       })
@@ -310,7 +287,6 @@ describe(import.meta.url, ({ test }) => {
         mounts: { 'b/': { key: KEY_B } }
       })
       const sub = await fileSync(a, dir, dataDir, {
-        filesKey: 'files',
         registry: makeStubRegistry([[KEY_A, a], [KEY_B, b], [KEY_C, c]]),
         pubkeyHex: KEY_A
       })
@@ -344,7 +320,6 @@ describe(import.meta.url, ({ test }) => {
       const captured = []
       console.error = (...args) => captured.push(args.join(' '))
       const sub = await fileSync(a, dir, dataDir, {
-        filesKey: 'files',
         registry: makeStubRegistry([[KEY_A, a], [KEY_B, b]]),
         pubkeyHex: KEY_A
       })
@@ -401,7 +376,7 @@ describe(import.meta.url, ({ test }) => {
         files: { 'main.js': 'mine' },
         mounts: { 'streamo/': { key: KEY_B } }
       })
-      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files' })
+      const sub = await fileSync(a, dir, dataDir)
       try {
         assert.equal((await readFile(join(dir, 'main.js'), 'utf8')), 'mine')
         let exists = false
@@ -428,7 +403,7 @@ describe(import.meta.url, ({ test }) => {
         title: 'My App',
         mounts: { 'streamo/': { key: KEY_B } }
       })
-      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files', recordFile: true })
+      const sub = await fileSync(a, dir, dataDir, { recordFile: true })
       try {
         const raw = await readFile(join(dir, 'streamo.json'), 'utf8')
         const parsed = JSON.parse(raw)
@@ -457,7 +432,7 @@ describe(import.meta.url, ({ test }) => {
       )
 
       const repo = new Repo()  // fresh, no prior commit
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         assert.equal(repo.get('title'), 'Bootstrap')
         assert.deepEqual(repo.get('mounts'), { 'lib/': { key: KEY_B } })
@@ -482,7 +457,7 @@ describe(import.meta.url, ({ test }) => {
       )
 
       const repo = new Repo()
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         assert.equal(repo.get('files', 'index.html'), '<page>')
         assert.equal(repo.get('title'), 'Combined')
@@ -511,7 +486,7 @@ describe(import.meta.url, ({ test }) => {
       console.warn = (...args) => warnings.push(args.join(' '))
 
       const repo = new Repo()
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         assert.equal(repo.get('title'), 'OK')
         // The bad files entry MUST NOT land — the file tree is authoritative
@@ -540,7 +515,7 @@ describe(import.meta.url, ({ test }) => {
       console.warn = (...args) => warnings.push(args.join(' '))
 
       const repo = new Repo()
-      const sub = await fileSync(repo, dir, dataDir, { filesKey: 'files', recordFile: true })
+      const sub = await fileSync(repo, dir, dataDir, { recordFile: true })
       try {
         // No commit; repo's value should still be undefined / empty
         assert.equal(repo.lastCommit, null, 'no commit on invalid streamo.json')
@@ -562,7 +537,7 @@ describe(import.meta.url, ({ test }) => {
         files: { 'index.html': '<x>' },
         mounts: { 'streamo/': { key: KEY_B } }
       })
-      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files' })  // recordFile NOT set
+      const sub = await fileSync(a, dir, dataDir)  // recordFile NOT set
       try {
         let exists = false
         try { await readFile(join(dir, 'streamo.json'), 'utf8'); exists = true } catch {}
@@ -582,7 +557,7 @@ describe(import.meta.url, ({ test }) => {
         files: { 'index.html': '<x>' },
         title: 'Original'
       })
-      const sub = await fileSync(a, dir, dataDir, { filesKey: 'files', recordFile: true })
+      const sub = await fileSync(a, dir, dataDir, { recordFile: true })
       try {
         // Give parcel/watcher a beat to settle on initial materialization
         // before we tamper.

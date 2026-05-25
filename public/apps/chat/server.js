@@ -173,7 +173,7 @@ if (server.signer) {
   // `files` key.  fileSync is bidirectional: edits on disk become commits,
   // commits become disk writes.
   const homepageDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'homepage')
-  await server.files(homepageDir, { filesKey: 'files' })
+  await server.files(homepageDir)
   console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
 }
 
@@ -201,7 +201,7 @@ await server.web(port, {
   // so /apps/explorer/, /streamo/*.js, /apps/styles/*.css keep working.
   // In relay-only mode, an empty archive means everything falls through to
   // express.static (the bundled defaults) until an author pushes their bytes.
-  serveRepoFiles: { repo: server.streamo, filesKey: 'files' },
+  serveRepoFiles: { repo: server.streamo },
   routes: pushStore ? pushRoutes(pushStore, vapid.publicKey) : undefined
 })
 
@@ -212,5 +212,5 @@ if (pushStore) notifyOnMessages(server.registry, pushStore, vapid)
 // is being served from bundled defaults rather than the home repo.
 if (isRelayOnly && server.streamo.byteLength === 0) {
   console.log(`[chat] archive is empty — homepage is served from bundled defaults until an author pushes bytes`)
-  console.log(`[chat] author can connect with: npx @dtudury/streamo --name ${name} --username ... --password ... --files ./public/homepage --files-key files --origin localhost:${port}`)
+  console.log(`[chat] author can connect with: npx @dtudury/streamo --name ${name} --username ... --password ... --files ./public/homepage --origin localhost:${port}`)
 }

@@ -195,16 +195,15 @@ await writeFile(
 
 // Each terminal cd's into its Record's subdir. --data-dir defaults to
 // `.streamo` per CWD (per-Record isolation). --files ./files finds the
-// seeded directory. --files-key files is required for the mount system —
-// in 8.9.0 it auto-enables --record-file streamo.json (which populates
-// value.mounts from the file on disk). Earlier 8.x versions (8.8.0 and
-// before) silently failed because the CLI didn't expose --record-file
-// and webSync didn't thread registry through to serveFromRepo. Use
-// 8.9.0+.
+// seeded directory and (in 9.0.0+) auto-enables --record-file
+// streamo.json so value.mounts gets populated from disk. Use 9.0.0+
+// — earlier versions silently failed because the CLI didn't expose
+// --record-file and webSync didn't thread registry through to
+// serveFromRepo.
 const cmd = (record, extra) =>
   `cd ${join(demoDir, record)} && \\
       npx @dtudury/streamo --name ${record} --username ${username} \\
-        --files ./files --files-key files ${extra}`
+        --files ./files ${extra}`
 
 console.log('\n' + RULE)
 console.log('ready — run these in three separate terminals')

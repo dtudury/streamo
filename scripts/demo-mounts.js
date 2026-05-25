@@ -100,7 +100,6 @@ const dataDir = await mkdtemp(join(tmpdir(), 'streamo-mounts-demo-data-'))
 console.log(`\n  materializing → ${outDir}`)
 
 const sub = await fileSync(app, outDir, dataDir, {
-  filesKey: 'files',
   registry,
   pubkeyHex: appKeyHex
 })

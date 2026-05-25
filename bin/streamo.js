@@ -52,16 +52,12 @@ program
       .preset('.')
   )
   .addOption(
-    new Option('--files-key <key>', 'mount file sync at repo.value[key] instead of replacing the whole value (preserves sibling state like members/journalists/entries)')
-      .env('STREAMO_FILES_KEY')
-  )
-  .addOption(
-    new Option('--record-file [name]', 'sync a JSON file on disk (default: streamo.json) into the record\'s value MINUS the files key. Lets you author mounts and other top-level metadata as plain JSON. Auto-enabled when --files-key is set; use --no-record-file to disable.')
+    new Option('--record-file [name]', 'sync a JSON file on disk (default: streamo.json) into the record\'s value MINUS the files key. Lets you author mounts and other top-level metadata as plain JSON. Auto-enabled when --files is set; use --no-record-file to disable.')
       .env('STREAMO_RECORD_FILE')
       .preset('streamo.json')
   )
   .addOption(
-    new Option('--no-record-file', 'disable the streamo.json sync even when --files-key is set')
+    new Option('--no-record-file', 'disable the streamo.json sync')
   )
   .addOption(
     new Option('--merge-from <url>', 'on first run only (empty repo), fork from this URL or host. Accepts http(s)://host[:port]/streams/<keyHex> or just "host[:port]" (uses /api/info to find the primary key). Idempotent — skipped on subsequent runs.')
@@ -236,19 +232,17 @@ if (options.mergeFrom) {
 
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'
-  const filesKey = options.filesKey || null
-  // recordFile defaults coupling: when --files-key is set, the user wants
-  // the structured Record shape, which includes streamo.json sync. Auto-
-  // enable to remove the silent-failure mode where mounts authored on disk
-  // never reach value.mounts. --no-record-file explicitly disables.
+  // recordFile defaults to `'streamo.json'` whenever --files is set, so
+  // mounts authored on disk (and any other top-level metadata) reach
+  // value.mounts without a separate opt-in. --no-record-file disables.
   const recordFile = options.recordFile !== undefined
     ? options.recordFile
-    : (filesKey ? 'streamo.json' : false)
-  await server.files(folder, { filesKey, recordFile })
+    : 'streamo.json'
+  await server.files(folder, { recordFile })
   const recordFileNote = recordFile
     ? ` (recordFile: ${recordFile === true ? 'streamo.json' : recordFile})`
     : ''
-  console.log(`\x1b[32mmirroring files: ${folder}${filesKey ? ` (at value.${filesKey})` : ''}${recordFileNote}\x1b[0m`)
+  console.log(`\x1b[32mmirroring files: ${folder} (at value.files)${recordFileNote}\x1b[0m`)
 }
 
 if (options.stateFile) {
@@ -274,11 +268,8 @@ if (options.web) {
   // Misses fall through to express.static so the streamo lib + bundled
   // apps still work for forks that don't override them.
   if (options.files) {
-    webOptions.serveRepoFiles = {
-      repo: server.streamo,
-      filesKey: options.filesKey || null
-    }
-    console.log(`\x1b[32mserving from repo: ${options.filesKey ? `value.${options.filesKey}` : 'value'} ↔ http://localhost:${+options.web}/\x1b[0m`)
+    webOptions.serveRepoFiles = { repo: server.streamo }
+    console.log(`\x1b[32mserving from repo: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
   }
   await server.web(+options.web, webOptions)
 }

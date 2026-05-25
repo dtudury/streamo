@@ -5,6 +5,33 @@ for what's next.
 
 ---
 
+## 9.0.0 — *in progress*
+
+We're retiring scaffolding now that the better way is real: the
+`public/*` static fallback and the `filesKey: null` legacy shape both
+predate mounts and the structured Record shape. See ROADMAP's *9.0.0
+— the mounts arc* section for the full phase plan. This entry will
+fill in as the arc lands.
+
+**Phase A — `filesKey: null` retirement (code-only).** *(landed; no
+release yet)*
+
+The `filesKey` option is gone from `fileSync` and `serveFromRepo`;
+files always live at `value.files`. The CLI lost `--files-key`;
+`--files` now auto-enables `--record-file streamo.json` so the
+mounts/metadata channel is on by default (use `--no-record-file` to
+opt out). The null branches inside `readRepoFiles`, `readFile`,
+`readFilesMap`, `readRepoRecordMeta`, `setRepoFiles`, and
+`setRecordMeta` collapsed to single paths.
+
+Breaking for any caller that explicitly passes `filesKey` or relies on
+the value-IS-files shape. Migration is small (we are the legacy user
+base); each in-the-wild Record gets a one-commit migration in Phase G.
+262 tests passing (down from 265 — the 3 deleted tests covered
+removed legacy behavior).
+
+---
+
 ## 8.9.0 — mounts: the wiring fix the demo demanded
 
 8.8.0 shipped the mounts feature: relay-side resolution, fileSync

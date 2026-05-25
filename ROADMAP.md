@@ -5,16 +5,30 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
-## next session's exploration
+## 9.0.0 — the mounts arc *(in progress)*
 
-**Three-record composed-website demo.** See
-[EXPLORATION-three-records.md](./EXPLORATION-three-records.md) — a
-handoff doc with the topology sketch, open questions, tarot, and
-the bigger frame David named (*"a few .gitignore files and we can
-check in a harness for maintaining the Procedure by which a set of
-Records are transformed into our website"*). Start there before
-anything else; it carries texture today-us had that tomorrow-us
-won't reconstruct from logs alone.
+We're retiring scaffolding now that the better way is real: the
+`public/*` static fallback (the relay's "if mounts miss, serve whatever
+the npm install shipped") and the `filesKey: null` legacy shape (value
+IS files, no room for `mounts` or sibling metadata) both predate mounts
+and the structured Record shape. Together they hid the moment when
+mounts stopped working in production — see the static-fallback section
+below for the discovery story.
+
+**Phases:**
+
+- **A — `filesKey: null` retirement (code-only).** *(shipped — no release yet, awaiting B+)* The `filesKey` option is gone from `fileSync` and `serveFromRepo`; files always live at `value.files`. CLI lost `--files-key`; `--files` auto-enables `--record-file streamo.json` (use `--no-record-file` to opt out). 262 tests passing.
+- **B — stand up the canonical library Record.** A `streamo-library` identity (derived via cryptopotamus, `streamo.dev,streamo-library,32,,,`) signs a Record whose `files` key holds `public/streamo/*`. Persisted on streamo.dev.
+- **C — migrate streamo.dev's homepage Record** to declare `mounts: { "streamo/": { key: "<library-key>" } }` in its `streamo.json`. Verify with a mount-proof-style file present in the library Record but absent from the package's `public/`.
+- **D — promote each bundled app** (chat, flashcards, explorer, todomvc) to its own signed Record. The homepage's mounts table grows to compose each at `apps/<name>/`.
+- **E — remove `app.use(express.static(publicDir))`** from `webSync.js`. The breaking line. Every URL now resolves through Record + mounts.
+- **F — tighten the npm tarball.** `public/` no longer ships homepage/apps as servable assets.
+- **G — migrate other in-the-wild Records** (chat room, flashcards reviews, streamo-history, local forks) to the structured shape.
+
+Substantive descriptions of why each piece exists are below under
+*held for a major bump* → *remove the `public/*` static fallback*
+and *retire `filesKey: null`*. As phases land, this checklist tracks
+progress; when 9.0.0 ships, the whole arc moves to CHANGELOG.
 
 ---
 
@@ -305,7 +319,7 @@ STREAMO_HOME_KEY=<hex> STREAMO_WEB=443 \
 # Author elsewhere (their laptop, or a separate user on the same box):
 npx @dtudury/streamo \
   --name homepage --username alice --password ... \
-  --files ./public/homepage --files-key files \
+  --files ./public/homepage \
   --origin streamo.dev
 ```
 

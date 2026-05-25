@@ -13,6 +13,53 @@ predate mounts and the structured Record shape. See ROADMAP's *9.0.0
 — the mounts arc* section for the full phase plan. This entry will
 fill in as the arc lands.
 
+**Phase C.1 — streamo.json is a first-class file in value.files
+(FolderRecord shape).** *(landed 2026-05-25; awaiting deploy)*
+
+A small reshape with a big framing payoff. Pre-C.1: fileSync
+*excluded* streamo.json from `value.files`, treating it as an
+"editor sidecar" outside the file tree. Post-C.1: streamo.json is
+a regular file in `value.files`, and its parsed content mirrors
+`value-top-level-minus-files`. The redundancy invariant is
+machine-checkable on the Record alone (no disk needed) and is
+enforced by fileSync's commit paths.
+
+This makes the *FolderRecord* shape explicit: a Record whose
+`value.files` is a folder tree (including its own metadata
+sidecar) and whose top-level meta mirrors `value.files[streamo.json]`.
+Most Records aren't this shape (chat messages, raw bytestreams,
+non-Repo Streamos). Naming the shape gives us:
+- A vocabulary that doesn't always say "Records that happen to
+  have a files key"
+- A clean place for shape-specific constraints to live
+- A future target for shape-specific optimizations (custom
+  serialization, AST storage for .js, dedup across same-content
+  files) that wouldn't make sense on a generic Record
+
+Concrete changes:
+- `buildOwnFilesFilter` no longer excludes `recordFile` — it
+  passes through like any other file
+- The watcher's separate recordFile-edit branch is folded into
+  own-file-edit: a single commit captures both the file change
+  *and* the parsed-meta application
+- `flushToDisk` drops its separate writeRecordFile call;
+  streamo.json flows to disk through `writeToFolder` like any
+  other file
+- A new `healMetaInvariant` helper detects + warns + heals when
+  code-driven `repo.set()` calls bypass fileSync and leave the
+  invariant temporarily broken (e.g., chat/server.js's seed step
+  pattern). Heals via a fix-up commit so `value.files[streamo.json]`
+  catches back up with top-level meta. Idempotent and no-op when
+  the invariant holds.
+- Mid-edit grace preserved differently: invalid JSON in streamo.json
+  no longer skips the entire commit. The broken entry is dropped
+  from `value.files` (top-level meta stays unchanged); other file
+  edits in the same event batch still commit. Cleaner; doesn't
+  block unrelated work on a transient parse error.
+
+268 tests passing (+2 covering the invariant: sealed-Repo heals on
+init, code-driven bypass auto-heals via flushToDisk).
+
 **Phase C — async mount resolver + meta merge + homepage mounts
 declaration.** *(landed 2026-05-25; awaiting deploy)*
 

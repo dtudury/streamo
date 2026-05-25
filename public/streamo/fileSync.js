@@ -267,17 +267,19 @@ async function collectAllMounted (repo, ownKey, registry) {
 
 /**
  * Wrap an accepts filter so it ALSO rejects paths under any current
- * mount prefix, AND the dedicated `recordFile` path at the root.
- * Used for "what counts as own-files" decisions — commits, watcher
- * events, and the disk-reads-for-commit pass.
+ * mount prefix. Used for "what counts as own-files" decisions —
+ * commits, watcher events, and the disk-reads-for-commit pass.
+ *
+ * The `recordFile` (streamo.json) is a first-class file in
+ * `value.files` — it's NOT excluded here. Its content mirrors the
+ * top-level meta (the redundancy invariant fileSync maintains).
  *
  * Reads mount prefixes fresh on every call so the filter tracks the
  * repo's current mounts table without needing to be rebuilt.
  */
-function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes, recordFileName) {
+function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes) {
   return rel => {
     if (!acceptsForDisk(rel)) return false
-    if (recordFileName && rel === recordFileName) return false
     for (const prefix of getMountPrefixes()) {
       const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
       if (rel === bare || rel.startsWith(prefix)) return false
@@ -344,28 +346,6 @@ function readRepoRecordMeta (repo) {
   const meta = { ...value }
   delete meta[FILES_KEY]
   return meta
-}
-
-/**
- * stat()-based mtime read for the record file. Returns 0 if absent;
- * used by the initial-sync timestamp comparison to decide whether disk
- * or repo wins.
- */
-async function getRecordFileMtime (folder, recordFile) {
-  if (!recordFile) return 0
-  try { return (await stat(join(folder, recordFile))).mtimeMs }
-  catch { return 0 }
-}
-
-/**
- * Write the record's meta to disk as pretty-printed JSON. Always
- * writes a trailing newline so the file is editor-friendly.
- */
-async function writeRecordFile (folder, recordFile, meta) {
-  if (!recordFile) return
-  const content = JSON.stringify(meta ?? {}, null, 2) + '\n'
-  await mkdir(folder, { recursive: true })
-  await writeFile(join(folder, recordFile), content)
 }
 
 /** Deep-equality for meta objects, via JSON serialization. */
@@ -461,7 +441,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     if (!registry || !pubkeyHex) return []
     return Object.keys(readRepoMounts(repo))
   }
-  const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes, recordFile)
+  const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
 
   const getRepoFiles = () => readRepoFiles(repo)
   const setRepoFiles = (working, files) => {
@@ -469,6 +449,33 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     // path-set to navigate into.  Materialize the wrapping object explicitly.
     if (working.get() === undefined) return working.set({ [FILES_KEY]: files })
     return working.set(FILES_KEY, files)
+  }
+
+  // Invariant: value.files[recordFile] mirrors top-level meta.
+  // Returns true iff a heal commit was made (caller may want to re-read
+  // state). Code that updates meta directly (e.g., server.streamo.set
+  // bypassing fileSync) breaks the invariant temporarily — this restores
+  // it by committing value.files[recordFile] = current top-level meta.
+  // No-op when invariant already holds.
+  const healMetaInvariant = (origin = 'heal') => {
+    if (!recordFile || !repo.lastCommit) return false
+    const ownFiles = getRepoFiles() ?? {}
+    const topLevelMeta = readRepoRecordMeta(repo) ?? {}
+    const filesEntry = ownFiles[recordFile]
+    const filesEntryIsValidMeta = filesEntry && typeof filesEntry === 'object' && !Array.isArray(filesEntry) && !(filesEntry instanceof Uint8Array)
+    const hasTopLevel = Object.keys(topLevelMeta).length > 0
+    if (!hasTopLevel) return false
+    if (filesEntryIsValidMeta && metaEqual(filesEntry, topLevelMeta)) return false
+    // Warn only on REAL divergence (a non-empty file entry that doesn't
+    // match) — initial population from a sealed-Repo with no entry yet
+    // is expected and noiseless.
+    if (filesEntryIsValidMeta && Object.keys(filesEntry).length > 0) {
+      console.warn(`fileSync: ${recordFile} out of sync with top-level meta; healing`)
+    }
+    const working = repo.checkout()
+    setRepoFiles(working, { ...ownFiles, [recordFile]: topLevelMeta })
+    repo.commit(working, `${origin}: sync ${recordFile}`)
+    return true
   }
   // setRecordMeta composes the streamo.json edit into the Record's
   // value, per `metaStrategy`:
@@ -497,45 +504,54 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   }
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)
-  const recordFileMtime = await getRecordFileMtime(folder, recordFile)
   const diskRecordMeta = await readRecordFileMeta(folder, recordFile)
   const lastCommit = repo.lastCommit
   const commitTime = lastCommit ? lastCommit.date.getTime() : 0
   const repoFiles = getRepoFiles()
-  const repoRecordMeta = readRepoRecordMeta(repo)
-  // Disk-wins iff ANY part of disk (file tree OR recordFile) is newer
-  // than the last commit. recordFile and tree share one decision so we
-  // never get into the "commit half the disk, overwrite the other half"
-  // shape — startup commits ALL of disk's authority or NONE of it.
-  const maxDiskMtime = Math.max(diskMtime, recordFileMtime)
+  // streamo.json is in diskFiles now (no exclusion), so its mtime is
+  // already included in diskMtime — no separate recordFile mtime read.
+  const maxDiskMtime = diskMtime
 
   if (lastCommit && repoFiles && maxDiskMtime <= commitTime) {
-    // Repo wins: write committed files to disk + materialize mounts +
-    // write the recordFile if enabled.
+    // Repo wins: write committed files to disk + materialize mounts.
+    // streamo.json is a regular file in value.files now — writeToFolder
+    // handles it like any other file. Heal the invariant first if the
+    // Record's value has top-level meta but value.files[recordFile] is
+    // missing or stale (e.g., sealed Repos authored by code that didn't
+    // go through fileSync).
+    healMetaInvariant('init')
+    const refreshedRepoFiles = getRepoFiles() ?? {}
     const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
-    const target = { ...mountedFiles, ...repoFiles }  // own files override mounted on collision
+    const target = { ...mountedFiles, ...refreshedRepoFiles }
     const { files: managed } = await readFolder(folder, acceptsForDisk)
-    // Exclude recordFile from toDelete — it's managed by writeRecordFile,
-    // not by the files-tree writer. Same reason it's excluded from
-    // acceptsForCommit (it's metadata, not one of value.files).
-    const toDelete = Object.keys(managed).filter(k => !(k in target) && k !== recordFile)
+    const toDelete = Object.keys(managed).filter(k => !(k in target))
     await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
-    if (recordFile && repoRecordMeta) {
-      await writeRecordFile(folder, recordFile, repoRecordMeta)
-    }
   } else if (Object.keys(diskFiles).length > 0 || (recordFile && diskRecordMeta)) {
-    // Disk wins: commit current disk state. setRepoFiles writes to the
-    // `files` subkey — siblings on the value survive. diskFiles is
-    // already filtered to own files (mount paths and the recordFile
-    // path both excluded by acceptsForCommit), so they don't bleed
-    // into this repo's chain.
-    const working = repo.checkout()
-    if (recordFile && diskRecordMeta) setRecordMeta(working, diskRecordMeta)
-    setRepoFiles(working, diskFiles)
-    repo.commit(working, `seed ${FILES_KEY}`)
-    // After the commit lands, the repo→disk watcher (below) will fire
-    // and materialize any mounts.
+    // Disk wins: commit current disk state in a single operation —
+    // value.files (including streamo.json) AND top-level meta extracted
+    // from streamo.json. setRecordMeta merges meta keys; setRepoFiles
+    // writes the files map (which now includes streamo.json).
+    //
+    // Mid-edit grace: if streamo.json failed to parse, diskFiles holds
+    // it as the raw string. Drop that entry so the broken JSON doesn't
+    // land in value.files (and meta stays unchanged) — the next valid
+    // save will commit cleanly. If after dropping it nothing remains
+    // and there's no valid meta, skip the commit entirely.
+    const filesToCommit = { ...diskFiles }
+    if (recordFile && typeof filesToCommit[recordFile] === 'string') {
+      delete filesToCommit[recordFile]
+    }
+    const hasFiles = Object.keys(filesToCommit).length > 0
+    const hasMeta = recordFile && diskRecordMeta
+    if (hasFiles || hasMeta) {
+      const working = repo.checkout()
+      if (hasMeta) setRecordMeta(working, diskRecordMeta)
+      setRepoFiles(working, filesToCommit)
+      repo.commit(working, `seed ${FILES_KEY}`)
+      // After the commit lands, the repo→disk watcher (below) will fire
+      // and materialize any mounts.
+    }
   }
 
   // Repo → disk: retries if a write is in progress so no commit is ever dropped
@@ -547,6 +563,20 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     writingToDisk = true
     pendingDiskFlush = false
     try {
+      // Code that updates meta directly (e.g., server.streamo.set
+      // bypassing fileSync) breaks the invariant temporarily. Heal with
+      // a fix-up commit — the commit re-triggers this watcher, the
+      // queue guard makes the re-entry safe, and the second flush sees
+      // the invariant restored and proceeds normally.
+      if (!committingFromDisk) {
+        committingFromDisk = true
+        try {
+          if (healMetaInvariant()) return  // heal triggered a re-flush
+        } finally {
+          committingFromDisk = false
+        }
+      }
+
       const ownFiles = getRepoFiles() ?? {}
       const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
       const target = { ...mountedFiles, ...ownFiles }
@@ -554,45 +584,15 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       // toDelete set covers removed mounts too — when a mount entry is
       // dropped from the table, its materialized files vanish from disk.
       const { files: managed } = await readFolder(folder, acceptsForDisk)
-      // Same recordFile exclusion as the initial-sync repo-wins branch —
-      // we don't manage streamo.json via the files-tree writer.
-      const managedForTree = recordFile
-        ? Object.fromEntries(Object.entries(managed).filter(([k]) => k !== recordFile))
-        : managed
-      if (!filesEqual(managedForTree, target)) {
-        const toDelete = Object.keys(managedForTree).filter(k => !(k in target))
+      if (!filesEqual(managed, target)) {
+        const toDelete = Object.keys(managed).filter(k => !(k in target))
         await writeToFolder(folder, target)
         await deleteFromFolder(folder, toDelete)
-      }
-      // recordFile (streamo.json) flush — write the latest meta whenever
-      // it differs from what's on disk. Idempotent (matches → no write),
-      // so the cost when nothing changed is one read + one JSON compare.
-      if (recordFile) {
-        const meta = readRepoRecordMeta(repo)
-        if (meta) {
-          const onDisk = await readRecordFileMeta(folder, recordFile)
-          if (!metaEqual(onDisk, meta)) {
-            await writeRecordFile(folder, recordFile, meta)
-          }
-        }
       }
     } finally {
       writingToDisk = false
       if (pendingDiskFlush) flushToDisk()
     }
-  }
-
-  /**
-   * Compare on-disk recordFile bytes against the meta the repo would
-   * write. Returns true iff the disk content DIFFERS — i.e., this is a
-   * *real* user edit, not just our own write echoing back through the
-   * watcher. Same semantic as isRealMountEdit, applied to streamo.json.
-   */
-  async function isRealRecordFileEdit () {
-    if (!recordFile) return false
-    const diskMeta = await readRecordFileMeta(folder, recordFile)
-    const repoMeta = readRepoRecordMeta(repo) ?? {}
-    return !metaEqual(diskMeta, repoMeta)
   }
 
   // Disk → repo: single-flight; filesystem events that arrive mid-commit are
@@ -682,29 +682,10 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       })()
     }
 
-    // recordFile (streamo.json) edits — the meta-commit path. Same
-    // content-check shape as mount edits so we don't fire commits for
-    // our own writes echoing back through the watcher.
-    if (recordFile) {
-      const recordEvents = events.filter(e => relative(folder, e.path) === recordFile)
-      if (recordEvents.length > 0 && !committingFromDisk) {
-        ;(async () => {
-          if (!(await isRealRecordFileEdit())) return  // our own write; ignore
-          committingFromDisk = true
-          try {
-            const newMeta = await readRecordFileMeta(folder, recordFile)
-            if (newMeta === null) return  // parse error or absent; skip
-            const working = repo.checkout()
-            setRecordMeta(working, newMeta)
-            repo.commit(working, `update ${recordFile}`)
-          } finally {
-            committingFromDisk = false
-          }
-        })()
-      }
-    }
-
-    // Own-file edits — the commit path.
+    // Own-file edits — the commit path. streamo.json is one of these
+    // (a first-class file in value.files); when it changes, we also
+    // extract its parsed content as the top-level meta update, so the
+    // file content and meta land in one commit.
     const relevant = events.filter(e => acceptsForCommit(relative(folder, e.path)))
     if (!relevant.length) return
     if (committingFromDisk) return
@@ -713,8 +694,35 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       try {
         const { files: newFiles } = await readFolder(folder, acceptsForCommit)
         const current = getRepoFiles() ?? {}
+
+        // Extract meta from streamo.json if it's present and parsable.
+        // The file's content is JSON.parse'd by decodeFile in readFolder;
+        // a string here means parse failed (transient mid-edit) — drop
+        // it from newFiles so the broken JSON doesn't land in value.files
+        // and meta stays unchanged. Other file edits in the same event
+        // batch still commit. A `files` key inside the JSON is stripped
+        // + warned (it'd shadow the real files key otherwise).
+        let newMeta = null
+        if (recordFile && recordFile in newFiles) {
+          const parsed = newFiles[recordFile]
+          if (typeof parsed === 'string') {
+            console.warn(`fileSync: ${recordFile} parse error, leaving meta + this file unchanged`)
+            delete newFiles[recordFile]
+          } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            if ('files' in parsed) {
+              console.warn(`fileSync: ${recordFile} contains a 'files' key — ignoring it (files come from the file tree)`)
+              const { files: _ignored, ...meta } = parsed
+              newMeta = meta
+              newFiles[recordFile] = meta  // strip from the file too, so invariant is maintainable
+            } else {
+              newMeta = parsed
+            }
+          }
+        }
+
         if (filesEqual(current, newFiles)) return
         const working = repo.checkout()
+        if (newMeta !== null) setRecordMeta(working, newMeta)
         setRepoFiles(working, newFiles)
         repo.commit(working, 'file change')
       } finally {

@@ -444,10 +444,11 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('recordFile: streamo.json path is excluded from the `files` key', async ({ assert }) => {
-    // Critical: streamo.json must not bleed into the file tree's
-    // commit, otherwise the user's meta data would also appear under
-    // `files`. acceptsForCommit excludes it.
+  test('recordFile: streamo.json is a first-class file in value.files (mirrors top-level meta)', async ({ assert }) => {
+    // Under the FolderRecord shape (9.0.0), streamo.json IS a file
+    // in value.files — and its content mirrors value-top-level-minus-files.
+    // The redundancy invariant lets the Record fully self-describe:
+    // a git clone of the folder reproduces the value exactly.
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
       await writeFile(join(dir, 'index.html'), '<page>')
@@ -461,9 +462,15 @@ describe(import.meta.url, ({ test }) => {
       try {
         assert.equal(repo.get('files', 'index.html'), '<page>')
         assert.equal(repo.get('title'), 'Combined')
-        const files = repo.get('files')
-        assert.ok(!('streamo.json' in files),
-          'streamo.json must NOT appear in the files key')
+        // streamo.json IS in value.files now; its content is the parsed meta
+        const filesEntry = repo.get('files', 'streamo.json')
+        assert.deepEqual(filesEntry, { title: 'Combined' },
+          'value.files[streamo.json] holds the parsed meta')
+        // Invariant: value.files[streamo.json] mirrors value-top-level-minus-files
+        const topLevel = { ...repo.get() }
+        delete topLevel.files
+        assert.deepEqual(filesEntry, topLevel,
+          'value.files[streamo.json] mirrors top-level meta')
       } finally {
         await sub.unsubscribe()
       }
@@ -649,6 +656,86 @@ describe(import.meta.url, ({ test }) => {
         assert.equal(repo.get('title'), undefined)
         assert.equal(repo.get('journalists'), undefined)
         assert.deepEqual(repo.get('mounts'), { 'lib/': { key: KEY_B } })
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── invariant: value.files[recordFile] mirrors top-level meta ────────────
+  // (the FolderRecord redundancy invariant — fileSync maintains it)
+
+  test('recordFile: sealed-Repo with top-level meta heals invariant on first sync (init)', async ({ assert }) => {
+    // A Repo created by code (sealedRepo here) has top-level meta but
+    // no streamo.json in value.files yet. fileSync's init runs a heal
+    // commit so value.files[recordFile] mirrors top-level meta. After
+    // init, the on-disk streamo.json reflects the full meta.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const a = sealedRepo({
+        files: { 'index.html': '<page>' },
+        title: 'Hello',
+        mounts: { 'lib/': { key: KEY_B } }
+      })
+      // Sanity: invariant violated at start (no streamo.json in files yet)
+      assert.equal(a.get('files', 'streamo.json'), undefined, 'precondition: streamo.json absent from files')
+
+      const sub = await fileSync(a, dir, dataDir, { recordFile: true })
+      try {
+        // Invariant holds after init
+        const filesEntry = a.get('files', 'streamo.json')
+        assert.ok(filesEntry, 'streamo.json now in value.files')
+        const topLevel = { ...a.get() }
+        delete topLevel.files
+        assert.deepEqual(filesEntry, topLevel)
+        // On-disk streamo.json reflects the full meta
+        const raw = await readFile(join(dir, 'streamo.json'), 'utf8')
+        const parsed = JSON.parse(raw)
+        assert.equal(parsed.title, 'Hello')
+        assert.deepEqual(parsed.mounts, { 'lib/': { key: KEY_B } })
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('recordFile: code-driven set() that bypasses fileSync auto-heals invariant via flushToDisk', async ({ assert }) => {
+    // Simulates the chat/server.js seed-step pattern: code does
+    // server.streamo.set({...current, mounts: newM}) directly. That
+    // updates top-level meta but leaves value.files[streamo.json] stale.
+    // flushToDisk's heal commits a fix-up; the invariant restores.
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const a = sealedRepo({
+        files: { 'index.html': '<page>', 'streamo.json': { title: 'Old' } },
+        title: 'Old'
+      })
+
+      const sub = await fileSync(a, dir, dataDir, { recordFile: true })
+      try {
+        // Confirm starting state
+        assert.deepEqual(a.get('files', 'streamo.json'), { title: 'Old' })
+
+        // Code-driven update: bump top-level title; do NOT touch value.files
+        const current = a.get()
+        const working = a.checkout()
+        working.set({ ...current, title: 'New', mounts: { 'x/': { key: KEY_B } } })
+        a.commit(working, 'code-driven meta update (bypassing fileSync)')
+
+        // Wait for flushToDisk's heal-on-commit-watcher to converge
+        const deadline = Date.now() + 5000
+        while (Date.now() < deadline) {
+          const f = a.get('files', 'streamo.json')
+          if (f && f.title === 'New' && f.mounts) break
+          await new Promise(r => setTimeout(r, 50))
+        }
+        const healed = a.get('files', 'streamo.json')
+        assert.equal(healed?.title, 'New', 'heal updated value.files[streamo.json].title')
+        assert.deepEqual(healed?.mounts, { 'x/': { key: KEY_B } }, 'heal updated value.files[streamo.json].mounts')
       } finally {
         await sub.unsubscribe()
       }

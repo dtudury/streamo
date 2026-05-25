@@ -5,7 +5,7 @@ for what's next.
 
 ---
 
-## unreleased — 9.x post-publish (FolderRecord arc completion)
+## 9.0.1 — FolderRecord arc completion (apps as Records + static fallback gone)
 
 After shipping 9.0.0 (the FolderRecord shape), the 9.x arc landed two
 more pieces on streamo.dev:

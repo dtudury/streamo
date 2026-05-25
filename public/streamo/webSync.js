@@ -1,12 +1,8 @@
 import { createServer } from 'http'
 import { WebSocketServer } from 'ws'
 import express from 'express'
-import { fileURLToPath } from 'url'
-import { dirname, join } from 'path'
 import { attachStreamSync } from './outletSync.js'
 import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
-
-const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 /**
  * Start an HTTP + WebSocket server that exposes a RepoRegistry to browsers
@@ -26,8 +22,10 @@ const publicDir = join(dirname(fileURLToPath(import.meta.url)), '..')
  * @param {number} port
  * @param {object} [peerOptions.serveRepoFiles]  optional config to serve a
  *   homepage Repo's files via serveFromRepo: `{ repo, ...serveOpts }`. When
- *   set, the middleware mounts ahead of express.static so any path present
- *   in the Repo wins; misses fall through to disk.
+ *   set, the middleware serves any path present in the Repo (via files +
+ *   mounts); misses fall through to the legacy /streams/<key>/<path> routes
+ *   and then 404. There is no static-file fallback — every URL on a
+ *   webSync server resolves through Record + mount chain.
  * @param {(app: import('express').Express) => void} [peerOptions.routes]
  *   optional hook to register extra HTTP routes — called after the JSON
  *   body parser is in place. Lets an embedding server (e.g. the chat
@@ -44,13 +42,9 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
     const { repo, ...serveOpts } = serveRepoFiles
     // Auto-thread registry + primaryKeyHex so serveFromRepo's mount
     // resolver fires. Without these, serveFromRepo silently falls into
-    // files-only mode (value.mounts ignored entirely), and the static
-    // fallback masks the gap because the bundled package ships the
-    // same paths the mount table would have resolved. Discovered during
-    // the three-record demo on 2026-05-24: every "compose via mounts"
-    // claim was actually express.static serving from publicDir. The
-    // caller can still override by passing registry/pubkeyHex
-    // explicitly in serveRepoFiles.
+    // files-only mode (value.mounts ignored entirely). The caller can
+    // still override by passing registry/pubkeyHex explicitly in
+    // serveRepoFiles.
     app.use(serveFromRepo(repo, {
       registry,
       pubkeyHex: primaryKeyHex,
@@ -65,7 +59,11 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // (→ raw-bytes endpoint) so the legacy routes below keep working.
   app.use('/streams/:keyhex', serveFromRegistry(registry))
 
-  app.use(express.static(publicDir))
+  // No static-file fallback. Every URL is served by a signed Record (via
+  // serveRepoFiles above, or /streams/<key>/<path> below) or 404s. This is
+  // the 9.x architectural commitment: "no server holds authority" applies
+  // at the request path itself — there is no fallback for bytes the Record
+  // doesn't declare.
 
   app.use(express.json())
 

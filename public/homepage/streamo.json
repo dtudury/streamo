@@ -14,6 +14,9 @@
     },
     "apps/todomvc/": {
       "key": "0237b6d9aa6586d993db948d4bf9fe66526d9c7ffe9fe105e69c7230d37cd7cdf0"
+    },
+    "apps/styles/": {
+      "key": "02f886c4a7c0cba70e6422f373983decc9349abd9dd1d84bc196cdfc22d46311e8"
     }
   }
 }

@@ -197,7 +197,11 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('serveRepoFiles falls through to express.static when path not in Repo', async ({ assert }) => {
+  test('serveRepoFiles next()s when path not in Repo (so sibling routes still fire)', async ({ assert }) => {
+    // Post-9.x, webSync has no static-file fallback — every URL resolves
+    // through a Record + mount chain or 404s. This test confirms that a
+    // serveRepoFiles middleware which doesn't match a request still calls
+    // next(), so adjacent routes (like /api/info) keep working.
     const { publicKeyHex } = await makeKey('fallthrough-smoke')
     const homepage = new Repo()
     const working = homepage.checkout()
@@ -208,8 +212,6 @@ describe(import.meta.url, ({ test }) => {
       serveRepoFiles: { repo: homepage }
     })
     try {
-      // /api/info is served by the express route AFTER static; falling through
-      // here means the middleware did not match `/api/info` (which is correct)
       const info = await fetch(`http://localhost:${port}/api/info`).then(r => r.json())
       assert.equal(info.primaryKeyHex, publicKeyHex)
     } finally {

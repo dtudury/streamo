@@ -32,7 +32,7 @@
  *   5. Prints identity recipes for memory
  */
 import { spawn } from 'child_process'
-import { readFile, unlink, mkdir, writeFile, rm } from 'fs/promises'
+import { readFile, readdir, unlink, mkdir, writeFile, rm } from 'fs/promises'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 import { Signer } from '../public/streamo/Signer.js'
@@ -55,7 +55,6 @@ const SKIP_LINES = skipLinesArg ? +skipLinesArg : 3
 
 const ITERATIONS = 100000
 const ORIGIN = 'streamo.dev'
-const PROBE_FILE = 'index.html'  // each bundled app has one
 
 // ── derive pubkeys ─────────────────────────────────────────────────────
 const lines = (await readFile(passwordsFile, 'utf8')).split('\n').map(l => l.trim())
@@ -127,16 +126,25 @@ async function promoteApp ({ app, username, password, pubkey }) {
     stdio: ['ignore', 'pipe', 'pipe']
   })
 
-  // Wait for origin connection, then poll streamo.dev for the probe file.
+  // Wait for origin connection, then poll streamo.dev for a probe file.
   // The "origin: connected" line in the CLI's stdout signals the WS is up;
-  // bytes start flowing immediately after. We poll the probe file until
-  // it appears (200) or until the deadline.
+  // bytes start flowing immediately after. We poll until any one file in
+  // the staged dir comes back 200. Picks the first file alphabetically as
+  // the probe — robust to apps that don't have an index.html (e.g.,
+  // pure-CSS shared records like styles).
   let connected = false
   let stderrBuf = ''
   child.stdout.on('data', d => { process.stdout.write(d); if (d.toString().includes('origin: connected')) connected = true })
   child.stderr.on('data', d => { stderrBuf += d.toString(); process.stderr.write(d) })
 
-  const probeUrl = `https://${ORIGIN}/streams/${pubkey}/${PROBE_FILE}`
+  // Find a probe file — walk staged dir, take first regular file.
+  const stagedEntries = (await readdir(stagingDir, { withFileTypes: true, recursive: true }))
+    .filter(e => e.isFile())
+    .map(e => join(e.parentPath || stagingDir, e.name))
+  const probeFsPath = stagedEntries[0]
+  if (!probeFsPath) throw new Error(`no files in staged dir ${stagingDir}`)
+  const probeRel = probeFsPath.slice(stagingDir.length + 1)
+  const probeUrl = `https://${ORIGIN}/streams/${pubkey}/${probeRel}`
   console.log(`  polling ${probeUrl} for 200…`)
   const deadline = Date.now() + 60_000
   let pushed = false

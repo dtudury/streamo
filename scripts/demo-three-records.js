@@ -20,17 +20,28 @@
  *
  * Then follow the printed three commands.
  *
- * Re-running wipes ./demo/ and rebuilds — safe to use as a reset.
+ * Re-running wipes ../streamo-three-record-demo/ and rebuilds —
+ * safe to use as a reset.
+ *
+ * Why a sibling directory and not ./demo/ inside the repo? Because
+ * running `npx @dtudury/streamo ...` inside a directory whose
+ * package.json declares "name": "@dtudury/streamo" makes npx treat
+ * the local package as already resolved, skip the install, and try
+ * to run `streamo` from PATH — which doesn't exist. The demo must
+ * live outside our repo for the npx invocations to fetch the
+ * published 8.x package cleanly. This is also more honest about
+ * what the demo claims: anyone with npm and no streamo checkout
+ * can reproduce it.
  */
 import { Signer } from '../public/streamo/Signer.js'
 import { bytesToHex } from '../public/streamo/utils.js'
 import { cp, mkdir, rm, writeFile } from 'fs/promises'
-import { dirname, join } from 'path'
+import { dirname, join, resolve } from 'path'
 import { fileURLToPath } from 'url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = dirname(here)
-const demoDir = join(repoRoot, 'demo')
+const demoDir = resolve(repoRoot, '..', 'streamo-three-record-demo')
 
 const RULE = '━'.repeat(72)
 console.log('\n' + RULE)
@@ -60,7 +71,7 @@ for (const r of records) {
 
 // ── Reset ./demo/ and build the directory layout ───────────────────────
 
-console.log('\n  resetting ./demo/ …')
+console.log(`\n  resetting ${demoDir} …`)
 await rm(demoDir, { recursive: true, force: true })
 await mkdir(join(demoDir, 'library', 'files'),  { recursive: true })
 await mkdir(join(demoDir, 'explorer', 'files'), { recursive: true })
@@ -141,18 +152,24 @@ await writeFile(
 
 // ── Print the three commands to copy/paste into three terminals ────────
 
-// -y auto-accepts npx's "install this?" prompt — without it, npx silently
-// falls back to PATH and you get `sh: streamo: command not found`.
+// Commands use relative paths from inside demoDir, so the user runs the
+// printed `cd` first. -y skips npx's install confirmation, which would
+// otherwise need a TTY response on a fresh machine.
 const cmd = (record, password, extra) =>
   `npx -y @dtudury/streamo \\
       --name ${record} --username demo --password ${password} \\
-      --data-dir ./demo/${record} --files ./demo/${record}/files \\
+      --data-dir ./${record} --files ./${record}/files \\
       --key-iterations 1 ${extra}`
 
 console.log('\n' + RULE)
-console.log('ready — run these in three separate terminals (from this repo)')
+console.log('ready — run these in three separate terminals')
 console.log(RULE)
 console.log(`
+  First, cd into the demo directory (so npx is OUTSIDE the streamo repo
+  — see header comment for why):
+
+    cd ${demoDir}
+
   Terminal 1 — homepage (the web + WS relay):
 
     ${cmd('homepage', 'hp-pw', '--web 8080')}

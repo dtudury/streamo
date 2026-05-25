@@ -21,7 +21,7 @@ import { liveLocation } from '../../streamo/liveLocation.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
 
 export const recaller = new Recaller('explorer')
-export const registry = new RepoRegistry(undefined, { recaller, name: 'explorer' })
+export const registry = new RepoRegistry({ recaller, name: 'explorer' })
 
 // Cross-view UI state. Currently just the connection pill —
 // registrySync writes it, the conn pill in main.js's mount template

@@ -114,7 +114,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages pushes when a fresh message lands', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new RepoRegistry(undefined, { recaller: new Recaller('push-test') })
+      const registry = new RepoRegistry({ recaller: new Recaller("push-test") })
       const sent = []
       const send = async (subscription, payload) => { sent.push({ subscription, payload }); return 201 }
 
@@ -136,7 +136,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages does not notify a message\'s own author', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new RepoRegistry(undefined, { recaller: new Recaller('push-test') })
+      const registry = new RepoRegistry({ recaller: new Recaller("push-test") })
       const sent = []
       const send = async () => { sent.push(1); return 201 }
 
@@ -156,7 +156,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages ignores an old message (history, not news)', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new RepoRegistry(undefined, { recaller: new Recaller('push-test') })
+      const registry = new RepoRegistry({ recaller: new Recaller("push-test") })
       const sent = []
       const send = async () => { sent.push(1); return 201 }
 

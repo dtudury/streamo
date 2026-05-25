@@ -22,6 +22,7 @@
  */
 import { Signer } from '../../streamo/Signer.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { Recaller } from '../../streamo/utils/Recaller.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex } from '../../streamo/utils.js'
 
@@ -72,7 +73,7 @@ try {
   process.exit(1)
 }
 
-const registry = new RepoRegistry()
+const registry = new RepoRegistry({ recaller: new Recaller('notify') })
 const session = await registrySync(registry, host, port, { secure })
 
 // subscribe() opens my repo AND plumbs it to the wire, so the relay

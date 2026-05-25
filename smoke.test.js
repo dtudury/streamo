@@ -2,6 +2,7 @@ import { describe } from './public/streamo/utils/testing.js'
 import { Streamo } from './public/streamo/Streamo.js'
 import { Repo } from './public/streamo/Repo.js'
 import { RepoRegistry } from './public/streamo/RepoRegistry.js'
+import { Recaller } from './public/streamo/utils/Recaller.js'
 import { archiveSync } from './public/streamo/archiveSync.js'
 import { webSync } from './public/streamo/webSync.js'
 import { Signer } from './public/streamo/Signer.js'
@@ -24,7 +25,7 @@ async function startServer (publicKeyHex, streamOrFactory, peerOptions = {}) {
   const factory = typeof streamOrFactory === 'function'
     ? streamOrFactory
     : () => streamOrFactory
-  const registry = new RepoRegistry(factory)
+  const registry = new RepoRegistry({ recaller: new Recaller('smoke'), factory })
   const server = await webSync(registry, publicKeyHex, 0, 'smoke-test', KEY_ITERATIONS, peerOptions)
   const { port } = server.address()
   const close = () => new Promise(resolve => server.close(resolve))

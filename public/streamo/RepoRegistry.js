@@ -3,15 +3,15 @@ import { Repo } from './Repo.js'
 import { Recaller } from './utils/Recaller.js'
 
 /**
- * Manages a collection of Repos keyed by hex-encoded public key. The
- * registry owns a shared Recaller (passed in or freshly created); the
- * default factory creates Repos that *share* this Recaller, so reading
- * any repo's state inside a reactive cell auto-subscribes the cell to
- * chunk arrivals — no bridge needed, no explicit dep/fire calls.
+ * Manages a collection of Repos keyed by hex-encoded public key. Every
+ * registry has a shared Recaller — its reactive coordination point —
+ * which **must be provided by the caller**. The default factory creates
+ * Repos that share this Recaller, so reading any repo's state inside a
+ * reactive cell auto-subscribes the cell to chunk arrivals.
  *
  * Iteration, `get(keyHex)`, and `size` all report access on
  * `(registry, 'keys')`, so slots iterating the registry auto-subscribe
- * to new-repo opens. `open()` fires the same key when a repo lands.
+ * to new-repo opens. `_materialize()` fires the same key when a repo lands.
  *
  * Custom factories that don't pass the registry's Recaller through
  * (e.g. `async key => { const r = new Repo(); await archiveSync(r); }`)
@@ -20,24 +20,32 @@ import { Recaller } from './utils/Recaller.js'
  * than the shared-Recaller path (every iteration-touching slot wakes
  * on every chunk arrival from any non-shared repo), but it works.
  *
+ * **`recaller` is required, not optional.** Pre-10.0.0 the constructor
+ * silently created a fresh per-registry Recaller if you omitted it —
+ * the silent-stale-slot footgun. Views read repos on recallers
+ * different from the one mount was watching, and slots went silently
+ * stale (no error, no log, just "huh, why isn't this updating"). Now
+ * the constructor throws on missing recaller; callers explicitly state
+ * which Recaller their registry shares.
+ *
  * Examples:
  *
  *   // plain in-memory, sharing the app's Recaller:
  *   const recaller = new Recaller('app')
- *   const registry = new RepoRegistry(undefined, { recaller, name: 'app' })
+ *   const registry = new RepoRegistry({ recaller, name: 'app' })
  *   mount(h`${() => {
  *     for (const [k, r] of registry) ...   // auto-subscribes
  *   }}`, document.body, recaller)
  *
- *   // archive-backed — to keep reactivity, pass registry.recaller in:
- *   const registry = new RepoRegistry(async key => {
- *     const repo = new Repo(registry.recaller)
- *     await archiveSync(repo, dataDir, key)
- *     return repo
- *   }, { recaller })
- *
- *   // standalone (no app recaller passed — registry creates one):
- *   new RepoRegistry()
+ *   // archive-backed:
+ *   const registry = new RepoRegistry({
+ *     recaller,
+ *     factory: async key => {
+ *       const repo = new Repo({ recaller })
+ *       await archiveSync(repo, dataDir, key)
+ *       return repo
+ *     }
+ *   })
  */
 export class RepoRegistry {
   /** The Recaller this registry's reactive events fire on. */
@@ -48,20 +56,29 @@ export class RepoRegistry {
   #openCallbacks = new Set()
 
   /**
-   * @param {(publicKeyHex: string) => Repo | Promise<Repo>} [factory]
+   * @param {object} options
+   * @param {Recaller} options.recaller  **Required.** The shared Recaller
+   *   this registry fires reactive events on. Pass your app's Recaller —
+   *   the one your slots / mount are watching — so opens here wake them.
+   * @param {(publicKeyHex: string) => Repo | Promise<Repo>} [options.factory]
    *   If omitted, the default factory creates plain in-memory Repos
-   *   that share our Recaller — so reading repo state inside a slot
-   *   automatically subscribes the slot to chunk arrivals, no bridge
-   *   needed. Custom factories that want the same effect should pass
-   *   `registry.recaller` into their `new Repo(...)` (or new Streamo)
-   *   call; otherwise the registry bridges their per-repo recaller
-   *   onto its own.
-   * @param {{ name?: string, recaller?: Recaller }} [options]
-   *   `name` is used in watch names for debugging; `recaller` is the
-   *   shared Recaller (defaults to a fresh one).
+   *   that share `recaller`. Custom factories that want the same effect
+   *   should pass `registry.recaller` into their `new Repo(...)` call;
+   *   otherwise the registry bridges their per-repo recaller onto its
+   *   own.
+   * @param {string} [options.name='registry']  Used in watch names for
+   *   debugging.
    */
-  constructor (factory, options = {}) {
-    const { name = 'registry', recaller = new Recaller(name) } = options
+  constructor (options = {}) {
+    if (!options || !options.recaller) {
+      throw new TypeError(
+        'RepoRegistry: `recaller` is required. Pass your app\'s Recaller via ' +
+        '`new RepoRegistry({ recaller, factory?, name? })`. Pre-10.0.0 a fresh ' +
+        'Recaller was silently created when omitted — the silent-stale-slot ' +
+        'footgun. See CLAUDE.md for the rationale.'
+      )
+    }
+    const { recaller, factory, name = 'registry' } = options
     this.#name = name
     this.recaller = recaller
     this.#factory = factory ?? (() => new Repo({ recaller: this.recaller }))

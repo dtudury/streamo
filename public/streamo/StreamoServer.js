@@ -1,5 +1,6 @@
 import { Repo } from './Repo.js'
 import { RepoRegistry } from './RepoRegistry.js'
+import { Recaller } from './utils/Recaller.js'
 import { Signer } from './Signer.js'
 import { archiveSync } from './archiveSync.js'
 import { fileSync } from './fileSync.js'
@@ -85,11 +86,15 @@ export class StreamoServer {
     }
 
     const archiveClosers = new Map()
-    const registry = new RepoRegistry(async key => {
-      const repo = new Repo()
-      const { close } = await archiveSync(repo, dataDir, key)
-      archiveClosers.set(key, close)
-      return repo
+    const recaller = new Recaller(`server:${name ?? resolvedPublicKeyHex.slice(0, 8)}`)
+    const registry = new RepoRegistry({
+      recaller,
+      factory: async key => {
+        const repo = new Repo({ recaller })
+        const { close } = await archiveSync(repo, dataDir, key)
+        archiveClosers.set(key, close)
+        return repo
+      }
     })
     const streamo = await registry._materialize(resolvedPublicKeyHex)
     if (signer) streamo.attachSigner(signer, name)

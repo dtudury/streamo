@@ -60,7 +60,7 @@ const filterFromHash = () => {
 // reading other people's lists is signer-agnostic at this layer.
 // myRepo/myKey/signer (only set after login) drive the *write* path;
 // the *read* path goes through the URL key and viewedRepo().
-const registry = new RepoRegistry(undefined, { recaller, name: 'todomvc' })
+const registry = new RepoRegistry({ recaller, name: 'todomvc' })
 const session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
 
 // Auto-subscribe to whatever key shows up in the URL. Reads `urlKey()`

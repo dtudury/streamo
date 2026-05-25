@@ -33,6 +33,7 @@
  */
 import { Signer } from '../../streamo/Signer.js'
 import { RepoRegistry } from '../../streamo/RepoRegistry.js'
+import { Recaller } from '../../streamo/utils/Recaller.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex } from '../../streamo/utils.js'
 
@@ -69,7 +70,7 @@ try {
   process.exit(1)
 }
 
-const registry = new RepoRegistry()
+const registry = new RepoRegistry({ recaller: new Recaller('watch') })
 const session = await registrySync(registry, host, port, {
   secure,
   // Subscribe to everyone who announces, so their chat repo syncs and we

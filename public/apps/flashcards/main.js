@@ -202,7 +202,7 @@ async function login (e) {
   // the deck-index doesn't have `flashcardsDecks`, so each clause
   // applies cleanly to its source. From here, discovery is *reactive*:
   // bytes flow in, the home view re-renders.
-  setRegistry(new RepoRegistry(undefined, { recaller, name: 'flashcards' }))
+  setRegistry(new RepoRegistry({ recaller, name: 'flashcards' }))
   session = await registrySync(
     registry,
     location.hostname,

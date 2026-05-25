@@ -231,7 +231,7 @@ async function login (e) {
     const { publicKey } = await signer.keysFor('chat')
     myKey  = bytesToHex(publicKey)
     myName = username
-    registry = new RepoRegistry(undefined, { recaller, name: 'chat' })
+    registry = new RepoRegistry({ recaller, name: 'chat' })
 
     // Track who we've already announced ourselves back to, so we don't
     // ping-pong forever. Without this set, every peer-back ricochets into

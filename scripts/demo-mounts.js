@@ -16,6 +16,7 @@
  */
 import { Repo } from '../public/streamo/Repo.js'
 import { RepoRegistry } from '../public/streamo/RepoRegistry.js'
+import { Recaller } from '../public/streamo/utils/Recaller.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { Signer } from '../public/streamo/Signer.js'
 import { bytesToHex } from '../public/streamo/utils.js'
@@ -84,10 +85,13 @@ app.attachSigner(appSigner, 'app')
 // `registry.get(key)` is the lookup the mount-resolver uses; the factory
 // is the lazy-open path. We pre-open both so the resolver finds them.
 
-const registry = new RepoRegistry(async (keyHex) => {
-  if (keyHex === libKeyHex) return lib
-  if (keyHex === appKeyHex) return app
-  return new Repo()
+const registry = new RepoRegistry({
+  recaller: new Recaller('demo-mounts'),
+  factory: async (keyHex) => {
+    if (keyHex === libKeyHex) return lib
+    if (keyHex === appKeyHex) return app
+    return new Repo()
+  }
 })
 await registry._materialize(libKeyHex)
 await registry._materialize(appKeyHex)

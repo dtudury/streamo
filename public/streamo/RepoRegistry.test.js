@@ -2,10 +2,13 @@ import { describe } from './utils/testing.js'
 import { Streamo } from './Streamo.js'
 import { Repo } from './Repo.js'
 import { RepoRegistry } from './RepoRegistry.js'
+import { Recaller } from './utils/Recaller.js'
 import { archiveSync } from './archiveSync.js'
 
+const newRegistry = (factory) => new RepoRegistry({ recaller: new Recaller('test'), factory })
+
 function archiveRegistry (dir) {
-  return new RepoRegistry(async key => {
+  return newRegistry(async key => {
     const repo = new Repo()
     await archiveSync(repo, dir, key)
     return repo
@@ -13,24 +16,30 @@ function archiveRegistry (dir) {
 }
 
 describe(import.meta.url, ({ test }) => {
+  test('rejects construction without a recaller', ({ assert }) => {
+    assert.throws(() => new RepoRegistry(), /recaller.*required/)
+    assert.throws(() => new RepoRegistry({}), /recaller.*required/)
+    assert.throws(() => new RepoRegistry({ name: 'oops' }), /recaller.*required/)
+  })
+
   test('plain registry creates in-memory repositories with no factory', async ({ assert }) => {
-    const registry = new RepoRegistry()
+    const registry = newRegistry()
     const s = await registry._materialize('anykey')
     assert.ok(s instanceof Repo)
     s.set({ x: 1 })
     assert.equal(s.get('x'), 1)
   })
 
-  test('open creates a repository and returns the same instance on repeat calls', async ({ assert }) => {
-    const registry = new RepoRegistry()
+  test('_materialize creates a repository and returns the same instance on repeat calls', async ({ assert }) => {
+    const registry = newRegistry()
     const s1 = await registry._materialize('aabbcc')
     const s2 = await registry._materialize('aabbcc')
     assert.ok(s1 === s2, 'same instance returned')
     assert.equal(registry.size, 1)
   })
 
-  test('open creates independent repositories for different keys', async ({ assert }) => {
-    const registry = new RepoRegistry()
+  test('_materialize creates independent repositories for different keys', async ({ assert }) => {
+    const registry = newRegistry()
     const s1 = await registry._materialize('key1')
     const s2 = await registry._materialize('key2')
     assert.ok(s1 !== s2)
@@ -41,9 +50,9 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(s2.get('from'), 'key2')
   })
 
-  test('concurrent open() calls return the same instance', async ({ assert }) => {
+  test('concurrent _materialize calls return the same instance', async ({ assert }) => {
     let created = 0
-    const registry = new RepoRegistry(async () => {
+    const registry = newRegistry(async () => {
       created++
       await new Promise(r => setTimeout(r, 10))
       return new Repo()
@@ -58,14 +67,14 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('get returns undefined for unopened or still-opening keys', async ({ assert }) => {
-    const registry = new RepoRegistry()
+    const registry = newRegistry()
     assert.equal(registry.get('nope'), undefined)
     await registry._materialize('exists')
     assert.ok(registry.get('exists') instanceof Streamo)
   })
 
   test('iterates over fully-opened repositories only', async ({ assert }) => {
-    const registry = new RepoRegistry()
+    const registry = newRegistry()
     await registry._materialize('a')
     await registry._materialize('b')
     const entries = [...registry]

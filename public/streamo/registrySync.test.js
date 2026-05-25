@@ -1,10 +1,15 @@
 import { WebSocketServer } from 'ws'
 import { describe } from './utils/testing.js'
 import { RepoRegistry } from './RepoRegistry.js'
+import { Recaller } from './utils/Recaller.js'
 import { attachStreamSync } from './outletSync.js'
 import { registrySync } from './registrySync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
+
+// 10.0.0 makes RepoRegistry's `recaller` required (locks the silent-
+// stale-slot footgun). Tests use a fresh per-test Recaller via this helper.
+const newRegistry = (opts = {}) => new RepoRegistry({ recaller: new Recaller('test'), ...opts })
 
 // Under the relay-as-authority model, the RepoSerializer at the relay gates
 // every incoming batch — fake keys can no longer carry data. Each "slot"
@@ -65,7 +70,7 @@ function startServer (registry, homeKey = null) {
 
 describe(import.meta.url, ({ test }) => {
   test('onOpen fires after registry._materialize resolves', async ({ assert }) => {
-    const registry = new RepoRegistry()
+    const registry = newRegistry()
     const calls = []
     registry.onOpen((key, repo) => calls.push({ key, repo }))
     const repo = await registry._materialize('abc')
@@ -75,7 +80,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('offOpen removes the callback', async ({ assert }) => {
-    const registry = new RepoRegistry()
+    const registry = newRegistry()
     let count = 0
     const cb = () => count++
     registry.onOpen(cb)
@@ -86,7 +91,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('onOpen not called for already-open key (concurrent open)', async ({ assert }) => {
-    const registry = new RepoRegistry()
+    const registry = newRegistry()
     let count = 0
     registry.onOpen(() => count++)
     await Promise.all([registry._materialize('k'), registry._materialize('k'), registry._materialize('k')])
@@ -94,12 +99,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('two registries sync an existing repo via registrySync', async ({ assert }) => {
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 1)
     serverRepo.set({ hello: 'world' })
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('hello') === 'world')
@@ -110,12 +115,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('changes on server after connect are synced to client', async ({ assert }) => {
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 2)
     serverRepo.set({ v: 1 })
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('v') === 1)
@@ -132,12 +137,12 @@ describe(import.meta.url, ({ test }) => {
     // The new shape: discovery cascades through home.value.members via `follow`.
     // When the home repo gains a new member after the client is connected, the
     // follow callback re-fires and the client subscribes to the newcomer.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: homeRepo, hex: homeKey } = await openWriter(serverRegistry, 3)
     homeRepo.set({ members: [] })
 
     const { wss, port } = await startServer(serverRegistry, homeKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (k, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
@@ -161,7 +166,7 @@ describe(import.meta.url, ({ test }) => {
     // The security claim of obsecurity: a relay can hold private repos that
     // are NOT announced. Connecting clients receive only home + home.members;
     // private keys can still be fetched, but only when explicitly subscribed.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: homeRepo, hex: homeKey } = await openWriter(serverRegistry, 4)
     homeRepo.set({ members: [] })
 
@@ -169,7 +174,7 @@ describe(import.meta.url, ({ test }) => {
     privateRepo.set({ name: 'secret' })
 
     const { wss, port } = await startServer(serverRegistry, homeKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port)
 
     // Home syncs (auto-subscribed via hello).
@@ -193,8 +198,8 @@ describe(import.meta.url, ({ test }) => {
     // Without a catalog mechanism, peers don't auto-broadcast their own repos —
     // each side explicitly subscribes for keys it wants to push or pull. This
     // is the p2p shape: no relay-blessed public face, just mutual consent.
-    const registryA = new RepoRegistry()
-    const registryB = new RepoRegistry()
+    const registryA = newRegistry()
+    const registryB = newRegistry()
 
     const { repo: repoA, hex: keyA } = await openWriter(registryA, 6)
     repoA.set({ owner: 'A' })
@@ -227,13 +232,13 @@ describe(import.meta.url, ({ test }) => {
     // the server accepts and the upward push restores the chain.
     // Real divergence (chains diverge at a shared offset) would still be
     // caught — by the serializer when the SIG arrives.
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const { repo: clientRepo, hex: key } = await openWriter(clientRegistry, 30)
     clientRepo.set({ value: 'i was here before the wipe' })
     await waitFor(() => clientRepo.signedLength > 0)
 
     // Server has nothing for this key — fresh post-wipe state.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
 
     const { wss, port } = await startServer(serverRegistry)
     const session = await registrySync(clientRegistry, 'localhost', port)
@@ -255,13 +260,13 @@ describe(import.meta.url, ({ test }) => {
     // the client claims its current signedLength + chainHash; server validates
     // (chain at that offset matches) and streams only the new tail. Verified
     // by checking the client ends up with the full server state.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 31)
     serverRepo.set({ stage: 1 })
     await waitFor(() => serverRepo.signedLength > 0)
 
     // Phase 1: client connects fresh and syncs the initial state
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const { wss, port } = await startServer(serverRegistry)
     const session1 = await registrySync(clientRegistry, 'localhost', port)
     const clientRepo = await session1.subscribe(key)
@@ -293,12 +298,12 @@ describe(import.meta.url, ({ test }) => {
     // The everyday "I want this key live" pattern: subscribe opens locally,
     // sets up the wire, and hands you the Repo. Idempotent — calling twice
     // returns the same Repo, no double-subscription side effects.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 20)
     serverRepo.set({ greeting: 'hi from the server' })
 
     const { wss, port } = await startServer(serverRegistry)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port)
 
     const repo = await session.subscribe(key)
@@ -320,7 +325,7 @@ describe(import.meta.url, ({ test }) => {
     // Simulates a chat app: rootRepo lists participant keys; client connects,
     // auto-subscribes to root (via hello), follow callback walks members,
     // each participant is subscribed in turn.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 10)
     const { repo: aliceRepo, hex: aliceKey } = await openWriter(serverRegistry, 11)
     const { repo: bobRepo, hex: bobKey } = await openWriter(serverRegistry, 12)
@@ -330,7 +335,7 @@ describe(import.meta.url, ({ test }) => {
     rootRepo.set({ members: [aliceKey, bobKey] })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
@@ -353,7 +358,7 @@ describe(import.meta.url, ({ test }) => {
     // mount entry's `ref` (the mounted record's pubkey) is subscribed
     // automatically, so a client/relay holding a record with mounts
     // also pulls the mounted records' bytes without out-of-band setup.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 30)
     const { repo: libRepo,  hex: libKey  } = await openWriter(serverRegistry, 31)
 
@@ -364,7 +369,7 @@ describe(import.meta.url, ({ test }) => {
     })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port, {
       followMounts: true
     })
@@ -384,7 +389,7 @@ describe(import.meta.url, ({ test }) => {
     // walks) and `mounts` (the standard composition key). Both
     // subscriptions should fire when followMounts: true is paired with
     // a custom follow that handles members.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: rootRepo,  hex: rootKey  } = await openWriter(serverRegistry, 32)
     const { repo: aliceRepo, hex: aliceKey } = await openWriter(serverRegistry, 33)
     const { repo: libRepo,   hex: libKey   } = await openWriter(serverRegistry, 34)
@@ -398,7 +403,7 @@ describe(import.meta.url, ({ test }) => {
     })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (k, repo, subscribe) => {
         for (const m of repo.get('members') ?? []) subscribe(m)
@@ -417,13 +422,13 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('follow: re-runs when home changes and discovers newly added refs', async ({ assert }) => {
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 13)
     const { hex: carolKey } = await realKey(14)
     rootRepo.set({ members: [] })  // starts empty
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const session = await registrySync(clientRegistry, 'localhost', port, {
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
@@ -445,17 +450,17 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('announce is routed to interested peers', async ({ assert }) => {
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(20)
     const announced = fakeKey(21)
 
     const received = []
-    const sessionA = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key, t) => received.push({ key, topic: t })
     })
     sessionA.interest(topic)
 
-    const sessionB = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionB = await registrySync(newRegistry(), 'localhost', port)
 
     // Give the interest message time to reach the server
     await new Promise(r => setTimeout(r, 50))
@@ -471,17 +476,17 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('announce is not received without interest', async ({ assert }) => {
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(22)
     const announced = fakeKey(23)
 
     const received = []
-    const sessionA = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => received.push(key)
     })
     // sessionA does NOT call interest(topic)
 
-    const sessionB = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionB = await registrySync(newRegistry(), 'localhost', port)
     await new Promise(r => setTimeout(r, 50))
     sessionB.announce(announced, topic)
 
@@ -494,21 +499,21 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('announce reaches multiple interested peers', async ({ assert }) => {
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(24)
     const announced = fakeKey(25)
 
     const receivedA = [], receivedB = []
-    const sessionA = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => receivedA.push(key)
     })
-    const sessionB = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionB = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => receivedB.push(key)
     })
     sessionA.interest(topic)
     sessionB.interest(topic)
 
-    const sessionC = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionC = await registrySync(newRegistry(), 'localhost', port)
     await new Promise(r => setTimeout(r, 50))
     sessionC.announce(announced, topic)
 
@@ -523,12 +528,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('announce is not echoed back to the sender', async ({ assert }) => {
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(26)
     const announced = fakeKey(27)
 
     const received = []
-    const session = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const session = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => received.push(key)
     })
     session.interest(topic)
@@ -548,18 +553,18 @@ describe(import.meta.url, ({ test }) => {
     // connects and expresses interest in the same topic. Without replay, bob
     // never learns about alice unless alice keeps heartbeating. With replay,
     // bob receives alice's announce immediately as part of his interest.
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(40)
     const aliceKey = fakeKey(41)
 
-    const sessionAlice = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionAlice = await registrySync(newRegistry(), 'localhost', port)
     sessionAlice.announce(aliceKey, topic)
 
     // Give the announce time to register on the server before bob connects.
     await new Promise(r => setTimeout(r, 50))
 
     const received = []
-    const sessionBob = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionBob = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key, t) => received.push({ key, topic: t })
     })
     sessionBob.interest(topic)
@@ -576,12 +581,12 @@ describe(import.meta.url, ({ test }) => {
   test('late interest replay does not echo the newcomer\'s own prior announces', async ({ assert }) => {
     // If the same socket announces and then expresses interest, the replay
     // should not bounce its own announces back at it.
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(42)
     const selfKey = fakeKey(43)
 
     const received = []
-    const session = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const session = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => received.push(key)
     })
     session.announce(selfKey, topic)
@@ -599,18 +604,18 @@ describe(import.meta.url, ({ test }) => {
     // Once alice disconnects, her announce is gone — a later-arriving bob
     // should not learn about her stale presence. Replay is "currently live,"
     // not "ever announced."
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(44)
     const aliceKey = fakeKey(45)
 
-    const sessionAlice = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionAlice = await registrySync(newRegistry(), 'localhost', port)
     sessionAlice.announce(aliceKey, topic)
     await new Promise(r => setTimeout(r, 50))
     sessionAlice.close()
     await new Promise(r => setTimeout(r, 50))
 
     const received = []
-    const sessionBob = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionBob = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => received.push(key)
     })
     sessionBob.interest(topic)
@@ -624,22 +629,22 @@ describe(import.meta.url, ({ test }) => {
 
   test('replay covers multiple existing announcers on the same topic', async ({ assert }) => {
     // Three peers already in a topic; a fourth joins and learns about all of them.
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(46)
     const aliceKey = fakeKey(47)
     const bobKey   = fakeKey(48)
     const carolKey = fakeKey(49)
 
-    const sessionAlice = await registrySync(new RepoRegistry(), 'localhost', port)
-    const sessionBob   = await registrySync(new RepoRegistry(), 'localhost', port)
-    const sessionCarol = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionAlice = await registrySync(newRegistry(), 'localhost', port)
+    const sessionBob   = await registrySync(newRegistry(), 'localhost', port)
+    const sessionCarol = await registrySync(newRegistry(), 'localhost', port)
     sessionAlice.announce(aliceKey, topic)
     sessionBob.announce(bobKey,     topic)
     sessionCarol.announce(carolKey, topic)
     await new Promise(r => setTimeout(r, 50))
 
     const received = []
-    const sessionDavid = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionDavid = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => received.push(key)
     })
     sessionDavid.interest(topic)
@@ -658,17 +663,17 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('after disconnect, interest is cleaned up and announcements stop', async ({ assert }) => {
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(28)
     const announced = fakeKey(29)
 
     const received = []
-    const sessionA = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
       onAnnounce: (key) => received.push(key)
     })
     sessionA.interest(topic)
 
-    const sessionB = await registrySync(new RepoRegistry(), 'localhost', port)
+    const sessionB = await registrySync(newRegistry(), 'localhost', port)
 
     // Confirm routing works before disconnect
     await new Promise(r => setTimeout(r, 50))
@@ -700,13 +705,13 @@ describe(import.meta.url, ({ test }) => {
     //       diverged apple-bytes flowing back). Either flag is acceptable;
     //       both arrive asynchronously and racing them in tests is brittle.
 
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 60)
     serverRepo.set({ v: 'apple' })
     await waitFor(() => serverRepo.signedLength === serverRepo.byteLength, 1000)
     const tipAfterApple = serverRepo.byteLength
 
-    const badRegistry = new RepoRegistry()
+    const badRegistry = newRegistry()
     const { repo: badRepo } = await openWriter(badRegistry, 60)
     badRepo.set({ v: 'banana' })
     await waitFor(() => badRepo.signedLength === badRepo.byteLength, 1000)
@@ -738,13 +743,13 @@ describe(import.meta.url, ({ test }) => {
     // locally and pushes. The push chains correctly off the relay's top, so
     // the serializer accepts and broadcasts.
 
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 61)
     serverRepo.set({ v: 'apple' })
     await waitFor(() => serverRepo.signedLength === serverRepo.byteLength, 1000)
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const { repo: clientRepo } = await openWriter(clientRegistry, 61)
     const session = await registrySync(clientRegistry, 'localhost', port)
 
@@ -765,12 +770,12 @@ describe(import.meta.url, ({ test }) => {
   test('auto-reconnects after an unexpected socket drop and resumes syncing', async ({ assert }) => {
     // The home repo is auto-subscribed via `hello` on every connect, so a
     // reconnect rediscovers it for free — post-drop changes keep flowing.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: serverRepo, hex: key } = await openWriter(serverRegistry, 70)
     serverRepo.set({ v: 1 })
 
     const { wss, port } = await startServer(serverRegistry, key)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const events = []
     const session = await registrySync(clientRegistry, 'localhost', port, {
       reconnectBaseMs: 20,
@@ -795,14 +800,14 @@ describe(import.meta.url, ({ test }) => {
   test('reconnect replays explicit subscriptions (a non-home key keeps syncing)', async ({ assert }) => {
     // A key reached only via session.subscribe() isn't rediscoverable from
     // `hello` — the session must remember it and replay the subscribe.
-    const serverRegistry = new RepoRegistry()
+    const serverRegistry = newRegistry()
     const { repo: homeRepo, hex: homeKey } = await openWriter(serverRegistry, 71)
     homeRepo.set({ members: [] })
     const { repo: privateRepo, hex: privateKey } = await openWriter(serverRegistry, 72)
     privateRepo.set({ stage: 1 })
 
     const { wss, port } = await startServer(serverRegistry, homeKey)
-    const clientRegistry = new RepoRegistry()
+    const clientRegistry = newRegistry()
     const events = []
     const session = await registrySync(clientRegistry, 'localhost', port, {
       reconnectBaseMs: 20,
@@ -828,19 +833,19 @@ describe(import.meta.url, ({ test }) => {
   test('reconnect replays interest (announcements still arrive after a drop)', async ({ assert }) => {
     // interest() is ephemeral server-side state, cleared when the socket
     // closes. The session must re-declare it on the fresh connection.
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const topic = fakeKey(70)
     const announced = fakeKey(71)
 
     const received = []
     const events = []
-    const listener = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const listener = await registrySync(newRegistry(), 'localhost', port, {
       reconnectBaseMs: 20,
       onAnnounce: key => received.push(key),
       onConnectionChange: c => events.push(c)
     })
     listener.interest(topic)
-    const announcer = await registrySync(new RepoRegistry(), 'localhost', port)
+    const announcer = await registrySync(newRegistry(), 'localhost', port)
     await new Promise(r => setTimeout(r, 50))
 
     // Drop the listener; once it's back, its interest must have been replayed.
@@ -858,9 +863,9 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('session.close() shuts down without reconnecting', async ({ assert }) => {
-    const { wss, port } = await startServer(new RepoRegistry())
+    const { wss, port } = await startServer(newRegistry())
     const events = []
-    const session = await registrySync(new RepoRegistry(), 'localhost', port, {
+    const session = await registrySync(newRegistry(), 'localhost', port, {
       reconnectBaseMs: 20,
       onConnectionChange: c => events.push(c)
     })

@@ -1,9 +1,12 @@
 import { describe } from './utils/testing.js'
-import { RepoRegistry as StreamRegistry } from './RepoRegistry.js'
+import { RepoRegistry } from './RepoRegistry.js'
+import { Recaller } from './utils/Recaller.js'
 import { outletSync } from './outletSync.js'
 import { originSync } from './originSync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
+
+const newRegistry = () => new RepoRegistry({ recaller: new Recaller('sync-test') })
 
 // Under the relay-as-authority model, the relay's RepoSerializer gates every
 // incoming batch via chain + crypto checks — so these end-to-end sync tests
@@ -45,7 +48,7 @@ function waitFor (stream, predicate, timeout = 2000) {
 
 describe(import.meta.url, ({ test }) => {
   test('outlet syncs existing stream data to a new origin', async ({ assert }) => {
-    const serverRegistry = new StreamRegistry()
+    const serverRegistry = newRegistry()
     const serverStream = await openSigned(serverRegistry)
     serverStream.set({ hello: 'world' })
 
@@ -53,7 +56,7 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(resolve => wss.on('listening', resolve))
     const { port } = wss.address()
 
-    const clientRegistry = new StreamRegistry()
+    const clientRegistry = newRegistry()
     const clientStream = await clientRegistry._materialize(await ensureKey())
     const ws = await originSync(clientStream, KEY, 'localhost', port)
 
@@ -66,12 +69,12 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('origin syncs local data up to the outlet', async ({ assert }) => {
-    const serverRegistry = new StreamRegistry()
+    const serverRegistry = newRegistry()
     const wss = outletSync(serverRegistry, 0)
     await new Promise(resolve => wss.on('listening', resolve))
     const { port } = wss.address()
 
-    const clientRegistry = new StreamRegistry()
+    const clientRegistry = newRegistry()
     const clientStream = await openSigned(clientRegistry)
     clientStream.set({ from: 'client' })
 
@@ -90,13 +93,13 @@ describe(import.meta.url, ({ test }) => {
     // Two devices sharing the same identity (same Signer / keypair) — under
     // single-author-signed-chain, both writers must own the private key to
     // contribute. This models "alice on her phone and her laptop."
-    const serverRegistry = new StreamRegistry()
+    const serverRegistry = newRegistry()
     const wss = outletSync(serverRegistry, 0)
     await new Promise(resolve => wss.on('listening', resolve))
     const { port } = wss.address()
 
-    const r1 = new StreamRegistry()
-    const r2 = new StreamRegistry()
+    const r1 = newRegistry()
+    const r2 = newRegistry()
     const s1 = await openSigned(r1)
     const s2 = await openSigned(r2)
 
@@ -127,7 +130,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('relay forwards data between server and client without writing its own commits', async ({ assert }) => {
     // Server
-    const serverRegistry = new StreamRegistry()
+    const serverRegistry = newRegistry()
     const serverStream = await openSigned(serverRegistry)
     serverStream.set({ hello: 'from-server' })
     const serverWss = outletSync(serverRegistry, 0)
@@ -137,7 +140,7 @@ describe(import.meta.url, ({ test }) => {
     // Relay: originSync upstream to server, outletSync downstream for clients.
     // The relay never calls set() or commit() — it only accumulates and re-serves
     // the byte stream it receives.
-    const relayRegistry = new StreamRegistry()
+    const relayRegistry = newRegistry()
     const relayStream = await relayRegistry._materialize(await ensureKey())
     await originSync(relayStream, KEY, 'localhost', serverPort)
     const relayWss = outletSync(relayRegistry, 0)
@@ -146,7 +149,7 @@ describe(import.meta.url, ({ test }) => {
 
     // Client connects to relay only — no direct server connection. Client owns
     // the keypair so it can write back through the relay.
-    const clientRegistry = new StreamRegistry()
+    const clientRegistry = newRegistry()
     const clientStream = await openSigned(clientRegistry)
     const clientWs = await originSync(clientStream, KEY, 'localhost', relayPort)
 

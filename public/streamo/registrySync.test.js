@@ -341,6 +341,83 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('observer-doesn\'t-push: a slim StreamoRecord sends zero bytes back to the relay', async ({ assert }) => {
+    // Unfalsifiable-diagnostic-marker discipline for the type-level
+    // observer-doesn't-push invariant introduced in 11.0.
+    //
+    // The claim: an observer — a process that subscribes to a Record
+    // through a registry whose factory produces a slim StreamoRecord
+    // for that key — has no outbound reader for the key, so it cannot
+    // push bytes back to the relay even when bytes flow down.
+    //
+    // The probe the wrong path can't fake: count BINARY frames inbound
+    // on the observer's WS connection at the server. Binary frames are
+    // record-byte pushes (JSON control messages — subscribe, hello,
+    // ping — are text). If anyone ever removes the `instanceof
+    // WritableStreamoRecord` guard in syncKey, the observer's reader
+    // would set up at offset 0 and start re-pushing received bytes
+    // back up; the binary frame counter would tick up; this test
+    // would fail loudly.
+    //
+    // The corresponding *positive* control is the existing "relay
+    // accepts a clean push from an already-synced client" test
+    // elsewhere in this file — that one proves the push path works
+    // when the client IS Writable. Together they bracket the
+    // invariant: slim → 0 binary in, Writable → > 0 binary in.
+    const serverRegistry = newRegistry()
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 50)
+    serverRepo.set({ headline: 'authored on the server' })
+
+    const { wss, port } = await startServer(serverRegistry, keyHex)
+
+    // Instrument: count binary frames per incoming WS connection. The
+    // listener is added before any client connects, so the observer's
+    // socket is captured the moment it opens.
+    const binaryFramesIn = new Map()  // ws → count
+    wss.on('connection', ws => {
+      binaryFramesIn.set(ws, 0)
+      ws.on('message', (data, isBinary) => {
+        if (isBinary) binaryFramesIn.set(ws, binaryFramesIn.get(ws) + 1)
+      })
+    })
+
+    // Observer side: a registry whose factory produces only slim
+    // StreamoRecords (no key is in writableKeys; this is the watch.js
+    // / explorer / notify shape).
+    const observerRegistry = newRegistry()
+    const session = await registrySync(observerRegistry, 'localhost', port)
+
+    // The down-channel works — bytes flow server → observer. Past this
+    // point any echo-on-receive bug would have started pushing.
+    const observerRepo = await session.subscribe(keyHex)
+    await waitFor(() => observerRepo.get('headline') === 'authored on the server')
+
+    // Generous beat for any straggling outbound to flush — localhost
+    // round-trip is sub-millisecond; 200ms is overkill, which is the
+    // point.
+    await new Promise(r => setTimeout(r, 200))
+
+    // The claim, asserted: the observer's WS connection at the server
+    // received exactly zero binary frames.
+    const observerWs = [...wss.clients][0]
+    const inboundBinaryFrames = binaryFramesIn.get(observerWs) ?? 0
+    assert.equal(inboundBinaryFrames, 0,
+      `observer (slim StreamoRecord) must push zero binary frames to the relay; ` +
+      `received ${inboundBinaryFrames}. If the instanceof-WritableStreamoRecord ` +
+      `guard in registrySync.syncKey was removed, that's where to look.`)
+
+    // Sanity: observer is in fact a slim StreamoRecord, not a Writable.
+    // If a future refactor accidentally makes the default factory
+    // produce Writables, the test above would falsely pass for the
+    // wrong reason; this assertion catches that drift.
+    assert.ok(!(observerRepo instanceof WritableStreamoRecord),
+      'observer was supposed to be a slim StreamoRecord (default factory); ' +
+      'if this is a WritableStreamoRecord the test\'s premise has shifted')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
   test('follow: auto-subscribes to repos referenced in the home repo\'s value', async ({ assert }) => {
     // Simulates a chat app: rootRepo lists participant keys; client connects,
     // auto-subscribes to root (via hello), follow callback walks members,

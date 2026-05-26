@@ -12,11 +12,18 @@ why it's small on purpose," not a sales pitch._
 
 | # | Phase | ~Min | Concrete move | Anchor phrase |
 |---|-------|------|---------------|---------------|
-| 1 | **substrate** | 3 | edit a file in `public/homepage/`, refresh, find the commit in the explorer | _"this page IS a Repo"_ |
+| 1 | **substrate** | 3 | edit a file in `public/homepage/`, refresh, find the commit in the explorer | _"this page IS a Record"_ |
 | 2 | **fork** | 5 | `npx @dtudury/streamo --merge-from streamo.dev ...` | _"no clone, no signup, no key file"_ |
 | 3 | **collaboration** | 5 | two-tab chat → throttle one offline → write in both → bring online → recovery banner → send | _"recovery uses the same primitives as everything else"_ |
-| 4 | **the story** | 2 | PHILOSOPHY.md trades, ~2k LOC, dumb-pipe relay | _"a primitive that lets a thousand platforms grow"_ |
+| 4 | **the story** | 2 | PHILOSOPHY.md trades, ~2k LOC, repo-free relay | _"a primitive that lets a thousand platforms grow"_ |
 | 5 | **Q&A** | — | listen + see prep below | (be honest about trades) |
+
+**One detail worth holding onto for any phase:** the relay running
+streamo.dev is literally `npx @dtudury/streamo` in relay-only mode —
+the **same binary** Rick is about to run on his laptop in Phase 2,
+just different flags. No source code on the prod box, no deploy
+script, no custom server. That's the architectural punchline; weave
+it in wherever it lands.
 
 **If you lose your place:** the demo is "you can read what I built, fork
 it in one command, collaborate on it, recover from conflicts" — in that
@@ -42,9 +49,26 @@ to localhost (your machine is reliable in a way live relays aren't).
 
 1. Local streamo checkout (`~/Documents/repos/streamo`), on `main`, clean
    working tree, dev server NOT running (so we can show the prod site)
-2. A second pane in `~/Desktop/rick-demo-site/` or similar — empty
-   directory ready for the `npx` fork. Pre-make it so you don't fumble
-   `mkdir` live: `mkdir -p ~/Desktop/rick-demo-site`
+2. **Author process running.** Since 10.1.0, streamo.dev is relay-only —
+   the prod box holds no signing creds. For Phase 1's "edit → refresh →
+   see live" to work, your laptop has to be the signer. Run before
+   Rick arrives, in its own pane:
+
+   ```bash
+   node bin/streamo.js \
+     --name streamo \
+     --username streamo-relay \
+     --files ./public/homepage \
+     --origin streamo.dev \
+     --data-dir ~/.streamo-prod-author
+   ```
+
+   Type the relay password at the hidden prompt. Wait for `mirroring
+   files: …` and `origin: connected to streamo.dev` before showing
+   Rick anything. Leave it running through the whole demo.
+3. A pane in `~/Desktop/rick-demo-site/` or similar — empty directory
+   ready for the `npx` fork. Pre-make it so you don't fumble `mkdir`
+   live: `mkdir -p ~/Desktop/rick-demo-site`
 
 **Pre-check (5 min before):**
 
@@ -62,9 +86,10 @@ cue than as a memorize.
 
 ## phase 1 — the substrate (~3 min)
 
-**The point:** "This isn't a website with a backend. It's a Repo on disk,
-served as bytes, signed by my keypair. The relay doesn't even know how to
-write to it — it just serves what's there."
+**The point:** "This isn't a website with a backend. It's a Record on
+disk, served as bytes, signed by my keypair. The relay doesn't even
+*hold* the signing key — my laptop signs, my laptop pushes the bytes
+over a WebSocket, the relay just archives and serves."
 
 ### the moves
 
@@ -76,21 +101,27 @@ write to it — it just serves what's there."
    change (a typo fix, a sentence tweak — pre-pick one so you don't
    freeze). Save.
 3. **Refresh the browser.** Show the change live.
-   _"I just wrote some bytes. The relay archived them. You're reading the
-   new bytes now. No build step, no CDN cache to bust, no deploy."_
+   _"My laptop just signed those bytes and pushed them to the relay
+   over a WebSocket. The relay archived them. You're reading the new
+   bytes now. No build step, no CDN cache to bust, no deploy."_
 4. **Switch to the explorer tab. Find your commit.** It'll be at the top
-   of the home repo's commit list. Click it.
+   of the home Record's commit list. Click it.
    _"Here's the byte-level reality. That's a SIGNATURE chunk — 97 bytes,
    secp256k1. That's the COMMIT envelope. That's the data."_
 
 ### if Rick interrupts
 
-- **"Wait, you can just edit it?"** — Yes. The relay is mirroring my
-  local `public/homepage/` directory to the home Repo's `files` key via
-  fileSync. Any save becomes a signed commit. Live.
+- **"Wait, you can just edit it?"** — Yes. My laptop is running
+  `bin/streamo.js` in author mode — it watches `public/homepage/`,
+  signs every save as a commit, and origin-syncs the bytes to
+  streamo.dev. Any disk save becomes a signed commit, live.
 - **"What stops anyone else from editing it?"** — They can't sign as me.
   My credentials → my keypair → my signatures. Anyone else's edit fails
   the relay's chain check.
+- **"Where's the signing key on streamo.dev?"** — It isn't. The prod
+  relay is `npx @dtudury/streamo` in *relay-only* mode — opens the
+  Record by pubkey, no signer derived. The signing only happens
+  here, on my laptop. The relay is a dumb pipe by construction.
 
 ### exit cue
 
@@ -125,14 +156,17 @@ command. There's no signup flow."
 3. **What happens, narrated:**
    _"PBKDF2 just derived a keypair from 'rick' plus the password. That's
    Rick's streamo identity, deterministic, no key file. Now it's fetching
-   a snapshot of streamo.dev's home repo via HTTP. Now it's committing a
-   pure copy to Rick's local chain with `remoteParent` set to my key —
+   a snapshot of streamo.dev's home Record via HTTP. Now it's committing
+   a pure copy to Rick's local chain with `remoteParent` set to my key —
    that's the lineage citation. Now it's writing the merged files to
    `./mysite/`."_
+   *(And, parenthetically: the binary doing this is the SAME binary the
+   prod relay is running — different flags, same code. We just installed
+   streamo.dev on your laptop.)*
 
 4. **Open `http://localhost:8081/` in a new browser tab.**
-   _"That's Rick's fork. Same homepage, served from his Repo, signed by
-   his keypair."_
+   _"That's Rick's fork. Same homepage, served from his Record, signed
+   by his keypair."_
 
 5. **Edit a file in `./mysite/` from your terminal** (e.g. the headline
    text). Refresh `localhost:8081`. Show it changed.
@@ -155,6 +189,12 @@ command. There's no signup flow."
   resume. The relay (streamo.dev) doesn't have Rick's fork until he
   pushes via `--origin streamo.dev`. (Show that command optionally
   but maybe not — keeps the demo focused.)
+- **"How fast is this?"** — Path-aware reads are O(depth), not
+  O(record). The library Record streamo.dev serves is ~530KB; a
+  per-request file lookup is ~6ms decoded. The homepage loads as a
+  ~360ms waterfall, not because the server is doing nothing — the
+  codec walks chunk graphs and only decodes the leaf the URL asks
+  for. Worth mentioning if Rick is tracking the latency feel.
 
 ### exit cue
 
@@ -174,7 +214,7 @@ loss."
    both as the same user (e.g. `alice` / a memorable password).
 2. **Type a message in tab A.** Show it appears in both tabs.
    _"Each participant owns their own signed message stream. Both tabs
-   are alice; they're writing to the same Repo via the same keypair."_
+   are alice; they're writing to the same Record via the same keypair."_
 3. **DevTools → Network → set Tab B to Offline (or Throttling: Offline).**
    _"Tab B is now disconnected. The relay can't see Tab B's writes."_
 4. **Type a message in Tab A** — call it "apple". Show it appears in Tab A
@@ -187,8 +227,11 @@ loss."
    diverged."_
 7. **The recovery banner appears on Tab B:**
    `your last write didn't reach the room. [send it now] [discard]`
-   _"This is recovery UX v1, shipped today. Without it, the only option
-   would be 'refresh and lose what you wrote.'"_
+   _"This is the recovery UX. Without it, the only option would be
+   'refresh and lose what you wrote.' The detection lives in the
+   substrate — the relay's per-Record serializer is the chain
+   authority; the rejection comes back as a reactive flag the app
+   binds to. Same primitives as any other UI signal."_
 8. **Click [send it now].** Show both tabs converge — the message list now
    contains both `apple` and `banana`, in timestamp order.
    _"The merge is app-specific — chat concatenates message lists and
@@ -202,8 +245,8 @@ loss."
   top. If the merge produces duplicates (impossible here because of the
   `at` timestamp), the app's merge function decides.
 - **"What about three devices?"** — Same shape. The relay's serializer
-  is the single chain authority per repo; first arriver extends the top,
-  later arrivers' pushes get rejected and recover.
+  is the single chain authority per Record; first arriver extends the
+  top, later arrivers' pushes get rejected and recover.
 - **"What if I want a real CRDT?"** — One author per stream sidesteps
   CRDT complexity by design. Multi-author values live in CRDTs we don't
   re-implement; if you need them, build them on top of streamo as a
@@ -227,8 +270,13 @@ platform."
 - **Identity from credentials.** No accounts table. No signup. No
   password reset (because there's nothing to reset against — your
   credentials derive your key directly).
-- **Dumb-pipe relay.** The public-port process *cannot write* to the
-  Repos it serves. Signing keys live with authors, never with the relay.
+- **Repo-free relay.** The prod relay is `npx @dtudury/streamo` —
+  no source code on the box, no checkout, no deploy script. The
+  systemd unit pins a version; bumping is one `sed` + restart.
+  The relay *cannot write* to the Records it serves; it holds no
+  signing creds. Signing keys live with authors, never with the
+  relay. That's "the server is a relay, not a gatekeeper" extended
+  all the way down to the file system.
 - **One author per stream.** Sidesteps CRDT complexity by design.
 - **Honest trades documented.** PHILOSOPHY.md is the welcome-the-skeptics
   doc: small core, no build step, no type system, no editor support
@@ -278,22 +326,33 @@ constraint is what makes this clean.
 - PBKDF2-SHA256 with 100k iterations is the key derivation. Standard
   floor; not novel; pinned by KAT in `Signer.test.js`.
 
-### "How big can a Repo get?"
+### "How big can a Record get?"
 
 Practical caps live in ROADMAP "known limitations":
 - ~2 MB feels instant; right default for chat-shaped apps
 - ~5–10 MB is comfortable for journal/notes
 - ~50 MB+ wants different infrastructure
-Lifecycle (not yet implemented): when a Repo approaches its cap, the
-author starts a successor Repo with the same keypair, signs a
-`successor` pointer at the end of the old one. Bounded per-Repo,
+Lifecycle (not yet implemented): when a Record approaches its cap, the
+author starts a successor Record with the same keypair, signs a
+`successor` pointer at the end of the old one. Bounded per-Record,
 unbounded total.
 
 ### "How would I deploy this?"
 
-`npm install @dtudury/streamo`, write a small `chat-server.js`-shaped
-binary, point a domain at it (Caddy or whatever TLS terminator you
-like). Streamo.dev runs on a single Hetzner box, ~50MB RAM idle.
+There's no deploy script. You provision a box, install node, put
+your VAPID + home pubkey in a `.env` file, and write a one-line
+systemd unit:
+
+```
+ExecStart=npx -y @dtudury/streamo@<version> --env-file /path/to/.env
+```
+
+No git clone, no source code, no build step. Bumping a version is
+editing the unit and restarting. Streamo.dev runs on a single
+Hetzner box, ~50MB RAM idle, behind Caddy for TLS. The full setup is
+in `DEPLOY.md` (linked from the README). Forks who prefer a checkout-
+based deployment can still use the legacy `scripts/deploy.sh`; it's
+preserved in the repo for that use case.
 
 ### "Is this AI-generated?"
 

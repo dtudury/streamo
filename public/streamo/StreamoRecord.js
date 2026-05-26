@@ -307,13 +307,9 @@ export class StreamoRecord extends Streamo {
     const commit = this.lastCommit  // registers 'length' dependency
     if (!commit) return super.get(...args)
     this.recaller.reportKeyAccess(this, JSON.stringify(args))
-    if (args.length === 0) return this.decode(commit.dataAddress)
-    let value = this.decode(commit.dataAddress)
-    for (const key of args) {
-      if (value == null) return undefined
-      value = value[key]
-    }
-    return value
+    // Lazy descent off the commit's dataAddress — only the chunks the path
+    // touches are decoded. See CodecRegistry.decodeAt.
+    return this.decodeAt(commit.dataAddress, ...args)
   }
 
   /**

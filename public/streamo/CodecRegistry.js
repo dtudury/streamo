@@ -203,6 +203,57 @@ export class CodecRegistry extends Addressifier {
   }
 
   /**
+   * Decode the value at `address`, descending lazily into composite children
+   * along `path`. Only the chunks the path actually touches are decoded;
+   * sibling subtrees are skipped entirely. O(depth) instead of O(record).
+   *
+   * The walk uses `asRefs(address)` at each step to follow addressed
+   * children without materializing them as JS values. When a path element
+   * lands on an **inline** child (asRefs can't give a separate address —
+   * the bytes are embedded in the parent chunk), this falls back to a full
+   * `decode(address)` at that level and walks the remainder of the path
+   * through the resulting JS value. Correctness preserved; the fallback
+   * is rare for records at any scale because the encoder addresses any
+   * child whose code is longer than a varint of the next address.
+   *
+   * No reactive bookkeeping happens here — this is the pure codec layer.
+   * Callers (Streamo.get / StreamoRecord.get) register their own deps.
+   *
+   * @param {number} address  Starting address. Must be >= 0.
+   * @param {...(string|number)} path  Keys to descend through.
+   * @returns {any}
+   */
+  decodeAt (address, ...path) {
+    for (let i = 0; i < path.length; i++) {
+      if (address < 0) return undefined // primitive — can't descend
+      const refs = this.asRefs(address)
+      if (refs === address) return undefined // non-composite at this level
+      const key = path[i]
+      if (!(key in refs)) return undefined
+      const next = refs[key]
+      if (next === undefined) {
+        // Inline child: asRefs returned undefined because the bytes live
+        // inside the parent chunk, no separate slot. Full-decode at this
+        // level and walk the rest in JS.
+        let value = this.decode(address)
+        for (let j = i; j < path.length; j++) {
+          if (value == null) return undefined
+          value = value[path[j]]
+        }
+        return value
+      }
+      address = next
+    }
+    // Path consumed. Decode the leaf.
+    if (address < 0) {
+      // Negative address encodes a single-byte primitive — recover the
+      // original byte and decode it as a one-byte chunk.
+      return this.decode(new Uint8Array([-address - 1]))
+    }
+    return this.decode(address)
+  }
+
+  /**
    * Internal: like asRefs but materializes inline children when needed
    * (write context). Used by Streamo.set / setRefs during path traversal,
    * which DOES need real addresses to navigate composite values; and the

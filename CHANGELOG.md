@@ -5,6 +5,51 @@ for what's next.
 
 ---
 
+## 10.2.0 — lazy `get(...path)` (the perf fix that makes serving real)
+
+`repo.get('files', 'h.js')` was secretly doing a full-record decode and
+then walking the resulting JS value. On streamo.dev's library Record
+(527KB) that meant ~150ms of synchronous CPU per file-serving request
+— and since Node's event loop is single-threaded, concurrent requests
+serialized cleanly at that rate. The homepage's ~20-asset waterfall
+hit ~4.5 seconds total. *"interesting vs. useful"* threshold, in
+David's framing.
+
+The fix is one new primitive: `CodecRegistry.decodeAt(address, ...path)`
+walks the chunk graph by address, using `asRefs()` at each step to
+descend through composite children without materializing siblings.
+Only the leaf chunk the path lands on is fully decoded.
+`Streamo.get` and `StreamoRecord.get` now delegate to it.
+
+**Measured locally** on a synthetic 1MB record with 32 addressed
+file-shaped children:
+
+| call                                   | before  | after   |
+|----------------------------------------|---------|---------|
+| `get()` full decode                    | 68 ms   | 68 ms   |
+| `get('files', 'file17.js')` leaf       | 68 ms   | 2.1 ms  |
+| `get('mounts', 'streamo/', 'key')`     | ~68 ms  | 0.02 ms |
+| `get('files')` (returns the whole map) | 68 ms   | 68 ms   |
+
+~32× speedup on path-specific reads. Reads that return whole subtrees
+still pay the decode cost they need (and should — they're returning
+all those bytes).
+
+**Inline-child fallback.** When a composite child is stored inline
+(its bytes live in the parent chunk, no separate address), `asRefs`
+can't give it a separate address. `decodeAt` falls back to a full
+decode at that level and walks the rest of the path in JS. Correct,
+rarely hit at production scale because the encoder addresses any
+child whose code is longer than a varint of the next address.
+
+**Reactive semantics preserved.** The same `(this, 'length')` and
+`(this, JSON.stringify(path))` dependency-access calls fire on every
+get, so per-path watchers re-run on exactly the changes they used
+to. Existing test suite (270 tests) passes; one new test covers the
+inline-fallback + array-index + primitive-at-depth shapes.
+
+---
+
 ## 10.1.0 — repo-free deploy
 
 Two changes to `bin/streamo.js` that let the published CLI replace

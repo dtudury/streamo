@@ -139,12 +139,9 @@ export class Streamo extends CodecRegistry {
       this.#recaller.reportKeyAccess(this, JSON.stringify(args))
     }
     if (address < 0) return undefined
-    let value = this.decode(address)
-    for (const key of args) {
-      if (value == null) return undefined
-      value = value[key]
-    }
-    return value
+    // Lazy descent — only decode the chunks the path touches. See
+    // CodecRegistry.decodeAt's comment for the algorithm + fallback.
+    return this.decodeAt(address, ...args)
   }
 
   /**

@@ -186,6 +186,54 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(s.decode(code), 'hello')
   })
 
+  test('get(...path) descends lazily — agrees with full-decode walk, including inline children + array indices + nested primitives', ({ assert }) => {
+    const s = new Streamo()
+    // A shape that exercises:
+    //   - Large addressed children (files map with sizable values)
+    //   - Small inline children (mounts entry — forces the inline-fallback branch)
+    //   - Arrays of mixed primitives + objects (journalists)
+    //   - Nested primitives reached via path (UINT7 / strings / booleans)
+    const value = {
+      files: {
+        'a.txt': 'unique-a-' + 'x'.repeat(200),
+        'b.txt': 'unique-b-' + 'y'.repeat(200),
+      },
+      mounts: { 'streamo/': { key: 'a'.repeat(66) } },
+      journalists: ['alice', 'bob', { name: 'carol', active: true }],
+      counters: { hits: 42, misses: 7 },
+      tagline: 'hello',
+    }
+    s.set(value)
+    // For every path the existing get used to walk, the new lazy get must
+    // return the same JS value. Whole tree, deep file leaf, inline mount
+    // leaf, array index, nested object inside array, primitive at depth.
+    const paths = [
+      [],
+      ['files'],
+      ['files', 'a.txt'],
+      ['files', 'b.txt'],
+      ['mounts'],
+      ['mounts', 'streamo/'],
+      ['mounts', 'streamo/', 'key'],
+      ['journalists'],
+      ['journalists', 0],
+      ['journalists', 2],
+      ['journalists', 2, 'name'],
+      ['journalists', 2, 'active'],
+      ['counters', 'hits'],
+      ['counters', 'misses'],
+      ['tagline'],
+      ['nope'],                                 // missing key → undefined
+      ['files', 'nope.txt'],                    // missing nested key
+      ['journalists', 99],                      // out-of-range array index
+      ['tagline', 'sub'],                       // descending into a primitive
+    ]
+    for (const path of paths) {
+      const expected = path.reduce((v, k) => (v == null ? undefined : v[k]), value)
+      assert.deepEqual(s.get(...path), expected, 'path: ' + JSON.stringify(path))
+    }
+  })
+
   test('sign and verify', async ({ assert }) => {
     const s = new StreamoRecord()
     s.set({ hello: 'world' })

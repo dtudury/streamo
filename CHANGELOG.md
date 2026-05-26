@@ -5,6 +5,79 @@ for what's next.
 
 ---
 
+## 11.0.1 — the post-11.0 stabilization arc (and one substrate primitive)
+
+A patch number for a release that did more than a patch deserves —
+the version bump intent was 11.1.0 but a finger slipped at publish
+time. Documenting honestly: this release contains all of the
+following.
+
+**New substrate primitive** (would normally warrant a minor bump on
+its own):
+- **`Recaller.when(predicate, { signal?, name? })`** — promise-shaped
+  wait for a reactive predicate to become truthy. Resolves on the
+  first reactive re-run that sees it flip; rejects on AbortSignal.
+  Composes with `Promise.race` for timeout. The second-altitude
+  primitive on top of named reactive cells like `isReadyToAuthor`:
+  *"the bug isn't in the stroke, it's in the orientation."* fileSync's
+  ready-to-author gate dropped from ~25 lines of watcher boilerplate
+  to ~12 lines that read like intent.
+
+**Type-checking infrastructure** (additive):
+- **`npm run typecheck`** — `tsc -p jsconfig.json` runs JSDoc-based
+  type checking. JSDoc annotations become load-bearing instead of
+  decorative. `@types/node` + `@types/express` + `typescript` added
+  as devDependencies. Substrate (every file in `public/streamo/`)
+  type-checks cleanly. ~35 errors remain in apps/scripts/bin, queued
+  for incremental cleanup as we touch each file.
+
+**Bug fixes:**
+- `archiveSync` slim+compact regression (shipped at 11.0): the
+  duck-type check `typeof stream.commit !== 'function'` correctly
+  skipped Records pre-rip, but post-rip slim StreamoRecord lost
+  `.commit` and the check started misfiring — wiping the cache on
+  load. Fix is shape-aware via `'lastCommit' in stream`.
+- `archiveSync` now refuses to silently truncate the on-disk file
+  when in-memory state diverges from disk in a way that can't be
+  explained by intentional compaction. Defense-in-depth against
+  silent corruption from racing processes / in-memory mutations.
+  Loud crash with operator-friendly diagnostic instead of bytes-on-
+  disk surprise.
+- `WritableStreamoRecord.scheduleSign` no longer infinite-loops after
+  the underlying Addressifier is closed. Affected any one-shot
+  script using Writable + signer + archiveSync (the close path
+  closed the Addressifier; sign reschedules forever).
+- `session._resyncRepo` in `registrySync` was referencing closure
+  variables (`readers`, `writers`, `sendJson`, `syncKey`) defined
+  inside `handleRegistryPeer`'s scope — would have thrown
+  `ReferenceError` the first time anyone hit a real `repo.update()`
+  conflict scenario. Dead code today (the concurrent-retry test is
+  `.skip` from 10.0). Caught by routine type-check pass; fix moves
+  `_resyncRepo` inside `handleRegistryPeer` where the state lives
+  and has the session delegate to it.
+
+**Test coverage additions:**
+- Focused observer-doesn't-push negative-assertion test for the
+  11.0 type-level invariant (counts binary frames inbound on the
+  observer's WS at the server; asserts zero; discipline-checked by
+  temporarily disabling the guard and watching the test fail with
+  the expected diagnostic).
+- Four serializer divergence-stress tests covering the canonical
+  reconciliation path (A wins, B reconciles on top, both lineages
+  survive), sustained contention (A→B→C→D), echo handling above
+  the accumulator, and empty-batch semantics.
+
+**Internal:**
+- Substrate-wide JSDoc cleanup: 64 substrate type errors → 0. Most
+  fixes were stale annotations from earlier refactors; several
+  were real catches (the `_resyncRepo` bug above; the
+  `slim.attachSigner` cast at StreamoServer; `s3Sync` /
+  `stateFileSync` had `Stream.js` import typos in their JSDoc).
+
+286 tests pass. Suite exits clean.
+
+---
+
 ## 11.0.0 — slim StreamoRecord, WritableStreamoRecord, observer-doesn't-push by type
 
 The slimming exploration prep notes called the question: *"what's the

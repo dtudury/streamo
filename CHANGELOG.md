@@ -5,6 +5,52 @@ for what's next.
 
 ---
 
+## 10.1.0 — repo-free deploy
+
+Two changes to `bin/streamo.js` that let the published CLI replace
+`chat/server.js` as the prod entry point on streamo.dev. Together
+with the live cutover (streamo.dev now runs `node bin/streamo.js
+--env-file .env.prod` in relay-only mode, with `STREAMO_HOME_KEY`
+opening the home Record by pubkey and signing creds commented out),
+these land *the relay holds no source* as a working deployment,
+not just an architectural claim.
+
+**`--enable-push` flag (env: `STREAMO_ENABLE_PUSH=1`).** Activates
+Web Push when `--web` is set. VAPID secrets come from env only
+(`STREAMO_VAPID_PUBLIC` / `_PRIVATE` / `_SUBJECT`) — never argv,
+since the signing-key shape doesn't belong in process listings.
+Refuses to start if the flag is set but VAPID env vars are missing,
+so an env mistake fails fast instead of silently running without
+push. Subscriptions persist as a plain JSON file in the data-dir
+(off the registry, since endpoint URLs + auth secrets must stay
+private).
+
+**`serveRepoFiles` is unconditional when `--web` is set.** Pre-10.1.0
+it was gated on `--files`. The new default lets relay-only mode
+(`--home-key`) serve a homepage whose bytes arrived via origin sync
+— exactly the shape `chat/server.js` was using all along. With the
+9.x static-fallback removal in place, this is also the only path
+that serves files at all; misses 404 cleanly.
+
+Together these mean: the same `npx @dtudury/streamo` binary that
+authors a homepage from a laptop can also run as the public-facing
+relay on streamo.dev. One binary, two configurations, no source
+code on the relay box.
+
+**What's still left in the repo-free arc** (queued in ROADMAP, not
+blocking):
+- Flip streamo.dev's systemd `ExecStart` from
+  `node bin/streamo.js …` to `npx -y @dtudury/streamo@10.1.0 …`,
+  then `rm -rf ~/apps/streamo/`. Becomes possible once 10.1.0 is
+  published.
+- Extract `chat/server.js`'s author-side workflow into one-shot
+  `scripts/seed-*.js` files (history, tarot, flashcards decks,
+  journal, journalists). Until those exist, changing the bundled
+  set requires an ad-hoc author session — but the bytes already
+  in the archive serve fine without it.
+
+---
+
 ## 10.0.0 — lock up our footguns
 
 Four held-for-major items that the names couldn't enforce on their

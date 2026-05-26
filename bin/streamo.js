@@ -14,6 +14,8 @@ import { fileSync } from '../public/streamo/fileSync.js'
 import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
+import { join } from 'path'
+import { PushStore, pushRoutes, notifyOnMessages } from '../public/apps/chat/push.js'
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)))
 
@@ -95,6 +97,10 @@ program
     new Option('--web [port]', 'start HTTP + WebSocket server for browsers and peers')
       .env('STREAMO_WEB')
       .preset('8080')
+  )
+  .addOption(
+    new Option('--enable-push', 'enable Web Push notifications when --web is set. Requires STREAMO_VAPID_PUBLIC, STREAMO_VAPID_PRIVATE (and optional STREAMO_VAPID_SUBJECT) in env — secrets stay off argv.')
+      .env('STREAMO_ENABLE_PUSH')
   )
   .addOption(
     new Option('--outlet [port]', 'accept inbound WebSocket peer connections')
@@ -263,14 +269,39 @@ if (options.s3Bucket) {
 
 if (options.web) {
   const webOptions = {}
-  // When the user is mirroring a folder into the streamo, serve those
-  // bytes via the repo on the same port — the page-as-StreamoRecord shape.
-  // Misses fall through to express.static so the streamo lib + bundled
-  // apps still work for forks that don't override them.
-  if (options.files) {
-    webOptions.serveRepoFiles = { repo: server.streamo }
-    console.log(`\x1b[32mserving from repo: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
+
+  // Optional Web Push. VAPID secrets come from env only (never argv).
+  // Subscriptions are stored as a plain JSON file in the data-dir — they
+  // hold endpoint URLs + auth secrets and must stay off the public
+  // registry. notifyOnMessages walks chat-shaped repos in the registry
+  // for new messages; on non-chat deployments it's a no-op watcher.
+  // Check first so an env mistake fails fast, before the server starts.
+  if (options.enablePush) {
+    const vapidPub  = process.env.STREAMO_VAPID_PUBLIC
+    const vapidPriv = process.env.STREAMO_VAPID_PRIVATE
+    if (!vapidPub || !vapidPriv) {
+      console.error('\x1b[31m--enable-push set but STREAMO_VAPID_PUBLIC / STREAMO_VAPID_PRIVATE not in env — refusing to start\x1b[0m')
+      process.exit(2)
+    }
+    const pushStore = new PushStore(join(options.dataDir, 'push-subscriptions.json'))
+    const vapid = {
+      publicKey: vapidPub,
+      privateKey: vapidPriv,
+      subject: process.env.STREAMO_VAPID_SUBJECT ?? 'mailto:streamo@streamo.dev'
+    }
+    webOptions.routes = pushRoutes(pushStore, vapid.publicKey)
+    notifyOnMessages(server.registry, pushStore, vapid)
+    console.log(`\x1b[32mweb push: enabled (${pushStore.all().length} stored subscription(s))\x1b[0m`)
   }
+
+  // Always serve from the record's value.files when --web is set — the
+  // page-as-StreamoRecord shape. Misses fall through to express.static so
+  // the streamo lib + bundled apps still work for forks that don't
+  // override them. In relay-only mode (--home-key) this lets a bare relay
+  // serve a homepage whose bytes arrived via origin sync.
+  webOptions.serveRepoFiles = { repo: server.streamo }
+  console.log(`\x1b[32mserving from repo: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
+
   await server.web(+options.web, webOptions)
 }
 

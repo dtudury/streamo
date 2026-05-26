@@ -87,15 +87,19 @@ Two small threads remain, neither blocking:
 
 - **`npm run deploy`'s precheck** aborts on a dirty working tree.
   The prod runtime's flushToDisk writes the full meta to
-  `public/homepage/streamo.json` (and may rewrite other homepage
-  files like sw.js after a fresh deploy). Manually discarding with
-  `ssh streamo@streamo.dev 'cd ~/apps/streamo && git checkout
+  `public/homepage/streamo.json` (and rewrites other homepage files
+  whose runtime-canonicalized bytes differ from git's view — e.g.
+  `streamo.svg` surfaced on the 10.0.0 deploy, in addition to the
+  already-known streamo.json and sw.js cases). Manually discarding
+  with `ssh streamo@streamo.dev 'cd ~/apps/streamo && git checkout
   public/homepage/'` clears it. Worth a small fix when convenient —
   teach deploy.sh to discard expected runtime-written files
   automatically (stash + drop), or move the homepage's mount
   declaration into the seed step (no git-tracked streamo.json for
   this Record; FolderRecord's invariant remains intact via code →
-  flushToDisk).
+  flushToDisk). **Largely dissolves under the repo-free deploy arc
+  above** — when the prod box no longer holds a git checkout, there's
+  no working tree to be dirty.
 - **Investigate-when-bored:** the prod's `value.files['sw.js']`
   was empty bytes before Phase E's deploy — Phase E's disk-wins
   init committed fresh bytes from git's just-pulled version. Some

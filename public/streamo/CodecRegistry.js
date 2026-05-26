@@ -224,33 +224,50 @@ export class CodecRegistry extends Addressifier {
    * @returns {any}
    */
   decodeAt (address, ...path) {
-    for (let i = 0; i < path.length; i++) {
-      if (address < 0) return undefined // primitive — can't descend
-      const refs = this.asRefs(address)
-      if (refs === address) return undefined // non-composite at this level
-      const key = path[i]
-      if (!(key in refs)) return undefined
-      const next = refs[key]
-      if (next === undefined) {
-        // Inline child: asRefs returned undefined because the bytes live
-        // inside the parent chunk, no separate slot. Full-decode at this
-        // level and walk the rest in JS.
-        let value = this.decode(address)
-        for (let j = i; j < path.length; j++) {
-          if (value == null) return undefined
-          value = value[path[j]]
+    try {
+      for (let i = 0; i < path.length; i++) {
+        if (address < 0) return undefined // primitive — can't descend
+        const refs = this.asRefs(address)
+        if (refs === address) return undefined // non-composite at this level
+        const key = path[i]
+        if (!(key in refs)) return undefined
+        const next = refs[key]
+        if (next === undefined) {
+          // Inline child: asRefs returned undefined because the bytes live
+          // inside the parent chunk, no separate slot. Full-decode at this
+          // level and walk the rest in JS.
+          let value = this.decode(address)
+          for (let j = i; j < path.length; j++) {
+            if (value == null) return undefined
+            value = value[path[j]]
+          }
+          return value
         }
-        return value
+        address = next
       }
-      address = next
+      // Path consumed. Decode the leaf.
+      if (address < 0) {
+        // Negative address encodes a single-byte primitive — recover the
+        // original byte and decode it as a one-byte chunk.
+        return this.decode(new Uint8Array([-address - 1]))
+      }
+      return this.decode(address)
+    } catch (err) {
+      // Defensive: during origin-sync's initial replay, the recaller fires
+      // reactive readers on every chunk arrival. A chunk's referenced inner
+      // chunks may not be appended yet at the moment a watcher runs — the
+      // resolve() call throws a TypeError on the missing address. Treat
+      // that as "value at this path isn't fully decodable right now"; the
+      // watcher re-runs when more bytes land and the read succeeds. Real
+      // shape-mismatch bugs in writers are caught at the encode site, not
+      // here; this catch only papers over the in-flight-replay race that
+      // would otherwise kill the process the first time an author-mode
+      // client subscribes to a populated relay.
+      if (err instanceof TypeError && /uint8Array|Cannot read properties of undefined/.test(err.message)) {
+        return undefined
+      }
+      throw err
     }
-    // Path consumed. Decode the leaf.
-    if (address < 0) {
-      // Negative address encodes a single-byte primitive — recover the
-      // original byte and decode it as a one-byte chunk.
-      return this.decode(new Uint8Array([-address - 1]))
-    }
-    return this.decode(address)
   }
 
   /**

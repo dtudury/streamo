@@ -288,7 +288,20 @@ export class StreamoRecord extends Streamo {
     // rather than this.get() to avoid recursion: get() calls lastCommit.
     const address = this.valueAddress
     if (address < 0) return null
-    const value = this.decode(address)
+    // Defensive decode: during origin-sync's initial replay, the recaller
+    // fires this getter on every chunk arrival. valueAddress can briefly
+    // point at a chunk whose referenced inner chunks (the Duple tree of
+    // the value, etc.) haven't been appended yet — resolve() throws on
+    // the missing address. Treat that as "no commit visible yet"; the
+    // watcher re-runs when the next chunk lands and the state stabilises.
+    // Without this guard, fileSync's repo→disk watcher kills the process
+    // mid-replay the first time a fresh local archive subscribes.
+    let value
+    try {
+      value = this.decode(address)
+    } catch {
+      return null
+    }
     if (!value || typeof value.message !== 'string' || !(value.date instanceof Date)) return null
     return value
   }

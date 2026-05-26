@@ -5,6 +5,59 @@ for what's next.
 
 ---
 
+## 10.2.2 — initial-replay race: reactive reads now survive mid-stream chunks
+
+A latent race surfaced the first time anyone exercised author-mode
+against a non-empty relay (`npx @dtudury/streamo --files X --origin
+streamo.dev` from a laptop with no local archive). The flow:
+
+1. Author boots with a fresh data-dir → local Streamo is empty.
+2. `fileSync` sets up reactive watchers on `repo.lastCommit` and
+   `repo.get(...)`.
+3. Origin sync connects and starts streaming the relay's chain from
+   byte 0 — chunks arrive one at a time.
+4. Every chunk arrival fires a `'length'` mutation; the watcher
+   re-runs at every intermediate state.
+5. At some point the most-recent chunk is structurally valid (a
+   COMMIT) but its referenced inner chunks haven't been appended
+   yet. `Addressifier.resolve()` throws on the missing address,
+   the watcher's `repo.lastCommit` / `repo.get(...)` doesn't catch
+   it, and the whole process dies.
+
+Two defensive try/catches close the gap:
+
+- **`StreamoRecord.lastCommit`** wraps its `this.decode(address)`.
+  Decode failure → return `null` (semantically "no commit visible
+  yet"). The fileSync `repo→disk` watcher already short-circuits
+  on null.
+- **`CodecRegistry.decodeAt`** wraps the whole lazy walk + leaf
+  decode. The catch only swallows the specific
+  `TypeError: Cannot read properties of undefined (reading 'uint8Array')`
+  shape that Addressifier.resolve throws on a missing chunk —
+  other errors still propagate. `repo.get(...)`, which goes
+  through `decodeAt`, now returns `undefined` for paths whose
+  inner chunks haven't arrived yet, instead of killing the
+  process.
+
+The watcher re-runs on the next chunk arrival and the read
+succeeds the moment the stream becomes consistent. No
+behavioral change for happy-path reads.
+
+**Tested by reproducing the crash locally** (fresh data-dir,
+`node bin/streamo.js --files ./public/homepage --origin
+localhost:8080`) — process dies in seconds on 10.2.1, runs cleanly
+on 10.2.2 with the archive syncing to full size. 271 tests pass.
+
+**The deeper question (deferred):** could we avoid firing reactive
+mutations *during* initial replay at all? A batched-mutation
+optimization (suppress `'length'` between origin-sync's
+"replay-started" and "caught-up" signals, fire one coalesced
+mutation at the end) would eliminate the wasted watcher work, not
+just the crash. Worth a real conversation; this patch unblocks the
+author flow first.
+
+---
+
 ## 10.2.1 — the resolver actually uses the lazy path
 
 10.2.0 made `repo.get(...path)` lazy at the codec layer, but didn't

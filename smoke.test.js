@@ -1,6 +1,7 @@
 import { describe } from './public/streamo/utils/testing.js'
 import { Streamo } from './public/streamo/Streamo.js'
 import { StreamoRecord } from './public/streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from './public/streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './public/streamo/StreamoRecordRegistry.js'
 import { Recaller } from './public/streamo/utils/Recaller.js'
 import { archiveSync } from './public/streamo/archiveSync.js'
@@ -65,14 +66,14 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex } = await makeKey()
     // Server-side stream needs StreamoRecord because outletSync's verified writer
     // (which gates incoming peer chunks) now lives on StreamoRecord, not Streamo.
-    const stream = new StreamoRecord()
+    const stream = new WritableStreamoRecord()
     stream.set({ synced: true })
     const { port, close } = await startServer(publicKeyHex, stream)
     try {
       // Client is also a StreamoRecord so .get() returns the committed value rather
       // than the raw top chunk (the server-side stream auto-commits, so the
       // top chunk on the wire is now a COMMIT record wrapping {synced:true}).
-      const client = new StreamoRecord()
+      const client = new WritableStreamoRecord()
       const writer = client.makeWritableStream().getWriter()
       const ws = new WebSocket(`ws://localhost:${port}`)
 
@@ -111,7 +112,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('set() after sign() reads/writes user data, not the signature chunk', async ({ assert }) => {
     const { signer } = await makeKey()
-    const stream = new StreamoRecord()
+    const stream = new WritableStreamoRecord()
     stream.set({ count: 0 })
     await stream.sign(signer, 'smoke')
     // Before the fix, set() with a path would crash here because byteLength - 1
@@ -124,7 +125,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('serveRepoFiles middleware serves homepage StreamoRecord bytes via HTTP', async ({ assert }) => {
     const { publicKeyHex } = await makeKey('serveRepo-smoke')
-    const homepage = new StreamoRecord()
+    const homepage = new WritableStreamoRecord()
     const working = homepage.checkout()
     working.set({ files: { 'index.html': '<!doctype html><html><head><title>x</title></head><body>hi</body></html>' } })
     homepage.commit(working, 'seed homepage')
@@ -161,7 +162,7 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex: primaryKey } = await makeKey('multi-home-primary')
     const { signer: forkSigner, publicKeyHex: forkKey } = await makeKey('multi-home-fork')
 
-    const fork = new StreamoRecord()
+    const fork = new WritableStreamoRecord()
     fork.attachSigner(forkSigner, 'multi-home-fork')
     const working = fork.checkout()
     working.set({ files: { 'index.html': '<!doctype html><title>fork</title><p>forked site</p>' } })
@@ -204,7 +205,7 @@ describe(import.meta.url, ({ test }) => {
     // serveRepoFiles middleware which doesn't match a request still calls
     // next(), so adjacent routes (like /api/info) keep working.
     const { publicKeyHex } = await makeKey('fallthrough-smoke')
-    const homepage = new StreamoRecord()
+    const homepage = new WritableStreamoRecord()
     const working = homepage.checkout()
     working.set({ files: { 'something-else.html': 'not the request' } })
     homepage.commit(working, 'seed')
@@ -222,14 +223,14 @@ describe(import.meta.url, ({ test }) => {
 
   test('StreamoRecord.merge accepts a full URL source and auto-fills remoteParent', async ({ assert }) => {
     const { publicKeyHex } = await makeKey('merge-url')
-    const sourceRepo = new StreamoRecord()
+    const sourceRepo = new WritableStreamoRecord()
     const sw = sourceRepo.checkout()
     sw.set({ files: { 'index.html': '<from-url>' }, members: ['ignored'] })
     sourceRepo.commit(sw, 'seed')
 
     const { port, close } = await startServer(publicKeyHex, sourceRepo)
     try {
-      const target = new StreamoRecord()
+      const target = new WritableStreamoRecord()
       await target.merge(`http://localhost:${port}/streams/${publicKeyHex}`, { from: 'files' })
 
       assert.deepEqual(target.get(), { files: { 'index.html': '<from-url>' } })
@@ -245,14 +246,14 @@ describe(import.meta.url, ({ test }) => {
 
   test('StreamoRecord.merge with host shorthand discovers primary key via /api/info', async ({ assert }) => {
     const { publicKeyHex } = await makeKey('merge-host')
-    const sourceRepo = new StreamoRecord()
+    const sourceRepo = new WritableStreamoRecord()
     const sw = sourceRepo.checkout()
     sw.set({ files: { 'p.html': '<host-mode>' } })
     sourceRepo.commit(sw, 'seed')
 
     const { port, close } = await startServer(publicKeyHex, sourceRepo)
     try {
-      const target = new StreamoRecord()
+      const target = new WritableStreamoRecord()
       // host shorthand — no path; merge fetches /api/info to find the key
       await target.merge(`localhost:${port}`, { from: 'files' })
 
@@ -286,7 +287,7 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex } = await makeKey('close-contract')
     const dir = await mkdtemp(join(tmpdir(), 'smoke-'))
     try {
-      const stream = new StreamoRecord()
+      const stream = new WritableStreamoRecord()
       const { close } = await archiveSync(stream, dir, publicKeyHex)
       // 50 sets × ~1KB payload — enough to exercise the writer loop's
       // batching path. With 8.4 wire-batching this drains fast, but
@@ -314,7 +315,7 @@ describe(import.meta.url, ({ test }) => {
     try {
       // First session: write a few commits to the archive.
       {
-        const stream = new StreamoRecord()
+        const stream = new WritableStreamoRecord()
         const { close } = await archiveSync(stream, dir, publicKeyHex)
         stream.set({ phase: 'first', n: 1 })
         stream.set({ phase: 'first', n: 2 })
@@ -326,7 +327,7 @@ describe(import.meta.url, ({ test }) => {
       // Second session: reopen, verify the load restored wireByteLength,
       // append more, close, and confirm the original bytes survived
       // verbatim at the head of the file.
-      const stream = new StreamoRecord()
+      const stream = new WritableStreamoRecord()
       const { close } = await archiveSync(stream, dir, publicKeyHex)
       assert.equal(stream.wireByteLength, before.length,
         'load restored in-memory wireByteLength to file size')
@@ -341,7 +342,7 @@ describe(import.meta.url, ({ test }) => {
 
       // Round-trip: fresh Streamo loading the final file sees both
       // sessions' commits as a continuous chain.
-      const stream3 = new StreamoRecord()
+      const stream3 = new WritableStreamoRecord()
       await archiveSync(stream3, dir, publicKeyHex)
       assert.deepEqual(stream3.get(), { phase: 'second', n: 3 })
       const history = [...stream3.history()].map(c => c.message).reverse()

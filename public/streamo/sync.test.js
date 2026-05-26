@@ -1,4 +1,6 @@
 import { describe } from './utils/testing.js'
+import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { outletSync } from './outletSync.js'
@@ -6,7 +8,23 @@ import { originSync } from './originSync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-const newRegistry = () => new StreamoRecordRegistry({ recaller: new Recaller('sync-test') })
+// Per-registry writable-keys set: openSigned adds its key before the
+// factory materializes it, so the produced Record is Writable and
+// supports attachSigner. Foreign keys (e.g., the relay-side mirror in
+// the dumb-pipe test) stay slim.
+const writableKeysFor = new WeakMap()
+const newRegistry = () => {
+  const recaller = new Recaller('sync-test')
+  const writableKeys = new Set()
+  const registry = new StreamoRecordRegistry({
+    recaller,
+    factory: key => writableKeys.has(key)
+      ? new WritableStreamoRecord({ recaller })
+      : new StreamoRecord({ recaller })
+  })
+  writableKeysFor.set(registry, writableKeys)
+  return registry
+}
 
 // Under the relay-as-authority model, the relay's StreamoRecordSerializer gates every
 // incoming batch via chain + crypto checks — so these end-to-end sync tests
@@ -24,6 +42,7 @@ async function ensureKey () {
 
 async function openSigned (registry) {
   const key = await ensureKey()
+  writableKeysFor.get(registry).add(key)
   const repo = await registry._materialize(key)
   repo.attachSigner(SIGNER, NAME)
   return repo

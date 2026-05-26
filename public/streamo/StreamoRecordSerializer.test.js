@@ -1,5 +1,6 @@
 import { describe } from './utils/testing.js'
 import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordSerializer } from './StreamoRecordSerializer.js'
 import { Signer } from './Signer.js'
 
@@ -28,13 +29,13 @@ describe(import.meta.url, ({ test }) => {
     const { publicKey } = await signer.keysFor('serializer-test')
 
     // Build a batch by having an author write + sign locally
-    const author = new StreamoRecord()
+    const author = new WritableStreamoRecord()
     author.set({ v: 1 })
     await author.sign(signer, 'serializer-test')
     const batch = extractBatch(author)
 
     // Target relay (fresh, empty)
-    const relay = new StreamoRecord()
+    const relay = new WritableStreamoRecord()
     const serializer = new StreamoRecordSerializer(relay, publicKey)
     const result = await serializer.submit(batch)
     assert.equal(result.accepted, true, 'first batch on empty repo must be accepted')
@@ -47,14 +48,14 @@ describe(import.meta.url, ({ test }) => {
     const { publicKey } = await signer.keysFor('race-test')
 
     // Both authors start fresh and both write commit_1 — they're racing
-    const a = new StreamoRecord()
+    const a = new WritableStreamoRecord()
     a.set({ v: 'apple' })
     await a.sign(signer, 'race-test')
-    const b = new StreamoRecord()
+    const b = new WritableStreamoRecord()
     b.set({ v: 'banana' })
     await b.sign(signer, 'race-test')
 
-    const relay = new StreamoRecord()
+    const relay = new WritableStreamoRecord()
     const serializer = new StreamoRecordSerializer(relay, publicKey)
     const first = await serializer.submit(extractBatch(a))
     assert.equal(first.accepted, true, 'A wins the race')
@@ -71,14 +72,14 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'pass', 1)
     const { publicKey } = await signer.keysFor('concurrent')
 
-    const a = new StreamoRecord()
+    const a = new WritableStreamoRecord()
     a.set({ v: 'apple' })
     await a.sign(signer, 'concurrent')
-    const b = new StreamoRecord()
+    const b = new WritableStreamoRecord()
     b.set({ v: 'banana' })
     await b.sign(signer, 'concurrent')
 
-    const relay = new StreamoRecord()
+    const relay = new WritableStreamoRecord()
     const serializer = new StreamoRecordSerializer(relay, publicKey)
 
     // Submit both without awaiting — they should be processed in order
@@ -97,7 +98,7 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'pass', 1)
     const { publicKey } = await signer.keysFor('pipeline')
 
-    const author = new StreamoRecord()
+    const author = new WritableStreamoRecord()
     author.set({ v: 1 })
     await author.sign(signer, 'pipeline')
     const batch1ByteLengthEnd = author.byteLength
@@ -131,7 +132,7 @@ describe(import.meta.url, ({ test }) => {
       return { chunks, sig }
     })()
 
-    const relay = new StreamoRecord()
+    const relay = new WritableStreamoRecord()
     const serializer = new StreamoRecordSerializer(relay, publicKey)
     const [r1, r2] = await Promise.all([
       serializer.submit(batch1),
@@ -146,7 +147,7 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('alice', 'pass', 1)
     const { publicKey } = await signer.keysFor('forge-test')
 
-    const author = new StreamoRecord()
+    const author = new WritableStreamoRecord()
     author.set({ v: 1 })
     await author.sign(signer, 'forge-test')
     const batch = extractBatch(author)
@@ -156,7 +157,7 @@ describe(import.meta.url, ({ test }) => {
     badSig[40] ^= 0xff
     const badBatch = { chunks: batch.chunks, sig: badSig }
 
-    const relay = new StreamoRecord()
+    const relay = new WritableStreamoRecord()
     const serializer = new StreamoRecordSerializer(relay, publicKey)
     const result = await serializer.submit(badBatch)
     assert.equal(result.accepted, false)

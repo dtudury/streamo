@@ -11,6 +11,8 @@ import { h }              from '../../streamo/h.js'
 import { mount }          from '../../streamo/mount.js'
 import { Signer }         from '../../streamo/Signer.js'
 import { Recaller }       from '../../streamo/utils/Recaller.js'
+import { StreamoRecord }  from '../../streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry }   from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync }   from '../../streamo/registrySync.js'
 import { liveValue }      from '../../streamo/LiveSource.js'
@@ -231,7 +233,17 @@ async function login (e) {
     const { publicKey } = await signer.keysFor('chat')
     myKey  = bytesToHex(publicKey)
     myName = username
-    registry = new StreamoRecordRegistry({ recaller, name: 'chat' })
+    // The chat client authors to its own key — produce WritableStreamoRecord
+    // for myKey, slim StreamoRecord for every peer we subscribe to. The
+    // observer-doesn't-push guard in registrySync.subscribe relies on the
+    // type discriminator, so peers stay read-only by construction.
+    registry = new StreamoRecordRegistry({
+      recaller,
+      name: 'chat',
+      factory: key => key === myKey
+        ? new WritableStreamoRecord({ recaller })
+        : new StreamoRecord({ recaller })
+    })
 
     // Track who we've already announced ourselves back to, so we don't
     // ping-pong forever. Without this set, every peer-back ricochets into

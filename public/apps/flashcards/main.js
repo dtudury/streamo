@@ -11,6 +11,8 @@
 import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
+import { StreamoRecord } from '../../streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
@@ -174,6 +176,7 @@ async function ensureReviewsRepo (deckId) {
   const streamName = `flashcards:reviews:${deckId}`
   const { publicKey } = await signer.keysFor(streamName)
   const repoKey = bytesToHex(publicKey)
+  registry._writableKeys.add(repoKey)
   const repo = await session.subscribe(repoKey)
   repo.attachSigner(signer, streamName)
   reviewRepos.set(deckId, repo)
@@ -202,7 +205,21 @@ async function login (e) {
   // the deck-index doesn't have `flashcardsDecks`, so each clause
   // applies cleanly to its source. From here, discovery is *reactive*:
   // bytes flow in, the home view re-renders.
-  setRegistry(new StreamoRecordRegistry({ recaller, name: 'flashcards' }))
+  // Track which keys the user authors to — those get
+  // WritableStreamoRecord; subscribed peers (bundled decks, the home
+  // repo) get slim StreamoRecord and stay read-only by type.
+  const writableKeys = new Set()
+  setRegistry(new StreamoRecordRegistry({
+    recaller,
+    name: 'flashcards',
+    factory: key => writableKeys.has(key)
+      ? new WritableStreamoRecord({ recaller })
+      : new StreamoRecord({ recaller })
+  }))
+  // Expose so ensureReviewsRepo / forkDeck / the fork-signer watcher
+  // can declare their keys Writable BEFORE the factory materializes
+  // them.
+  registry._writableKeys = writableKeys
   session = await registrySync(
     registry,
     location.hostname,
@@ -212,7 +229,13 @@ async function login (e) {
         const fd = repo.get('flashcardsDecks') ?? {}
         for (const deckKey of Object.values(fd)) subscribe(deckKey)
         const myDecks = repo.get('decks') ?? []
-        for (const deckKey of myDecks) subscribe(deckKey)
+        for (const deckKey of myDecks) {
+          // Every entry in myDeckIndex.decks is a fork the user owns
+          // (they authored it) — pre-declare Writable so the factory
+          // produces the right class when the subscribe materializes.
+          writableKeys.add(deckKey)
+          subscribe(deckKey)
+        }
       }
     }
   )
@@ -233,6 +256,7 @@ async function login (e) {
   const idxStream = 'flashcards:deck-index'
   const { publicKey: idxPub } = await signer.keysFor(idxStream)
   const idxKey = bytesToHex(idxPub)
+  registry._writableKeys.add(idxKey)
   myDeckIndex = await session.subscribe(idxKey)
   myDeckIndex.attachSigner(signer, idxStream)
 
@@ -344,6 +368,7 @@ async function forkDeck (upstreamId) {
   const forkStream = `flashcards:my-deck:${upstreamId}:${Date.now()}`
   const { publicKey } = await signer.keysFor(forkStream)
   const newDeckKey = bytesToHex(publicKey)
+  registry._writableKeys.add(newDeckKey)
 
   const forkRepo = await session.subscribe(newDeckKey)
   forkRepo.attachSigner(signer, forkStream)

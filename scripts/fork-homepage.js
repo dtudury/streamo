@@ -39,7 +39,7 @@
  */
 import { question } from 'readline-sync'
 import { Signer } from '../public/streamo/Signer.js'
-import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../public/streamo/WritableStreamoRecord.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { bytesToHex } from '../public/streamo/utils.js'
 
@@ -84,7 +84,7 @@ console.log(`    ${myKeyHex}`)
 console.log('')
 
 // ── open local fork repo ──────────────────────────────────────────
-const myRepo = new StreamoRecord()
+const myRepo = new WritableStreamoRecord()
 await archiveSync(myRepo, dataDir, myKeyHex)
 myRepo.attachSigner(signer, streamName)
 

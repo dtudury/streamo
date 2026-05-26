@@ -3,6 +3,8 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { rmSync, writeFileSync } from 'fs'
 import { Recaller } from '../../streamo/utils/Recaller.js'
+import { StreamoRecord } from '../../streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { Signer } from '../../streamo/Signer.js'
 import { bytesToHex } from '../../streamo/utils.js'
@@ -30,12 +32,29 @@ function waitFor (fn, ms = 1000) {
   })
 }
 
+// Build a test registry that produces WritableStreamoRecord for any
+// key chatRepo declares — every test in this file authors via the
+// helper. Slim for anything else.
+function newTestRegistry () {
+  const recaller = new Recaller('push-test')
+  const writableKeys = new Set()
+  const registry = new StreamoRecordRegistry({
+    recaller,
+    factory: key => writableKeys.has(key)
+      ? new WritableStreamoRecord({ recaller })
+      : new StreamoRecord({ recaller })
+  })
+  registry._writableKeys = writableKeys
+  return registry
+}
+
 // A signer + a helper to open a signed "chat" repo (one with a messages
 // array) inside a registry, so notifyOnMessages has something to watch.
 const SIGNER = new Signer('push-test', 'pw', 1)
 async function chatRepo (registry, name) {
   const { publicKey } = await SIGNER.keysFor(name)
   const hex = bytesToHex(publicKey)
+  registry._writableKeys.add(hex)
   const repo = await registry._materialize(hex)
   repo.attachSigner(SIGNER, name)
   return { repo, hex }
@@ -114,7 +133,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages pushes when a fresh message lands', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new StreamoRecordRegistry({ recaller: new Recaller("push-test") })
+      const registry = newTestRegistry()
       const sent = []
       const send = async (subscription, payload) => { sent.push({ subscription, payload }); return 201 }
 
@@ -136,7 +155,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages does not notify a message\'s own author', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new StreamoRecordRegistry({ recaller: new Recaller("push-test") })
+      const registry = newTestRegistry()
       const sent = []
       const send = async () => { sent.push(1); return 201 }
 
@@ -156,7 +175,7 @@ describe(import.meta.url, ({ test }) => {
   test('notifyOnMessages ignores an old message (history, not news)', async ({ assert }) => {
     const path = tempPath()
     try {
-      const registry = new StreamoRecordRegistry({ recaller: new Recaller("push-test") })
+      const registry = newTestRegistry()
       const sent = []
       const send = async () => { sent.push(1); return 201 }
 

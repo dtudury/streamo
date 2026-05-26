@@ -1,6 +1,7 @@
 import { describe } from './utils/testing.js'
 import { Streamo } from './Streamo.js'
 import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { archiveSync } from './archiveSync.js'
@@ -9,7 +10,7 @@ const newRegistry = (factory) => new StreamoRecordRegistry({ recaller: new Recal
 
 function archiveRegistry (dir) {
   return newRegistry(async key => {
-    const repo = new StreamoRecord()
+    const repo = new WritableStreamoRecord()
     await archiveSync(repo, dir, key)
     return repo
   })
@@ -55,7 +56,7 @@ describe(import.meta.url, ({ test }) => {
     const registry = newRegistry(async () => {
       created++
       await new Promise(r => setTimeout(r, 10))
-      return new StreamoRecord()
+      return new WritableStreamoRecord()
     })
     const [s1, s2, s3] = await Promise.all([
       registry._materialize('k'),

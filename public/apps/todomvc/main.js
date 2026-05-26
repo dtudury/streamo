@@ -8,6 +8,8 @@ import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
+import { StreamoRecord } from '../../streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { liveValue }    from '../../streamo/LiveSource.js'
@@ -60,7 +62,18 @@ const filterFromHash = () => {
 // reading other people's lists is signer-agnostic at this layer.
 // myRepo/myKey/signer (only set after login) drive the *write* path;
 // the *read* path goes through the URL key and viewedRepo().
-const registry = new StreamoRecordRegistry({ recaller, name: 'todomvc' })
+// myKey isn't known at module load (it's derived from login creds).
+// The writableKeys set is mutated when login happens; the factory
+// consults it at materialization time. Keys we URL-subscribe to
+// stay slim — they're someone else's list, we just watch.
+const writableKeys = new Set()
+const registry = new StreamoRecordRegistry({
+  recaller,
+  name: 'todomvc',
+  factory: key => writableKeys.has(key)
+    ? new WritableStreamoRecord({ recaller })
+    : new StreamoRecord({ recaller })
+})
 const session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
 
 // Auto-subscribe to whatever key shows up in the URL. Reads `urlKey()`
@@ -109,6 +122,13 @@ async function login (e) {
     // Pre-10.0.0 this was two lines (`registry.open` + a separate
     // `subscribe`) — the open did nothing the subscribe didn't, and
     // the open's name was a footgun. Now one verb.
+    writableKeys.add(myKey)
+    // Known 11.0 limitation: if the URL watcher already materialized
+    // myKey as slim (visiting one's own list URL before logging in),
+    // session.subscribe returns the existing slim Record and
+    // attachSigner below will throw. Workaround: log in first, then
+    // navigate to your list. Real fix needs a registry "promote to
+    // Writable" verb — tracked as 11.0.x follow-up.
     myRepo = await session.subscribe(myKey)
     myRepo.attachSigner(signer, 'todomvc')
     myRepo.defaultMessage = `signed in as ${username}`

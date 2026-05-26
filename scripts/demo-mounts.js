@@ -15,6 +15,7 @@
  *   $ node scripts/demo-mounts.js
  */
 import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../public/streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../public/streamo/StreamoRecordRegistry.js'
 import { Recaller } from '../public/streamo/utils/Recaller.js'
 import { fileSync } from '../public/streamo/fileSync.js'
@@ -46,7 +47,7 @@ console.log(`  app record      ${appKeyHex.slice(0, 16)}…`)
 // `h.js`, `mount.js`, etc. — content doesn't matter for the demo, just
 // that they're distinct files we can prove arrived via the mount.
 
-const lib = new StreamoRecord()
+const lib = new WritableStreamoRecord()
 lib.attachSigner(libSigner, 'lib')
 {
   const w = lib.checkout()
@@ -65,7 +66,7 @@ lib.attachSigner(libSigner, 'lib')
 // The app's `main.js` imports from `./streamo/h.js` as if streamo were
 // a sibling folder — the mount makes that path real.
 
-const app = new StreamoRecord()
+const app = new WritableStreamoRecord()
 app.attachSigner(appSigner, 'app')
 {
   const w = app.checkout()

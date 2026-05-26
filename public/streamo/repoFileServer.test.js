@@ -1,12 +1,13 @@
 import { describe } from './utils/testing.js'
 import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { serveFromRepo } from './repoFileServer.js'
 
 /**
  * Build a StreamoRecord seeded with a single commit of the given value.
  */
 function makeRepo (value) {
-  const repo = new StreamoRecord()
+  const repo = new WritableStreamoRecord()
   const working = repo.checkout()
   working.set(value)
   repo.commit(working, 'seed')
@@ -90,7 +91,7 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('falls through when repo has no commit', async ({ assert }) => {
-    const repo = new StreamoRecord()
+    const repo = new WritableStreamoRecord()
     const mw = serveFromRepo(repo, { injectImportMap: false })
     const r = await callMiddleware(mw, { path: '/' })
     assert.equal(r.nextCalled, true)
@@ -403,7 +404,7 @@ describe(import.meta.url, ({ test }) => {
     // Build a record that goes through two commits; pin the mount to
     // the first commit's dataAddress and confirm the served content
     // matches the pinned commit, not HEAD.
-    const b = new StreamoRecord()
+    const b = new WritableStreamoRecord()
     let w = b.checkout()
     w.set({ files: { 'x.txt': 'v1' } })
     b.commit(w, 'v1')

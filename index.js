@@ -14,6 +14,7 @@
 
 export { Streamo, changedPaths } from './public/streamo/Streamo.js'
 export { StreamoRecord } from './public/streamo/StreamoRecord.js'
+export { WritableStreamoRecord } from './public/streamo/WritableStreamoRecord.js'
 export { Signer, verifySignature } from './public/streamo/Signer.js'
 export { Signature } from './public/streamo/Signature.js'
 export { StreamoRecordRegistry } from './public/streamo/StreamoRecordRegistry.js'

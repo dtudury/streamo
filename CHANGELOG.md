@@ -5,6 +5,114 @@ for what's next.
 
 ---
 
+## 11.0.0 — slim StreamoRecord, WritableStreamoRecord, observer-doesn't-push by type
+
+The slimming exploration prep notes called the question: *"what's the
+minimum a StreamoRecord can have and still be a StreamoRecord?"* Answer:
+a Streamo whose bytes interpret as a signed chain — read, traverse,
+verify, subscribe-and-watch. Nothing about authoring. That's the
+**slim `StreamoRecord`** shipped here. Authoring lives in the new
+**`WritableStreamoRecord`** subclass, which extends slim with
+`attachSigner`, `set`, `setRefs`, `checkout`, `commit`, `merge`,
+`update`, `sign`.
+
+**The type split is load-bearing.** A subscribed slim Record is an
+observer *by construction* — it has no `set`, no signer, can't author.
+`registrySync.subscribe`'s outbound guard keys off `repo instanceof
+WritableStreamoRecord`: slim Records skip reader setup entirely.
+Architectural-invisibility for non-authors — the watch.js corruption
+footgun from 2026-05-26 (a Stop-hook-respawning observer process
+re-pushing cached bytes that confused the relay's archive) is
+dissolved at the type level, not at runtime.
+
+**`locallyAuthoredOffset`** — a substrate primitive on
+WritableStreamoRecord: the low-water mark of bytes this process
+authored. Bumped by `commit` and `sign` (capturing byteLength
+pre-append, monotonic-downward). Initial value `Infinity` ("nothing
+authored yet"). Archive replay, wire-inbound, and any other "received
+not authored" path leave it untouched. Available to apps — *"have I
+signed for anything this session?"* — and reserved for future
+reconnect-bandwidth optimization. **The architectural word for
+"received vs. authored"** the corruption fight surfaced as missing.
+
+### the breaking changes
+
+- **`new StreamoRecord()` no longer authors.** It has no `set`,
+  `setRefs`, `checkout`, `commit`, `merge`, `update`, `attachSigner`,
+  `sign`. Calling any of these raises a TypeError. Migration: use
+  `new WritableStreamoRecord()` for any Record you intend to author
+  to.
+- **Registry factories choose the class.** A registry whose factory
+  produces slim `StreamoRecord`s (the default) yields read-only
+  Records. For author-mode keys, the factory must explicitly produce
+  `WritableStreamoRecord`. `StreamoServer.create` does this
+  automatically: the primary repo is Writable when there's a signer
+  to attach (author mode); slim in relay-only mode. App code that
+  authors typically wires its own factory keyed on its own pubkey —
+  see `public/apps/chat/main.js`'s registry construction for the
+  canonical shape.
+- **`session.subscribe(key)` returns whatever the registry's factory
+  produced.** Slim by default. If you intend to author, declare the
+  key Writable in your factory before subscribing.
+
+### what moved where
+
+- `Streamo`: unchanged externally; still the identity-blind codec.
+- `StreamoRecord` *(slim)*: chain reads (`lastCommit`, `committedChainHash`,
+  `signedLength`, `valueAddress`, `get`, `getRefs`, `files`,
+  `history`, `verify`), wire-state cells (`hasRelay`,
+  `caughtUpToRelay`, `isReadyToAuthor`, `pushRejected`,
+  `conflictDetected`, `relayChainHash`, `relaySubscribedAtOffset`),
+  `_attachSession`, `_reset`, and the `makeRelayInboundStream`
+  delegate.
+- `WritableStreamoRecord` *(extends slim)*: `attachSigner`, `set`,
+  `setRefs`, `checkout`, `commit`, `merge`, `update`, `sign`,
+  `defaultMessage`, `_awaitChainHash`, `locallyAuthoredOffset` +
+  `_markAuthoredAtOffset`, and an overridden `_reset` that resets
+  the mark.
+- `relayInboundStream.js` — extracted in 10.3.x as a free function;
+  unchanged in 11.0.
+
+### app migration
+
+The substrate-side sweep + app sweep are done in this commit. Six
+internal factories and ten app/script callsites now declare
+`WritableStreamoRecord` explicitly where they author. Three sites
+intentionally stay slim (the explorer's `context.js`, chat's
+`watch.js`, and any factory's fallback for foreign keys).
+
+**One known limitation in todomvc**: visiting your own list's URL
+before logging in materializes the Record as slim via the URL
+watcher; login can't upgrade the class in place. Workaround: log in
+first, then visit your URL. The real fix needs a registry
+"promote-to-Writable" verb — tracked as a 11.0.x follow-up.
+
+### why `locallyAuthoredOffset` lives where it does
+
+The slimming exploration prep notes proposed putting the mark on
+`Streamo` so the outbound filter could read it across all subclasses.
+The implementation pivot — the dumb-pipe relay topology made the
+offset filter too narrow; we needed the coarser `instanceof Writable`
+guard — pulled the mark down to `WritableStreamoRecord` where it
+belongs. *Streamo doesn't need to know about authors to be a Streamo;
+the substrate's own minimum-X test answers the layering question.*
+
+### tests, deviations, follow-ups
+
+273 passing. The substrate-side observer-doesn't-push behavior is
+*inferred* by the existing test coverage (every test that asserts
+one-directional flow validates the invariant), but **not directly
+verified by a focused negative-assertion test**. That focused test
+goes on the next punch list — unfalsifiable-diagnostic-marker
+discipline says we should land it before we trust the guard at
+scale.
+
+`repo.update`'s concurrent-retry test stays `test.skip` (carried
+over from 10.0); the WS-lifecycle interaction with `conflictDetected`
+needs more session-level work.
+
+---
+
 ## 10.3.0 — the author side knows which way is up
 
 10.2.2 made reactive reads *survive* the initial-replay race without

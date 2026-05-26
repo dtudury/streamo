@@ -13,6 +13,8 @@
  */
 import readline from 'node:readline'
 import { Signer } from '../../streamo/Signer.js'
+import { StreamoRecord } from '../../streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { registrySync } from '../../streamo/registrySync.js'
@@ -42,7 +44,15 @@ console.log(`my key  : ${myKey.slice(0, 16)}…`)
 console.log(`root key: ${rootKey.slice(0, 16)}…`)
 console.log('─'.repeat(40))
 
-const registry = new StreamoRecordRegistry({ recaller: new Recaller('cli') })
+const recaller = new Recaller('cli')
+// Author for myKey, observer for everyone else — see chat/main.js for
+// the rationale on the type-level observer-doesn't-push guard.
+const registry = new StreamoRecordRegistry({
+  recaller,
+  factory: key => key === myKey
+    ? new WritableStreamoRecord({ recaller })
+    : new StreamoRecord({ recaller })
+})
 // Track who we've announced ourselves back to (deduped to prevent
 // ping-pong) — see comment in chat/main.js for the discovery pattern.
 const announcedTo = new Set()

@@ -181,3 +181,91 @@ Whether `files` and `history` belong in the slim core or as a
 moving them feels like fragmenting for the sake of it. *Leaning
 toward: keep in slim core; they're idiomatic queries on the chain,
 not bolted-on features.*
+
+---
+
+## session-2 prep — what next-me should know before starting
+
+**Status going in:**
+- David signed off on going straight to 11.0 (skip what would have
+  been 10.x patches between today's 10.3 and the slimming work).
+- `relayInboundStream.js` already extracted as a free function in
+  the previous session (commit `29ae9b8`). The Record's instance
+  method `makeRelayInboundStream` is a thin delegate; no API break.
+  This is the first cut; the bigger Writable/slim split is what
+  11.0 ships.
+- The `locallyAuthoredOffset` fix from the corruption fight is
+  bundled into 11.0 — same migration sweep pays for both.
+
+**The six compromises David might have notes on overnight:**
+
+1. **Wire state stays on Record, not in a composed `RelaySession`
+   object.** Strictly violates the "subclass type-level, compose
+   runtime-level" lens. Justification: reactive subscribers want
+   one place to read `repo.pushRejected`. Pragmatism. *Might want
+   to revisit if David has a cleaner shape in mind.*
+2. **Real API break for external callers** that import
+   `StreamoRecord` + use `.set()`. Migration is mechanical (rename
+   to `WritableStreamoRecord`). No transition-window re-export —
+   that defeats the readability goal.
+3. **Factory will almost always produce `WritableStreamoRecord`.**
+   The slim is the *definitional* minimum, not the everyday
+   instance. Pays rent in clarity, less in memory.
+4. **`files` and `history` in slim core**, not in a separate
+   "convenience reads" file. Judgment call (see Open Question
+   above).
+5. **`locallyAuthoredOffset` bundled doubles scope.** Two
+   migrations in one bump; more risk; cleaner together
+   architecturally.
+6. **27-file sweep is real.** Mechanical but not glamorous.
+
+**Suggested order of operations:**
+
+1. Re-read this doc + the journal entry from 2026-05-26.
+2. Check David's notes (if any) on the compromises above.
+3. Create `WritableStreamoRecord.js` extending `StreamoRecord`;
+   move the author methods (set, setRefs, commit, checkout, merge,
+   update, sign, attachSigner, defaultMessage, `#scheduleSign`).
+4. Add `#locallyAuthoredOffset` to slim StreamoRecord; bump in
+   `WritableStreamoRecord`'s set/commit/sign paths;
+   `makeRelayInboundStream` does NOT bump.
+5. Filter the outbound reader in `registrySync` (or wherever bytes
+   flow out) so it only sends bytes ≥ `locallyAuthoredOffset`.
+6. Run tests early + often — they will break; fix the breakages by
+   updating imports in test files to `WritableStreamoRecord` where
+   write methods are called.
+7. Sweep substrate callers (registrySync, originSync, outletSync,
+   StreamoServer.create, StreamoRecordRegistry, fileSync, etc.).
+8. Sweep app callers (chat, flashcards, todomvc, explorer, scripts).
+9. CHANGELOG entry capturing both the slim/Writable split AND the
+   `locallyAuthoredOffset` story (with a callback to the
+   corruption-fight that motivated the latter).
+10. Version bump to 11.0.0, commit, prep for publish.
+
+**The corruption-fight context for `locallyAuthoredOffset`:**
+
+Tonight a respawning `watch.js` process (from the Claude Code Stop
+hook) kept re-pushing the home Record's cached bytes to the relay
+within seconds of every restart. The fix isn't operational ("kill
+watch.js"); it's architectural — the substrate doesn't articulate
+"I authored this" vs "I received this and have it in memory." With
+`locallyAuthoredOffset` on Streamo:
+- `WritableStreamoRecord.set/commit/sign` bumps it
+- `makeRelayInboundStream.append` does *not*
+- Outbound readers filter by it
+- watch.js has zero locally-authored bytes → outbound is empty →
+  cannot push anything → architectural-invisibility for read-only
+  observers
+
+This was *the* most-direct argument for the fix that surfaced in
+real production behavior tonight, so the slim-refactor and the
+locallyAuthoredOffset fix go together naturally.
+
+**A working principle to hold onto:** *the minimum-X exploration is
+the architecture's self-definition.* Asking "what can we pull off
+and still have a Record?" at every layer of the split is the same
+question as "what is the substrate's irreducible word for what this
+is?" Trust the question; the answers will be sharper than the
+ones I'd write a priori.
+
+🌳

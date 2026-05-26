@@ -40,7 +40,7 @@ without the script if needed.
 │   └── streamo/                  ← the git clone (deploy target)
 │       ├── .env.prod             ← live secrets; NEVER commit
 │       ├── package.json
-│       ├── public/apps/chat/server.js   ← the running entry point
+│       ├── bin/streamo.js        ← the running entry point (relay-only)
 │       └── …
 ├── streamo-data/                 ← archive dir (referenced by
 │   ├── 035df79…b47a63.bin             STREAMO_DATA_DIR in .env.prod)
@@ -66,12 +66,27 @@ Type=simple
 User=streamo
 WorkingDirectory=/home/streamo/apps/streamo
 ExecStart=/home/streamo/.local/share/fnm/aliases/default/bin/node \
-          public/apps/chat/server.js --env-file .env.prod
+          bin/streamo.js --env-file .env.prod
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 ```
+
+`bin/streamo.js` is the published CLI binary — the same code people get
+from `npx @dtudury/streamo`. With `STREAMO_HOME_KEY` in `.env.prod`,
+it runs in **relay-only mode**: opens the home Record by pubkey, no
+signer derivation on the box, bytes arrive via sync from an author
+process running with the matching credentials.
+
+The signing credentials (`STREAMO_USERNAME` / `STREAMO_PASSWORD`)
+are commented out in `.env.prod` — they don't belong on the relay
+box, and are re-derivable from the cryptopotamus recipe (see MEMORY:
+`project_streamo_dev_relay_identity.md`). What stays in `.env.prod`:
+the Web Push VAPID keypair (`STREAMO_VAPID_PUBLIC` / `_PRIVATE` /
+`_SUBJECT` — that's the relay's *own* push identity, separate from
+any author identity), the home pubkey (`STREAMO_HOME_KEY`), and
+`STREAMO_ENABLE_PUSH=1`.
 
 - **status:** `systemctl is-active streamo` / `systemctl status streamo`
 - **restart:** `sudo systemctl restart streamo` (the `streamo` user
@@ -167,6 +182,25 @@ Look for the expected keys (`entries`, `journalists`, `members`,
 
 ## what's NOT in this doc (yet)
 
+- **No-checkout deploy.** The git checkout at `~/apps/streamo/` is
+  still on the box — `bin/streamo.js` is invoked from it. The
+  architectural-honest shape is `ExecStart = npx -y
+  @dtudury/streamo@<version> --env-file .env.prod`, which requires
+  the phase-1 changes to be published to npm. Once that's published,
+  swap the systemd `ExecStart`, then `rm -rf ~/apps/streamo/`. The
+  `streamo-data/` archive and `.env.prod` (move it out of the
+  checkout first — e.g. to `~/.env.prod`) survive.
+- **Author-side workflow.** With relay-only mode, edits to the home
+  Record happen elsewhere (an author process running on a laptop
+  with the credentials, plus `--files ./public/homepage --origin
+  streamo.dev`). The chat/server.js's old in-process seeds (new
+  flashcards decks, journalists list, journal entries, fileSync
+  mirroring the homepage directory) need to move to either one-shot
+  `scripts/seed-*.js` files (extracted, run from a laptop) or
+  ad-hoc author sessions. Not blocking — the bytes already in the
+  archive keep serving — but the next time you need to change the
+  set of bundled flashcards decks or the journalists list, you'll
+  need an author-side workflow.
 - **Backups.** No automated backup of `~/streamo-data/` exists.
   When users show up, this becomes urgent.
 - **Staging.** No staging host yet. When users show up, a second

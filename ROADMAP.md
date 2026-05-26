@@ -5,7 +5,7 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
-## repo-free deploy *(natural follow-on to 10.0.0)*
+## repo-free deploy *(natural follow-on to 10.0.0 — entry-point landed; finishing the cutover)*
 
 The 9.x arc moved every byte streamo.dev serves into signed Records.
 10.0.0 cleaned the substrate names. Together those land the
@@ -14,26 +14,42 @@ architecture for *the relay holds no source* — `npx -y
 /path/to/archive` is enough to serve the homepage + library + apps,
 because every URL resolves through the archive's Records.
 
-What's left to make it real:
+**Landed (post-10.0.0):**
 
-- **Extract `chat/server.js`'s seed step into one-shot npx
-  invocations** — each existing seed (history, tarot, flashcards
-  decks) becomes a script you run once from your laptop with the
-  signing identity, `--origin streamo.dev`. The archive captures
-  the bytes; never need to seed again on restart. Removes the
-  "all-or-nothing startup" coupling; each Record is independent.
-- **Web Push as a CLI flag on the main binary** — push routes are
-  already factored behind `webSync`'s `routes` hook and
-  `notifyOnMessages` watcher. `bin/streamo.js` grows
-  `--enable-push` (with `STREAMO_VAPID_PUBLIC` / `_PRIVATE` /
-  `_SUBJECT` env vars). Single binary, single process, optional
-  feature.
-- **Retire `chat/server.js` as a separate entry point.** Once the
-  seed step is extracted and push is a CLI flag, the systemd unit's
-  `ExecStart` changes from `node public/apps/chat/server.js
-  --env-file .env.prod` to `npx -y @dtudury/streamo@<v> --home-key
-  <hex> --web 443 --data-dir <path> --enable-push --env-file .env.prod`.
-  The repo is no longer needed on the prod box.
+- **Web Push as a CLI flag on `bin/streamo.js`** — `--enable-push`
+  (env: `STREAMO_ENABLE_PUSH=1`) wires VAPID secrets from env-only
+  (`STREAMO_VAPID_PUBLIC` / `_PRIVATE` / `_SUBJECT`) and registers
+  the relay's push routes + chat-message watcher. Refuses to start
+  if the flag is set but VAPID env vars aren't present.
+- **Always-on `serveRepoFiles` when `--web`** — bin/streamo.js now
+  serves from the record's `value.files` whenever `--web` is set,
+  not gated on `--files`. In relay-only mode (`--home-key`) this
+  lets a bare relay serve a homepage whose bytes arrived via origin
+  sync.
+- **streamo.dev's systemd unit cut over** — `ExecStart` is now
+  `node bin/streamo.js --env-file .env.prod`, with `STREAMO_HOME_KEY`
+  + `STREAMO_ENABLE_PUSH=1` in `.env.prod` (and the signing creds
+  commented out — they're re-derivable from cryptopotamus). The
+  relay runs in relay-only mode; no signer on the box.
+
+**What's left to make it fully real:**
+
+- **Publish phase-1 to npm + flip ExecStart to `npx`.** The CLI code
+  is at HEAD; once published, the systemd unit can become
+  `ExecStart = npx -y @dtudury/streamo@<v> --env-file .env.prod`,
+  and `~/apps/streamo/` (the git checkout) can be removed. `.env.prod`
+  moves to `~/.env.prod` first.
+- **Extract `chat/server.js`'s author-side workflow into one-shot
+  scripts** — each existing seed (history, tarot, flashcards decks,
+  journal entries, journalists list) becomes a script you run once
+  from your laptop with the signing identity, `--origin streamo.dev`.
+  The archive on the relay captures the bytes; no in-process seed
+  on every restart. Removes the "all-or-nothing startup" coupling;
+  each Record is independent. Not blocking — the existing bytes in
+  the archive keep serving — but until this lands, changing the set
+  of bundled flashcards decks (or the journalists list) requires an
+  ad-hoc author session, and editing `public/homepage/` on the box
+  no longer flows to the served bytes (no more fileSync at boot).
 
 **Graceful partial setup is the architectural prize.** If the journal
 seed never runs, the journal section is empty — nothing else

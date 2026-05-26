@@ -184,6 +184,22 @@ export class StreamoRecord extends Streamo {
   // on conflict since it has no path to retry.
   #session = null
 
+  // Reactive: whether an upstream relay session is currently attached.
+  // Flipped true the first time `_attachSession` is called; stays true
+  // for the lifetime of this StreamoRecord (sessions reconnect transparently
+  // — see 8.5.0 auto-reconnect). Read by callers that want to know
+  // "is there an upstream view we should defer to?", notably fileSync's
+  // startup gate.
+  #hasRelay = false
+
+  // The byte offset the relay had reached when it accepted our subscribe.
+  // Null until the relay sends back `{type: 'subscribed', atOffset}`. After
+  // that, `caughtUpToRelay` becomes true when local byteLength >= this
+  // offset — the moment we've replayed everything the relay knew about
+  // when we subscribed. New bytes after that point are ongoing-flow,
+  // not initial-replay.
+  #relaySubscribedAtOffset = null
+
   /**
    * Walk back from the tail to the most recent SIGNATURE chunk. Returns
    * its starting address (the byte at which it begins), or -1 if there
@@ -690,9 +706,92 @@ export class StreamoRecord extends Streamo {
    * `session.subscribe`; `merge()` uses it to request a session-level
    * resync after a rejected push. Null on StreamoRecords that aren't attached
    * to a wire (server-side archive-only, tests, etc.).
+   *
+   * Also flips `hasRelay` to true on first call so reactive consumers
+   * (fileSync's startup gate, future "is there an upstream?" callers)
+   * can subscribe to a single reactive boolean.
    */
   _attachSession (session) {
     this.#session = session
+    if (!this.#hasRelay) {
+      this.#hasRelay = true
+      this.recaller.reportKeyMutation(this, 'hasRelay')
+    }
+  }
+
+  /**
+   * Reactive: true once an upstream relay session has been attached
+   * (`_attachSession` was called). Stays true for the lifetime of this
+   * StreamoRecord — auto-reconnect (8.5.0) keeps the session object stable
+   * across network blips. Read this when you need to know "is there an
+   * upstream view of this Record that I should defer to?"
+   *
+   * Local-only Records (no session attached — relay-side archive-only,
+   * tests, the dumb-pipe relay itself) return false. Author processes
+   * that ran `session.subscribe` return true.
+   */
+  get hasRelay () {
+    this.recaller.reportKeyAccess(this, 'hasRelay')
+    return this.#hasRelay
+  }
+
+  /**
+   * The byte offset the relay had reached when it accepted our subscribe.
+   * Null until the `{type: 'subscribed', atOffset}` ack lands. Internal —
+   * the public-facing predicate is `caughtUpToRelay`.
+   */
+  _setRelaySubscribedAtOffset (offset) {
+    // Only the FIRST subscribe ack matters for the initial-replay
+    // watermark. Subsequent subscribes (e.g. after `_resyncRepo` between
+    // update retries) re-send the message, but the original watermark
+    // has already been crossed — overwriting it would re-arm the gate
+    // and cause spurious waits.
+    if (this.#relaySubscribedAtOffset !== null) return
+    this.#relaySubscribedAtOffset = offset
+    this.recaller.reportKeyMutation(this, 'relaySubscribedAtOffset')
+  }
+
+  get relaySubscribedAtOffset () {
+    this.recaller.reportKeyAccess(this, 'relaySubscribedAtOffset')
+    return this.#relaySubscribedAtOffset
+  }
+
+  /**
+   * Reactive: true once this StreamoRecord has caught up to the relay's
+   * chain head as of the moment we subscribed. Monotonic — once true,
+   * stays true (new bytes after this point are ongoing-flow, not
+   * initial-replay).
+   *
+   * False until BOTH (a) the relay has acked our subscribe with
+   * `{type: 'subscribed', atOffset}` AND (b) our local byteLength has
+   * reached that offset. With an old relay that doesn't send
+   * `subscribed`, this stays false forever — callers that gate on
+   * this predicate may want a fallback for that case.
+   */
+  get caughtUpToRelay () {
+    const watermark = this.relaySubscribedAtOffset
+    if (watermark === null) return false
+    return this.byteLength >= watermark
+  }
+
+  /**
+   * Reactive: true when it's safe to make disk-vs-repo authority
+   * decisions and commit local writes. The fileSync startup gate that
+   * fixes the "fresh laptop, populated relay, push lands on stale chain
+   * → relay rejects with chain-mismatch" race (the substrate didn't
+   * know which way was up).
+   *
+   * Three cases, all reactive:
+   *   - No relay session attached → ready (local-only mode; the local
+   *     archive IS the source of truth, there's no upstream to defer to)
+   *   - Relay attached but not caught up yet → not ready (committing
+   *     now would author on top of a fresh chain while the relay has
+   *     weeks of history; the push lands and gets rejected)
+   *   - Relay attached and caught up → ready
+   */
+  get isReadyToAuthor () {
+    if (!this.hasRelay) return true
+    return this.caughtUpToRelay
   }
 
   /**

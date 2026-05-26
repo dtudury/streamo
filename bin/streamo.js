@@ -236,6 +236,17 @@ if (options.mergeFrom) {
   }
 }
 
+// --origin connects BEFORE --files so the relay's `{type: 'subscribed',
+// atOffset}` ack can arrive before fileSync makes its disk-vs-repo
+// authority decision. With this order, an author command against a
+// populated relay reads "no relay → wait → caught up → author"
+// instead of "no relay yet (false negative) → commit on fresh chain →
+// push rejected with chain-mismatch." See StreamoRecord.isReadyToAuthor.
+if (options.origin) {
+  await server.connect(options.origin)
+  console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
+}
+
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'
   // recordFile defaults to `'streamo.json'` whenever --files is set, so
@@ -309,11 +320,6 @@ if (options.outlet) {
   const port = +options.outlet
   server.outlet(port)
   console.log(`\x1b[32moutlet: listening on port ${port}\x1b[0m`)
-}
-
-if (options.origin) {
-  await server.connect(options.origin)
-  console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
 }
 
 if (options.verbose) {

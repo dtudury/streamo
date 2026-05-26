@@ -390,7 +390,35 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           if (!valid) {
             sendJson({ type: 'reject', key: msg.key, reason: 'chain-mismatch' })
           } else {
+            // Tell the subscriber where our chain head is RIGHT NOW.
+            // They'll know "initial replay is done" once their local
+            // byteLength reaches this offset — the watermark that turns
+            // their `caughtUpToRelay` flag true. Snapshot BEFORE
+            // `syncKey` starts streaming so the offset reflects the
+            // pre-stream state. Without this signal, a new client with
+            // a fresh local archive can't tell "I'm caught up" from
+            // "I just haven't received the relay's bytes yet" — they
+            // race ahead and commit on a stale chain (the fileSync
+            // chain-mismatch scenario).
+            sendJson({
+              type: 'subscribed',
+              key: msg.key,
+              atOffset: repo.byteLength
+            })
             await syncKey(msg.key, readerOffset)
+          }
+        } else if (msg.type === 'subscribed') {
+          // Peer (acting as relay) acked our subscribe with their
+          // chain-head byteLength. Surface as a watermark on the local
+          // StreamoRecord so reactive consumers — fileSync's startup gate,
+          // anyone else who needs "is initial replay done?" — can wait
+          // for `caughtUpToRelay` to flip true. Idempotent per Record:
+          // only the first ack lands (resync-after-conflict re-arms the
+          // wire but the watermark from the original subscribe still
+          // governs the initial-replay boundary).
+          const repo = registry.get(msg.key)
+          if (repo?._setRelaySubscribedAtOffset && typeof msg.atOffset === 'number') {
+            repo._setRelaySubscribedAtOffset(msg.atOffset)
           }
         } else if (msg.type === 'interest') {
           if (routing) {

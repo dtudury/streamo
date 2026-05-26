@@ -365,4 +365,67 @@ describe(import.meta.url, ({ test }) => {
     })
     assert.equal(target.lastCommit.message, 'because I said so')
   })
+
+  test('isReadyToAuthor: no relay session → ready; session attached → wait for caught-up watermark', async ({ assert }) => {
+    // Local-only Record (no session ever attached): ready immediately —
+    // this is the "user runs --files with no --origin" case where disk
+    // IS the source of truth.
+    const local = new StreamoRecord()
+    assert.equal(local.hasRelay, false, 'no session → hasRelay false')
+    assert.equal(local.isReadyToAuthor, true, 'no relay → ready immediately')
+
+    // After _attachSession: relay is attached but no watermark yet →
+    // NOT ready. This is the state during the brief window between
+    // session.subscribe firing and the relay's {type: subscribed} ack
+    // landing.
+    const fakeSession = { _resyncRepo: () => {} }
+    local._attachSession(fakeSession)
+    assert.equal(local.hasRelay, true, 'session attached → hasRelay true')
+    assert.equal(local.relaySubscribedAtOffset, null, 'no watermark until relay acks')
+    assert.equal(local.caughtUpToRelay, false, 'no watermark → not caught up')
+    assert.equal(local.isReadyToAuthor, false, 'relay attached + no watermark → wait')
+
+    // Relay acks with atOffset = 100. Local byteLength still 0, so
+    // we have NOT caught up — still waiting.
+    local._setRelaySubscribedAtOffset(100)
+    assert.equal(local.relaySubscribedAtOffset, 100, 'watermark recorded')
+    assert.equal(local.caughtUpToRelay, false, 'byteLength 0 < watermark 100 → not caught up')
+    assert.equal(local.isReadyToAuthor, false, 'still waiting for chain to reach watermark')
+
+    // Subscribed ack is idempotent — a second ack (e.g. from
+    // _resyncRepo's re-subscribe between update retries) is ignored
+    // so the watermark stays anchored at the original initial-replay
+    // boundary.
+    local._setRelaySubscribedAtOffset(500)
+    assert.equal(local.relaySubscribedAtOffset, 100, 'second ack ignored; original watermark preserved')
+  })
+
+  test('isReadyToAuthor: flips reactively when byteLength reaches watermark', async ({ assert }) => {
+    const repo = new StreamoRecord()
+    repo._attachSession({ _resyncRepo: () => {} })
+    // Force-set watermark to a small value that we can reach by writing.
+    // (In production this offset comes from the wire's `subscribed`
+    // message — here we set it directly to exercise the predicate.)
+    let readyEvents = 0
+    repo.recaller.watch('test:isReadyToAuthor', () => {
+      if (repo.isReadyToAuthor) readyEvents++
+    })
+    // Initially: hasRelay=true, no watermark, not ready. Watcher fires
+    // once (the initial sync run) and sees not-ready.
+    assert.equal(readyEvents, 0, 'watcher saw not-ready initially')
+    // Set a small watermark.
+    repo._setRelaySubscribedAtOffset(5)
+    await new Promise(r => setTimeout(r, 5))
+    assert.equal(readyEvents, 0, 'byteLength still 0 — still not ready')
+    // Write enough bytes to reach the watermark. set() commits, which
+    // appends signed bytes and grows byteLength past 5.
+    const w = repo.checkout()
+    w.set({ x: 1 })
+    repo.commit(w, 'test')
+    await new Promise(r => setTimeout(r, 5))
+    assert.ok(repo.byteLength >= 5, 'byteLength now >= watermark')
+    assert.equal(repo.caughtUpToRelay, true, 'caught up: byteLength >= watermark')
+    assert.equal(repo.isReadyToAuthor, true, 'ready: relay attached + caught up')
+    assert.ok(readyEvents >= 1, 'reactive watcher fired when predicate flipped true')
+  })
 })

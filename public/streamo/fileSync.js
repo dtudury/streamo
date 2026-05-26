@@ -508,6 +508,58 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     }
   }
 
+  // Gate the disk-vs-repo authority decision on "is the upstream view
+  // in?" — when an origin session is attached but initial replay hasn't
+  // completed, the local archive looks empty (or incomplete) but the
+  // relay has weeks of history. Authoring against the empty view here
+  // produces a fresh-chain commit that the relay rejects with
+  // chain-mismatch. Wait until either there's no relay (local-only mode,
+  // safe to author immediately) or we've caught up to the relay's chain
+  // head as of subscribe time.
+  //
+  // Implemented via repo.isReadyToAuthor — a reactive predicate that
+  // composes hasRelay + caughtUpToRelay. Old Records without this
+  // predicate (or non-StreamoRecord Streamos) fall through to immediate
+  // ready, preserving prior behavior.
+  //
+  // OLD-RELAY FALLBACK: relays older than this version don't send the
+  // `{type: 'subscribed'}` ack the gate waits on. To avoid a hard
+  // deadlock against such a relay, the await is bounded: after 3 s with
+  // hasRelay=true but no watermark, log a warning and proceed. The
+  // legacy race (chain-mismatch on first push) re-appears in that
+  // configuration — but the user sees a clear log line saying so, not
+  // an unexplained hang.
+  if (typeof repo.isReadyToAuthor === 'boolean') {
+    if (!repo.isReadyToAuthor) {
+      await new Promise(resolve => {
+        let timeoutId = null
+        const cleanup = () => {
+          repo.recaller.unwatch(fn)
+          if (timeoutId !== null) clearTimeout(timeoutId)
+        }
+        const fn = () => {
+          if (repo.isReadyToAuthor) {
+            cleanup()
+            resolve()
+          }
+        }
+        repo.recaller.watch('fileSync:await-ready-to-author', fn)
+        timeoutId = setTimeout(() => {
+          if (repo.hasRelay && repo.relaySubscribedAtOffset === null) {
+            console.warn(
+              'fileSync: relay did not send a `subscribed` ack within 3 s — ' +
+              'proceeding without the initial-replay gate. If your author push ' +
+              'gets rejected with chain-mismatch, your relay is older than 10.2.3; ' +
+              'update it to use the new initial-replay handshake.'
+            )
+          }
+          cleanup()
+          resolve()
+        }, 3000)
+      })
+    }
+  }
+
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)
   const diskRecordMeta = await readRecordFileMeta(folder, recordFile)
   const lastCommit = repo.lastCommit

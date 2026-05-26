@@ -5,6 +5,96 @@ for what's next.
 
 ---
 
+## 10.3.0 — the author side knows which way is up
+
+10.2.2 made reactive reads *survive* the initial-replay race without
+crashing — defensive try/catches in `lastCommit` and `decodeAt` let
+the recaller retry until the stream became consistent. But the
+race's *consequence* was still there: an author command against a
+populated relay (fresh laptop `--data-dir`, `--files`, `--origin
+streamo.dev`) would commit on top of a not-yet-synced local archive,
+push, and the relay would reject the chain with `chain-mismatch`.
+Crash gone; chain-mismatch reject still present. David named the
+shape exactly: *"my server doesn't know which way is up."*
+
+The fix is one reactive predicate composed from one new wire
+message + one new reactive cell. **`repo.isReadyToAuthor`** —
+fileSync's startup gate.
+
+**The new substrate primitives** (all on `StreamoRecord`, all reactive):
+
+- `repo.hasRelay` — true once `_attachSession` is called (i.e., an
+  upstream relay session has been attached via `session.subscribe`).
+  Flips to true once and stays true; auto-reconnect (8.5.0) keeps
+  the session stable across blips.
+- `repo.relaySubscribedAtOffset` — the byte offset the relay had
+  reached when it accepted our subscribe. Null until the relay
+  sends back a new `{type: 'subscribed', key, atOffset}` ack;
+  idempotent thereafter (only the first ack lands, so `_resyncRepo`
+  between update retries doesn't re-arm the gate).
+- `repo.caughtUpToRelay` — true once `byteLength >= relaySubscribedAtOffset`.
+  Monotonic; once true, stays true.
+- `repo.isReadyToAuthor` — `!hasRelay || caughtUpToRelay`. The
+  composed predicate: ready when there's no relay (local-only),
+  or when there is a relay AND we've caught up to its initial chain
+  head.
+
+**The new wire message.** The relay sends `{type: 'subscribed', key,
+atOffset}` immediately after accepting a `subscribe`, with
+`atOffset` being its `byteLength` at that moment. Snapshot-style —
+not "the relay's current head right now," but "the boundary between
+initial-replay and ongoing-flow as the relay sees it." Old clients
+that don't handle this message fall through silently (unknown JSON
+types are ignored); new clients ack the watermark and gate their
+writes.
+
+**fileSync gates its startup commit on `isReadyToAuthor`.** The
+disk-vs-repo authority decision — the one that fires "disk wins" on
+a fresh laptop with an empty archive and commits a stale-chain
+snapshot — now waits until the predicate is true. With no relay,
+ready immediately (preserves local-only behavior). With a relay,
+waits for the watermark + the chain to reach it, then proceeds with
+the relay's view as the baseline.
+
+**`bin/streamo.js` reorders `--origin` before `--files`** so the
+session attaches (and `hasRelay` flips true) before fileSync's
+startup runs. Old order had fileSync deciding *before* origin
+attached, with `hasRelay=false` masking the race.
+
+**Old-relay fallback.** If a relay older than 10.3.0 doesn't send
+the `subscribed` ack, fileSync's gate waits 3 s, logs a clear
+warning naming the relay version mismatch, and proceeds without the
+gate. The legacy chain-mismatch race re-appears in that
+configuration — but the user sees a diagnostic, not an unexplained
+hang.
+
+**What this also dissolves** (the *"streamlines several ongoing
+existing issues"* part):
+
+- **The 10.2.2 defensive catches in `lastCommit` and `decodeAt`**
+  become belt-and-suspenders rather than load-bearing. Reactive
+  readers stop firing during mid-stream state because the gate keeps
+  them out. The catches stay (cheap; correct), but the conditions
+  they guard against are now actively prevented.
+- **`repo.update`'s full conflict-retry** (the 10.0.x deferred
+  follow-up). The "WS-lifecycle interaction is the sticky part" was
+  precisely "when has the relay re-converged?" — the same reactive
+  pattern (`_awaitChainHash` watches `relayChainHash`, this new code
+  watches `relaySubscribedAtOffset` + `byteLength`). The deferred
+  work becomes a small follow-on, not a separate substrate effort.
+- **First-user fork with `--origin` against a populated relay.**
+  Currently works only because the demo-shape happens to merge-from-
+  then-author. With the gate, a forker can safely combine
+  `--files`/`--origin`/`--merge-from` in any order without thinking
+  about init sequence.
+
+273 tests pass (271 existing + 2 new for `isReadyToAuthor`'s
+predicate behavior). Reproduced the chain-mismatch crash + verified
+the fix locally with a fresh `--data-dir` author against
+`localhost:8080`.
+
+---
+
 ## 10.2.2 — initial-replay race: reactive reads now survive mid-stream chunks
 
 A latent race surfaced the first time anyone exercised author-mode

@@ -26,6 +26,34 @@ export class Recaller {
   }
 
   /**
+   * Reactive watchers currently registered on this Recaller. The base
+   * leak-detection signal: a sequence of operations (subscribe + unsubscribe,
+   * `when` + resolve, etc.) should leave this stable. Growing-without-bound
+   * across canonical operations indicates a watcher being registered without
+   * a matching `unwatch` somewhere.
+   *
+   * Read-only. Don't mutate from outside.
+   */
+  get watchCount () {
+    return this.#names.size
+  }
+
+  /**
+   * Names of currently-registered watchers, in registration order, with
+   * duplicates preserved (multiple watchers can share a name — that's
+   * conventional, e.g. `fileSync:await-ready-to-author` could be active
+   * once per fileSync invocation). Useful for diagnosing *which* watcher
+   * isn't being cleaned up when `watchCount` is growing unexpectedly.
+   *
+   * Read-only snapshot. Don't mutate from outside.
+   *
+   * @returns {string[]}
+   */
+  get watcherNames () {
+    return [...this.#names.values()]
+  }
+
+  /**
    * Call f immediately while tracking any reportKeyAccess calls made during
    * execution. Re-runs f whenever reportKeyMutation is called on a key that
    * was accessed. Each re-run establishes a fresh set of tracked dependencies.

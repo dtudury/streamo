@@ -116,6 +116,56 @@ test('when() with already-aborted signal rejects immediately', async () => {
   assert.ok(err, 'rejected synchronously on already-aborted signal')
 })
 
+test('watchCount + watcherNames track active watchers (leak-detection instrumentation)', async () => {
+  const r = new Recaller('test')
+  assert.equal(r.watchCount, 0, 'fresh Recaller has no watchers')
+  assert.deepEqual(r.watcherNames, [])
+
+  const f1 = () => {}
+  const f2 = () => {}
+  r.watch('one', f1)
+  r.watch('two', f2)
+  assert.equal(r.watchCount, 2, 'two watchers registered')
+  assert.deepEqual(r.watcherNames.sort(), ['one', 'two'])
+
+  r.unwatch(f1)
+  assert.equal(r.watchCount, 1, 'unwatch decrements')
+  assert.deepEqual(r.watcherNames, ['two'])
+
+  r.unwatch(f2)
+  assert.equal(r.watchCount, 0, 'back to clean')
+})
+
+test('when() leaves no leaked watcher after resolving', async () => {
+  // The leak signal that matters: did the primitive's own watcher get
+  // torn down? If `when` ever drifts toward "register watcher, don't
+  // clean up after resolve," this test catches it.
+  const r = new Recaller('test')
+  const target = {}
+  let cell = false
+  assert.equal(r.watchCount, 0)
+
+  const promise = r.when(() => { r.reportKeyAccess(target, 'cell'); return cell })
+  assert.equal(r.watchCount, 1, 'when() registers one watcher while waiting')
+
+  cell = true
+  r.reportKeyMutation(target, 'cell')
+  await promise
+  assert.equal(r.watchCount, 0, 'when() cleans up its watcher on resolve — no leak')
+})
+
+test('when() leaves no leaked watcher after AbortSignal rejection', async () => {
+  // The other branch — if `when` aborts via signal, cleanup is via the
+  // abort handler. Same invariant: no orphaned watcher.
+  const r = new Recaller('test')
+  const controller = new AbortController()
+  const promise = r.when(() => false, { signal: controller.signal })
+  assert.equal(r.watchCount, 1, 'when() registers watcher pre-abort')
+  controller.abort('test')
+  try { await promise } catch {}
+  assert.equal(r.watchCount, 0, 'when() cleans up its watcher on abort — no leak')
+})
+
 test('when() composes with Promise.race for timeout (the fileSync pattern)', async () => {
   const r = new Recaller('test')
   const target = {}

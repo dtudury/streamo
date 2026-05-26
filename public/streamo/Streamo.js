@@ -88,7 +88,7 @@ export class Streamo extends CodecRegistry {
   #valueAddress = -1
 
   /**
-   * @param {Recaller} [recaller]
+   * @param {{recaller?: Recaller, name?: string}} [options]
    */
   constructor ({ recaller, name = 'Streamo' } = {}) {
     super()

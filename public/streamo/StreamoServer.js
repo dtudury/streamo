@@ -106,7 +106,9 @@ export class StreamoServer {
       }
     })
     const streamo = await registry._materialize(resolvedPublicKeyHex)
-    if (signer) streamo.attachSigner(signer, name)
+    // The factory above produced a WritableStreamoRecord IFF signer is
+    // non-null. The cast surfaces the dependent type to the checker.
+    if (signer) /** @type {WritableStreamoRecord} */ (streamo).attachSigner(signer, name)
 
     const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
     server.#dataDir = dataDir

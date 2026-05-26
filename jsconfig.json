@@ -4,12 +4,31 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "module": "node16",
     "moduleResolution": "node16",
-    "checkJs": false,
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
       "@dtudury/streamo": ["./index.js"],
       "@dtudury/streamo/*": ["./public/streamo/*"]
     }
   },
-  "exclude": ["node_modules"]
+  "include": [
+    "index.js",
+    "bin/**/*.js",
+    "public/streamo/**/*.js",
+    "public/apps/**/*.js",
+    "scripts/**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "**/*.test.js",
+    "public/streamo/utils/testing.js",
+    "public/streamo/utils/mockDOM.js"
+  ]
 }

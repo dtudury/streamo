@@ -2,7 +2,19 @@
   "name": "@dtudury/streamo",
   "version": "11.0.1",
   "description": "peer-to-peer sync where your data and identity belong to you, not the server",
-  "keywords": ["p2p", "peer-to-peer", "sync", "reactive", "content-addressed", "websocket", "signed", "append-only", "offline-first", "cryptographic", "identity"],
+  "keywords": [
+    "p2p",
+    "peer-to-peer",
+    "sync",
+    "reactive",
+    "content-addressed",
+    "websocket",
+    "signed",
+    "append-only",
+    "offline-first",
+    "cryptographic",
+    "identity"
+  ],
   "homepage": "https://streamo.dev",
   "repository": {
     "type": "git",
@@ -43,11 +55,16 @@
     "ws": "^8.18.3"
   },
   "scripts": {
-    "test":          "node --test",
-    "dev":           "node public/apps/chat/server.js --env-file .env.dev",
-    "prod":          "node public/apps/chat/server.js --env-file .env.prod",
-    "seed-history":  "node scripts/seed-history.js",
+    "test": "node --test",
+    "typecheck": "tsc -p jsconfig.json",
+    "dev": "node public/apps/chat/server.js --env-file .env.dev",
+    "prod": "node public/apps/chat/server.js --env-file .env.prod",
+    "seed-history": "node scripts/seed-history.js",
     "fork-homepage": "node scripts/fork-homepage.js",
-    "deploy":        "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "typescript": "^6.0.3"
   }
 }

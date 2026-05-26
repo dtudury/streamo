@@ -36,20 +36,21 @@ without the script if needed.
 
 ```
 /home/streamo/
-├── apps/
-│   └── streamo/                  ← the git clone (deploy target)
-│       ├── .env.prod             ← live secrets; NEVER commit
-│       ├── package.json
-│       ├── bin/streamo.js        ← the running entry point (relay-only)
-│       └── …
+├── .env.prod                     ← live secrets; not in any repo
 ├── streamo-data/                 ← archive dir (referenced by
 │   ├── 035df79…b47a63.bin             STREAMO_DATA_DIR in .env.prod)
 │   ├── 021915ef…dd7f.bin              one .bin per pubkey
 │   └── …
 ├── .local/share/fnm/             ← node version manager
-│   └── aliases/default/bin/{node,npm}
+│   └── aliases/default/bin/{node,npm,npx}
+├── .npm/_npx/                    ← npx cache (holds @dtudury/streamo@<v>;
+│   └── …                              first restart of a new version pulls)
 └── …
 ```
+
+**No git checkout on the box.** The relay runs from the published npm
+package via `npx`. To deploy a new version, publish it from a laptop
+clone, then bump the version pin in the systemd unit on the box.
 
 `STREAMO_DATA_DIR=/home/streamo/streamo-data` is set in
 `.env.prod`, so `git pull` and `npm install` never touch the
@@ -64,20 +65,36 @@ the node process. Key fields:
 [Service]
 Type=simple
 User=streamo
-WorkingDirectory=/home/streamo/apps/streamo
-ExecStart=/home/streamo/.local/share/fnm/aliases/default/bin/node \
-          bin/streamo.js --env-file .env.prod
+WorkingDirectory=/home/streamo
+Environment=PATH=/home/streamo/.local/share/fnm/aliases/default/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/streamo/.local/share/fnm/aliases/default/bin/npx \
+          -y @dtudury/streamo@<version> --env-file /home/streamo/.env.prod
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 ```
 
-`bin/streamo.js` is the published CLI binary — the same code people get
-from `npx @dtudury/streamo`. With `STREAMO_HOME_KEY` in `.env.prod`,
-it runs in **relay-only mode**: opens the home Record by pubkey, no
-signer derivation on the box, bytes arrive via sync from an author
-process running with the matching credentials.
+`@dtudury/streamo@<version>` is the published CLI binary (pinned to
+a specific version so restarts are deterministic). The `PATH=`
+environment line is load-bearing: the package's bin uses
+`#!/usr/bin/env node`, which needs `node` resolvable in PATH; systemd's
+default PATH doesn't include the fnm-managed node, so we set it
+explicitly.
+
+With `STREAMO_HOME_KEY` in `.env.prod`, the CLI runs in **relay-only
+mode**: opens the home Record by pubkey, no signer derivation on the
+box, bytes arrive via sync from an author process running with the
+matching credentials.
+
+**Deploying a new version:** publish from a laptop clone
+(`npm publish`), then on the box edit
+`/etc/systemd/system/streamo.service` to bump the version pin and
+`sudo systemctl daemon-reload && sudo systemctl restart streamo`.
+The first restart at a new version pulls the package into the npx
+cache (a few seconds); subsequent restarts at the same version use
+the cache. The archive at `~/streamo-data/` is untouched by any of
+this.
 
 The signing credentials (`STREAMO_USERNAME` / `STREAMO_PASSWORD`)
 are commented out in `.env.prod` — they don't belong on the relay
@@ -96,41 +113,42 @@ any author identity), the home pubkey (`STREAMO_HOME_KEY`), and
   `sudo` gets you the full unit view)
 - **stop / start:** `sudo systemctl stop streamo` / `start streamo`
 
-## the standard deploy
-
-`npm run deploy` (from your local clone). It runs
-`scripts/deploy.sh` which does, in order:
-
-1. **ssh-check:** confirms the working tree on the remote is
-   clean; aborts if not
-2. **fetch + count:** shows what's about to land
-3. **git pull origin main**
-4. **npm install** (uses an explicit PATH to the fnm-managed node,
-   since non-interactive ssh shells don't load fnm init)
-5. **sudo systemctl restart streamo**
-6. **verify:** `systemctl is-active streamo` returns `active`, then
-   `curl https://streamo.dev/api/info` succeeds
-
-Pass `--reset` to wipe `~/streamo-data/` before restart (see
-"when to wipe the archive" below).
-
-Pass `--branch <name>` to deploy a non-main branch (rare; useful
-for staging or experimental rollouts).
-
-## manual deploy (if the script breaks)
+## deploying a new version
 
 ```bash
+# From your local clone:
+npm publish                         # ships the bytes; needs your npm creds
+
+# On the box:
 ssh streamo@streamo.dev
-cd ~/apps/streamo
-git status   # should be clean
-git pull origin main
-PATH=/home/streamo/.local/share/fnm/aliases/default/bin:$PATH npm install --production --no-audit --no-fund
+sudo sed -i 's|@dtudury/streamo@[^ ]*|@dtudury/streamo@<new-version>|' \
+  /etc/systemd/system/streamo.service
+sudo systemctl daemon-reload
 sudo systemctl restart streamo
-sleep 2 && systemctl is-active streamo   # expect: active
-journalctl -u streamo -n 8 --no-pager
-exit
-curl https://streamo.dev/api/info        # expect: JSON with primaryKeyHex
+sleep 6                              # first restart of a new version pulls
+systemctl is-active streamo          # expect: active
+sudo journalctl -u streamo -n 10 --no-pager
+curl https://streamo.dev/api/info    # expect: JSON with primaryKeyHex
 ```
+
+The npx cache lives at `~/.npm/_npx/`. Once a version is pulled,
+subsequent restarts at the same version use the cached package
+(milliseconds). Wiping the cache is harmless — the next restart
+re-pulls.
+
+Rollback: bump the version pin to the prior published version,
+restart. No archive changes; the bytes-served are the same Records
+regardless of CLI version (every Record on disk works with every
+CLI version that can parse the codec).
+
+## the legacy script (scripts/deploy.sh)
+
+Pre-10.1.0 the box held a git checkout and `scripts/deploy.sh`
+shelled `git pull` + `npm install` + restart. With the repo-free
+shape that script no longer fits the prod deployment — it's
+preserved in the repo for forks that prefer the older shape (a
+checkout-on-the-box deployment is still a valid choice, just not
+ours).
 
 ## when to wipe the archive
 
@@ -182,14 +200,6 @@ Look for the expected keys (`entries`, `journalists`, `members`,
 
 ## what's NOT in this doc (yet)
 
-- **No-checkout deploy.** The git checkout at `~/apps/streamo/` is
-  still on the box — `bin/streamo.js` is invoked from it. The
-  architectural-honest shape is `ExecStart = npx -y
-  @dtudury/streamo@<version> --env-file .env.prod`, which requires
-  the phase-1 changes to be published to npm. Once that's published,
-  swap the systemd `ExecStart`, then `rm -rf ~/apps/streamo/`. The
-  `streamo-data/` archive and `.env.prod` (move it out of the
-  checkout first — e.g. to `~/.env.prod`) survive.
 - **Author-side workflow.** With relay-only mode, edits to the home
   Record happen elsewhere (an author process running on a laptop
   with the credentials, plus `--files ./public/homepage --origin

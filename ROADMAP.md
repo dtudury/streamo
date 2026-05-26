@@ -5,51 +5,44 @@ Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
 ---
 
-## repo-free deploy *(natural follow-on to 10.0.0 — entry-point landed; finishing the cutover)*
+## repo-free deploy *(landed — author-side workflow remains)*
 
 The 9.x arc moved every byte streamo.dev serves into signed Records.
-10.0.0 cleaned the substrate names. Together those land the
-architecture for *the relay holds no source* — `npx -y
-@dtudury/streamo@<version> --home-key <hex> --web 443 --data-dir
-/path/to/archive` is enough to serve the homepage + library + apps,
-because every URL resolves through the archive's Records.
+10.0.0 cleaned the substrate names. 10.1.0 closed the loop:
+streamo.dev now runs as `npx -y @dtudury/streamo@10.1.0 --env-file
+/home/streamo/.env.prod` under systemd. **No git checkout on the
+box.** `~/apps/streamo/` was removed; the relay holds an archive,
+an env file, and the npx cache. That's it.
 
-**Landed (post-10.0.0):**
+**Landed in 10.1.0:**
 
-- **Web Push as a CLI flag on `bin/streamo.js`** — `--enable-push`
-  (env: `STREAMO_ENABLE_PUSH=1`) wires VAPID secrets from env-only
-  (`STREAMO_VAPID_PUBLIC` / `_PRIVATE` / `_SUBJECT`) and registers
-  the relay's push routes + chat-message watcher. Refuses to start
-  if the flag is set but VAPID env vars aren't present.
-- **Always-on `serveRepoFiles` when `--web`** — bin/streamo.js now
-  serves from the record's `value.files` whenever `--web` is set,
-  not gated on `--files`. In relay-only mode (`--home-key`) this
-  lets a bare relay serve a homepage whose bytes arrived via origin
-  sync.
-- **streamo.dev's systemd unit cut over** — `ExecStart` is now
-  `node bin/streamo.js --env-file .env.prod`, with `STREAMO_HOME_KEY`
-  + `STREAMO_ENABLE_PUSH=1` in `.env.prod` (and the signing creds
-  commented out — they're re-derivable from cryptopotamus). The
-  relay runs in relay-only mode; no signer on the box.
+- `--enable-push` flag on `bin/streamo.js` (env: `STREAMO_ENABLE_PUSH=1`).
+  VAPID secrets come from env only.
+- Unconditional `serveRepoFiles` when `--web` is set (was gated on
+  `--files`). Relay-only mode now serves a homepage authored
+  elsewhere.
+- Systemd unit `ExecStart` flipped to `npx`. `.env.prod` moved out
+  of the (now-removed) checkout to `/home/streamo/.env.prod`.
+  Signing creds commented out — re-derivable from cryptopotamus
+  (see [MEMORY](#) `project_streamo_dev_relay_identity`).
 
-**What's left to make it fully real:**
+**What's still left in the broader arc** (not blocking):
 
-- **Publish phase-1 to npm + flip ExecStart to `npx`.** The CLI code
-  is at HEAD; once published, the systemd unit can become
-  `ExecStart = npx -y @dtudury/streamo@<v> --env-file .env.prod`,
-  and `~/apps/streamo/` (the git checkout) can be removed. `.env.prod`
-  moves to `~/.env.prod` first.
 - **Extract `chat/server.js`'s author-side workflow into one-shot
   scripts** — each existing seed (history, tarot, flashcards decks,
   journal entries, journalists list) becomes a script you run once
   from your laptop with the signing identity, `--origin streamo.dev`.
-  The archive on the relay captures the bytes; no in-process seed
-  on every restart. Removes the "all-or-nothing startup" coupling;
-  each Record is independent. Not blocking — the existing bytes in
-  the archive keep serving — but until this lands, changing the set
-  of bundled flashcards decks (or the journalists list) requires an
-  ad-hoc author session, and editing `public/homepage/` on the box
-  no longer flows to the served bytes (no more fileSync at boot).
+  Until this lands, the bytes already in the archive keep serving
+  — but changing the set of bundled flashcards decks (or the
+  journalists list) requires an ad-hoc author session, and editing
+  `public/homepage/` on a laptop clone needs an explicit
+  `npx @dtudury/streamo --files ./public/homepage --origin
+  streamo.dev` to push bytes to the relay (no more fileSync-at-boot
+  doing it for free).
+- **Decommission the legacy `chat/server.js` entry point.** Still
+  present in the repo, used by `npm run dev` for local development.
+  Could be slimmed to an integration-test harness or removed once
+  the seed scripts cover the same workflow.
 
 **Graceful partial setup is the architectural prize.** If the journal
 seed never runs, the journal section is empty — nothing else

@@ -1004,6 +1004,61 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  // ── pipeline-level watcher-leak stress (uses 11.0.x instrumentation) ────
+
+  test('many session.subscribe + session.close cycles leave the recaller\'s watchCount bounded', async ({ assert }) => {
+    // Pipeline-level leak detection using recaller.watchCount. The
+    // invariant: a session lifecycle (subscribe → use → close) should
+    // not accrete watchers indefinitely. If `Recaller.when`, a
+    // session._resyncRepo, a `follow` cascade, or anything else in
+    // the wire path forgets to `unwatch`, this test makes it visible.
+    //
+    // Not asserting *exact* count because background work (the
+    // 'subscribed' ack arriving, the home-key auto-subscribe, etc.)
+    // may register transient watchers that resolve after our close.
+    // The real signal is *boundedness*: 10 cycles should not produce
+    // 10× the watcher count of 1 cycle.
+    const serverRegistry = newRegistry()
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 300)
+    serverRepo.set({ payload: 'hello' })
+    const { wss, port } = await startServer(serverRegistry, keyHex)
+
+    const recaller = new Recaller('leak-test')
+    const clientRegistry = newRegistry({ recaller })
+    const baseline = recaller.watchCount
+
+    async function oneCycle () {
+      const session = await registrySync(clientRegistry, 'localhost', port, { reconnectBaseMs: 20 })
+      const repo = await session.subscribe(keyHex)
+      await waitFor(() => repo.get('payload') === 'hello', 1000)
+      session.close()
+      // Brief settle window — close is synchronous to the WS but
+      // the close handler's cleanup runs on the next microtask.
+      await new Promise(r => setTimeout(r, 50))
+    }
+
+    // Run several cycles; measure watchCount drift.
+    await oneCycle()
+    const afterOne = recaller.watchCount
+    for (let i = 0; i < 9; i++) await oneCycle()
+    const afterTen = recaller.watchCount
+
+    // Watchers may legitimately accrete a fixed amount per session
+    // (e.g., one per subscribed-key reactive surface) — what we're
+    // catching is unbounded growth proportional to cycle count. A 9×
+    // factor would be a clear leak; allow up to 3× as headroom for
+    // session-stable watchers that hang around legitimately.
+    const drift = afterTen - afterOne
+    const oneCycleDelta = afterOne - baseline
+    assert.ok(drift <= oneCycleDelta * 3,
+      `watchCount drift across 9 extra cycles (${drift}) should be bounded; ` +
+      `one cycle added ${oneCycleDelta} watchers. If drift is roughly 9× ` +
+      `oneCycleDelta, a per-cycle watcher is leaking. Names currently held: ` +
+      JSON.stringify([...new Set(recaller.watcherNames)].sort()))
+
+    await new Promise(r => wss.close(r))
+  })
+
   // ── concurrent-update retry: known-incomplete in this MVP ────────────────
   //
   // The intended behavior is below — two clients writing concurrently both

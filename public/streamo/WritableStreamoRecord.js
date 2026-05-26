@@ -178,6 +178,13 @@ export class WritableStreamoRecord extends StreamoRecord {
 
   #scheduleSign () {
     if (!this.#signer) return
+    // Once the underlying Addressifier is closed, any append (including
+    // SIG appends from sign()) will throw "cannot append to a closed
+    // Addressifier" — and the catch below would reschedule us forever.
+    // Bail out: closed streams stop trying to sign. The remaining
+    // unsigned tail stays unsigned; that's the caller's call when they
+    // chose to close.
+    if (this.isClosed) return
     if (this.#signing) { this.#signPending = true; return }
     this.#signing = true
     this.sign(this.#signer, this.#signerName)

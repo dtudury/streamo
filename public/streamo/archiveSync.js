@@ -41,28 +41,68 @@ export async function archiveSync (stream, dir, publicKeyHex) {
 
   // Load existing bytes into the stream.
   let fileSize = 0
+  let loadWriter = null
   try {
     const bytes = await readFile(filePath)
     if (bytes.length > 0) {
-      const writer = stream.makeWritableStream().getWriter()
-      await writer.write(bytes)
+      loadWriter = stream.makeWritableStream().getWriter()
+      await loadWriter.write(bytes)
     }
     fileSize = bytes.length
   } catch {
     // No existing archive — start fresh.
+  } finally {
+    // Release the load writer's lock so the underlying writable stream
+    // doesn't keep the process alive. Important on the throw path
+    // (the refuse-to-truncate sanity below); benign on the happy path.
+    if (loadWriter) {
+      try { loadWriter.releaseLock() } catch {}
+    }
   }
 
-  // Compact plain Streams: discard accumulated history and keep only
-  // the current value. Skipped for Repository subclasses whose commit
-  // records embed dataAddress pointers that would become invalid.
-  if (stream.byteLength > 0 && typeof stream.commit !== 'function') {
+  // Compact plain Streamos: discard accumulated history and keep only
+  // the current value. Skipped for StreamoRecord subclasses (slim AND
+  // Writable) because their commit records embed dataAddress pointers
+  // that would become invalid under compaction.
+  //
+  // Duck-type by `lastCommit` (defined on StreamoRecord, absent from
+  // plain Streamo). Pre-11.0 this check was `typeof stream.commit !==
+  // 'function'`, which worked when every Record had commit — but
+  // post-11.0 slim StreamoRecord lost commit (moved to Writable), and
+  // the old check silently misfired: it'd `_reset()` a slim Record
+  // then TypeError on `set(value)`, leaving the stream empty and the
+  // archive about to be truncated to 0 bytes. The current check is
+  // record-shape-aware regardless of authorability.
+  let intentionallyCompacted = false
+  if (stream.byteLength > 0 && !('lastCommit' in stream)) {
     try {
       const value = stream.get()
       if (value !== undefined) {
         stream._reset()
         stream.set(value)
+        intentionallyCompacted = true
       }
     } catch { /* not compactable */ }
+  }
+
+  // Defense-in-depth sanity: after load (and the optional compact
+  // above), in-memory state should match disk size — UNLESS we just
+  // intentionally compacted. Any other cause of divergence (stale
+  // process racing this one on the same archive, in-memory state
+  // mutated between load and write, a future bug we haven't seen
+  // yet) would be silently propagated to disk by the truncate path.
+  // Refuse instead. The operator gets a loud crash with a diagnostic
+  // pointing at what to investigate.
+  if (!intentionallyCompacted && stream.wireByteLength !== fileSize) {
+    throw new Error(
+      `archiveSync refusing to overwrite ${filePath}: in-memory stream ` +
+      `is ${stream.wireByteLength} wire-bytes after load but disk has ` +
+      `${fileSize}. Usually means another process is racing this one on ` +
+      `the same archive directory, or in-memory state was mutated between ` +
+      `the load and this check. Investigate before retrying. (If you ` +
+      `really need to replace the archive with the in-memory state, ` +
+      `delete ${filePath} first.)`
+    )
   }
 
   // Append-vs-truncate decision in wire-format units (matches what's

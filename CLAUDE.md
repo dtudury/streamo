@@ -15,7 +15,7 @@ after any meaningful change — not as an afterthought, but as part of the work:
 - **`README.md`** — npm/GitHub landing page; imports, framing, and examples must reflect
   the current package name (`@dtudury/streamo`) and current capabilities
 - **`public/homepage/index.html`** — browser homepage, served from the home repo's
-  `files` key via `fileSync` (page-as-Repo). Feature list and app cards should match
+  `files` key via `fileSync` (page-as-Record). Feature list and app cards should match
   the README's framing. Edit on disk → signed commit lands → next request serves the
   new bytes
 - **`package.json`** — version, name (`@dtudury/streamo`), description, and keywords;
@@ -52,7 +52,7 @@ Use this framing consistently across all public-facing text:
 
 ## package surface
 
-- **`index.js`** — main barrel; `import { Repo, Signer, registrySync } from '@dtudury/streamo'`.
+- **`index.js`** — main barrel; `import { StreamoRecord, WritableStreamoRecord, Signer, registrySync } from '@dtudury/streamo'`.
   Excludes `StreamoComponent` (extends `HTMLElement`, browser-only — subpath-import it from
   `'@dtudury/streamo/StreamoComponent.js'`).
 - **`exports` map** — `"."` → `index.js`; `"./*"` → `./public/streamo/*` so subpath imports
@@ -68,34 +68,35 @@ lands without tests passing, you have failed the contract.
 
 ## known footguns
 
-- ## ⚠️ **IMPORTANT — REPEAT OFFENDER:** `registry.open(key)` is local; `session.subscribe(key)` is the wire.
-  **If your client code is reading `undefined` from a Repo you just opened, you
-  almost certainly wanted `session.subscribe` instead.** This footgun has
-  bitten us at least twice — independent Claudes from independent sessions,
-  both reaching for `open` because the English meaning is right. Read this
-  one twice before you write the `open` call.
-
-  `RepoRegistry.open(key)` ensures a Repo object exists locally for that
-  pubkey — it's idempotent, doesn't touch the network, and is used internally
-  by the registry when bytes arrive for an unknown key (or by code that
-  explicitly wants local-only behaviour, like the relay's startup seed step).
-  **Client code that wants bytes to flow wants `session.subscribe(key)`,**
-  which calls `open` *and* sends a `subscribe` message over the WS so the
+- **`registry._materialize(key)` is local; `session.subscribe(key)` is the wire.**
+  Closed-loop in 10.0: the old `registry.open` is now `_materialize` (underscored
+  because client code almost never wants it). `_materialize` ensures a local
+  Record exists for that pubkey — idempotent, doesn't touch the network, used
+  internally by the registry's chunk-arrival path and by the relay's startup
+  seed. **Client code that wants bytes to flow wants `session.subscribe(key)`**,
+  which materializes locally AND sends a `subscribe` JSON over the WS so the
   relay starts pushing bytes. The cascading `follow` callback in
   `registrySync(...)` is the content-driven sibling — subscribe-by-discovery
-  via a watcher on a known repo's value (`home.flashcardsDecks`,
+  via a watcher on a known record's value (`home.flashcardsDecks`,
   `home.members`, etc.) instead of subscribe-by-explicit-call.
 
-  *The lesson isn't that the API is mis-shaped — the split is real and useful
-  (the registry needs a local-only path; the relay seed wants it).* The lesson
-  is that **the right verb has a less-attractive name than the wrong one, and
-  that gravity recurs.** The complete fix — making `open` retrieve-only,
-  routing all creation through `subscribe` — is tracked under *Held for a
-  major bump* in ROADMAP.md. Until that ships:
-
-  **If your code calls `registry.open` directly and you are not the registry
-  or the server-side seed, you are probably writing a bug.** Use
-  `session.subscribe` or wire a `follow` cascade instead.
+  If you find yourself reaching for `registry._materialize` outside the
+  registry, the relay's seed step, or the explorer's startup-from-disk path,
+  you're probably writing a bug — use `session.subscribe` or wire a `follow`
+  cascade instead.
+- **Slim `StreamoRecord` has no author methods.** Calling `.set`, `.setRefs`,
+  `.commit`, `.checkout`, `.merge`, `.update`, `.attachSigner`, or `.sign` on a
+  slim StreamoRecord raises `TypeError` — they live on `WritableStreamoRecord`,
+  the subclass you opt into when you intend to author. The discriminator is
+  the registry's factory: the canonical pattern is `key === myKey ? new
+  WritableStreamoRecord(...) : new StreamoRecord(...)`. `session.subscribe`
+  returns whatever the factory produced, so an app that intends to author to
+  its own key must declare it Writable in the factory BEFORE the subscribe
+  materializes it. The type-level guard is load-bearing — `registrySync.subscribe`'s
+  outbound reader checks `repo instanceof WritableStreamoRecord` and skips
+  reader setup for slim Records (no signer, no business pushing). This is
+  what dissolves the watch.js corruption-fight footgun architecturally; don't
+  defeat it by making everything Writable "just in case."
 - **`onclick=${fn}` in h templates is a trap.** `attr=${fn}` is the *reactive
   cell* pattern: mount calls `fn(el)` on every render and assigns the **return
   value** to the attribute. For onclick this means the "handler" runs on every
@@ -112,11 +113,11 @@ lands without tests passing, you have failed the contract.
 - **One Recaller per app.** A Recaller is meant to be the shared
   coordination point: data sources fire on it, views watch on it,
   the `(target, key)` NestedSet keeps unrelated subsystems from
-  colliding. The streamo idiom: `new RepoRegistry(undefined, {
-  recaller })` makes the default factory create Repos that *share*
-  the recaller, so reading any repo's state inside a slot self-
-  subscribes the slot. App UI state, async caches (verify), and
-  toggle state (trees) each become their own `liveObject(target,
+  colliding. The streamo idiom: `new StreamoRecordRegistry({
+  recaller })` makes the default factory create slim StreamoRecords
+  that *share* the recaller, so reading any record's state inside a
+  slot self-subscribes the slot. App UI state, async caches (verify),
+  and toggle state (trees) each become their own `liveObject(target,
   { recaller })` — different targets, same recaller, no collisions.
   `defineComponent(name, fn, { recaller })` does the same for custom-
   element components: pass the app's Recaller and the component's
@@ -164,17 +165,27 @@ lands without tests passing, you have failed the contract.
 - `Streamo` — content-addressable codec. `set(value)→address`, `get(address)→value`,
   same value → same address. Decomposes structured values into reusable chunks; chunks
   reference each other by byte-offset address. Hash-chain (chainHash) folds over the byte
-  stream; SIG chunks anchor it. Identity-blind — sign/verify take signer/pubkey as args.
-- `Repo` — extends Streamo; every `set()` is a signed commit (message, date, dataAddress,
-  parent, remoteParent?). Owns `makeRelayInboundStream` (trust+append for the
-  receive-from-relay path, with a chain-hash-equality alignment check that catches the
-  push-in-flight race), plus the reactive `conflictDetected` (local alignment failed)
-  and `pushRejected` (the relay said no) flags. Paired with `RepoSerializer` on the
-  relay side — the per-repo chain authority that atomically accepts or rejects
-  incoming pushes against the current `committedChainHash`. Vocabulary:
-  *fork* = new Repo with a lineage note; *branch* = an addressed-but-non-head value
-  inside a Repo; *conflict* = the runtime "these bytes can't be appended" failure;
-  *merge* = a commit citing prior values
+  stream; SIG chunks anchor it. Identity-blind — knows nothing about signatures,
+  authors, or chains.
+- `StreamoRecord` (slim) — extends Streamo with the chain-interpretation lens: "this
+  Streamo's bytes interpret as a signed chain." Read-only definitional minimum:
+  chain reads (`lastCommit`, `committedChainHash`, `signedLength`, `valueAddress`,
+  `get`, `getRefs`, `files`, `history`, `verify`), wire-state cells (`hasRelay`,
+  `caughtUpToRelay`, `isReadyToAuthor`, `pushRejected`, `conflictDetected`,
+  `relayChainHash`), `_attachSession`, and the `makeRelayInboundStream` delegate
+  (trust+append for the receive-from-relay path, with a chain-hash-equality
+  alignment check that catches the push-in-flight race). Paired with
+  `StreamoRecordSerializer` on the relay side — the per-record chain authority
+  that atomically accepts or rejects incoming pushes against the current
+  `committedChainHash`.
+- `WritableStreamoRecord` — extends slim with the author surface: `attachSigner`,
+  `set`, `setRefs`, `checkout`, `commit`, `merge`, `update`, `sign`,
+  `defaultMessage`, plus `locallyAuthoredOffset` (the substrate's word for
+  "which bytes did I sign for this session"). The type-level split is what
+  makes the observer-doesn't-push guard load-bearing. Vocabulary: *fork* =
+  new Record with a lineage note; *branch* = an addressed-but-non-head value
+  inside a Record; *conflict* = the runtime "these bytes can't be appended"
+  failure; *merge* = a commit citing prior values.
 - `Signer` — deterministic secp256k1 keypairs via PBKDF2-SHA256 (256 bits, `deriveBits`)
   from username + password. KAT in `Signer.test.js` pins the bytes — do not change the
   derivation without updating the KAT and acknowledging it as a breaking change.

@@ -49,9 +49,9 @@ The protocol fits in [`design.md`](./design.md). The reference implementation co
 
 A streamo app is really three kinds of thing, layered on top of each other. If you already think in *input / function / output*, this is the same shape — just with names for the artifacts at each layer.
 
-- **Records** are streamo's primary data unit (the things called `Repo` in the code today). Each record is signed by exactly one keypair, append-only, indelible, and content-addressed. Your reviews on a flashcard deck are a record. The deck itself is a record. The relay's homepage is a record. Records are *how data exists in streamo* — and the indelibility means they're an honest log of what was written, not what someone wishes they'd written.
+- **Records** are streamo's primary data unit (`StreamoRecord` in the code; `WritableStreamoRecord` is the subclass you author into). Each record is signed by exactly one keypair, append-only, indelible, and content-addressed. Your reviews on a flashcard deck are a record. The deck itself is a record. The relay's homepage is a record. Records are *how data exists in streamo* — and the indelibility means they're an honest log of what was written, not what someone wishes they'd written.
 
-- **Procedures** are deterministic specifications for combining records — the JavaScript (functions, helpers, render code) that reads one or more records and produces something derived from them. Anyone with the same records and the same procedure gets the same result. Procedures themselves are often delivered as files served from a record (*page-as-Repo*), which means the procedure *is itself* a record — same audit trail, same indelibility, same verifiability.
+- **Procedures** are deterministic specifications for combining records — the JavaScript (functions, helpers, render code) that reads one or more records and produces something derived from them. Anyone with the same records and the same procedure gets the same result. Procedures themselves are often delivered as files served from a record (*page-as-Record*), which means the procedure *is itself* a record — same audit trail, same indelibility, same verifiability.
 
 - **Images** are the rendered, consultable outputs — the web pages, JSON responses, leaderboards, feeds that someone actually looks at. *"Here are your decks, here's what's due"* is an image. *"Here are this commentator's verified rankings"* is an image. The same records can be imaged many ways: change the procedure, change the inputs, and you get a different image. No single canonical image — any peer can publish their own from the same records.
 
@@ -221,22 +221,26 @@ store.get('score')  // 42
 
 Values are encoded with a self-describing codec (strings, numbers, dates, booleans, arrays, objects, `Uint8Array`). Same value → same bytes → same address; dedup is automatic.
 
-### Repo — signed commit log
+### StreamoRecord + WritableStreamoRecord — signed commit log
 
-`Repo` wraps a `Streamo` so every `set()` becomes a commit — message, date, data address, and parent pointer. The raw commit log is what syncs over the wire.
+`StreamoRecord` wraps a `Streamo` with the chain-interpretation lens: a Streamo whose bytes interpret as a signed chain. It's the read-only definitional minimum — readable, traversable, verifiable. To author, use the `WritableStreamoRecord` subclass, which adds `attachSigner`, `set`, `setRefs`, `checkout`, `commit`, `merge`, `update`, `sign`.
 
 ```js
-import { Repo } from '@dtudury/streamo'
+import { StreamoRecord, WritableStreamoRecord } from '@dtudury/streamo'
 
-const repo = new Repo()
+// Read-only: subscribed peer Records, observers, anything you don't sign for.
+const peer = new StreamoRecord()
+peer.get('name')      // reads through the last commit
+[...peer.history()]   // newest-first iterator over commits
+
+// Author: your own Records, the home repo on your StreamoServer.
+const repo = new WritableStreamoRecord()
 repo.attachSigner(signer, 'my-dataset')  // auto-sign every commit
 repo.set({ name: 'alice', messages: [] })
-repo.get('name')      // 'alice'
 repo.lastCommit       // { message: '', date: Date, dataAddress: n, parent: n|undefined }
-[...repo.history()]   // newest-first iterator over commits
 ```
 
-Signature chunks travel in the byte stream automatically. At the relay, a per-repo serializer is the chain authority — it verifies every incoming push against the repo's public key and rejects forged signatures or stale-chained writes atomically. Clients receiving the relay's authoritative stream trust + append.
+The type-level split is load-bearing: a slim `StreamoRecord` is an observer by construction, so the registry sync layer can structurally refuse to push from it (no signer, no business pushing). Signature chunks travel in the byte stream automatically. At the relay, a per-record serializer is the chain authority — it verifies every incoming push against the record's public key and rejects forged signatures or stale-chained writes atomically. Clients receiving the relay's authoritative stream trust + append.
 
 ### Signer — deterministic identity
 
@@ -250,38 +254,45 @@ const publicKeyHex = bytesToHex(publicKey)   // stable identity for this (user, 
 
 Keys are derived with PBKDF2 so the same username + password always produces the same keypair. No key files to manage.
 
-### RepoRegistry — multi-repo store
+### StreamoRecordRegistry — multi-record store
 
 ```js
-import { RepoRegistry, Repo, archiveSync } from '@dtudury/streamo'
+import { StreamoRecordRegistry, StreamoRecord, WritableStreamoRecord, archiveSync, Recaller } from '@dtudury/streamo'
 
-const registry = new RepoRegistry(async key => {
-  const repo = new Repo()
-  await archiveSync(repo, '.streamo', key)  // persist to disk
-  return repo
+const recaller = new Recaller('app')
+const registry = new StreamoRecordRegistry({
+  recaller,
+  // Writable for your own key (you author to it); slim for everyone else.
+  factory: async key => {
+    const RecordClass = key === myKey ? WritableStreamoRecord : StreamoRecord
+    const repo = new RecordClass({ recaller })
+    await archiveSync(repo, '.streamo', key)  // persist to disk
+    return repo
+  }
 })
-
-const repo = await registry.open(publicKeyHex)
 ```
 
-### RepoRegistry + your app's Recaller — one Recaller for everything
+The factory choosing slim-vs-Writable per key is the canonical shape: subscribed peer records are read-only by type, only your own records are authorable. The registry never produces a Writable Record by accident.
+
+### StreamoRecordRegistry + your app's Recaller — one Recaller for everything
 
 A `Recaller` is meant to be the shared coordination point: data sources
 fire on it, views watch on it, the `(target, key)` namespace keeps
 unrelated subsystems from colliding. Pass your app's `Recaller` to
-`RepoRegistry` and the default factory creates Repos that share it —
-reading any repo's state inside a reactive cell auto-subscribes the
-cell. Iteration, `get(keyHex)`, and `size` all self-report too, so
-slots that walk the registry auto-subscribe to new-repo opens.
+`StreamoRecordRegistry` and the default factory creates slim
+StreamoRecords that share it — reading any record's state inside a
+reactive cell auto-subscribes the cell. Iteration, `get(keyHex)`, and
+`size` all self-report too, so slots that walk the registry
+auto-subscribe to new-record opens.
 
 ```js
-import { Recaller, RepoRegistry, h, mount } from '@dtudury/streamo'
+import { Recaller, StreamoRecordRegistry, h, mount } from '@dtudury/streamo'
 
 const recaller = new Recaller('app')
-const registry = new RepoRegistry(undefined, { recaller, name: 'app' })
+const registry = new StreamoRecordRegistry({ recaller, name: 'app' })
 
 mount(h`${() => {
-  for (const [k, r] of registry) ...   // auto-subscribes to chunks + new repos
+  for (const [k, r] of registry) ...   // auto-subscribes to chunks + new records
 }}`, appEl, recaller)
 ```
 
@@ -318,8 +329,8 @@ const session = await registrySync(registry, 'localhost', 8080, {
 session.interest(rootKey)        // receive announcements for this topic
 session.announce(myKey, rootKey) // tell interested peers about your repo
 
-// The everyday "I want this key live" verb — opens the Repo locally if
-// not yet opened, plumbs it to the wire, returns the Repo:
+// The everyday "I want this key live" verb — opens the record locally if
+// not yet opened, plumbs it to the wire, returns it:
 const myRepo = await session.subscribe(myKey)
 ```
 
@@ -404,7 +415,7 @@ different transport.
 
 ```bash
 npm test                                 # all tests
-node --test public/streamo/Repo.test.js  # single file
+node --test public/streamo/StreamoRecord.test.js  # single file
 ```
 
 ## roadmap

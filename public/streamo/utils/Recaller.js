@@ -51,6 +51,46 @@ export class Recaller {
     this.#disassociate(f)
   }
 
+  /**
+   * Promise-shaped wait for a reactive predicate to become truthy.
+   *
+   * Returns a promise that resolves once `predicate()` returns a truthy
+   * value (immediately if already truthy; otherwise on the first
+   * reactive re-run that sees it flip). Cancellation via standard
+   * `AbortSignal` — abort and the watcher is torn down + the promise
+   * rejects with the signal's reason.
+   *
+   * The hydroplane move on top of the watch+predicate+gate boilerplate
+   * (a 25-line dance of watcher setup, fire-on-flip, cleanup, optional
+   * timeout). Caller writes intent — *"await readiness"* — and composes
+   * with `Promise.race` / `AbortSignal` for timeout / cancellation.
+   *
+   * @param {(r: Recaller) => any} predicate  reactive predicate function
+   *   (any reportKeyAccess inside subscribes the wait to that key)
+   * @param {{ signal?: AbortSignal, name?: string }} [options]
+   * @returns {Promise<void>}
+   */
+  when (predicate, { signal, name = 'recaller:when' } = {}) {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const fn = () => {
+        if (settled) return
+        let v
+        try { v = predicate(this) } catch (e) { settled = true; this.unwatch(fn); reject(e); return }
+        if (v) { settled = true; this.unwatch(fn); resolve() }
+      }
+      const onAbort = () => {
+        if (settled) return
+        settled = true
+        this.unwatch(fn)
+        reject(signal?.reason ?? new Error('aborted'))
+      }
+      if (signal?.aborted) { onAbort(); return }
+      signal?.addEventListener('abort', onAbort, { once: true })
+      this.watch(name, fn)
+    })
+  }
+
   reportKeyAccess (target, key) {
     const f = this.#stack[0]
     if (typeof f !== 'function') return

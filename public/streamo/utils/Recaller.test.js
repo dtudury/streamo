@@ -60,3 +60,73 @@ test('unwatch DURING flush (mid-batch) does NOT resurrect the watcher', async ()
   assert.equal(aRuns, 2, 'a re-runs as expected')
   assert.equal(bRuns, 1, 'b was unwatched mid-flush; its batch entry must be skipped')
 })
+
+test('when() resolves immediately if predicate already truthy', async () => {
+  const r = new Recaller('test')
+  let cell = true
+  await r.when(() => cell)
+  assert.ok(true, 'resolved')
+})
+
+test('when() resolves on the reactive flip', async () => {
+  const r = new Recaller('test')
+  const target = {}
+  let cell = false
+  const promise = r.when(() => {
+    r.reportKeyAccess(target, 'cell')
+    return cell
+  })
+  // Not yet — predicate is false.
+  let resolved = false
+  promise.then(() => { resolved = true })
+  await new Promise(resolve => nextTick(resolve))
+  assert.equal(resolved, false, 'still waiting before the flip')
+
+  // Flip the cell + notify.
+  cell = true
+  r.reportKeyMutation(target, 'cell')
+  await new Promise(resolve => nextTick(resolve))
+  // Give the promise's .then a microtask to fire.
+  await new Promise(resolve => nextTick(resolve))
+  assert.equal(resolved, true, 'resolved once the predicate flipped truthy')
+})
+
+test('when() rejects when AbortSignal aborts', async () => {
+  const r = new Recaller('test')
+  const target = {}
+  let cell = false
+  const controller = new AbortController()
+  const promise = r.when(
+    () => { r.reportKeyAccess(target, 'cell'); return cell },
+    { signal: controller.signal }
+  )
+  controller.abort('user-cancelled')
+  let err = null
+  try { await promise } catch (e) { err = e }
+  assert.ok(err, 'rejected on abort')
+  assert.equal(err, 'user-cancelled', 'rejection reason is the signal.reason')
+})
+
+test('when() with already-aborted signal rejects immediately', async () => {
+  const r = new Recaller('test')
+  const controller = new AbortController()
+  controller.abort('pre-aborted')
+  let err = null
+  try { await r.when(() => false, { signal: controller.signal }) } catch (e) { err = e }
+  assert.ok(err, 'rejected synchronously on already-aborted signal')
+})
+
+test('when() composes with Promise.race for timeout (the fileSync pattern)', async () => {
+  const r = new Recaller('test')
+  const target = {}
+  let cell = false
+  const controller = new AbortController()
+  const ready = r.when(
+    () => { r.reportKeyAccess(target, 'cell'); return cell },
+    { signal: controller.signal }
+  ).catch(() => 'timeout')
+  const timer = setTimeout(() => controller.abort('timeout'), 10)
+  const result = await ready
+  clearTimeout(timer)
+  assert.equal(result, 'timeout', 'race lost to timeout — caller proceeds')
+})

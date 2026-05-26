@@ -529,35 +529,25 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // legacy race (chain-mismatch on first push) re-appears in that
   // configuration — but the user sees a clear log line saying so, not
   // an unexplained hang.
-  if (typeof repo.isReadyToAuthor === 'boolean') {
-    if (!repo.isReadyToAuthor) {
-      await new Promise(resolve => {
-        let timeoutId = null
-        const cleanup = () => {
-          repo.recaller.unwatch(fn)
-          if (timeoutId !== null) clearTimeout(timeoutId)
-        }
-        const fn = () => {
-          if (repo.isReadyToAuthor) {
-            cleanup()
-            resolve()
-          }
-        }
-        repo.recaller.watch('fileSync:await-ready-to-author', fn)
-        timeoutId = setTimeout(() => {
-          if (repo.hasRelay && repo.relaySubscribedAtOffset === null) {
-            console.warn(
-              'fileSync: relay did not send a `subscribed` ack within 3 s — ' +
-              'proceeding without the initial-replay gate. If your author push ' +
-              'gets rejected with chain-mismatch, your relay is older than 10.2.3; ' +
-              'update it to use the new initial-replay handshake.'
-            )
-          }
-          cleanup()
-          resolve()
-        }, 3000)
-      })
-    }
+  if (typeof repo.isReadyToAuthor === 'boolean' && !repo.isReadyToAuthor) {
+    const controller = new AbortController()
+    const ready = repo.recaller.when(
+      () => repo.isReadyToAuthor,
+      { signal: controller.signal, name: 'fileSync:await-ready-to-author' }
+    ).catch(() => {})  // timeout aborts; swallow and proceed
+    const timer = setTimeout(() => {
+      if (repo.hasRelay && repo.relaySubscribedAtOffset === null) {
+        console.warn(
+          'fileSync: relay did not send a `subscribed` ack within 3 s — ' +
+          'proceeding without the initial-replay gate. If your author push ' +
+          'gets rejected with chain-mismatch, your relay is older than 10.2.3; ' +
+          'update it to use the new initial-replay handshake.'
+        )
+      }
+      controller.abort('timeout')
+    }, 3000)
+    await ready
+    clearTimeout(timer)
   }
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)

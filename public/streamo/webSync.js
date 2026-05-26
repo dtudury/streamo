@@ -20,17 +20,25 @@ import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
  * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {string} primaryKeyHex   public key of the "main" streamo for GET /
  * @param {number} port
- * @param {object} [peerOptions.serveRepoFiles]  optional config to serve a
- *   homepage StreamoRecord's files via serveFromRepo: `{ repo, ...serveOpts }`. When
- *   set, the middleware serves any path present in the StreamoRecord (via files +
- *   mounts); misses fall through to the legacy /streams/<key>/<path> routes
- *   and then 404. There is no static-file fallback — every URL on a
- *   webSync server resolves through Record + mount chain.
- * @param {(app: import('express').Express) => void} [peerOptions.routes]
- *   optional hook to register extra HTTP routes — called after the JSON
- *   body parser is in place. Lets an embedding server (e.g. the chat
- *   relay's Web Push endpoints) add routes without webSync knowing about
- *   them; webSync stays a generic relay server.
+ * @param {string} [name]
+ * @param {number} [keyIterations]
+ * @param {{
+ *   serveRepoFiles?: { repo: any, [opt: string]: any },
+ *   routes?: (app: import('express').Express) => void,
+ *   home?: string,
+ *   isAuthority?: boolean,
+ *   [other: string]: any
+ * }} [peerOptions]
+ *   `serveRepoFiles`: optional config to serve a homepage StreamoRecord's
+ *   files via serveFromRepo: `{ repo, ...serveOpts }`. When set, the
+ *   middleware serves any path present in the StreamoRecord (via files
+ *   + mounts); misses fall through to the legacy /streams/<key>/<path>
+ *   routes and then 404. There is no static-file fallback — every URL
+ *   on a webSync server resolves through Record + mount chain.
+ *   `routes`: optional hook to register extra HTTP routes — called
+ *   after the JSON body parser is in place. Lets an embedding server
+ *   (e.g. the chat relay's Web Push endpoints) add routes without
+ *   webSync knowing about them; webSync stays a generic relay server.
  * @returns {Promise<import('http').Server>}
  */
 export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000, peerOptions = {}) {
@@ -83,7 +91,10 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
       if (typeof path !== 'string' || typeof content !== 'string') {
         return res.status(400).json({ error: 'path and content must be strings' })
       }
-      const repo = await registry._materialize(primaryKeyHex)
+      // The primary repo is Writable in author-mode servers (see
+      // StreamoServer.create's factory). Relay-only servers don't expose
+      // this endpoint via a route guard upstream, so the cast is safe.
+      const repo = /** @type {import('./WritableStreamoRecord.js').WritableStreamoRecord} */ (await registry._materialize(primaryKeyHex))
       const working = repo.checkout()
       // Store JSON files as parsed objects so they round-trip cleanly with fileSync
       let value = content

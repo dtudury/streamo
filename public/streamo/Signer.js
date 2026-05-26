@@ -10,7 +10,7 @@
  */
 import { getPublicKey, signAsync, verify } from './utils/noble-secp256k1.js'
 
-const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
+const cryptoSubtle = /** @type {SubtleCrypto} */ (typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle)
 
 /**
  * Derive a deterministic 256-bit private key from (name, password) using PBKDF2-SHA256.

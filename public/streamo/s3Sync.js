@@ -39,7 +39,7 @@ async function uploadFrame (client, bucket, key, data) {
  * On startup, existing frames are downloaded in order and fed into the stream.
  * New frames are uploaded as they arrive.
  *
- * @param {import('./Stream.js').Stream} stream
+ * @param {import('./Streamo.js').Streamo} stream
  * @param {string} publicKeyHex
  * @param {object} config
  * @param {string} config.bucket

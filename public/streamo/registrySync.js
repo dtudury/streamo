@@ -27,25 +27,36 @@ function arraysEqual (a, b) {
 }
 
 /**
+ * Adapted WebSocket — either a Node `ws` package socket (already has
+ * `.on`/`.off`) or a browser-native WebSocket that's been polyfilled.
+ * @typedef {WebSocket & {
+ *   on: (event: string, fn: (...args: any[]) => any) => any,
+ *   off: (event: string, fn: (...args: any[]) => any) => any
+ * }} AdaptedWebSocket
+ */
+
+/**
  * Normalize a browser-native WebSocket to the Node `ws` EventEmitter interface.
  * If the socket already has `.on()` (Node ws package) it is returned unchanged.
  * @param {WebSocket} ws
- * @returns {WebSocket}
+ * @returns {AdaptedWebSocket}
  */
 function adaptWebSocket (ws) {
-  if (typeof ws.on === 'function') return ws
-  ws.binaryType = 'arraybuffer'
+  const adapted = /** @type {AdaptedWebSocket} */ (/** @type {unknown} */ (ws))
+  if (typeof adapted.on === 'function') return adapted
+  adapted.binaryType = 'arraybuffer'
+  /** @type {Record<string, Function[]>} */
   const h = { open: [], close: [], error: [], message: [] }
-  ws.addEventListener('open', () => h.open.forEach(fn => fn()))
-  ws.addEventListener('close', e => h.close.forEach(fn => fn(e.code, e.reason)))
-  ws.addEventListener('error', e => h.error.forEach(fn => fn(e)))
-  ws.addEventListener('message', e => {
+  adapted.addEventListener('open', () => h.open.forEach(fn => fn()))
+  adapted.addEventListener('close', e => h.close.forEach(fn => fn(/** @type {any} */ (e).code, /** @type {any} */ (e).reason)))
+  adapted.addEventListener('error', e => h.error.forEach(fn => fn(e)))
+  adapted.addEventListener('message', e => {
     const data = e.data instanceof ArrayBuffer ? new Uint8Array(e.data) : e.data
     h.message.forEach(fn => fn(data))
   })
-  ws.on = (ev, fn) => { h[ev]?.push(fn); return ws }
-  ws.off = (ev, fn) => { if (h[ev]) h[ev] = h[ev].filter(f => f !== fn); return ws }
-  return ws
+  adapted.on = (ev, fn) => { h[ev]?.push(fn); return adapted }
+  adapted.off = (ev, fn) => { if (h[ev]) h[ev] = h[ev].filter(f => f !== fn); return adapted }
+  return adapted
 }
 
 // Compressed secp256k1 public keys are always 33 bytes (0x02 or 0x03 prefix).
@@ -177,9 +188,9 @@ const RECONNECT_RESET_MS = 30000
  * in turn.  This lets a graph of related repositories be discovered organically
  * from content — no out-of-band catalog is needed.
  *
- * @param {WebSocket} ws
+ * @param {AdaptedWebSocket} ws
  * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
- * @param {RegistrySyncOptions} [options]
+ * @param {RegistrySyncOptions & { isAuthority?: boolean }} [options]
  * @param {string} [label]  prefix for log messages
  */
 export function handleRegistryPeer (ws, registry, options = {}, label = 'registry', routing = null) {
@@ -526,6 +537,47 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     cleanup()
   })
 
+  /**
+   * Drop the current subscription state for `keyHex` and re-subscribe
+   * from offset 0. Lives at this scope (handleRegistryPeer) because it
+   * mutates readers/writers/pendingChunks and calls sendJson/syncKey,
+   * all defined in this closure. The session-level wrapper delegates
+   * here when a live peer is present.
+   *
+   * Used by `repo.update()` between retry attempts after a rejected
+   * push (caller has already `_reset()`'d the local Record).
+   */
+  async function _resyncRepo (keyHex) {
+    const oldReader = readers.get(keyHex)
+    if (oldReader) {
+      oldReader.cancel().catch(() => {})
+      readers.delete(keyHex)
+    }
+    const oldWriter = writers.get(keyHex)
+    if (oldWriter) {
+      try { await oldWriter.close() } catch {}
+      writers.delete(keyHex)
+    }
+    pendingChunks.delete(keyHex)
+    sendJson({
+      type: 'subscribe',
+      key: keyHex,
+      fromOffset: 0,
+      fromChainHash: bytesToHex(new Uint8Array(32))
+    })
+    await syncKey(keyHex, 0)
+    const repo = await registry._materialize(keyHex)
+    await new Promise(resolve => {
+      const fn = () => {
+        if (repo.relayChainHash) {
+          repo.recaller.unwatch(fn)
+          resolve(undefined)
+        }
+      }
+      repo.recaller.watch('peer:resync-wait-anchor', fn)
+    })
+  }
+
   return {
     /** Declare interest in a topic — receive future `announce` messages for it. */
     interest (key) { sendJson({ type: 'interest', key }) },
@@ -537,7 +589,9 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
      * The everyday "I want this key live" verb.
      * @returns {Promise<import('./StreamoRecord.js').StreamoRecord>}
      */
-    subscribe (key) { return subscribeToKey(key) }
+    subscribe (key) { return subscribeToKey(key) },
+    /** Resync a single key's wire state. Internal — used by session._resyncRepo. */
+    _resyncRepo
   }
 }
 
@@ -672,7 +726,7 @@ export function registrySync (registry, host, port, options = {}) {
   // and reconnection a fire-and-forget loop.
   function connect () {
     return new Promise((resolve, reject) => {
-      const sock = adaptWebSocket(new WS(url))
+      const sock = adaptWebSocket(/** @type {WebSocket} */ (new WS(url)))
       let opened = false
       sock.on('open', () => {
         opened = true
@@ -736,58 +790,23 @@ export function registrySync (registry, host, port, options = {}) {
     },
     /**
      * Drop the current subscription state for `keyHex` and re-subscribe
-     * from offset 0. Used by `repo.merge()` between retry attempts after
-     * a rejected push:
+     * from offset 0. Used by `WritableStreamoRecord.update()` between
+     * retry attempts after a rejected push:
      *
-     *   1. Caller has already `_reset()`'d the StreamoRecord (local bytes wiped,
-     *      flags cleared).
-     *   2. This closes the existing reader (it would send stale local
-     *      bytes that no longer exist) and writer (its alignment state
-     *      expects bytes the local StreamoRecord no longer has).
-     *   3. Sends a fresh `subscribe` JSON with `fromOffset: 0` so the
-     *      relay streams its authoritative chain from the start.
-     *   4. Re-creates reader + writer via `syncKey`.
-     *   5. Waits for the first SIG from the relay to land (re-anchoring
-     *      `relayChainHash`), at which point the caller's update can
-     *      re-apply against fresh state.
+     *   1. Caller has already `_reset()`'d the StreamoRecord.
+     *   2. The peer-level `_resyncRepo` closes its readers/writers/
+     *      pending state, sends a fresh `subscribe` JSON with
+     *      `fromOffset: 0`, recreates reader+writer, and waits for the
+     *      first SIG from the relay to re-anchor `relayChainHash`.
+     *   3. Caller's update can re-apply against fresh state.
      *
+     * Throws if there's no live peer (reconnect in progress).
      * Underscore-prefixed because this is substrate-internal — apps
-     * should use `repo.merge()`, which orchestrates the full retry.
+     * use `repo.update()`, which orchestrates the full retry.
      */
     async _resyncRepo (keyHex) {
-      // Tear down per-key wire state. Errors during close are best-effort;
-      // we're about to recreate everything anyway.
-      const oldReader = readers.get(keyHex)
-      if (oldReader) {
-        oldReader.cancel().catch(() => {})
-        readers.delete(keyHex)
-      }
-      const oldWriter = writers.get(keyHex)
-      if (oldWriter) {
-        try { await oldWriter.close() } catch {}
-        writers.delete(keyHex)
-      }
-      pendingChunks.delete(keyHex)
-      // Fresh subscribe — fromOffset 0 because we just `_reset()`'d.
-      sendJson({
-        type: 'subscribe',
-        key: keyHex,
-        fromOffset: 0,
-        fromChainHash: bytesToHex(new Uint8Array(32))
-      })
-      await syncKey(keyHex, 0)
-      // Wait for the first SIG from the relay to land — that's the
-      // "we're anchored again" signal.
-      const repo = await registry._materialize(keyHex)
-      await new Promise(resolve => {
-        const fn = () => {
-          if (repo.relayChainHash) {
-            repo.recaller.unwatch(fn)
-            resolve()
-          }
-        }
-        repo.recaller.watch('session:resync-wait-anchor', fn)
-      })
+      if (!peer) throw new Error('session._resyncRepo: no live peer (mid-reconnect?)')
+      return peer._resyncRepo(keyHex)
     }
   }
 

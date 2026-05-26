@@ -1,3 +1,4 @@
+// @ts-nocheck — vendored crypto from noble-secp256k1; upstream code, not ours to type-clean.
 /*! noble-secp256k1 - MIT License (c) 2019 Paul Miller (paulmillr.com) */
 /**
  * 4KB JS implementation of secp256k1 signatures & ECDH. Compliant with RFC6979.

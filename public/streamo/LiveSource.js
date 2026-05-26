@@ -50,11 +50,10 @@ import { Recaller } from './utils/Recaller.js'
  * no recaller is passed, a fresh one is created.
  *
  * @param {object} target  Plain object to wrap.
- * @param {object|string} [options]  Options object, or a string treated
- *   as `{name: ...}` for legacy convenience.
- * @param {string} [options.name='object']  Recaller name (for debug logs).
- * @param {Recaller} [options.recaller]  Recaller to share. If omitted,
- *   a fresh `new Recaller(name)` is created.
+ * @param {({name?: string, recaller?: Recaller})|string} [options]
+ *   Options object, or a string treated as `{name: ...}` for legacy
+ *   convenience. `name` defaults to `'object'`; `recaller` defaults
+ *   to a fresh `new Recaller(name)` if omitted.
  * @returns {{recaller: Recaller, get: Function, set: Function, target: object}}
  *
  * @example
@@ -135,9 +134,10 @@ export function liveObject (target, options = {}) {
  * object, use `liveObject` with path-shaped get/set.
  *
  * @param {any} initial         starting value
- * @param {object|string} [options]
- * @param {string} [options.name='value']
- * @param {Recaller} [options.recaller]
+ * @param {({name?: string, recaller?: Recaller})|string} [options]
+ *   Options object (or a string treated as `{name: ...}` for legacy
+ *   convenience). `name` defaults to `'value'`; `recaller` defaults
+ *   to a fresh `new Recaller(name)` if omitted.
  */
 export function liveValue (initial, options = {}) {
   if (typeof options === 'string') options = { name: options }

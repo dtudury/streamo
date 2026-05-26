@@ -49,7 +49,10 @@ export class StreamoRecordSerializer {
     this.publicKey = publicKey
     // The promise chain that serializes incoming submissions. Every
     // submit() awaits this before running, then replaces it with its own
-    // promise. JS single-threaded event-loop does the rest.
+    // promise. JS single-threaded event-loop does the rest. Typed as
+    // Promise<any> so each .then().catch() chain reassignment carries
+    // whatever shape the previous submit returned without conflict.
+    /** @type {Promise<any>} */
     this._lock = Promise.resolve()
   }
 

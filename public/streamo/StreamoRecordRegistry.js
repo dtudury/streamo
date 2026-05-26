@@ -1,4 +1,3 @@
-import { Streamo } from './Streamo.js'
 import { StreamoRecord } from './StreamoRecord.js'
 import { Recaller } from './utils/Recaller.js'
 
@@ -56,18 +55,21 @@ export class StreamoRecordRegistry {
   #openCallbacks = new Set()
 
   /**
-   * @param {object} options
-   * @param {Recaller} options.recaller  **Required.** The shared Recaller
-   *   this registry fires reactive events on. Pass your app's Recaller —
-   *   the one your slots / mount are watching — so opens here wake them.
-   * @param {(publicKeyHex: string) => StreamoRecord | Promise<StreamoRecord>} [options.factory]
-   *   If omitted, the default factory creates plain in-memory StreamoRecords
-   *   that share `recaller`. Custom factories that want the same effect
-   *   should pass `registry.recaller` into their `new StreamoRecord(...)` call;
+   * @param {{
+   *   recaller?: Recaller,
+   *   factory?: (publicKeyHex: string) => StreamoRecord | Promise<StreamoRecord>,
+   *   name?: string
+   * }} [options]  `recaller` is required at runtime (pre-10.0.0 a fresh
+   *   one was silently created when omitted — the silent-stale-slot
+   *   footgun; the constructor now throws if missing). Marked optional
+   *   in the type only so the default `= {}` literal type-checks; the
+   *   runtime check below catches missing recaller with a clear error.
+   *   `factory` defaults to one that creates plain in-memory
+   *   StreamoRecords sharing `recaller`. Custom factories should pass
+   *   `registry.recaller` into their `new StreamoRecord(...)` call;
    *   otherwise the registry bridges their per-repo recaller onto its
-   *   own.
-   * @param {string} [options.name='registry']  Used in watch names for
-   *   debugging.
+   *   own. `name` defaults to `'registry'` (used in watch names for
+   *   debugging).
    */
   constructor (options = {}) {
     if (!options || !options.recaller) {
@@ -114,7 +116,8 @@ export class StreamoRecordRegistry {
    */
   async _materialize (publicKeyHex) {
     if (this.#streams.has(publicKeyHex)) return this.#streams.get(publicKeyHex)
-    let resolve
+    /** @type {(stream: StreamoRecord) => void} */
+    let resolve = () => {}
     const placeholder = new Promise(r => { resolve = r })
     this.#streams.set(publicKeyHex, placeholder)
     const stream = await this.#factory(publicKeyHex)
@@ -159,7 +162,9 @@ export class StreamoRecordRegistry {
   get (publicKeyHex) {
     this.recaller.reportKeyAccess(this, 'keys')
     const entry = this.#streams.get(publicKeyHex)
-    return entry instanceof Streamo ? entry : undefined
+    // Filters out the pending-Promise placeholder; what remains is the
+    // resolved StreamoRecord (or undefined for not-yet-opened keys).
+    return entry instanceof StreamoRecord ? entry : undefined
   }
 
   /** Number of currently open (or opening) repos. Reports access. */
@@ -177,7 +182,7 @@ export class StreamoRecordRegistry {
     this.recaller.reportKeyAccess(this, 'keys')
     return (function * (map) {
       for (const [k, v] of map) {
-        if (v instanceof Streamo) yield [k, v]
+        if (v instanceof StreamoRecord) yield [k, v]
       }
     })(this.#streams)
   }

@@ -186,7 +186,12 @@ function readRepoMounts (repo) {
  * Pin-aware: when `atDataAddress` is set, reads the mounted record's
  * value at that specific commit instead of HEAD.
  *
- * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
+ * @param {{
+ *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
+ *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
+ * }} registry
+ *   Structural subset of StreamoRecordRegistry — anything with these
+ *   two methods works. (full registry passes trivially.)
  * @param {string} targetKey
  * @param {number|undefined} atDataAddress
  * @param {Set<string>} visited
@@ -250,7 +255,10 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
  *
  * @param {import('./StreamoRecord.js').StreamoRecord} repo
  * @param {string|null} ownKey
- * @param {{ get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined }|null} registry
+ * @param {{
+ *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
+ *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
+ * }|null} registry
  */
 async function collectAllMounted (repo, ownKey, registry) {
   if (!registry || !ownKey) return {}
@@ -388,11 +396,15 @@ function metaEqual (a, b) {
  * marked visited; mounts back to it short-circuit). Diamonds (same
  * record at two top-level paths) materialize at both locations.
  *
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./WritableStreamoRecord.js').WritableStreamoRecord} repo
+ *   Must be Writable — fileSync commits the disk's state into the Record.
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
  * @param {object} [options]
- * @param {{ get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined }|null} [options.registry=null]
+ * @param {{
+ *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
+ *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
+ * }|null} [options.registry=null]
  *   registry whose stored StreamoRecords provide the bytes for any mounted record.
  *   When unset, mount materialization is disabled (files-only behavior).
  * @param {string|null} [options.pubkeyHex=null]  the pubkey of `repo`,

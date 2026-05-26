@@ -49,7 +49,7 @@ export class StreamoComponent extends HTMLElement {
   static sharedRecaller = undefined
 
   connectedCallback () {
-    this.#recaller = this.constructor.sharedRecaller ?? new Recaller(this.localName)
+    this.#recaller = /** @type {typeof StreamoComponent} */ (this.constructor).sharedRecaller ?? new Recaller(this.localName)
     this.#root = this.attachShadow({ mode: 'open' })
     mount(this.render(this.#buildProps()), this.#root, this.#recaller)
   }

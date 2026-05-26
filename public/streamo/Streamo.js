@@ -128,9 +128,10 @@ export class Streamo extends CodecRegistry {
    * @returns {any}
    */
   get (...args) {
+    /** @type {number} */
     let address
     if (typeof args[0] === 'number') {
-      address = args.shift()
+      address = /** @type {number} */ (args.shift())
     } else {
       address = this.valueAddress
       // 'length': re-run when external bytes arrive (append() fires 'length').
@@ -250,7 +251,8 @@ export class Streamo extends CodecRegistry {
    * @returns {number} address of the newly appended code
    */
   setRefs (...args) {
-    let childAddr = args.pop()
+    /** @type {number} */
+    let childAddr = /** @type {number} */ (args.pop())
     const path = args
     const baseAddress = this.valueAddress
     const prevAddress = super.byteLength > 0 ? this.valueAddress : undefined

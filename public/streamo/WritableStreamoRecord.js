@@ -396,14 +396,14 @@ export class WritableStreamoRecord extends StreamoRecord {
         const relayHash = this.relayChainHash
         if (rejected) {
           this.recaller.unwatch(fn)
-          const err = new Error(`push rejected: ${rejected.reason ?? 'unknown reason'}`)
+          const err = /** @type {Error & { pushRejected?: any }} */ (new Error(`push rejected: ${rejected.reason ?? 'unknown reason'}`))
           err.pushRejected = rejected
           reject(err)
           return
         }
         if (conflict) {
           this.recaller.unwatch(fn)
-          const err = new Error('local store diverged from incoming chain')
+          const err = /** @type {Error & { conflictDetected?: any }} */ (new Error('local store diverged from incoming chain'))
           err.conflictDetected = conflict
           reject(err)
           return
@@ -454,10 +454,10 @@ export class WritableStreamoRecord extends StreamoRecord {
     }
     const finalState = { pushRejected: this.pushRejected, attempts: retries + 1 }
     if (onConflict) return onConflict(finalState)
-    const err = new Error(
+    const err = /** @type {Error & { pushRejected?: any }} */ (new Error(
       `repo.update: exhausted ${retries + 1} attempts; ${lastError?.message ?? 'unknown'}` +
       (this._session ? '' : ' (no session attached — update requires session.subscribe for retry path)')
-    )
+    ))
     err.pushRejected = this.pushRejected
     throw err
   }

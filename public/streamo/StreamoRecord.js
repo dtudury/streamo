@@ -74,6 +74,14 @@ export class StreamoRecord extends Streamo {
   #conflictDetected = null
   #pushRejected     = null
 
+  /**
+   * Hex-encoded pubkey this Record was materialized under. Populated by
+   * `StreamoRecordRegistry._materialize` immediately after construction.
+   * Undefined for Records created without going through a registry.
+   * @type {string | undefined}
+   */
+  publicKeyHex
+
   // The chainHash the upstream relay has confirmed up to — surfaced from
   // makeRelayInboundStream's `pendingChainHash`. Null until the first SIG
   // from the wire lands. When this matches `committedChainHash` of a SIG

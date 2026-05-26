@@ -59,6 +59,9 @@ function parseHashQuery (hash) {
   return new URLSearchParams((hash || '').replace(/^#\??/, ''))
 }
 
+/**
+ * @param {{recaller?: Recaller, name?: string}} [options]
+ */
 export function liveLocation ({ recaller, name = 'location' } = {}) {
   recaller ??= new Recaller(name)
 

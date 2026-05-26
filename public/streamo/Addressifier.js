@@ -134,9 +134,10 @@ export class Addressifier {
    * Copy internal store state (chunks + content map) into `target` up to
    * `address`. Called by subclass clone() methods so they can pass a
    * subclass instance as `target`.
-   * @param {Addressifier} target
+   * @template {Addressifier} T
+   * @param {T} target
    * @param {number} address
-   * @returns {Addressifier}
+   * @returns {T}
    */
   _applyClone (target, address) {
     const idx = this.#indexAt(address, false)

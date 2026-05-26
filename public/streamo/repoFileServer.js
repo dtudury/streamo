@@ -120,9 +120,13 @@ function readFile (repo, path, atDataAddress) {
       return (map && typeof map === 'object') ? map[path] : undefined
     } catch { return undefined }
   }
-  const map = readFilesMap(repo)
-  if (!map || typeof map !== 'object' || map instanceof Uint8Array) return undefined
-  return map[path]
+  // Two-arg get → lazy descent through the files map; only the leaf chunk
+  // (the requested file's bytes) gets fully decoded. Previously this called
+  // `readFilesMap(repo)[path]`, which forced a full decode of every file
+  // in the map on every request — the actual cause of streamo.dev's
+  // ~200ms-per-asset waterfall before 10.2.1. The codec already has the
+  // chunk-graph references; just had to ask for the path we wanted.
+  return repo.get(FILES_KEY, path)
 }
 
 /**

@@ -5,6 +5,40 @@ for what's next.
 
 ---
 
+## 10.2.1 — the resolver actually uses the lazy path
+
+10.2.0 made `repo.get(...path)` lazy at the codec layer, but didn't
+inspect *all* the callers — and `repoFileServer.js`'s `readFile` was
+still doing `readFilesMap(repo)[path]`. One-arg `get('files')`
+returns the whole files map, forcing the same full decode 10.2.0
+was supposed to retire. The perf win was real in microbenchmarks
+and invisible in production.
+
+The fix is one line: `readFile` now calls `repo.get(FILES_KEY, path)`
+(two-arg), which triggers the lazy descent. The leaf chunk —
+typically the one file the URL asked for — is the only thing fully
+decoded.
+
+**Measured on streamo.dev**, hitting `/streamo/h.js` (a mounted
+library Record file, 12KB), debug-instrumented before/after:
+
+| | before 10.2.1 | after 10.2.1 |
+|---|---|---|
+| sequential (warm)            | ~170ms / req | **9–17ms / req** |
+| 20 parallel (same conn)      | ~5000ms      | **235ms**        |
+| decodeAt timing on the leaf  | ~170ms       | **6–10ms**       |
+
+~18× on the parallel waterfall; ~20× on per-request latency. The
+homepage's full asset waterfall should now feel instant instead of
+loading-bar slow.
+
+**Lesson worth keeping:** lazy-walk primitives don't help if the
+callers don't use them. Always grep the callers when adding a new
+"lazy" entry point. 10.2.0 should have included this; consider it a
+single perf arc retroactively.
+
+---
+
 ## 10.2.0 — lazy `get(...path)` (the perf fix that makes serving real)
 
 `repo.get('files', 'h.js')` was secretly doing a full-record decode and

@@ -1,4 +1,5 @@
 import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { Signer } from './Signer.js'
@@ -87,10 +88,18 @@ export class StreamoServer {
 
     const archiveClosers = new Map()
     const recaller = new Recaller(`server:${name ?? resolvedPublicKeyHex.slice(0, 8)}`)
+    // Writable for the primary IFF this server is in author mode (has a
+    // signer to attach). Subscribed peer keys, and the primary in relay-
+    // only mode (publicKeyHex without credentials), get the slim
+    // StreamoRecord — read-only-by-type. Calling set() on a slim Record
+    // raises a clear TypeError instead of silently no-op'ing on the
+    // unsigned-but-appended bytes the relay would then reject.
     const registry = new StreamoRecordRegistry({
       recaller,
       factory: async key => {
-        const repo = new StreamoRecord({ recaller })
+        const isAuthorPrimary = key === resolvedPublicKeyHex && signer !== null
+        const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
+        const repo = new RecordClass({ recaller })
         const { close } = await archiveSync(repo, dataDir, key)
         archiveClosers.set(key, close)
         return repo

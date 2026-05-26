@@ -464,6 +464,10 @@ export class StreamoRecord extends Streamo {
     const { remoteParent, date = new Date() } = options
     const parentAddr = super.valueAddress
     const parent = parentAddr >= 0 ? parentAddr : undefined
+    // Capture byteLength BEFORE any author append so locallyAuthoredOffset
+    // settles at the first byte THIS commit contributed. The mark is
+    // monotonic-downward; later commits don't move it.
+    const authoredFrom = this.byteLength
     // Use valueAddress (the explicit top-value pointer), not byteLength-1.
     // When working.set encodes a value whose outermost subcode already exists
     // in working's content map (dedup — e.g. toggling back to a state the
@@ -475,6 +479,7 @@ export class StreamoRecord extends Streamo {
     if (remoteParent !== undefined) record.remoteParent = remoteParent
     const code = this.encode(record)
     const result = this.append(code)
+    this._markAuthoredAtOffset(authoredFrom)
     this.#scheduleSign()
     return result
   }
@@ -613,6 +618,14 @@ export class StreamoRecord extends Streamo {
     const compactRawBytes = await signer.sign(streamoName, chainHash)
     if (this.byteLength !== before) throw new Error('repo was modified while signing')
     const sig = new Signature(chainHash, compactRawBytes)
+    // Sign is an author act: lower the locallyAuthoredOffset to the
+    // first byte the SIG covers. If a Writable Record signs over bytes
+    // it already authored (typical: commit then auto-sign), the mark
+    // is already at or below `before` and this call is a no-op. If the
+    // Record signs over bytes received from the wire (atypical — e.g.
+    // a tool deliberately re-signing imported chunks), this marks the
+    // re-signed region as authored so it'll be eligible for push.
+    this._markAuthoredAtOffset(before)
     this.append(this.encode(sig))
     return sig
   }

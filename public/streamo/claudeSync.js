@@ -30,7 +30,7 @@
  *     await claude.appendJournalEntry('headline', 'body')
  *     await claude.close()
  */
-import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { Signer } from './Signer.js'
 import { Recaller } from './utils/Recaller.js'
 import { originSync } from './originSync.js'
@@ -48,7 +48,7 @@ import { bytesToHex } from './utils.js'
  * @param {number} [opts.iterations=100000]    PBKDF2 iteration count (must match relay)
  * @param {string} [opts.name='streamo']       signer namespace (must match relay's STREAMO_NAME)
  * @param {number} [opts.settleMs=2500]        ms to wait for the relay to replay existing chunks
- * @returns {Promise<{ publicKeyHex: string, repo: StreamoRecord, appendJournalEntry: Function, close: Function }>}
+ * @returns {Promise<{ publicKeyHex: string, repo: WritableStreamoRecord, appendJournalEntry: Function, close: Function }>}
  */
 export async function claudeSync ({
   username,
@@ -65,7 +65,7 @@ export async function claudeSync ({
   const { publicKey } = await signer.keysFor(name)
   const publicKeyHex = bytesToHex(publicKey)
 
-  const repo = new StreamoRecord({ recaller, name: `claude-${name}` })
+  const repo = new WritableStreamoRecord({ recaller, name: `claude-${name}` })
 
   // originSync sends our local chunks up AND verifies incoming chunks against
   // our pubkey. On first run nothing comes down (relay has no prior chunks

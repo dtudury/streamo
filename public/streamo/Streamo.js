@@ -87,6 +87,25 @@ export class Streamo extends CodecRegistry {
   // -1 means "uninitialized; fall back to byteLength-1 in the getter."
   #valueAddress = -1
 
+  // Low-water mark of bytes this process authored locally — "the smallest
+  // offset at which I appended a byte I signed for." Outbound readers
+  // (registrySync's push path) only send bytes at offsets >= this value.
+  //
+  // Initial value Infinity = "nothing authored yet." Archive replay,
+  // wire-inbound, and any other "received not authored" path leave it at
+  // Infinity. Only WritableStreamoRecord's author methods call
+  // _markAuthoredAtOffset to lower the mark — they capture byteLength
+  // BEFORE the append and pass that, so the mark settles at the first
+  // authored byte and outbound sends from there.
+  //
+  // The corruption-fight motivator (2026-05-26): a watch.js process
+  // loaded its user's Repo over the wire and, on every Stop-hook
+  // respawn, re-pushed those bytes to the relay. The substrate had no
+  // word for "I authored this" vs "I received this." With this mark a
+  // read-only observer stays at Infinity and its outbound is empty —
+  // architectural-invisibility for non-authors.
+  #locallyAuthoredOffset = Infinity
+
   /**
    * @param {Recaller} [recaller]
    */
@@ -312,5 +331,36 @@ export class Streamo extends CodecRegistry {
   _reset () {
     super._reset()
     this.#valueAddress = -1
+    this.#locallyAuthoredOffset = Infinity
+    this.#recaller.reportKeyMutation(this, 'locallyAuthoredOffset')
+  }
+
+  /**
+   * Reactive: the low-water mark of bytes this process authored locally.
+   * `Infinity` means "nothing authored yet" (the default; what archive
+   * replay and wire-inbound leave it at). Otherwise, the smallest byte
+   * offset at which an author method appended.
+   *
+   * Outbound readers (registrySync's push path) filter by this: send
+   * bytes at offsets >= locallyAuthoredOffset, skip the rest. A
+   * read-only observer (a process that only subscribes and never
+   * authors) stays at Infinity, so its outbound is structurally empty.
+   */
+  get locallyAuthoredOffset () {
+    this.#recaller.reportKeyAccess(this, 'locallyAuthoredOffset')
+    return this.#locallyAuthoredOffset
+  }
+
+  /**
+   * Lower the locallyAuthoredOffset mark to `offset` if it's currently
+   * higher. Idempotent and monotonic-downward. Called by
+   * WritableStreamoRecord's author methods with the byteLength captured
+   * BEFORE the author append, so the mark settles at the first authored
+   * byte. Internal — leading underscore by convention.
+   */
+  _markAuthoredAtOffset (offset) {
+    if (offset >= this.#locallyAuthoredOffset) return
+    this.#locallyAuthoredOffset = offset
+    this.#recaller.reportKeyMutation(this, 'locallyAuthoredOffset')
   }
 }

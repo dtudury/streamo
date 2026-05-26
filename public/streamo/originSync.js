@@ -27,7 +27,14 @@ export function originSync (stream, publicKeyHex, host, port, { protocol = 'ws' 
       // Handshake: identify which stream we want to sync
       ws.send(publicKeyHex)
 
-      // Local → remote: replay all chunks, then stream new ones
+      // Local → remote: replay all chunks, then stream new ones. originSync
+      // is the lower-level "keep this Record in sync" primitive — used by
+      // author processes (claudeSync, StreamoServer.connect) AND by dumb-
+      // pipe relays that intentionally forward bytes they didn't author.
+      // No outbound filter here: the relay's accumulator dedups echoes
+      // via `alreadyHave`. The "don't re-push received bytes" footgun is
+      // addressed at the higher-level `registrySync.subscribe` verb,
+      // which gates push on `repo instanceof WritableStreamoRecord`.
       const reader = stream.makeReadableStream().getReader()
       ;(async () => {
         try {

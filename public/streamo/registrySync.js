@@ -18,6 +18,7 @@ const WS = globalThis.WebSocket ?? (await import('ws')).default
 
 import { hexToBytes, bytesToHex } from './utils.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 
 function arraysEqual (a, b) {
   if (a.length !== b.length) return false
@@ -212,8 +213,23 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   async function syncKey (keyHex, readerFromOffset = 0) {
     const repo = await registry._materialize(keyHex)
 
-    // We → peer: replay all existing chunks then stream new ones
-    if (!readers.has(keyHex)) {
+    // We → peer: replay all existing chunks then stream new ones.
+    //
+    // **Client-side observer guard** (`!isAuthority`): a slim
+    // `StreamoRecord` (not `WritableStreamoRecord`) is by type a read-
+    // only observer — the local process holds no signer for this key
+    // and has no business pushing bytes up. The watch.js corruption
+    // (a respawning Stop-hook process re-pushing cached bytes the
+    // relay then misinterprets) is dissolved at the type level: no
+    // reader, no push, architectural-invisibility for non-authors.
+    //
+    // The relay (`isAuthority`) broadcasts to subscribers regardless
+    // of what it authored, so the guard doesn't apply there. Author
+    // processes that go through registrySync.subscribe declare
+    // themselves Writable via the registry's factory (the chat
+    // client's custom factory, StreamoServer.create's primary, etc).
+    const isObserver = !isAuthority && !(repo instanceof WritableStreamoRecord)
+    if (!isObserver && !readers.has(keyHex)) {
       const keyBytes = hexToBytes(keyHex)
       const reader = repo.makeReadableStream({ fromOffset: readerFromOffset }).getReader()
       readers.set(keyHex, reader)

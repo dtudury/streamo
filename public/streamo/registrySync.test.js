@@ -1,5 +1,7 @@
 import { WebSocketServer } from 'ws'
 import { describe } from './utils/testing.js'
+import { StreamoRecord } from './StreamoRecord.js'
+import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { attachStreamSync } from './outletSync.js'
@@ -7,14 +9,31 @@ import { registrySync } from './registrySync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-// 10.0.0 makes StreamoRecordRegistry's `recaller` required (locks the silent-
-// stale-slot footgun). Tests use a fresh per-test Recaller via this helper.
-const newRegistry = (opts = {}) => new StreamoRecordRegistry({ recaller: new Recaller('test'), ...opts })
+// 11.0.0 splits StreamoRecord (read-only) from WritableStreamoRecord (author).
+// Tests declare which keys they intend to author on via `openWriter` — those
+// get Writable; everything else materialized through the registry stays slim.
+// The observer-doesn't-push invariant (a slim Record can't accidentally
+// re-push received bytes) is the type-level mechanism behind the
+// watch.js corruption fix.
+const writableKeysFor = new WeakMap()
+const newRegistry = (opts = {}) => {
+  const recaller = opts.recaller ?? new Recaller('test')
+  const writableKeys = new Set()
+  const registry = new StreamoRecordRegistry({
+    recaller,
+    factory: key => writableKeys.has(key)
+      ? new WritableStreamoRecord({ recaller })
+      : new StreamoRecord({ recaller })
+  })
+  writableKeysFor.set(registry, writableKeys)
+  return registry
+}
 
 // Under the relay-as-authority model, the StreamoRecordSerializer at the relay gates
 // every incoming batch — fake keys can no longer carry data. Each "slot"
 // that flows data gets a real keypair derived deterministically from the
 // shared Signer and a stable name; `openWriter(registry, N)` opens the repo
+// (declaring it Writable beforehand so the factory produces the right class)
 // and attaches the signer so writes auto-sign.
 const SIGNER = new Signer('alice', 'hunter2', 1)
 const keyCache = new Map()
@@ -28,6 +47,7 @@ async function realKey (n) {
 }
 async function openWriter (registry, n) {
   const { name, hex } = await realKey(n)
+  writableKeysFor.get(registry).add(hex)
   const repo = await registry._materialize(hex)
   repo.attachSigner(SIGNER, name)
   return { repo, hex }
@@ -888,6 +908,11 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = newRegistry()
+    // The client is about to author to this key — declare it Writable
+    // BEFORE session.subscribe so the registry's factory produces
+    // WritableStreamoRecord (and the observer-doesn't-push guard
+    // lets our pushes through).
+    writableKeysFor.get(clientRegistry).add(keyHex)
     const session = await registrySync(clientRegistry, 'localhost', port)
     const clientRepo = await session.subscribe(keyHex)
     await waitFor(() => clientRepo.get('count') === 0)

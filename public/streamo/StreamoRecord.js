@@ -40,6 +40,7 @@
 import { Streamo, changedPaths } from './Streamo.js'
 import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
+import { makeRelayInboundStream as _makeRelayInboundStream } from './relayInboundStream.js'
 
 // Chain-hash helpers — StreamoRecord-internal, since Streamo is identity-blind and
 // doesn't know about signatures.
@@ -652,6 +653,19 @@ export class StreamoRecord extends Streamo {
   }
 
   /**
+   * Setter for the relay-inbound-stream factory to call when the local
+   * alignment check fires. Not part of the user-facing StreamoRecord API;
+   * named with a leading underscore by convention. Pass `null` to clear
+   * (e.g. after a successful recovery via `_reset` + resubscribe). Lets
+   * the inbound stream live in its own module while still mutating the
+   * record's reactive flag through a documented interface.
+   */
+  _setConflictDetected (value) {
+    this.#conflictDetected = value
+    this.recaller.reportKeyMutation(this, 'conflictDetected')
+  }
+
+  /**
    * Reactive: `null` until a push from this client to the relay is rejected;
    * then `{ reason }` describing why. Set by the registry-sync layer when a
    * `{type: 'reject', key, reason}` control message arrives from the relay.
@@ -950,81 +964,6 @@ export class StreamoRecord extends Streamo {
    * @returns {WritableStream}
    */
   makeRelayInboundStream (maxFrameSize = 64 * 1024 * 1024) {
-    const self = this
-    let buf = new Uint8Array(0)
-    let bufOffset = 0
-    let staged = []                                  // not-already-present chunks awaiting a covering SIG
-    // Anchor on local state — the sender (relay) knows our offset/chainHash from
-    // the subscribe handshake and is sending bytes from there. So our wire-side
-    // pendingChainHash starts equal to our local committedChainHash; each sig
-    // arriving from the wire advances both in lockstep. Local writes (e.g. the
-    // user signs a commit) advance committedChainHash without touching
-    // pendingChainHash, which is exactly when the alignment check should fire.
-    let pendingChainHash = self.committedChainHash
-    return new WritableStream({
-      async write (incoming) {
-        // Compact leftover + incoming into a fresh buf, reset offset.
-        // Hot loop uses subarray (a view, not a copy) so each chunk
-        // extraction is O(1) — the previous `buf = buf.slice(rest)`
-        // pattern was O(N) per chunk, O(N²) per batched frame.
-        const leftover = buf.length - bufOffset
-        if (leftover === 0) buf = incoming
-        else {
-          const next = new Uint8Array(leftover + incoming.length)
-          next.set(buf.subarray(bufOffset), 0)
-          next.set(incoming, leftover)
-          buf = next
-        }
-        bufOffset = 0
-        while (buf.length - bufOffset >= 4) {
-          const view = new DataView(buf.buffer, buf.byteOffset + bufOffset, 4)
-          const len = view.getUint32(0, true)
-          if (len === 0) throw new Error('malformed frame: zero-length chunk')
-          if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
-          if (buf.length - bufOffset < 4 + len) break
-          const code = buf.subarray(bufOffset + 4, bufOffset + 4 + len)
-          bufOffset += 4 + len
-
-          const alreadyHave = self.addressOf(code) !== undefined
-          const codec = self.footerToCodec[code.at(-1)]
-
-          if (codec?.type === 'SIGNATURE') {
-            // Alignment check (chain-hash equality): only matters when we'd
-            // actually append new chunks. If staged is empty, this sig
-            // closes an alreadyHave batch (a resync echo) — safe to skip.
-            //
-            // When the wire is about to extend the chain past pendingChainHash
-            // (its previous sig's chainHash), our local committedChainHash
-            // must equal pendingChainHash too — otherwise we have local
-            // commits the wire doesn't know about and the staged chunks
-            // would land on top of them at wrong addresses.
-            if (staged.length > 0) {
-              if (!arraysEqual(pendingChainHash, self.committedChainHash)) {
-                self.#conflictDetected = { dataAddress: self.lastCommit?.dataAddress }
-                self.recaller.reportKeyMutation(self, 'conflictDetected')
-                throw new Error(
-                  'local store diverged from incoming chain: ' +
-                  'our most recent sig\'s chainHash does not equal the wire\'s previous sig\'s chainHash ' +
-                  '(local content past the last shared sig — push in flight or push got beaten)'
-                )
-              }
-            }
-            for (const c of staged) self.append(c)
-            staged = []
-            if (!alreadyHave) self.append(code)
-            // Advance: the SIG chunk's first 32 bytes are its chainHash.
-            // No decode needed — read the bytes directly. Surface to the
-            // StreamoRecord as `relayChainHash` so `merge()` can await round-trip
-            // confirmation of pushed bytes (the broadcast-back lands a
-            // SIG here whose chainHash matches our just-signed local SIG).
-            pendingChainHash = code.slice(0, 32)
-            self._setRelayChainHash(pendingChainHash)
-          } else if (!alreadyHave) {
-            staged.push(code)
-          }
-        }
-      }
-    })
+    return _makeRelayInboundStream(this, maxFrameSize)
   }
-
 }

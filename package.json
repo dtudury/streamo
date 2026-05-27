@@ -1,6 +1,6 @@
 {
   "name": "@dtudury/streamo",
-  "version": "11.0.2",
+  "version": "11.1.0",
   "description": "peer-to-peer sync where your data and identity belong to you, not the server",
   "keywords": [
     "p2p",

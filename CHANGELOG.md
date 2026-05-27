@@ -5,6 +5,88 @@ for what's next.
 
 ---
 
+## 11.1.0 — recoveryStuck, shared-note demo, real-bug catches in the browser
+
+The "architecture-promise made visible at the app layer" release.
+Substrate adds `recoveryStuck` (the meta-layer "auto-resolve gave
+up" reactive cell) and `recaller.watchCount` / `recaller.watcherNames`
+(leak-detection instrumentation). The new `shared-note` app at
+`public/apps/shared-note/` is the canonical recovery-UX demo +
+the template for the broader `claude.md`-per-app pattern toward
+streamo.social.
+
+**New substrate API:**
+- `WritableStreamoRecord.recoveryStuck` — reactive cell, `null`
+  when healthy; `{attempts, pushRejected?}` after `repo.update`
+  exhausts retries. Cleared automatically on next `update` call
+  (the "retry now" semantic — `update` IS the retry verb, no
+  separate method) and on `_reset`. Apps gate the "intervention
+  required" UI on this.
+- `Recaller.watchCount` / `Recaller.watcherNames` — read-only
+  leak-detection signal. Canonical operations should leave the
+  count stable.
+
+**Real bug catches (browser-found, fixed):**
+- `repo.update` was reading `target = committedChainHash`
+  SYNCHRONOUSLY after `this.set(next)`, before `scheduleSign`
+  had appended the new SIG — so `target` was the OLD chain hash.
+  In Node tests this resolved immediately (relayChainHash already
+  matched) and tests "passed" via a subsequent `waitFor` that
+  masked the early-return. In the browser with fresh Records, it
+  hung indefinitely (`save button never comes back`). Fix:
+  `await recaller.when(() => signedLength === byteLength)` before
+  reading target. Existing happy-path test strengthened with
+  synchronous assertions so the bug stays caught.
+- `update`'s `await session._resyncRepo` could throw "no live
+  peer" during WS-close-on-conflict; pre-fix the throw propagated
+  uncaught and skipped `recoveryStuck`. Now wrapped in try/catch
+  so resync failures flow through to the substrate-articulated
+  signal.
+- `liveObject.set(value)` (whole-value form) fired only
+  `__root__` mutation; path-based readers (the common pattern)
+  didn't wake. Fix: also fire per-key mutations for every
+  affected key. The two call shapes (`set(value)` and
+  `set(path, value)`) now have consistent reactive semantics.
+
+**New tests** (296→298 → final):
+- Four serializer divergence-stress tests (reconciliation,
+  sustained contention, echo handling, empty-batch semantics)
+- Pipeline-leak test (subscribe + close cycles bound watchCount)
+- recoveryStuck contract tests + reactive verification
+- LiveSource whole-value-set wakes-path-readers regression tests
+- when() no-leak tests
+
+**`shared-note` app** at `public/apps/shared-note/`:
+- ~110 LOC demonstrating the recovery UX end-to-end
+- Same view serves "edited locally but couldn't push" AND "saved
+  but the relay raced you" — both manifest as `recoveryStuck`
+  fired with the rejected value addressable
+- Ships with **canonical `claude.md`** — the template for the
+  per-app affordance that lets web-Claude personalize apps for
+  any user without that user touching code
+
+**Documentation:**
+- `ROADMAP.md` extended with the `claude.md`-per-app sequencing
+  toward streamo.social-for-Claudes-and-their-humans (extends
+  the existing franken-fleece vision with the concrete mechanic)
+
+**Substrate-typecheck-shotgun pass** that was already in 11.0.1:
+substrate is type-clean (`npm run typecheck` over `public/streamo/`
+returns 0 errors); 35 app/script errors queued for incremental
+cleanup as we touch each file.
+
+Known gaps (queued):
+- `fileSync`, `stateFileSync`, `claudeSync`, most existing apps
+  use raw `repo.set` where their intent is mirror/additive;
+  should migrate to `repo.update` for proper retry-on-conflict
+- `bin/streamo.js` should warn at startup if `--files` is set
+  without `--origin` (silent partial functioning footgun)
+- Pre-conflict banner for in-flight text editing (option 2 from
+  the design conversation)
+- Verbose colored substrate logging à la turtledb 🐢
+
+---
+
 ## 11.0.1 — the post-11.0 stabilization arc (and one substrate primitive)
 
 A patch number for a release that did more than a patch deserves —

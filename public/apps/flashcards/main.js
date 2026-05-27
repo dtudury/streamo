@@ -96,7 +96,7 @@ function previewRetentionTarget (event) {
   state.set('pendingRetentionTarget', value)
 }
 
-function saveRetentionTarget () {
+async function saveRetentionTarget () {
   const pending = state.get('pendingRetentionTarget')
   if (pending == null) return
   const deckId = activeDeck()
@@ -108,30 +108,28 @@ function saveRetentionTarget () {
   const v = repo.get() ?? { deck: deckId, reviews: [] }
   if (v.retentionTarget !== pending) {
     repo.defaultMessage = `set retention target to ${(pending * 100).toFixed(0)}%`
-    repo.set({ ...v, retentionTarget: pending })
+    await repo.update(c => ({ ...(c ?? { deck: deckId, reviews: [] }), retentionTarget: pending }))
   }
   state.set('pendingRetentionTarget', null)
 }
 
-function toggleCardActive (deckId, cardIdx) {
+async function toggleCardActive (deckId, cardIdx) {
   const repo = reviewRepos.get(deckId)
   if (!repo) return
+  // One-shot read for the human-readable commit message; the actual
+  // toggle decision happens inside update against the current value
+  // at write time (so concurrent toggles converge correctly).
   const value = repo.get() ?? { deck: deckId, reviews: [] }
-  const set = new Set(Array.isArray(value.active) ? value.active : [])
-  let nowActive
-  if (set.has(cardIdx)) {
-    set.delete(cardIdx)
-    nowActive = false
-  } else {
-    set.add(cardIdx)
-    nowActive = true
-  }
-  repo.defaultMessage = nowActive
-    ? `add card ${cardIdx} to active`
-    : `remove card ${cardIdx} from active`
-  repo.set({
-    ...value,
-    active: [...set].sort((a, b) => a - b)
+  const wasActive = (Array.isArray(value.active) ? value.active : []).includes(cardIdx)
+  repo.defaultMessage = wasActive
+    ? `remove card ${cardIdx} from active`
+    : `add card ${cardIdx} to active`
+  await repo.update(c => {
+    const current = c ?? { deck: deckId, reviews: [] }
+    const set = new Set(Array.isArray(current.active) ? current.active : [])
+    if (set.has(cardIdx)) set.delete(cardIdx)
+    else set.add(cardIdx)
+    return { ...current, active: [...set].sort((a, b) => a - b) }
   })
 }
 
@@ -321,7 +319,7 @@ function toggleReveal () {
   state.set('revealedCardIdx', current === idx ? null : idx)
 }
 
-function grade (gradeIdx) {
+async function grade (gradeIdx) {
   const deckId = activeDeck()
   const repo   = reviewRepos.get(deckId)
   if (!repo) return
@@ -329,17 +327,20 @@ function grade (gradeIdx) {
   // card happens to top the queue now if it shifted.
   const cardIdx = state.get('revealedCardIdx')
   if (cardIdx == null) return
-  // Spread the existing repo value so we preserve sibling fields
-  // (notably `active`). Before this, grade() rebuilt the value as
-  // `{deck, reviews}` and silently wiped the active set on every
-  // grade — David noticed: add cards → grade easy → active set gone.
-  const value = repo.get() ?? { deck: deckId, reviews: [] }
-  const reviews = value.reviews ?? []
+  // update preserves sibling fields (notably `active`). The earlier
+  // grade() wiped the active set on every grade — David noticed: add
+  // cards → grade easy → active set gone. Spreading the current value
+  // (inside update, so it's the chain-current at write time) keeps
+  // them.
   repo.defaultMessage = `review: card ${cardIdx} graded ${['again', 'hard', 'good', 'easy'][gradeIdx]}`
-  repo.set({
-    ...value,
-    deck: deckId,
-    reviews: [...reviews, { cardIdx, grade: gradeIdx, at: Date.now() }]
+  await repo.update(c => {
+    const current = c ?? { deck: deckId, reviews: [] }
+    const reviews = current.reviews ?? []
+    return {
+      ...current,
+      deck: deckId,
+      reviews: [...reviews, { cardIdx, grade: gradeIdx, at: Date.now() }]
+    }
   })
   // No queue mutation, no index advance — the commit above updates
   // the reviews repo, which shifts buildStudyQueue's output, which
@@ -455,7 +456,7 @@ function addCard () {
 // when the title hasn't actually changed. If the deck repo has no
 // signer attached (e.g., a bundled deck reached by direct URL), the
 // repo.set call won't commit — silent no-op, no crash.
-function saveDeckTitle (event) {
+async function saveDeckTitle (event) {
   const deckId = activeDeck()
   const repo = deckRepo(deckId)
   if (!repo) return
@@ -464,10 +465,10 @@ function saveDeckTitle (event) {
   const deck = repo.get()
   if (!deck || deck.title === next) return
   repo.defaultMessage = `rename deck to "${next}"`
-  repo.set({ ...deck, title: next })
+  await repo.update(c => ({ ...(c ?? {}), title: next }))
 }
 
-function saveCard (e) {
+async function saveCard (e) {
   e.preventDefault()
   const form = e.target
   const front = form.elements.front.value.trim()
@@ -479,7 +480,6 @@ function saveCard (e) {
   const deck = repo.get()
   if (!deck) return
 
-  let newCards
   let message
   if (cardIdx === -1) {
     // Adding new — skip if both fields blank.
@@ -487,30 +487,42 @@ function saveCard (e) {
       state.set('editingCardIdx', null)
       return
     }
-    newCards = [...deck.cards, { front, back }]
     message = `add card: ${(front || back).slice(0, 40)}`
   } else {
-    // Editing existing — preserve any other fields (like `deleted`) on the card.
-    newCards = [...deck.cards]
-    newCards[cardIdx] = { ...newCards[cardIdx], front, back }
     message = `edit card ${cardIdx}: ${(front || back).slice(0, 40)}`
   }
   repo.defaultMessage = message
-  repo.set({ ...deck, cards: newCards })
+  await repo.update(c => {
+    const current = c ?? deck
+    const cards = Array.isArray(current.cards) ? current.cards : []
+    let newCards
+    if (cardIdx === -1) {
+      newCards = [...cards, { front, back }]
+    } else {
+      // Editing existing — preserve any other fields (like `deleted`) on the card.
+      newCards = [...cards]
+      newCards[cardIdx] = { ...newCards[cardIdx], front, back }
+    }
+    return { ...current, cards: newCards }
+  })
   state.set('editingCardIdx', null)
 }
 
-function deleteCard (cardIdx) {
+async function deleteCard (cardIdx) {
   if (!confirm("Delete this card? Reviews of it stay in your history but it won't appear in study.")) return
   const deckId = activeDeck()
   const repo = deckRepo(deckId)
   if (!repo) return
   const deck = repo.get()
   if (!deck) return
-  const newCards = [...deck.cards]
-  newCards[cardIdx] = { ...newCards[cardIdx], deleted: true }
   repo.defaultMessage = `delete card ${cardIdx}`
-  repo.set({ ...deck, cards: newCards })
+  await repo.update(c => {
+    const current = c ?? deck
+    const cards = Array.isArray(current.cards) ? current.cards : []
+    const newCards = [...cards]
+    if (newCards[cardIdx]) newCards[cardIdx] = { ...newCards[cardIdx], deleted: true }
+    return { ...current, cards: newCards }
+  })
 }
 
 // ── manage view handlers ────────────────────────────────────────────

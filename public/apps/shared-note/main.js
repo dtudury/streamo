@@ -148,7 +148,7 @@ function editorView () {
   return h`<main class="editor">
     <h1>shared note · ${ui.get('username')}</h1>
     <form onsubmit=${handle(save)}>
-      <textarea name="text" autofocus>${value.text ?? ''}</textarea>
+      <textarea name="text" autofocus data-key=${value.at ?? 'initial'}>${value.text ?? ''}</textarea>
       <p class="meta">last edited by ${value.lastEditedBy ?? '—'} · ${value.at ? new Date(value.at).toLocaleTimeString() : '—'} · <span class="status ${connected ? '' : 'disconnected'}">${connected ? 'connected' : 'reconnecting…'}</span></p>
       <div class="row">
         <button type="submit" disabled=${saving}>${saving ? 'saving…' : 'save'}</button>

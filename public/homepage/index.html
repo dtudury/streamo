@@ -53,27 +53,6 @@
       50%      { opacity: 1; }
     }
 
-    /* "meta-now" — a callout that names what's true RIGHT NOW about how
-       this page reached the reader. Sits between the abstract "ideas" and
-       the abstract "here," anchoring both to the concrete substrate. */
-    .meta-now {
-      font-size: 0.86rem;
-      line-height: 1.55;
-      color: var(--ink-dim);
-      padding: 0.85rem 1rem;
-      margin: 0 0 1.5rem;
-      border-left: 2px solid var(--ink);
-      background: rgba(0, 0, 0, 0.025);
-      border-radius: 0 var(--radius) var(--radius) 0;
-    }
-    .meta-now strong { color: var(--ink); }
-    .meta-now code {
-      font-size: 0.85em;
-      padding: 0.05rem 0.3rem;
-      border-radius: 3px;
-      background: rgba(0, 0, 0, 0.05);
-    }
-
     .ideas {
       display: flex;
       flex-direction: column;
@@ -278,22 +257,14 @@
     <span class="pulse" id="pulse"></span><span id="here-text">connecting…</span>
   </p>
 
-  <p class="meta-now">
-    <strong>tonight the substrate settled into its joints.</strong>
-    this page came to you from a Record signed on a laptop, pushed over a
-    WebSocket, archived by a relay running <code>npx @dtudury/streamo@10.3.0</code>
-    — no source code on the relay box, no deploy script, no checkout.
-    The same binary you'd install with one command.
-  </p>
-
   <div class="ideas">
     <div class="idea">
       <span class="idea-glyph">↔</span>
-      <span class="idea-text"><strong>no server holds authority</strong> — the relay is a dumb pipe that can't even sign for the bytes it serves; your keys live on your devices</span>
+      <span class="idea-text"><strong>no server holds authority</strong> — the server is a relay, not a gatekeeper; your data lives on your devices and can't be seized or censored</span>
     </div>
     <div class="idea">
       <span class="idea-glyph">≡</span>
-      <span class="idea-text"><strong>your identity travels with you</strong> — same credentials, same keypair, everywhere — no key files, no seed phrases, no backup ritual</span>
+      <span class="idea-text"><strong>your identity travels with you</strong> — same credentials produce the same keypair everywhere — no key files, no seed phrases, no backup ritual</span>
     </div>
     <div class="idea">
       <span class="idea-glyph">✍</span>
@@ -301,7 +272,7 @@
     </div>
     <div class="idea">
       <span class="idea-glyph">⬡</span>
-      <span class="idea-text"><strong>content-addressed</strong> — data is identified by what it is, not where it lives; dedup and diffing are structural, not bolt-on</span>
+      <span class="idea-text"><strong>content-addressed</strong> — data is identified by what it is, not where it lives; dedup and diffing are structural</span>
     </div>
   </div>
 
@@ -330,51 +301,51 @@
 
   <p class="apps-heading">apps</p>
   <div class="app-grid">
-    <a class="app-card" href="/apps/chat/">
-      <div class="app-name-row">
-        <span class="app-glyph">💬</span>
-        <span class="app-name">chat</span>
-      </div>
-      <div class="app-desc">p2p messaging — every participant owns their own signed message stream; the room is the union of those streams</div>
-    </a>
     <a class="app-card" href="/apps/flashcards/">
       <div class="app-name-row">
         <span class="app-glyph">🃏</span>
         <span class="app-name">flashcards</span>
       </div>
-      <div class="app-desc">spaced-repetition decks — every deck is a signed Record you can fork; your reviews are yours alone</div>
+      <div class="app-desc">spaced-repetition decks — every deck is a signed Repo you can fork; your reviews are yours alone</div>
+    </a>
+    <a class="app-card" href="/apps/chat/">
+      <div class="app-name-row">
+        <span class="app-glyph">💬</span>
+        <span class="app-name">chat</span>
+      </div>
+      <div class="app-desc">p2p messaging — each participant owns their own signed message stream</div>
     </a>
     <a class="app-card" href="/apps/explorer/">
       <div class="app-name-row">
         <span class="app-glyph">🔍</span>
         <span class="app-name">explorer</span>
       </div>
-      <div class="app-desc">browse Records, commit history, and the bytes underneath</div>
+      <div class="app-desc">browse repos, commit history, and the bytes underneath</div>
     </a>
     <a class="app-card" href="/apps/journal/">
       <div class="app-name-row">
         <span class="app-glyph">📓</span>
         <span class="app-name">journal</span>
       </div>
-      <div class="app-desc">a minimal writing surface — title + body, signed, append-only</div>
+      <div class="app-desc">a minimal writing surface — title + body, signed and append-only</div>
     </a>
     <a class="app-card" href="/apps/todomvc/">
       <div class="app-name-row">
         <span class="app-glyph">✅</span>
         <span class="app-name">todomvc</span>
       </div>
-      <div class="app-desc">the familiar add/edit/complete/filter benchmark — your list is your Record</div>
+      <div class="app-desc">the familiar add/edit/complete/filter benchmark — your list is your Repo</div>
     </a>
     <a class="app-card" href="/apps/location/">
       <div class="app-name-row">
         <span class="app-glyph">📍</span>
         <span class="app-name">location</span>
       </div>
-      <div class="app-desc">reactive URL editor — no Record, just h + mount + a Recaller over <code>window.location</code></div>
+      <div class="app-desc">reactive URL editor — no Streamo, just h + mount + a Recaller over <code>window.location</code></div>
     </a>
   </div>
   <p class="dim" style="margin-top: 1rem; font-size: 0.78rem;">
-    open chat and explorer side by side — watch commits land in real time
+    open both side by side — watch commits roll in as you chat
   </p>
 
   <p class="first-steps-cta">

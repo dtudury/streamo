@@ -66,7 +66,14 @@ async function login (e) {
   // Make the repo inspectable from the devtools console.
   window.sharedNoteRepo = myRepo
 
-  ui.set({ phase: 'editor', username, connected: true, saving: false })
+  // Path-based sets fire path-specific mutations; the view's `ui.get('phase')`
+  // etc. subscribe to those specific keys. A whole-object `ui.set({...})`
+  // would fire only the '__root__' key and these path-based readers wouldn't
+  // wake. (Documented in LiveSource.js's set() — footgun worth respecting.)
+  ui.set('username', username)
+  ui.set('connected', true)
+  ui.set('saving', false)
+  ui.set('phase', 'editor')
 }
 
 async function save (e) {

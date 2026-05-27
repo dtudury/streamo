@@ -1,7 +1,19 @@
 {
+  "journalists": [
+    "0291eb291d975ab39c03ddbfac13e4c1a4cbe3a6156af8430f7b7922ea0ebccfe6",
+    "038426978da1c1be061af29f091fe256b9b4f074b9d75eaf40204757e52d0fd098"
+  ],
+  "entries": [
+    {
+      "headline": "running streamo",
+      "body": "this is the streamo journal. each entry is a signed commit on this repo; the homepage walks them and the relay link in the explorer leads here. append-only history made visible.",
+      "at": "2026-05-25T17:49:38.688Z"
+    }
+  ],
+  "flashcardsDecks": {},
   "mounts": {
     "streamo/": {
-      "key": "02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a"
+      "key": "0393c58214dba17da4a3bfedd1b67b941692ccc44655f9513ffd9b3ea5774c5060"
     },
     "apps/chat/": {
       "key": "039678087054203b8a99c0a36a1b57aed64fe8827c2e07cf88f289372ad244e5f3"
@@ -17,6 +29,9 @@
     },
     "apps/styles/": {
       "key": "02f886c4a7c0cba70e6422f373983decc9349abd9dd1d84bc196cdfc22d46311e8"
+    },
+    "apps/shared-note/": {
+      "key": "0377cf60083f72885725d333cd29ee87cf0775a04aee06715556f6f7ee3287b1b6"
     }
   }
 }

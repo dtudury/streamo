@@ -95,6 +95,15 @@ export function liveObject (target, options = {}) {
       // `target` reference from inside (callers hold their own
       // reference), so we mutate in place — keys not in `value` are
       // dropped; keys in `value` are written.
+      //
+      // **FOOTGUN:** this fires `reportKeyMutation(target, '__root__')`
+      // — only watchers that read via `get()` (no path) wake up.
+      // Watchers that read via `get('phase')` etc. are subscribed to
+      // the specific key (e.g., `(target, 'phase')`), NOT '__root__',
+      // and they will NOT fire. If you've been doing path-based reads
+      // throughout the app (the common pattern), call `set` with paths
+      // too: `set('phase', 'editor'); set('username', ...)` instead of
+      // `set({ phase: 'editor', username: ... })`.
       for (const k of Object.keys(target)) delete target[k]
       Object.assign(target, value)
       recaller.reportKeyMutation(target, '__root__')

@@ -74,7 +74,7 @@ async function save (e) {
   const text = e.target.elements.text.value
   ui.set('saving', true)
   try {
-    await myRepo.update(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username') }))
+    await myRepo.update(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username'), at: new Date().toISOString() }))
   } catch {
     // recoveryStuck has fired; the view re-renders to show the
     // resolve UI. No need to do anything else here.
@@ -89,7 +89,7 @@ async function chooseValue (text) {
   // UI naturally hides; if it exhausts again, the UI re-renders.
   ui.set('saving', true)
   try {
-    await myRepo.update(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username') }))
+    await myRepo.update(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username'), at: new Date().toISOString() }))
   } catch {
     // recoveryStuck set again; user will resolve again.
   } finally {
@@ -132,12 +132,13 @@ function editorView () {
         <div class="choice theirs">
           <h3>their version (current truth)</h3>
           <pre>${value.text ?? '(empty)'}</pre>
-          <p class="who">last edited by ${value.lastEditedBy ?? 'someone'}</p>
+          <p class="who">last edited by ${value.lastEditedBy ?? 'someone'}${value.at ? ' at ' + new Date(value.at).toLocaleTimeString() : ''}</p>
           <button onclick=${handle(() => chooseValue(value.text ?? ''))}>use theirs</button>
         </div>
         <div class="choice yours">
           <h3>your unsaved edit</h3>
           <pre>${yourRejected?.text ?? '(your unsaved value isn\'t decodable — paste it back if you have it)'}</pre>
+          <p class="who">${yourRejected?.lastEditedBy ?? 'you'}${yourRejected?.at ? ' at ' + new Date(yourRejected.at).toLocaleTimeString() : ''}</p>
           <button onclick=${handle(() => chooseValue(yourRejected?.text ?? ''))}>use yours</button>
         </div>
       </div>
@@ -148,7 +149,7 @@ function editorView () {
     <h1>shared note · ${ui.get('username')}</h1>
     <form onsubmit=${handle(save)}>
       <textarea name="text" autofocus>${value.text ?? ''}</textarea>
-      <p class="meta">last edited by ${value.lastEditedBy ?? '—'} · <span class="status ${connected ? '' : 'disconnected'}">${connected ? 'connected' : 'reconnecting…'}</span></p>
+      <p class="meta">last edited by ${value.lastEditedBy ?? '—'} · ${value.at ? new Date(value.at).toLocaleTimeString() : '—'} · <span class="status ${connected ? '' : 'disconnected'}">${connected ? 'connected' : 'reconnecting…'}</span></p>
       <div class="row">
         <button type="submit" disabled=${saving}>${saving ? 'saving…' : 'save'}</button>
         <span class="muted">tip: open another tab as same user, both edit, both save — watch the resolve UI appear</span>

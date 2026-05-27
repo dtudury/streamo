@@ -7,6 +7,7 @@ import { archiveSync } from './archiveSync.js'
 import { fileSync } from './fileSync.js'
 import { originSync } from './originSync.js'
 import { outletSync } from './outletSync.js'
+import { registrySync } from './registrySync.js'
 import { s3Sync } from './s3Sync.js'
 import { stateFileSync } from './stateFileSync.js'
 import { bytesToHex } from './utils.js'
@@ -147,6 +148,36 @@ export class StreamoServer {
   async connect (hostPort) {
     const { host, port, protocol } = parseOrigin(hostPort)
     return originSync(this.streamo, this.publicKeyHex, host, port, { protocol })
+  }
+
+  /**
+   * Subscribe to a peer relay's home Record (and its mounted records,
+   * via the `followMounts` cascade). Federation arc step 4 — the
+   * cross-relay subscribe primitive. The returned session holds the
+   * connection open; bytes flow continuously while open.
+   *
+   * Mechanism: `registrySync` opens a WebSocket to the peer, receives
+   * its `hello { home }`, auto-subscribes to that home, and the
+   * `followMounts: true` cascade subscribes to every Record referenced
+   * in the home's `mounts` table. Combined with `webSync`'s `hostMap`,
+   * this lets one relay serve content authored on another — federation
+   * at HTTP boundaries.
+   *
+   * @param {string} hostPort  ws/wss URL or host[:port] shorthand
+   *   (same shape as `connect()`)
+   * @param {object} [options]  forwarded to `registrySync` — e.g.
+   *   `{ follow, followMounts, onAnnounce, onConnectionChange }`.
+   *   Defaults to `followMounts: true` which is the federation-pattern
+   *   default (subscribe to everything the peer's home mounts).
+   * @returns {Promise<ReturnType<typeof registrySync>>}
+   */
+  async peer (hostPort, options = {}) {
+    const { host, port, protocol } = parseOrigin(hostPort)
+    return registrySync(this.registry, host, port, {
+      protocol,
+      followMounts: true,
+      ...options
+    })
   }
 
   async files (folder = '.', options = {}) {

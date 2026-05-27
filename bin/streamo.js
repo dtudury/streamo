@@ -113,6 +113,12 @@ program
       .env('STREAMO_ORIGIN')
   )
   .addOption(
+    new Option('--peer <url>', 'subscribe to a peer relay\'s home Record (and its mounted records via the followMounts cascade). Federation arc step 4. Can be repeated; each value opens an independent registrySync session. URL shape matches --origin.')
+      .env('STREAMO_PEER')
+      .argParser((val, prev = []) => [...prev, val])
+      .default([])
+  )
+  .addOption(
     new Option('--interactive', 'start a REPL with streamo, signer, and helpers as globals')
       .env('STREAMO_INTERACTIVE')
   )
@@ -247,6 +253,18 @@ if (options.mergeFrom) {
 if (options.origin) {
   await server.connect(options.origin)
   console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
+}
+
+// --peer connects this relay to upstream peer relays. Each peer's
+// home Record + mounted records flow down into our local registry
+// (via the followMounts cascade). Combined with --web's hostMap
+// option, this lets one relay serve content authored on another.
+// Repeatable: each --peer opens an independent registrySync session.
+if (options.peer && options.peer.length > 0) {
+  for (const peerUrl of options.peer) {
+    await server.peer(peerUrl)
+    console.log(`\x1b[32mpeer: subscribed to ${peerUrl}\x1b[0m`)
+  }
 }
 
 if (options.files) {

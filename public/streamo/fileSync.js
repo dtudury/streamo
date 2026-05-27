@@ -461,11 +461,12 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
 
   const getRepoFiles = () => readRepoFiles(repo)
-  const setRepoFiles = (working, files) => {
-    // On a fresh checkout (no prior commits), there's no parent object for
-    // path-set to navigate into.  Materialize the wrapping object explicitly.
-    if (working.get() === undefined) return working.set({ [FILES_KEY]: files })
-    return working.set(FILES_KEY, files)
+  // Value-in / value-out helper for `repo.update(c => applyFilesToValue(c, files))`.
+  // On a fresh record (`current === undefined`), materialize the wrapping
+  // object explicitly so the value has structural shape.
+  const applyFilesToValue = (current, files) => {
+    if (current === undefined) return { [FILES_KEY]: files }
+    return { ...current, [FILES_KEY]: files }
   }
 
   // Invariant: value.files[recordFile] mirrors top-level meta.
@@ -474,7 +475,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // bypassing fileSync) breaks the invariant temporarily — this restores
   // it by committing value.files[recordFile] = current top-level meta.
   // No-op when invariant already holds.
-  const healMetaInvariant = (origin = 'heal') => {
+  const healMetaInvariant = async (origin = 'heal') => {
     if (!recordFile || !repo.lastCommit) return false
     const ownFiles = getRepoFiles() ?? {}
     const topLevelMeta = readRepoRecordMeta(repo) ?? {}
@@ -489,13 +490,14 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     if (filesEntryIsValidMeta && Object.keys(filesEntry).length > 0) {
       console.warn(`fileSync: ${recordFile} out of sync with top-level meta; healing`)
     }
-    const working = repo.checkout()
-    setRepoFiles(working, { ...ownFiles, [recordFile]: topLevelMeta })
-    repo.commit(working, `${origin}: sync ${recordFile}`)
+    await repo.update(
+      c => applyFilesToValue(c, { ...ownFiles, [recordFile]: topLevelMeta }),
+      { message: `${origin}: sync ${recordFile}` }
+    )
     return true
   }
-  // setRecordMeta composes the streamo.json edit into the Record's
-  // value, per `metaStrategy`:
+  // applyMetaToValue composes the streamo.json edit into the Record's
+  // value, per `metaStrategy`. Value-in / value-out for repo.update():
   //   - 'merge' (default): spread the file's keys into the existing
   //     value. Keys not mentioned in streamo.json survive (other
   //     writers — seed steps, code — keep their keys). A `null` value
@@ -503,20 +505,19 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   //   - 'replace': the file is the sole truth for meta; keys absent
   //     from streamo.json are removed. `files` is always preserved
   //     (it's owned by the file tree, not the meta channel).
-  const setRecordMeta = (working, meta) => {
+  const applyMetaToValue = (current, meta) => {
     if (metaStrategy === 'replace') {
-      const currentFiles = working.get(FILES_KEY)
       const next = { ...(meta ?? {}) }
+      const currentFiles = current?.[FILES_KEY]
       if (currentFiles !== undefined) next[FILES_KEY] = currentFiles
-      working.set(next)
+      return next
     } else {
-      const current = working.get() ?? {}
-      const next = { ...current }
+      const next = { ...(current ?? {}) }
       for (const [k, v] of Object.entries(meta ?? {})) {
         if (v === null) delete next[k]
         else next[k] = v
       }
-      working.set(next)
+      return next
     }
   }
 
@@ -578,7 +579,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     // Record's value has top-level meta but value.files[recordFile] is
     // missing or stale (e.g., sealed StreamoRecords authored by code that didn't
     // go through fileSync).
-    healMetaInvariant('init')
+    await healMetaInvariant('init')
     const refreshedRepoFiles = getRepoFiles() ?? {}
     const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
     const target = { ...mountedFiles, ...refreshedRepoFiles }
@@ -604,10 +605,11 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     const hasFiles = Object.keys(filesToCommit).length > 0
     const hasMeta = recordFile && diskRecordMeta
     if (hasFiles || hasMeta) {
-      const working = repo.checkout()
-      if (hasMeta) setRecordMeta(working, diskRecordMeta)
-      setRepoFiles(working, filesToCommit)
-      repo.commit(working, `seed ${FILES_KEY}`)
+      await repo.update(c => {
+        let v = c
+        if (hasMeta) v = applyMetaToValue(v, diskRecordMeta)
+        return applyFilesToValue(v, filesToCommit)
+      }, { message: `seed ${FILES_KEY}` })
       // After the commit lands, the repo→disk watcher (below) will fire
       // and materialize any mounts.
     }
@@ -630,7 +632,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       if (!committingFromDisk) {
         committingFromDisk = true
         try {
-          if (healMetaInvariant()) return  // heal triggered a re-flush
+          if (await healMetaInvariant()) return  // heal triggered a re-flush
         } finally {
           committingFromDisk = false
         }
@@ -780,10 +782,11 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         }
 
         if (filesEqual(current, newFiles)) return
-        const working = repo.checkout()
-        if (newMeta !== null) setRecordMeta(working, newMeta)
-        setRepoFiles(working, newFiles)
-        repo.commit(working, 'file change')
+        await repo.update(c => {
+          let v = c
+          if (newMeta !== null) v = applyMetaToValue(v, newMeta)
+          return applyFilesToValue(v, newFiles)
+        }, { message: 'file change' })
       } finally {
         committingFromDisk = false
       }

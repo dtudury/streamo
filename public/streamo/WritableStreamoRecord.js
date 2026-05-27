@@ -431,6 +431,18 @@ export class WritableStreamoRecord extends StreamoRecord {
         if (relayHash && arraysEqual(relayHash, target)) {
           this.recaller.unwatch(fn)
           resolve()
+          return
+        }
+        // No session attached AND no error signal armed → no relay ack
+        // will ever arrive, nothing will mutate these cells from the
+        // wire. Resolve cleanly. This is what lets update() be a
+        // drop-in for sessionless callers (fileSync's archive-only
+        // paths, claudeSync's originSync architecture). Tests that
+        // pre-arm `conflictDetected` still exercise the reject path
+        // — the checks above fire first.
+        if (!this._session) {
+          this.recaller.unwatch(fn)
+          resolve()
         }
       }
       this.recaller.watch('repo:_awaitChainHash', fn)
@@ -488,6 +500,13 @@ export class WritableStreamoRecord extends StreamoRecord {
       // forever even though our bytes successfully made the round-trip.
       // Symptom: save button never comes back after first save.
       // `signedLength === byteLength` becomes true once sign() appends.
+      //
+      // No signer attached → nothing will ever advance signedLength, so
+      // the await would hang forever. The primitive collapses to
+      // "commit and return" — matches set()'s old fire-and-forget shape.
+      // Tests creating records without signers (fileSync's archive-only
+      // paths) hit this case.
+      if (this.#signer === null) return
       await this.recaller.when(() => this.signedLength === this.byteLength)
       const target = this.committedChainHash
       try {

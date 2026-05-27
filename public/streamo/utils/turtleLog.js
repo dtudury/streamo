@@ -10,11 +10,24 @@
  *   [▛▞▖🐢 ▝▞▟] <02e7…b93a> ← ✍️ sig          chainHash=ab12…cd34 …
  *   [▛▞▖🐢 ▝▞▟] <02e7…b93a> → 👂 subscribe    fromOffset=143657 …
  *
- * Default-off. Enable via `STREAMO_LOG_TURTLES=1` in env, or
- * `setTurtleLog(true)` at runtime.
+ * Default-ON. Silence via `STREAMO_LOG_TURTLES=0` in env, or
+ * `setTurtleLog(false)` at runtime. Auto-silent under `node --test`
+ * so test output stays scannable.
  */
 
-let enabled = !!(globalThis.process?.env?.STREAMO_LOG_TURTLES)
+function defaultEnabled () {
+  const env = globalThis.process?.env ?? {}
+  const v = env.STREAMO_LOG_TURTLES
+  if (v === '0' || v === 'false') return false
+  if (v != null && v !== '') return true
+  // Unset: on, unless we're running under `node --test`.
+  const argv = globalThis.process?.argv ?? []
+  if (argv.includes('--test')) return false
+  if (env.NODE_TEST_CONTEXT) return false
+  return true
+}
+
+let enabled = defaultEnabled()
 
 export function setTurtleLog (v) { enabled = !!v }
 export function turtleLogEnabled () { return enabled }

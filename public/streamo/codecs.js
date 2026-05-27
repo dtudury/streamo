@@ -17,6 +17,67 @@
  * a property of which r you pass, not a flag you flip.
  *
  * See design.md §3.
+ *
+ * ── Footer space — current state and forward-compat convention ─────────
+ *
+ * Each chunk's last byte (the footer) selects its codec via
+ * `footerToCodec[footer]`. The footer-space is a single byte (0–255);
+ * codecs claim contiguous ranges of footers as they're registered, sized
+ * by `1 + sum-of-part-option-products`. CodecRegistry assigns
+ * `baseFooter` sequentially in the order codecs appear in this file's
+ * `makeCodecs()` return.
+ *
+ * Currently allocated: ~201 of 256 footers (UINT7 alone claims 128 —
+ * one footer per integer value 0–127, so any int 0–127 round-trips in
+ * a single byte). DUPLE claims 25 (a 5×5 product of inline-or-address
+ * options on its two parts). The 4 single-byte primitives + the
+ * fixed-shape SIGNATURE + the empty-collection codecs each claim one.
+ *
+ * **~55 footers are free.** New codecs added at the end of
+ * `makeCodecs()` get the next contiguous range without touching any
+ * existing footer assignment — old data stays readable forever.
+ *
+ * **Forward-compat convention** (the decision-in-place, 2026-05-27):
+ *
+ * - **Don't speculatively allocate.** Add codecs when a real use case
+ *   demands them; reserve space by *not using it*. The cost of an
+ *   unused slot is zero; the cost of a speculative slot we want to
+ *   reclaim is "migrate every stored record."
+ *
+ * - **Add new codecs at the END of `makeCodecs()`'s return.** That
+ *   keeps existing footers stable. Reordering or inserting mid-list
+ *   is a format-break.
+ *
+ * - **Footer 255 is *informally* reserved** for a future META codec
+ *   class (format-version, preamble, or any other format-evolution
+ *   primitive). Not allocated; just don't bury it in the middle of
+ *   ordinary additions. When we add META, register it consciously
+ *   — likely as the last codec — and the slot we use becomes the
+ *   reservation.
+ *
+ * - **Preamble decision (deferred):** Streamo records currently have
+ *   no format-identifying header at offset 0. A record's first byte
+ *   is whatever first chunk's footer happens to be. **If we evolve
+ *   the format in a way that needs a version marker**, the planned
+ *   shape is: a META chunk at offset 0, identified by a reserved
+ *   footer (the 255 region above). Old records (without META at
+ *   offset 0) are detectable by absence and read in v1 mode forever;
+ *   new records carry their own version. **For now we don't need
+ *   this**; documenting the shape so future-us doesn't have to
+ *   re-invent it.
+ *
+ * - **Per-record version anchoring (lightweight complement):** for
+ *   specific high-value records (Claude's journal, tarot readings,
+ *   memory files when those land here), the worst-case read path is
+ *   *"check out the streamo git hash that wrote this record."*
+ *   Record the writing version's git hash alongside the record
+ *   (e.g., in a sibling field or as part of value metadata) and the
+ *   reader procedure for any format is recoverable from git history.
+ *   Frugal pattern; complements META — META is the in-format
+ *   convention, git-hash is the out-of-band escape hatch.
+ *
+ * The directional rule: **leave room for the futures we know about
+ * without paying for them yet.**
  */
 import { numberToVar, varToNumber, range } from './utils.js'
 import { Signature } from './Signature.js'

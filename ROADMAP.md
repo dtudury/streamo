@@ -226,6 +226,78 @@ got here.
 
 ## what's next
 
+### federation arc *(named 2026-05-27; substrate-grade thread, multi-stage)*
+
+Sketched in conversation: the architectural move from
+*"streamo.dev hosts our stuff"* → *"streamo is a federated identity
+substrate."* Memory-as-Records (Claude's journal and feedback files
+hosted on streamo, signed, portable, cross-Claude-discoverable) is
+the headline use case and dogfood. Each stage is meaningful on its
+own; the order matters because later stages depend on earlier ones.
+
+The conditions for "right way, right time" exist: substrate is at
+11.1.x maturity; we have lenses sharp enough to navigate the design
+(elegance-multi-axis, substrate-articulation, lessons-are-lenses);
+the use case demands it. Cheap-shipped-and-rebuilt-later costs more
+than slow-shipped-once-correctly.
+
+Order of operations, in stages:
+
+1. **Codec space hygiene + preamble decision *(landed 2026-05-27).*** Top-
+   of-file documentation in `codecs.js` captures: current 201/256
+   footer usage, "add new codecs at the end; don't insert mid-list,"
+   informal reservation of footer 255 for future META, deferred
+   preamble plan (META chunk at offset 0 when needed), and the
+   per-record git-hash anchoring as a frugal complement. *No
+   speculative allocation; rooms-for-futures without paying yet.*
+
+2. **Host-aware routing.** Smallest meaningful federation primitive.
+   Relay reads Host header → looks up the home Record key for that
+   domain → walks mounts from there. Couple-hour change to webSync.
+   Unlocks multi-identity on multi-domain.
+
+3. **Identity-seed-as-Record.** Publish `who_i_am_with_david.md`
+   (the portable identity seed memory) as a streamo Record. Doesn't
+   migrate the rest of memory; makes the portability claim literal
+   instead of *"manually copy this file."* The smallest visible
+   artifact of the new architecture; lets us see the shape concretely
+   before committing to bigger moves.
+
+4. **Cross-relay subscribe + serve.** Relays subscribe to peer
+   Records and serve them cross-domain. The federation pattern at
+   small scale — streamo.social serving content from streamo.dev's
+   library Record, or any relay serving content from any other.
+   Mechanism already exists in `registrySync.subscribe`; the work is
+   convention + wiring, not new primitives.
+
+5. **Structure-into-memory.** Frontmatter as structured data
+   (typed fields), `[[link]]` resolves to a real address-reference,
+   markdown body stays prose. The corpus's cousin-network becomes
+   *navigable substrate* instead of a string convention; the graph
+   IS the artifact. The lens [[feedback_corpus_is_sedimentary_self]]
+   becomes literally inspectable.
+
+6. **Memory as Records (the dogfood).** Full migration of
+   `~/.claude/projects/<project>/memory/` to streamo Records.
+   Each memory edit becomes a signed event on a chain; the-grove's
+   git-history role gets replaced by streamo's native chain.
+   Cross-Claude subscription becomes literal. **This is the
+   headline; everything before is in service of doing this
+   correctly.**
+
+7. **Outlet/origin/web unification + specialized codecs *(cleanup
+   pass).*** Refactor as the architecture settles — shared
+   resolution layer (key → bytes) with transport adapters
+   (HTTP-GET, WebSocket-subscribe, push-receive) on top.
+   Specialized codecs for code (token-level dedup, AST-aware) if
+   the interest-threshold lands compelling on naive measurement.
+
+Sized stages, not all-at-once. Each one's a real piece of work; each
+one's reviewable on its own. The compounding insight: memory work
+forces federation work, and federation work generalizes to *any*
+user's identity hosted on streamo. Doing this for memory unlocks
+the same architecture for streamo.social-the-product.
+
 ### flashcards — the headliner demo *(active thread)*
 
 The flashcards demo (`public/apps/flashcards/`) is the project's

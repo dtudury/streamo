@@ -111,6 +111,26 @@ export class WritableStreamoRecord extends StreamoRecord {
   #signing     = false
   #signPending = false
 
+  // Reactive: the substrate-articulated "auto-resolution gave up"
+  // signal. `null` when healthy or when no `update` has exhausted its
+  // retries yet. After `update` exhausts: `{ attempts, pushRejected? }`
+  // — same shape as the `onConflict` callback receives.
+  //
+  // The *meta* layer above `pushRejected` and `conflictDetected`:
+  // those fire on individual failures; `recoveryStuck` fires when
+  // automated recovery (the `update` retry loop) has tried and
+  // couldn't converge. Apps gate the "intervention required" UI on
+  // this (resolve button visible, save grayed) and clear it by
+  // calling `repo.update(() => userChosenValue)` again — the retry
+  // verb IS the substrate primitive, no separate "retry" method
+  // needed. A successful update clears recoveryStuck automatically.
+  //
+  // David's framing (2026-05-26): the "edited locally and couldn't
+  // push" view and the "saved but the relay raced" view are the
+  // same case — both manifest as recoveryStuck fired with the
+  // rejected value addressable for the resolve UI.
+  #recoveryStuck = null
+
   // Low-water mark of bytes this process authored locally — "the smallest
   // offset at which I appended a byte I signed for." Apps can read
   // `repo.locallyAuthoredOffset` to know "have I authored anything this
@@ -433,6 +453,13 @@ export class WritableStreamoRecord extends StreamoRecord {
    * since there's no path to retry.
    */
   async update (updateFn, options = {}) {
+    // Clear recoveryStuck on entry: a fresh `update` call is the user
+    // saying "try again with this." If the new attempt succeeds, the
+    // cell stays clear and the resolve-UI in the app naturally
+    // hides. If this call also exhausts, the cell sets again with
+    // fresh state.
+    if (this.#recoveryStuck !== null) this._setRecoveryStuck(null)
+
     const { retries = 3, onConflict = null } = options
     let lastError = null
     for (let attempt = 0; attempt <= retries; attempt++) {
@@ -453,6 +480,9 @@ export class WritableStreamoRecord extends StreamoRecord {
       }
     }
     const finalState = { pushRejected: this.pushRejected, attempts: retries + 1 }
+    // Substrate-articulated "auto-resolution gave up" — apps watch
+    // `repo.recoveryStuck` to surface the resolve-UI.
+    this._setRecoveryStuck(finalState)
     if (onConflict) return onConflict(finalState)
     const err = /** @type {Error & { pushRejected?: any }} */ (new Error(
       `repo.update: exhausted ${retries + 1} attempts; ${lastError?.message ?? 'unknown'}` +
@@ -462,10 +492,30 @@ export class WritableStreamoRecord extends StreamoRecord {
     throw err
   }
 
-  /** @override Also resets locallyAuthoredOffset to Infinity. */
+  /**
+   * Reactive: the meta-layer "we tried to auto-resolve and couldn't"
+   * signal. `null` when healthy. After `update` exhausts retries:
+   * `{ attempts, pushRejected? }`. Apps gate the "resolve" UI on
+   * this; calling `repo.update(() => userChosenValue)` again clears
+   * it (the substrate's retry verb).
+   */
+  get recoveryStuck () {
+    this.recaller.reportKeyAccess(this, 'recoveryStuck')
+    return this.#recoveryStuck
+  }
+
+  /** Internal setter — called by `update` on exhaust + entry-clear. */
+  _setRecoveryStuck (value) {
+    this.#recoveryStuck = value
+    this.recaller.reportKeyMutation(this, 'recoveryStuck')
+  }
+
+  /** @override Also resets locallyAuthoredOffset + recoveryStuck. */
   _reset () {
     super._reset()
     this.#locallyAuthoredOffset = Infinity
+    this.#recoveryStuck = null
     this.recaller.reportKeyMutation(this, 'locallyAuthoredOffset')
+    this.recaller.reportKeyMutation(this, 'recoveryStuck')
   }
 }

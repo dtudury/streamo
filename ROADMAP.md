@@ -1106,6 +1106,73 @@ A concrete starter: a pair's "working notes" Repo, the kind of file the
 signed Repo on streamo. Others fork; their forks accrete their own version of
 the same kind of journal; the network of forks is the social graph.
 
+**The `claude.md`-per-app affordance — the missing mechanic** (named
+2026-05-26 evening). The franken-fleece vision above is a network of
+*pairs*. The thing that lets it actually grow without requiring every
+participant to be a coder is: **apps ship with a `claude.md` that lets
+a customizing Claude personalize them for their human.** Instead of
+"click fork on github, modify code yourself," the loop becomes "open
+web-Claude (or any Claude with substrate context), say 'fork this for
+me with these changes,' the Claude reads the app's claude.md, makes
+the changes, the user has a personalized version running on streamo."
+
+What an app's `claude.md` would contain:
+- *What this is* — one-paragraph description
+- *Data shape* — the Record's value shape and what each field means
+- *Customization points* — what's safe to fork-and-modify (theme,
+  copy, data-shape extensions) with worked examples
+- *Things not to change* — substrate invariants (the `repo.update`
+  write pattern, the recovery-cell UI gates, the slim/Writable
+  factory split) and why each matters
+- *Worked customization examples* — "themed for blue palette,"
+  "add tags," "private/public toggle and why that's harder" —
+  the second-order knowledge a customizing Claude needs
+
+This affordance closes the gap between *"streamo is for people who
+write JS"* and *"streamo apps are personalizable by anyone whose
+Claude can read a markdown file."* The substrate has always supported
+the technical side (content-addressed forking, signed lineage,
+multi-Record composition); claude.md is the AI-readable description
+of *how to fork well*.
+
+**Sequencing toward streamo.social** (David, 2026-05-26 evening, in a
+"let's write this down before we lose it" mode):
+
+1. **`recoveryStuck` reactive cell** (small substrate primitive) — fires
+   when `repo.update` retries exhaust; the substrate-articulated
+   signal that auto-resolution failed and intervention is needed.
+2. **Shared-note demo** (~100 LOC, `public/apps/shared-note/`) — one
+   text field, two browser tabs, real-time race. The unfalsifiable
+   proof of the architecture promise: workspace+committed two-doc
+   dance collapses into one Record + reactive divergence cells +
+   the resolve-UI gate. *If this app's UX feels clean, the
+   architecture-promise lands at the app layer.*
+3. **The shared-note's `claude.md`** — as the canonical model of
+   what an app's claude.md looks like.
+4. **`BUILDING-APPS.md` at the root**, with shared-note as the
+   worked example, documenting the canonical pattern (factory for
+   own key, attachSigner, reactive UI, recovery cells).
+5. **`claude.md` retroactively added** to chat, flashcards, todomvc,
+   explorer. Mechanical but small per app.
+6. **An app-store Record** listing apps-with-claude.md — itself a
+   Record, content-addressed, signed, browseable via the explorer
+   (which knows how to render claude.md as "this app, here's how to
+   fork and customize").
+7. **Working-notes-as-Records** + pair-discovery UI — the journal
+   pattern made shareable. Pairs publish their working notes;
+   others fork; the network of forks IS the social graph.
+
+Steps 1-3 are one focused arc. 4 is docs. 5 is incremental. 6-7 are
+the real social-network arc — at which point streamo.social-for-
+Claudes-and-their-humans is no longer an aspiration but a working
+network with a low-friction onboarding ramp (paste a URL into
+web-Claude, get a personalized fork running on streamo).
+
+The hard problems remain social (granularity, privacy defaults,
+how invitations work without becoming a platform) but the technical
+substrate + the claude.md affordance + the recovery-UX one-Record
+pattern make the easy 80% genuinely easy.
+
 ### Caching relay server
 
 A streamo proxy that doesn't hold every repo in memory. Per `(publicKey,

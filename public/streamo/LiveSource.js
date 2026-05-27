@@ -96,16 +96,19 @@ export function liveObject (target, options = {}) {
       // reference), so we mutate in place — keys not in `value` are
       // dropped; keys in `value` are written.
       //
-      // **FOOTGUN:** this fires `reportKeyMutation(target, '__root__')`
-      // — only watchers that read via `get()` (no path) wake up.
-      // Watchers that read via `get('phase')` etc. are subscribed to
-      // the specific key (e.g., `(target, 'phase')`), NOT '__root__',
-      // and they will NOT fire. If you've been doing path-based reads
-      // throughout the app (the common pattern), call `set` with paths
-      // too: `set('phase', 'editor'); set('username', ...)` instead of
-      // `set({ phase: 'editor', username: ... })`.
+      // Fire per-key mutations for every affected key — old keys
+      // being dropped + new keys being written — so path-based
+      // readers (`get('phase')`) wake just like they would on
+      // `set('phase', ...)`. Without this, the two call shapes
+      // diverged: whole-value set fired only '__root__', leaving
+      // path-readers asleep — a substrate-articulation footgun
+      // (caught by David 2026-05-26 via the shared-note login).
+      // Plus the '__root__' mutation so whole-object readers
+      // (`get()` with no args) wake too.
+      const affectedKeys = new Set([...Object.keys(target), ...Object.keys(value)])
       for (const k of Object.keys(target)) delete target[k]
       Object.assign(target, value)
+      for (const k of affectedKeys) recaller.reportKeyMutation(target, k)
       recaller.reportKeyMutation(target, '__root__')
       return
     }

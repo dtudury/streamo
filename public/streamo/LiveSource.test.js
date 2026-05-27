@@ -56,6 +56,52 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(seen[seen.length - 1], 1, 'watcher re-ran with the new value')
   })
 
+  test('liveObject whole-value set ALSO wakes path-based readers (substrate fix 2026-05-26)', async ({ assert }) => {
+    // Caught by David via the shared-note login bug. Before the fix:
+    // `set({a:1, b:2})` fired only `reportKeyMutation(target,
+    // '__root__')`. Watchers that read via `get('a')` subscribed to
+    // (target, 'a') — NOT '__root__' — and didn't wake. The two call
+    // shapes (set(value) vs set(path, value)) had inconsistent
+    // reactive semantics. After the fix: whole-value set fires
+    // per-key mutations for every affected key + '__root__'.
+    const s = liveObject({ phase: 'login', name: 'anon' })
+    const phaseSeen = []
+    const nameSeen = []
+    const rootSeen = []
+    s.recaller.watch('phase', () => phaseSeen.push(s.get('phase')))
+    s.recaller.watch('name', () => nameSeen.push(s.get('name')))
+    s.recaller.watch('root', () => rootSeen.push({ ...s.get() }))
+    assert.equal(phaseSeen.length, 1)
+    assert.equal(nameSeen.length, 1)
+    assert.equal(rootSeen.length, 1)
+
+    // Whole-value set must wake ALL three watcher kinds.
+    s.set({ phase: 'editor', name: 'alice' })
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(phaseSeen[phaseSeen.length - 1], 'editor',
+      'path-based watcher reading phase woke after whole-value set')
+    assert.equal(nameSeen[nameSeen.length - 1], 'alice',
+      'path-based watcher reading name woke after whole-value set')
+    assert.deepEqual(rootSeen[rootSeen.length - 1], { phase: 'editor', name: 'alice' },
+      'whole-object watcher woke too')
+  })
+
+  test('liveObject whole-value set fires mutations for dropped keys', async ({ assert }) => {
+    // Edge case: a key in the OLD value that's absent from the NEW
+    // value is being dropped — readers of that key should wake (and
+    // see undefined). Otherwise a stale view of the removed key
+    // would persist.
+    const s = liveObject({ phase: 'login', removed: 'old' })
+    const removedSeen = []
+    s.recaller.watch('removed', () => removedSeen.push(s.get('removed')))
+    assert.equal(removedSeen[0], 'old')
+
+    s.set({ phase: 'editor' })  // no 'removed' key
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(removedSeen[removedSeen.length - 1], undefined,
+      'watcher for dropped key woke and saw undefined')
+  })
+
   test('liveObject get returns undefined for paths that miss', ({ assert }) => {
     const s = liveObject({ a: 1 })
     assert.equal(s.get('nope'), undefined)

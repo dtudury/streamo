@@ -1,0 +1,98 @@
+/* shared-note — minimal styles. The point of the app is the substrate
+   behavior, not the look. Theme via the CSS vars below. */
+
+:root {
+  --bg: #fafafa;
+  --fg: #222;
+  --muted: #888;
+  --accent: #4a7;
+  --conflict-bg: #fff8e1;
+  --conflict-border: #e6c200;
+  --theirs-bg: #e3f2fd;
+  --yours-bg: #fce4ec;
+  --max-width: 640px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font: 16px/1.5 system-ui, -apple-system, sans-serif;
+  color: var(--fg);
+  background: var(--bg);
+  margin: 0;
+  padding: 2em 1em;
+  display: flex;
+  justify-content: center;
+}
+
+main {
+  max-width: var(--max-width);
+  width: 100%;
+}
+
+h1 { font-size: 1.3em; margin: 0 0 1em; }
+h2 { font-size: 1.1em; margin: 0 0 .5em; }
+h3 { font-size: 1em; margin: 0 0 .3em; color: var(--muted); }
+
+input, textarea, button {
+  font: inherit;
+  color: inherit;
+}
+
+input, textarea {
+  width: 100%;
+  padding: .5em .7em;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background: white;
+}
+textarea { min-height: 8em; resize: vertical; }
+
+button {
+  padding: .5em 1em;
+  border: none;
+  border-radius: 4px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+button[disabled] { opacity: .4; cursor: default; }
+button.secondary { background: white; color: var(--fg); border: 1px solid #ccc; }
+
+form .row { display: flex; gap: .5em; align-items: center; margin-top: .5em; }
+form .row .muted { color: var(--muted); font-size: .9em; }
+
+.login form { display: grid; gap: .5em; max-width: 280px; }
+
+.editor .meta { color: var(--muted); font-size: .9em; margin: .5em 0; }
+.editor .status { color: var(--accent); font-size: .9em; }
+.editor .status.disconnected { color: #c33; }
+
+.resolve {
+  border: 2px solid var(--conflict-border);
+  background: var(--conflict-bg);
+  border-radius: 6px;
+  padding: 1em;
+}
+.resolve h2 { color: #6b4f00; }
+.resolve > p { margin: 0 0 1em; }
+
+.choice {
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: .8em;
+  margin-bottom: .8em;
+}
+.choice.theirs { background: var(--theirs-bg); }
+.choice.yours { background: var(--yours-bg); }
+.choice pre {
+  background: white;
+  padding: .5em .7em;
+  border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: .3em 0;
+  min-height: 1.5em;
+}
+.choice .who { color: var(--muted); font-size: .85em; margin: .3em 0; }

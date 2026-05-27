@@ -9,7 +9,7 @@ import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
  * and other peers.
  *
  * HTTP endpoints:
- *   GET /                         → 200 JSON: current value of the primary streamo
+ *   GET /                         → 200 JSON: current value of the home streamo for this host
  *   GET /streams/:key             → 200 JSON: current value of streamo `key`
  *   GET /streams/:key/raw         → 200 application/octet-stream: full wire-format archive
  *
@@ -17,14 +17,25 @@ import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
  *   Uses the same handshake + full-duplex wire protocol as outletSync, so any
  *   originSync client can connect here directly.
  *
+ * **Host-aware routing** (federation arc step 2): when `hostMap` is set,
+ * HTTP read routes resolve their "home" Record per-request by checking the
+ * Host header against the map. So one server can serve foo.example.com from
+ * Record A and bar.example.com from Record B. Unmapped hosts fall through to
+ * `primaryKeyHex`. Writable routes (`POST /api/file`) stay primary-keyed —
+ * those are *"write to MY repo,"* not *"write to whoever's domain is in
+ * Host."* WS handshake is also primary-keyed for now (per-connection
+ * host-awareness needs an upgrade-event hook — follow-up).
+ *
  * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
- * @param {string} primaryKeyHex   public key of the "main" streamo for GET /
+ * @param {string} primaryKeyHex   public key of the "main" streamo — the
+ *   server's own primary, used as fallback when no host in hostMap matches
  * @param {number} port
  * @param {string} [name]
  * @param {number} [keyIterations]
  * @param {{
  *   serveRepoFiles?: { repo: any, [opt: string]: any },
  *   routes?: (app: import('express').Express) => void,
+ *   hostMap?: Record<string, string>,
  *   home?: string,
  *   isAuthority?: boolean,
  *   [other: string]: any
@@ -39,25 +50,62 @@ import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
  *   after the JSON body parser is in place. Lets an embedding server
  *   (e.g. the chat relay's Web Push endpoints) add routes without
  *   webSync knowing about them; webSync stays a generic relay server.
+ *   `hostMap`: `{ 'foo.example.com': 'aabbcc...', ... }` — maps Host
+ *   header (hostname only; port stripped) to the home Record's keyhex.
+ *   When set, HTTP read routes resolve per-host; unmapped hosts use
+ *   `primaryKeyHex`. Records in the map must be present in the
+ *   registry (we materialize them eagerly at server start so the
+ *   per-host serveFromRepo middlewares can be built).
  * @returns {Promise<import('http').Server>}
  */
 export async function webSync (registry, primaryKeyHex, port, name, keyIterations = 100000, peerOptions = {}) {
   const app = express()
 
-  const { serveRepoFiles, routes, ...peerOpts } = peerOptions
+  const { serveRepoFiles, routes, hostMap = {}, ...peerOpts } = peerOptions
+
+  // Strip port from Host header; "streamo.dev:8443" → "streamo.dev".
+  // Empty/missing host falls through to primary via `??`.
+  function hostnameOf (req) {
+    return req.get('host')?.split(':')[0]
+  }
+
+  // Resolve the home Record's keyhex for THIS request. Falls back to the
+  // server's primary when no hostMap entry matches.
+  function resolveHomeKey (req) {
+    return hostMap[hostnameOf(req)] ?? primaryKeyHex
+  }
 
   if (serveRepoFiles && serveRepoFiles.repo) {
-    const { repo, ...serveOpts } = serveRepoFiles
-    // Auto-thread registry + primaryKeyHex so serveFromRepo's mount
-    // resolver fires. Without these, serveFromRepo silently falls into
-    // files-only mode (value.mounts ignored entirely). The caller can
-    // still override by passing registry/pubkeyHex explicitly in
-    // serveRepoFiles.
-    app.use(serveFromRepo(repo, {
+    const { repo: primaryRepo, ...serveOpts } = serveRepoFiles
+
+    // Build a serveFromRepo middleware per mapped host, plus one for the
+    // primary fallback. Materialize each host's Record eagerly so the
+    // middleware is ready before requests start landing — the alternative
+    // (lazy materialize on first request) adds latency to the first hit
+    // and complicates the dispatcher.
+    const hostMiddlewares = {}
+    for (const [host, keyHex] of Object.entries(hostMap)) {
+      const hostRepo = await registry._materialize(keyHex)
+      hostMiddlewares[host] = serveFromRepo(hostRepo, {
+        registry,
+        pubkeyHex: keyHex,
+        ...serveOpts
+      })
+    }
+    const primaryMiddleware = serveFromRepo(primaryRepo, {
       registry,
       pubkeyHex: primaryKeyHex,
       ...serveOpts
-    }))
+    })
+
+    // Dispatcher: pick the host-specific middleware if Host matches the
+    // map; otherwise serve from the primary. Per-host middlewares are
+    // already configured with the right repo + pubkeyHex, so mount
+    // resolution and ETag generation stay correct per-host.
+    app.use((req, res, next) => {
+      const mw = hostMiddlewares[hostnameOf(req)] ?? primaryMiddleware
+      mw(req, res, next)
+    })
   }
 
   // Multi-home file serving: any repo the registry holds is addressable at
@@ -79,9 +127,12 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // for its Web Push endpoints). webSync itself stays push-agnostic.
   routes?.(app)
 
-  // Expose primary key so the browser app knows which streamo to open
+  // Expose the home key for THIS host so the browser app knows which
+  // streamo to open. Host-aware via hostMap; falls back to primaryKeyHex
+  // for unmapped hosts. Field name stays `primaryKeyHex` for caller
+  // compatibility — the value is "the primary for the host you're on."
   app.get('/api/info', (req, res) => {
-    res.json({ primaryKeyHex, name, keyIterations })
+    res.json({ primaryKeyHex: resolveHomeKey(req), name, keyIterations })
   })
 
   // Write a single file to the primary streamo's latest commit
@@ -109,10 +160,10 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
     }
   })
 
-  // Current value of the primary streamo as JSON
+  // Current value of the home streamo for this host as JSON.
   app.get('/', async (req, res) => {
     try {
-      const streamo = await registry._materialize(primaryKeyHex)
+      const streamo = await registry._materialize(resolveHomeKey(req))
       res.json(streamo.byteLength > 0 ? streamo.get() : null)
     } catch (e) {
       res.status(500).json({ error: e.message })

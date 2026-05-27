@@ -460,12 +460,27 @@ export class WritableStreamoRecord extends StreamoRecord {
     // fresh state.
     if (this.#recoveryStuck !== null) this._setRecoveryStuck(null)
 
-    const { retries = 3, onConflict = null } = options
+    const { retries = 3, onConflict = null, message } = options
     let lastError = null
     for (let attempt = 0; attempt <= retries; attempt++) {
       const current = this.get()
       const next = updateFn(current)
-      this.set(next)
+      if (message !== undefined) {
+        // Inline the whole-value set body so we can pass `message` straight
+        // to commit() — set() reads this.defaultMessage at commit time,
+        // which under concurrent updates would race. Same path-mutation
+        // bookkeeping as set's single-arg path.
+        const prevDataAddress = this.lastCommit?.dataAddress
+        const working = this.checkout()
+        working.set(next)
+        this.commit(working, message)
+        const newDataAddress = this.lastCommit?.dataAddress
+        for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
+          this.recaller.reportKeyMutation(this, JSON.stringify(changed))
+        }
+      } else {
+        this.set(next)
+      }
       // Wait for scheduleSign to actually append the SIG before reading
       // committedChainHash. Without this, `target` is the PREVIOUS
       // chain hash (the SIG before our new commit), so _awaitChainHash

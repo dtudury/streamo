@@ -6,9 +6,10 @@
  *   node scripts/demo-turtle-log.js
  */
 import { randomBytes } from 'node:crypto'
-import { setTurtleLog, turtleIn, turtleOut, turtleLocal } from '../public/streamo/utils/turtleLog.js'
+import { turtleIn, turtleOut, turtleLocal } from '../public/streamo/utils/turtleLog.js'
+import { setLogLevel, SILLY } from '../public/streamo/utils/logger.js'
 
-setTurtleLog(true)
+setLogLevel(SILLY)
 
 // Generate a faithful-looking secp256k1-compressed pubkey: 33 bytes,
 // leading 02 or 03, tail uniformly random.

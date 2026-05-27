@@ -36,6 +36,8 @@
  * - On alignment failure, calls `record._setConflictDetected(...)` so
  *   apps can react and offer recovery UX.
  */
+import { turtleLocal } from './utils/turtleLog.js'
+
 const arraysEqual = (a, b) => {
   if (a.length !== b.length) return false
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
@@ -111,6 +113,7 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           if (staged.length > 0) {
             if (!arraysEqual(pendingChainHash, record.committedChainHash)) {
               record._setConflictDetected({ dataAddress: record.lastCommit?.dataAddress })
+              turtleLocal('conflict', record.publicKeyHex, { dataAddress: record.lastCommit?.dataAddress })
               throw new Error(
                 'local store diverged from incoming chain: ' +
                 'our most recent sig\'s chainHash does not equal the wire\'s previous sig\'s chainHash ' +
@@ -128,6 +131,7 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // SIG here whose chainHash matches our just-signed local SIG).
           pendingChainHash = code.slice(0, 32)
           record._setRelayChainHash(pendingChainHash)
+          turtleLocal('sig', record.publicKeyHex, { chainHash: pendingChainHash })
         } else if (!alreadyHave) {
           staged.push(code)
         }

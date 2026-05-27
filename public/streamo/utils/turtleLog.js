@@ -10,44 +10,20 @@
  *   [▛▞▖🐢 ▝▞▟] <02e7…b93a> ← ✍️ sig          chainHash=ab12…cd34 …
  *   [▛▞▖🐢 ▝▞▟] <02e7…b93a> → 👂 subscribe    fromOffset=143657 …
  *
- * Default-ON. Silence via `STREAMO_LOG_TURTLES=0` in env, or
- * `setTurtleLog(false)` at runtime. Auto-silent under `node --test`
- * so test output stays scannable.
+ * Severity follows `logger.js`. Each event has a default level:
+ *   - structural lifecycle (open/close/hello/subscribe/announce/caughtUp): INFO
+ *   - commits (sig): DEBUG
+ *   - byte flow (chunk): TRACE
+ *   - heartbeats (ping): SILLY
+ *   - failures (reject/conflict/pushRejected): WARN
+ *
+ * At default INFO you see the *story* without the chunk torrent.
+ * Set `STREAMO_LOG_LEVEL=trace` or `--verbose trace` for the torrent.
  */
 
-function defaultEnabled () {
-  const env = globalThis.process?.env ?? {}
-  const v = env.STREAMO_LOG_TURTLES
-  if (v === '0' || v === 'false') return false
-  if (v != null && v !== '') return true
-  // Unset: on, unless we're running under `node --test`.
-  const argv = globalThis.process?.argv ?? []
-  if (argv.includes('--test')) return false
-  if (env.NODE_TEST_CONTEXT) return false
-  return true
-}
-
-let enabled = defaultEnabled()
-
-export function setTurtleLog (v) { enabled = !!v }
-export function turtleLogEnabled () { return enabled }
-
-const GLYPHS = {
-  hello:        '👋',
-  subscribe:    '👂',
-  subscribed:   '✓ ',
-  interest:     '🔎',
-  announce:     '📣',
-  reject:       '⛔',
-  chunk:        '📦',
-  sig:          '✍️',
-  conflict:     '💥',
-  pushRejected: '↩️ ',
-  caughtUp:     '🌊',
-  open:         '🤝',
-  close:        '👋',
-  ping:         '💓'
-}
+import {
+  getLogLevel, INFO, DEBUG, TRACE, SILLY, WARN
+} from './logger.js'
 
 // OKLab→linear-sRGB (Björn Ottosson's matrices). OKLab/OKLCH is a
 // perceptual color space — L=0.7 means "perceptually 70% lightness"
@@ -99,14 +75,6 @@ function oklchToRgb (L, C, H) {
  * - hue A → light variant (L=0.70) — perceptually 70% bright
  * - hue B → dark variant  (L=0.40) — perceptually 40% bright
  * - swap bit decides whether bg is light + fg is dark, or vice-versa
- *
- * Same perceptual lightness across all hues. Chroma starts at 0.2
- * and gets clipped down per-hue to whatever sRGB can hold — so
- * yellows stay vivid, blues mute themselves a bit, all within human-
- * eye-equal lightness bands.
- *
- * @param {string} keyHex
- * @returns {{ bg: [number, number, number], fg: [number, number, number] }}
  */
 function colorsFromKey (keyHex) {
   const tail = keyHex.slice(-6).padStart(6, '0')          // 3 bytes
@@ -123,6 +91,40 @@ function colorsFromKey (keyHex) {
 function turtleBlock (keyHex) {
   const { bg, fg } = colorsFromKey(keyHex)
   return `\x1b[48;2;${bg[0]};${bg[1]};${bg[2]};38;2;${fg[0]};${fg[1]};${fg[2]}m▛▞▖🐢 ▝▞▟\x1b[0m`
+}
+
+const GLYPHS = {
+  hello:        '👋',
+  subscribe:    '👂',
+  subscribed:   '✓ ',
+  interest:     '🔎',
+  announce:     '📣',
+  reject:       '⛔',
+  chunk:        '📦',
+  sig:          '✍️',
+  conflict:     '💥',
+  pushRejected: '↩️ ',
+  caughtUp:     '🌊',
+  open:         '🤝',
+  close:        '👋',
+  ping:         '💓'
+}
+
+const EVENT_LEVELS = {
+  open:         INFO,
+  close:        INFO,
+  hello:        INFO,
+  subscribe:    INFO,
+  subscribed:   INFO,
+  interest:     INFO,
+  announce:     INFO,
+  caughtUp:     INFO,
+  sig:          DEBUG,
+  chunk:        TRACE,
+  ping:         SILLY,
+  reject:       WARN,
+  pushRejected: WARN,
+  conflict:     WARN
 }
 
 const ARROW_IN  = '\x1b[31m←\x1b[0m'
@@ -152,30 +154,33 @@ function formatDetails (details) {
   return parts.join(' ')
 }
 
+function levelFor (event) {
+  return EVENT_LEVELS[event] ?? INFO
+}
+
 function line (arrow, event, keyHex, details) {
   const block = turtleBlock(keyHex)
   const glyph = GLYPHS[event] ?? '🐢'
   const id = shortKey(keyHex)
-  // pad event name so columns roughly align
   const evt = event.padEnd(12)
   return `${block} ${id} ${arrow} ${glyph} ${evt} ${formatDetails(details)}`
 }
 
 /** Log an event the local node *received* from the wire. */
 export function turtleIn (event, keyHex, details) {
-  if (!enabled) return
+  if (levelFor(event) > getLogLevel()) return
   console.log(line(ARROW_IN, event, keyHex, details))
 }
 
 /** Log an event the local node *sent* to the wire. */
 export function turtleOut (event, keyHex, details) {
-  if (!enabled) return
+  if (levelFor(event) > getLogLevel()) return
   console.log(line(ARROW_OUT, event, keyHex, details))
 }
 
 /** Log a local state change (no direction — internal substrate event). */
 export function turtleLocal (event, keyHex, details) {
-  if (!enabled) return
+  if (levelFor(event) > getLogLevel()) return
   const block = turtleBlock(keyHex)
   const glyph = GLYPHS[event] ?? '🐢'
   const id = shortKey(keyHex)

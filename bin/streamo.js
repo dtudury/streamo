@@ -16,6 +16,7 @@ import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
 import { join } from 'path'
 import { PushStore, pushRoutes, notifyOnMessages } from '../public/apps/chat/push.js'
+import { setLogLevel, logInfo, logDebug } from '../public/streamo/utils/logger.js'
 
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)))
 
@@ -122,8 +123,9 @@ program
       .argParser(Number)
   )
   .addOption(
-    new Option('--verbose', 'enable verbose logging')
+    new Option('--verbose [level]', 'verbose logging level: off/warn/info/debug/trace/silly (no arg = debug)')
       .env('STREAMO_VERBOSE')
+      .preset('debug')
   )
 
   .parse()
@@ -135,6 +137,8 @@ if (options.envFile) {
   program.parse()
   Object.assign(options, program.opts())
 }
+
+if (options.verbose !== undefined) setLogLevel(options.verbose)
 
 // Two startup shapes:
 //   (1) Author — derives a signer from {name, username, password}; can
@@ -215,9 +219,7 @@ ${rows.map(([l, v], i) => [
 // --files so fileSync sees the merged content when it starts.
 if (options.mergeFrom) {
   if (streamo.lastCommit) {
-    if (options.verbose) {
-      console.log(`\x1b[33mmerge-from: skipping (repo already has commits)\x1b[0m`)
-    }
+    logInfo(`\x1b[33mmerge-from: skipping (repo already has commits)\x1b[0m`)
   } else {
     try {
       const mergeOptions = options.mergeFromKey ? { from: options.mergeFromKey } : {}
@@ -322,10 +324,8 @@ if (options.outlet) {
   console.log(`\x1b[32moutlet: listening on port ${port}\x1b[0m`)
 }
 
-if (options.verbose) {
-  console.log(`archive: ${options.dataDir}/${publicKeyHex}.bin (${streamo.byteLength} bytes loaded)`)
-  console.log({ options })
-}
+logInfo(`archive: ${options.dataDir}/${publicKeyHex}.bin (${streamo.byteLength} bytes loaded)`)
+logDebug(() => `options: ${JSON.stringify(options, null, 2)}`)
 
 if (options.interactive) {
   const get     = (...args) => streamo.get(...args)

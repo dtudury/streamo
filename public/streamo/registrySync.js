@@ -19,6 +19,9 @@ const WS = globalThis.WebSocket ?? (await import('ws')).default
 import { hexToBytes, bytesToHex } from './utils.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
+import { turtleIn, turtleOut, turtleLocal } from './utils/turtleLog.js'
+
+const UNKNOWN_KEY = '0'.repeat(66)
 
 function arraysEqual (a, b) {
   if (a.length !== b.length) return false
@@ -202,7 +205,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   const followFns = new Map()      // keyHex → fn registered with recaller.watch
 
   function sendJson (msg) {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+    if (ws.readyState !== ws.OPEN) return
+    ws.send(JSON.stringify(msg))
+    const { type, key, home: msgHome, ...rest } = msg
+    const turtleKey = key ?? msgHome ?? home ?? UNKNOWN_KEY
+    turtleOut(type, turtleKey, Object.keys(rest).length ? rest : null)
   }
 
   function handleWriteError (keyHex, e) {
@@ -254,6 +261,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
               frame.set(keyBytes, 0)
               frame.set(value, KEY_BYTES)
               ws.send(frame)
+              turtleOut('chunk', keyHex, { bytes: value.length })
             } else break
           }
         } catch {}
@@ -355,6 +363,8 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     return await registry._materialize(keyHex)
   }
 
+  turtleLocal('open', home ?? UNKNOWN_KEY, { label })
+
   // Identity announcement. The remote side auto-subscribes to `home` when
   // this arrives — that's the bootstrap pointer, and from there the `follow`
   // callback walks the home's members. No catalog enumeration anywhere.
@@ -376,6 +386,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       // JSON control message ('{' = 0x7B; secp256k1 keys start with 0x02 or 0x03)
       try {
         const msg = JSON.parse(new TextDecoder().decode(buf))
+        {
+          const { type, key, home: msgHome, ...rest } = msg
+          const turtleKey = key ?? msgHome ?? home ?? UNKNOWN_KEY
+          turtleIn(type, turtleKey, Object.keys(rest).length ? rest : null)
+        }
         if (msg.type === 'hello') {
           // Auto-subscribe to the remote's home. From here, the `follow`
           // callback will cascade through home.value.members.
@@ -508,6 +523,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       if (buf.length <= KEY_BYTES) return
       const keyHex = bytesToHex(buf.subarray(0, KEY_BYTES))
       const chunk = new Uint8Array(buf.slice(KEY_BYTES))
+      turtleIn('chunk', keyHex, { bytes: chunk.length })
       const writer = writers.get(keyHex)
       if (writer) {
         writer.write(chunk).catch(e => handleWriteError(keyHex, e))
@@ -531,7 +547,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     }
   }
 
-  ws.on('close', cleanup)
+  ws.on('close', () => {
+    turtleLocal('close', home ?? UNKNOWN_KEY, { label })
+    cleanup()
+  })
   ws.on('error', err => {
     console.error(`[${label}] connection error: ${err.message}`)
     cleanup()

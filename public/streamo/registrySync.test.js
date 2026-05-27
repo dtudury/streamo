@@ -997,8 +997,29 @@ describe(import.meta.url, ({ test }) => {
 
     await clientRepo.update(c => ({ ...c, count: 1 }))
     assert.equal(clientRepo.get('count'), 1, 'updateFn applied locally')
-    await waitFor(() => serverRepo.get('count') === 1)
-    assert.equal(serverRepo.get('count'), 1, 'change propagated to server')
+
+    // **Regression marker (2026-05-26 browser-found):** update must ACTUALLY
+    // await the relay's broadcast-back, not return early because target
+    // happens to equal the pre-existing relayChainHash. Pre-fix, update
+    // read `target = committedChainHash` BEFORE scheduleSign appended the
+    // new SIG, so target was the OLD chain hash, which the relay's
+    // pre-update relayChainHash already matched — _awaitChainHash
+    // resolved immediately, update returned before the server had the
+    // bytes. Symptom in-browser was different (no pre-existing relay
+    // hash → hang) but the same code path. Post-fix, update waits for
+    // sign-completion before reading target, so target IS the new hash
+    // and _awaitChainHash genuinely waits for the round-trip.
+    //
+    // No `waitFor` here — by the time `await update` resolves, the
+    // server must have it. If this assertion ever starts failing
+    // intermittently, the sign-completion wait drifted.
+    assert.equal(serverRepo.get('count'), 1,
+      'server has the bytes BEFORE update returns (no waitFor) — update properly awaited broadcast-back')
+    // And relayChainHash should equal committedChainHash by this point —
+    // the round-trip is complete.
+    const a = clientRepo.relayChainHash, b = clientRepo.committedChainHash
+    assert.ok(a && b && a.length === b.length && a.every((v, i) => v === b[i]),
+      'after update, relayChainHash equals committedChainHash')
 
     session.close()
     await new Promise(r => wss.close(r))

@@ -466,6 +466,14 @@ export class WritableStreamoRecord extends StreamoRecord {
       const current = this.get()
       const next = updateFn(current)
       this.set(next)
+      // Wait for scheduleSign to actually append the SIG before reading
+      // committedChainHash. Without this, `target` is the PREVIOUS
+      // chain hash (the SIG before our new commit), so _awaitChainHash
+      // waits for a hash the relay already broadcast — and hangs
+      // forever even though our bytes successfully made the round-trip.
+      // Symptom: save button never comes back after first save.
+      // `signedLength === byteLength` becomes true once sign() appends.
+      await this.recaller.when(() => this.signedLength === this.byteLength)
       const target = this.committedChainHash
       try {
         await this._awaitChainHash(target)
@@ -476,7 +484,17 @@ export class WritableStreamoRecord extends StreamoRecord {
         const session = this._session
         if (!session) break  // no path to retry without a session
         this._reset()
-        await session._resyncRepo(this.publicKeyHex)
+        // _resyncRepo can throw "no live peer (mid-reconnect?)" when the
+        // WS just closed (typical after conflictDetected tears down the
+        // connection). Catch it and let the loop end normally so
+        // recoveryStuck fires below — instead of an uncaught throw that
+        // skips the substrate-articulated "auto-resolve gave up" signal.
+        try {
+          await session._resyncRepo(this.publicKeyHex)
+        } catch (resyncErr) {
+          lastError = resyncErr
+          break
+        }
       }
     }
     const finalState = { pushRejected: this.pushRejected, attempts: retries + 1 }

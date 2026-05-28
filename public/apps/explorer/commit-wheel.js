@@ -20,12 +20,15 @@
 //     below costs to render. Returns { syncWheel }, a post-render pass
 //     that seeds a freshly-mounted wheel's resting position.
 //
-// Phase 1: the wheel spins and snaps. It does NOT navigate yet — picking
-// a commit (writing the URL on settle) is Phase 2's job.
+// Settling on a commit writes the URL via `go({ keyHex, address })`. The
+// initial-mount seed in `syncWheel` does NOT navigate — the URL already
+// matches the wheel's resting position. Only spins, taps, and scrolls that
+// land on a different address fire navigation.
 
 import { h } from '../../streamo/h.js'
 import { fmtDate } from './format.js'
 import { commitsNewestFirst } from './walking.js'
+import { go, getAddress } from './context.js'
 
 // Geometry — the single source of truth. CSS handles colour and type
 // only; every pixel position below is inline-styled from these constants
@@ -116,14 +119,47 @@ export function setupCommitWheel ({ appEl }) {
     if (raf != null) { cancelAnimationFrame(raf); raf = null }
   }
 
-  // Mark the commit currently under the band. Phase 1 this is purely
-  // cosmetic; Phase 2 will navigate from here instead.
-  function settleRow (wheel, track) {
+  // Mark the commit currently under the band as `.selected`, and — when
+  // navigate is true — write its address to the URL via `go()`. The
+  // navigate flag is OFF for the initial-mount seed (URL already matches)
+  // and ON for spins, taps, and scroll-settles. Same-address settles are
+  // a no-op at the URL layer (we compare against the current address
+  // before calling go() so we don't pump duplicate hashchange events).
+  function settleRow (wheel, track, { navigate = false } = {}) {
     const last = (+wheel.dataset.count || 1) - 1
     const idx = clamp(indexForOffset(track._offset), { min: 0, max: last })
+    let settled = null
     for (const row of track.children) {
-      row.classList.toggle('selected', +row.dataset.index === idx)
+      const isSelected = +row.dataset.index === idx
+      row.classList.toggle('selected', isSelected)
+      if (isSelected) settled = row
     }
+    if (navigate && settled) {
+      const addr = +settled.dataset.commitAddr
+      if (addr !== getAddress()) {
+        const keyHex = wheel.dataset.key.slice('wheel-'.length)
+        go({ keyHex, address: addr })
+      }
+    }
+  }
+
+  // Glide-free snap toward a target offset, used by tap-to-select. Reuses
+  // momentum's snap easing so a tap lands with the same feel as a spin
+  // settling — just without the friction-glide phase.
+  function snapTo (wheel, track, targetOffset) {
+    cancelMomentum()
+    const frame = () => {
+      const diff = targetOffset - track._offset
+      if (Math.abs(diff) < 0.5) {
+        applyOffset(track, targetOffset)
+        raf = null
+        settleRow(wheel, track, { navigate: true })
+        return
+      }
+      applyOffset(track, track._offset + diff * SNAP)
+      raf = requestAnimationFrame(frame)
+    }
+    raf = requestAnimationFrame(frame)
   }
 
   // Post-render pass — a wheel the engine has never seen gets its resting
@@ -167,7 +203,7 @@ export function setupCommitWheel ({ appEl }) {
       if (Math.abs(diff) < 0.5) {
         applyOffset(track, target)
         raf = null
-        settleRow(wheel, track)
+        settleRow(wheel, track, { navigate: true })
         return
       }
       applyOffset(track, track._offset + diff * SNAP)
@@ -177,8 +213,9 @@ export function setupCommitWheel ({ appEl }) {
   }
 
   // Drag — a 3px threshold before a pointerdown counts as a spin, so a
-  // tap falls through harmlessly. Velocity is sampled per move (px per
-  // 16ms frame) and handed to the momentum loop on release.
+  // tap falls through to tap-to-select handling in endDrag. Velocity is
+  // sampled per move (px per 16ms frame) and handed to the momentum loop
+  // on release.
   appEl.addEventListener('pointerdown', e => {
     if (e.button) return
     const wheel = e.target.closest('.commit-wheel')
@@ -187,6 +224,7 @@ export function setupCommitWheel ({ appEl }) {
     cancelMomentum()
     drag = {
       wheel, track, pointerId: e.pointerId,
+      tappedRow: e.target.closest('.wheel-row'),
       startY: e.clientY, startOffset: track._offset ?? 0,
       lastY: e.clientY, lastT: performance.now(), velocity: 0, moved: false
     }
@@ -213,7 +251,18 @@ export function setupCommitWheel ({ appEl }) {
     const d = drag
     drag = null
     d.wheel.classList.remove('spinning')
-    if (!d.moved) return
+    if (!d.moved) {
+      // A pointerdown that never crossed the 3px threshold counts as a
+      // tap on whichever row it landed on. Snap-animate to that row, then
+      // navigate. Tapping outside any row (the band itself, the fades) is
+      // a no-op — closest('.wheel-row') returns null.
+      if (d.tappedRow) {
+        const idx = +d.tappedRow.dataset.index
+        const targetOffset = clamp(offsetForIndex(idx), boundsOf(d.wheel))
+        snapTo(d.wheel, d.track, targetOffset)
+      }
+      return
+    }
     // A drag that ended in a pause shouldn't fling — drop stale velocity.
     const v = performance.now() - d.lastT > 80 ? 0 : d.velocity
     momentum(d.wheel, d.track, v)

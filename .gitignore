@@ -14,13 +14,15 @@ node_modules/
 # Optional REPL history
 .node_repl_history
 
-# dotenv environment variable files — everything except .env.dev,
-# which is tracked as an example. .env.prod lives on the server;
-# .env.claude lives only on author machines and holds a signing
-# password.
+# dotenv environment variable files — everything except .env.dev and
+# .env.demo.*, which are tracked as examples (demo uses demo/demo with
+# 1 PBKDF2 iteration — toy credentials, fine to commit). .env.prod lives
+# on the server; .env.claude lives only on author machines and holds a
+# signing password.
 .env
 .env.*
 !.env.dev
+!.env.demo.*
 
 # the true price of a pretty laptop
 **/.DS_Store

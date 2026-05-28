@@ -1,0 +1,19 @@
+{
+  "journalists": [],
+  "entries": [
+    {
+      "headline": "demo homepage",
+      "body": "this is the demo homepage. it's authored by a separate process from the relay that serves it — change this file and watch the change land in your browser.",
+      "at": "2026-05-28T00:00:00.000Z"
+    }
+  ],
+  "flashcardsDecks": {},
+  "mounts": {
+    "streamo/": {
+      "key": "0350e9487e2205591dfff4384246b43e8ca2e9f21ad25f0e5ef5669b74f65a308a"
+    },
+    "apps/explorer/": {
+      "key": "034629a659f6b99f1e2af6b9fb9e691579c0272166d50399cd91c0eae38ab46ffa"
+    }
+  }
+}

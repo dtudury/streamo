@@ -179,6 +179,22 @@ if (server.signer) {
   console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
 }
 
+// Peer subscription — when STREAMO_PEER is set, open a registrySync to
+// that host. The followMounts: true cascade (federation arc step 4)
+// subscribes to every Record the peer's home mounts reference, so bundled-
+// app Records (library, chat, flashcards, explorer, styles, todomvc,
+// shared-note) come alive locally without manual seeding. Canonical dev
+// shape: STREAMO_PEER=streamo.dev in .env.dev — a local relay that's a
+// window onto production. Unset for production itself (no self-peering).
+const peerHost = process.env.STREAMO_PEER
+if (peerHost) {
+  console.log(`[chat] peer:        opening registrySync → ${peerHost}`)
+  await server.peer(peerHost, {
+    onConnectionChange: c => console.log(`[chat] peer ${peerHost}: ${c ? 'connected' : 'disconnected'}`)
+  })
+  console.log(`[chat] peer:        cascade subscribing to mounted records`)
+}
+
 // Web Push — the relay's subscription store, endpoints, and the watcher
 // that fires a notification when a chat message lands. Stood up only when
 // a full VAPID keypair is configured (.env STREAMO_VAPID_PUBLIC/_PRIVATE);

@@ -326,10 +326,10 @@ if (options.web) {
   }
 
   // Always serve from the record's value.files when --web is set — the
-  // page-as-StreamoRecord shape. Misses fall through to express.static so
-  // the streamo lib + bundled apps still work for forks that don't
-  // override them. In relay-only mode (--home-key) this lets a bare relay
-  // serve a homepage whose bytes arrived via origin sync.
+  // page-as-StreamoRecord shape. No static-file fallback (9.x architectural
+  // commitment): paths the home Record doesn't declare via `files` or
+  // route via `mounts` return 404. In relay-only mode (--home-key) this
+  // lets a bare relay serve a homepage whose bytes arrived via origin sync.
   webOptions.serveRepoFiles = { repo: server.streamo }
   console.log(`\x1b[32mserving from repo: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
 

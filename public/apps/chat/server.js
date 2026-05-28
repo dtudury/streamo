@@ -198,11 +198,13 @@ if (process.env.STREAMO_VAPID_PUBLIC && process.env.STREAMO_VAPID_PRIVATE) {
 }
 
 await server.web(port, {
-  // serveFromRepo middleware reads the home repo's `files` key on every
-  // request — any path present wins; misses fall through to express.static
-  // so /apps/explorer/, /streamo/*.js, /apps/styles/*.css keep working.
-  // In relay-only mode, an empty archive means everything falls through to
-  // express.static (the bundled defaults) until an author pushes their bytes.
+  // serveFromRepo middleware reads the home repo's `value.files` first,
+  // then walks its `mounts` table (longest-prefix match) recursively
+  // through any subscribed Records the registry holds. No static-file
+  // fallback — the 9.x architectural commitment is that every URL is
+  // either a signed Record's content or a 404. /apps/chat/, /streamo/*.js,
+  // /apps/styles/*.css work because the homepage's mounts route them to
+  // bundled Records the relay has subscribed to.
   serveRepoFiles: { repo: server.streamo },
   routes: pushStore ? pushRoutes(pushStore, vapid.publicKey) : undefined
 })

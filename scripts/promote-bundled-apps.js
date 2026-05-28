@@ -6,9 +6,10 @@
  *
  * Each app under `public/apps/` becomes a FolderRecord signed by a
  * per-app identity (`streamo-<name>`). The homepage Record then mounts
- * them at `/apps/<name>/`. After this script and the next deploy,
- * the relay's `app.use(express.static(publicDir))` fallback is no
- * longer needed for app paths — Phase D of the 9.x arc.
+ * them at `/apps/<name>/`. After this script and the next deploy, app
+ * paths are served entirely via signed Records — completing the 9.x
+ * architectural commitment ("every URL is a signed Record's content or
+ * a 404") for /apps/*. Phase D of the 9.x arc.
  *
  * Usage:
  *

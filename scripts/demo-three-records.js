@@ -108,13 +108,13 @@ await cp(
   { recursive: true }
 )
 
-// Inject a marker file the static-file fallback cannot serve. The relay's
-// web server falls through to express.static(publicDir) — the installed
-// package's public/ folder — after the repo+mount resolver fails. Real lib
-// files (h.js, mount.js) exist there too, so a working smoke test on those
-// proves only that the bytes are *available*, not that the mount is doing
-// the work. This file exists ONLY in the library Record. If the homepage
-// can import it, the mount resolver is the one serving.
+// Inject a marker file that exists ONLY in the library Record. Under 9.x
+// there is no static-file fallback (see the demo's own smoke-test notes
+// further below for the user-facing version of this note) — every URL is
+// a signed Record's content or 404. Real lib files (h.js, mount.js) live
+// in the library Record alongside this marker. The demo's smoke test
+// proves the mount resolver works: if the homepage can import this file
+// at /streamo/mount-proof.js, the library mount is being walked.
 console.log('  injecting mount-proof.js into library Record …')
 await writeFile(
   join(demoDir, 'library', 'files', 'mount-proof.js'),

@@ -430,7 +430,7 @@ useful when the audience wants to see the federation cascade explicitly,
 or when streamo.dev is unreachable, or as a follow-up after the main
 script to show the same architecture from a different angle._
 
-Setup committed in `1604a3d` (`.env.demo.*` files + `demo:*` npm scripts +
+Setup committed in `1604a3d` (`env/demo.*.env` files + `demo:*` npm scripts +
 `public/demo-homepage/`). All four processes use demo/demo/1-iteration
 credentials; toy creds, no real secrets in the env files.
 
@@ -489,8 +489,8 @@ npm run demo:explorer
   `/apps/styles/proto.css`, which isn't in the demo's mount table.
   That 404 is *part of the narrative* — *"every piece of this page is
   independently addressable; I just haven't authored the styles
-  Record yet."* If you'd rather have styles, clone `.env.demo.explorer`
-  → `.env.demo.styles` with `STREAMO_FILES=public/apps/styles` and a
+  Record yet."* If you'd rather have styles, clone `env/demo.explorer.env`
+  → `env/demo.styles.env` with `STREAMO_FILES=public/apps/styles` and a
   fifth `demo:styles` script.
 - **Port 8081** for the whole thing — independent of `npm run dev`'s
   8080, so you can have both running simultaneously without conflict.

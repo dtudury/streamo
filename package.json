@@ -57,12 +57,12 @@
   "scripts": {
     "test": "node --test",
     "typecheck": "tsc -p jsconfig.json",
-    "dev": "STREAMO_LOG_LEVEL=trace node public/apps/chat/server.js --env-file .env.dev",
-    "prod": "node public/apps/chat/server.js --env-file .env.prod",
-    "demo:relay": "node bin/streamo.js --env-file .env.demo.relay",
-    "demo:homepage": "node bin/streamo.js --env-file .env.demo.homepage",
-    "demo:library": "node bin/streamo.js --env-file .env.demo.library",
-    "demo:explorer": "node bin/streamo.js --env-file .env.demo.explorer",
+    "dev": "STREAMO_LOG_LEVEL=trace node public/apps/chat/server.js --env-file env/dev.env",
+    "prod": "node public/apps/chat/server.js --env-file env/prod.env",
+    "demo:relay": "node bin/streamo.js --env-file env/demo.relay.env",
+    "demo:homepage": "node bin/streamo.js --env-file env/demo.homepage.env",
+    "demo:library": "node bin/streamo.js --env-file env/demo.library.env",
+    "demo:explorer": "node bin/streamo.js --env-file env/demo.explorer.env",
     "seed-history": "node scripts/seed-history.js",
     "fork-homepage": "node scripts/fork-homepage.js",
     "deploy": "bash scripts/deploy.sh"

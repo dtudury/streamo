@@ -9,9 +9,9 @@
  * tab.
  *
  * Usage:
- *   node --env-file=.env.claude public/apps/chat/notify.js "your message"
+ *   node --env-file=env/claude.env public/apps/chat/notify.js "your message"
  *
- * Environment (see .env.claude):
+ * Environment (see env/claude.env):
  *   STREAMO_CLAUDE_USERNAME   chat-identity username   (required)
  *   STREAMO_CLAUDE_PASSWORD   chat-identity password   (required)
  *   STREAMO_RELAY_HOST        relay hostname           (default localhost)
@@ -30,7 +30,7 @@ import { bytesToHex } from '../../streamo/utils.js'
 
 const text = process.argv.slice(2).join(' ').trim()
 if (!text) {
-  console.error('usage: node --env-file=.env.claude notify.js "message"')
+  console.error('usage: node --env-file=env/claude.env notify.js "message"')
   process.exit(2)
 }
 
@@ -40,7 +40,7 @@ const host = process.env.STREAMO_RELAY_HOST || 'localhost'
 const port = Number(process.env.STREAMO_RELAY_PORT || '8080')
 const secure = process.env.STREAMO_RELAY_SECURE === '1' || port === 443
 if (!username || !password) {
-  console.error('notify.js: STREAMO_CLAUDE_USERNAME / STREAMO_CLAUDE_PASSWORD missing — pass --env-file=.env.claude')
+  console.error('notify.js: STREAMO_CLAUDE_USERNAME / STREAMO_CLAUDE_PASSWORD missing — pass --env-file=env/claude.env')
   process.exit(2)
 }
 

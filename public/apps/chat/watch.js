@@ -21,9 +21,9 @@
  * keep-alive timeout.
  *
  * Usage (as a hook, or by hand to test):
- *   node --env-file=.env.claude public/apps/chat/watch.js
+ *   node --env-file=env/claude.env public/apps/chat/watch.js
  *
- * Environment (see .env.claude):
+ * Environment (see env/claude.env):
  *   STREAMO_CLAUDE_USERNAME / _PASSWORD   chat identity   (required)
  *   STREAMO_RELAY_HOST / _PORT            relay           (default localhost:8080)
  *   STREAMO_RELAY_SECURE                  "1" forces wss  (default: on iff port 443)
@@ -44,7 +44,7 @@ const port = Number(process.env.STREAMO_RELAY_PORT || '8080')
 const secure = process.env.STREAMO_RELAY_SECURE === '1' || port === 443
 const windowMs = Number(process.env.STREAMO_WATCH_WINDOW_MS || String(30 * 60 * 1000))
 if (!username || !password) {
-  console.error('watch.js: STREAMO_CLAUDE_USERNAME / STREAMO_CLAUDE_PASSWORD missing — pass --env-file=.env.claude')
+  console.error('watch.js: STREAMO_CLAUDE_USERNAME / STREAMO_CLAUDE_PASSWORD missing — pass --env-file=env/claude.env')
   process.exit(1)
 }
 

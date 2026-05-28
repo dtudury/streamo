@@ -24,7 +24,7 @@ const keyIter    = +(process.env.STREAMO_KEY_ITERATIONS ?? 100000)
 // Optional additional journalist pubkeys (comma-separated hex). The relay's
 // own pubkey is always included automatically — these are the OTHER peers
 // whose repos the homepage walks for journal entries. Configured per relay
-// in .env.prod; for streamo.dev this is just Claude's pubkey for now.
+// in env/prod.env; for streamo.dev this is just Claude's pubkey for now.
 const extraJournalists = (process.env.STREAMO_JOURNALISTS ?? process.env.STREAMO_CLAUDE_PUBKEY ?? '')
   .split(',').map(s => s.trim()).filter(Boolean)
 
@@ -185,7 +185,7 @@ if (server.signer) {
 // home mounts reference, so bundled-app Records (library, chat,
 // flashcards, explorer, styles, todomvc, shared-note) come alive
 // locally without manual seeding. Canonical dev shape:
-// STREAMO_WATCH=streamo.dev in .env.dev — a local relay that's a window
+// STREAMO_WATCH=streamo.dev in env/dev.env — a local relay that's a window
 // onto production. Unset for production itself (no self-subscription).
 // "Watch" rather than "peer" because streamo's per-record authority is
 // asymmetric: each Record has one origin, so a relay is a subscriber to

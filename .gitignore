@@ -7,23 +7,27 @@ node_modules/
 # git uses this file and should ignore turtleDB stuff
 .turtleDB/
 
-# streamo archive data (also excluded from fileSync via buildFilter)
+# streamo archive data (also excluded from fileSync via buildFilter).
+# .streamo-* catches the demo:relay / demo:homepage / demo:library /
+# demo:explorer data dirs (and any other local data dirs that follow
+# the .streamo-NAME convention).
 .streamo/
 .stream/
-.streamo-*/   # demo:relay, demo:homepage, demo:library, demo:explorer dirs and similar local data dirs
+.streamo-*/
 
 # Optional REPL history
 .node_repl_history
 
-# dotenv environment variable files — everything except .env.dev and
-# .env.demo.*, which are tracked as examples (demo uses demo/demo with
-# 1 PBKDF2 iteration — toy credentials, fine to commit). .env.prod lives
-# on the server; .env.claude lives only on author machines and holds a
-# signing password.
+# dotenv environment variable files — env/ holds them as of 2026-05-28.
+# env/dev.env and env/demo.*.env are tracked as examples (demo uses
+# demo/demo with 1 PBKDF2 iteration — toy credentials, fine to commit).
+# env/prod.env lives on the server; env/claude.env lives only on author
+# machines and holds a signing password.
 .env
 .env.*
-!.env.dev
-!.env.demo.*
+env/*.env
+!env/dev.env
+!env/demo.*.env
 
 # the true price of a pretty laptop
 **/.DS_Store

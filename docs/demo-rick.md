@@ -422,6 +422,115 @@ The demo gods are real. Have these escape hatches ready.
 
 ---
 
+## alternate demo path — incremental local cascade
+
+_A different shape of demo, fully local, no streamo.dev dependency. Tells
+the "build the substrate up from nothing, one Record at a time" story —
+useful when the audience wants to see the federation cascade explicitly,
+or when streamo.dev is unreachable, or as a follow-up after the main
+script to show the same architecture from a different angle._
+
+Setup committed in `1604a3d` (`.env.demo.*` files + `demo:*` npm scripts +
+`public/demo-homepage/`). All four processes use demo/demo/1-iteration
+credentials; toy creds, no real secrets in the env files.
+
+### the flow — 4 terminals
+
+```sh
+# Terminal 1 — empty relay on 8081
+npm run demo:relay
+# Browser → http://localhost:8081 → 404 everywhere
+# "There's a relay listening, but nothing's authored anything yet.
+#  The relay holds no content of its own. It's a mirror waiting for
+#  someone to push bytes."
+
+# Terminal 2 — homepage author
+npm run demo:homepage
+# Watches public/demo-homepage/, signs commits, pushes to relay
+# Browser refresh → homepage HTML loads, /streamo/*.js still 404
+# "My laptop signed those bytes and pushed them. The relay archived
+#  them and now serves them. But the homepage's <script> tags want
+#  /streamo/h.js, and nobody's authored the library Record yet — so
+#  those 404."
+
+# Live edit: change public/demo-homepage/index.html or streamo.json
+# fileSync sees the save, signs a new commit, pushes
+# Browser refresh → change visible
+# "Edit on disk → signed commit → relay archive → browser sees it.
+#  Same shape as Phase 1 of the main demo, but the substrate is
+#  literally on this laptop."
+
+# Terminal 3 — library author
+npm run demo:library
+# Watches public/streamo/, pushes the streamo JS library as a Record
+# Browser refresh → /streamo/*.js resolves, page comes alive, but
+# /apps/explorer/ link 404s
+# "The homepage's mounts table said 'for /streamo/, ask Record X.'
+#  Record X just came online. The explorer mount is still empty."
+
+# Terminal 4 — explorer author
+npm run demo:explorer
+# Watches public/apps/explorer/, pushes
+# Browser refresh → full explorer loads (with this morning's
+# commit-wheel work — clickable commit selector)
+# "The substrate just assembled itself from four independently-signed
+#  Records. No deploy. No coordinated rollout. Each piece is its own
+#  signed chain authored by a separate process; the homepage's mounts
+#  table is the glue."
+```
+
+### what to expect along the way
+
+- **Turtle log torrents** in each terminal (STREAMO_VERBOSE=trace in the
+  env files) — visible evidence of byte-level wire activity. Each
+  arrow is a chunk crossing the WebSocket. Demo magic, optional to
+  narrate.
+- **The page will look unstyled.** The homepage's HTML references
+  `/apps/styles/proto.css`, which isn't in the demo's mount table.
+  That 404 is *part of the narrative* — *"every piece of this page is
+  independently addressable; I just haven't authored the styles
+  Record yet."* If you'd rather have styles, clone `.env.demo.explorer`
+  → `.env.demo.styles` with `STREAMO_FILES=public/apps/styles` and a
+  fifth `demo:styles` script.
+- **Port 8081** for the whole thing — independent of `npm run dev`'s
+  8080, so you can have both running simultaneously without conflict.
+
+### the bytes on disk
+
+Each demo process has its own data dir under repo root:
+- `.streamo-demo-relay/` — relay's archive of received bytes
+- `.streamo-demo-homepage/` — homepage author's local archive
+- `.streamo-demo-library/` — library author's local archive
+- `.streamo-demo-explorer/` — explorer author's local archive
+
+After a demo run, `wc -c .streamo-demo-relay/*.bin` shows the
+literal byte count of each Record on disk. Worth showing if Rick
+asks *"where is this?"* — point at the file, run `wc`, that's it.
+The relay is just an archive of signed bytes that arrived over a
+WebSocket.
+
+### caveats
+
+- **Order matters.** Start the relay first; it has to be listening
+  before the authors can push.
+- **demo/demo credentials with 1 PBKDF2 iteration** — toy keys,
+  deterministic, fine to commit. Anyone running these commands on
+  any machine gets the same pubkeys. Real production identities use
+  100,000 iterations + real passwords.
+- **No `--peer streamo.dev`.** The demo cascade is fully local; the
+  relay never reaches out. Browsers never see streamo.dev. Perfect
+  for offline demos.
+
+### when to use this path
+
+- Streamo.dev is down and the main script's Phases 1-2 can't run
+- Audience wants the *cascade narrative* (each Record arrives
+  independently) more than the *fork narrative* (npx, identity from
+  credentials, your own keypair)
+- Showing it to yourself for the first time before showing Rick
+
+---
+
 ## post-demo notes (fill in after)
 
 - What landed well:

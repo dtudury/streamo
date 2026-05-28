@@ -127,50 +127,66 @@ async function promoteApp ({ app, username, password, pubkey }) {
     stdio: ['ignore', 'pipe', 'pipe']
   })
 
-  // Wait for origin connection, then poll streamo.dev for a probe file.
-  // The "origin: connected" line in the CLI's stdout signals the WS is up;
-  // bytes start flowing immediately after. We poll until any one file in
-  // the staged dir comes back 200. Picks the first file alphabetically as
-  // the probe — robust to apps that don't have an index.html (e.g.,
-  // pure-CSS shared records like styles).
-  let connected = false
-  let stderrBuf = ''
-  child.stdout.on('data', d => { process.stdout.write(d); if (d.toString().includes('origin: connected')) connected = true })
-  child.stderr.on('data', d => { stderrBuf += d.toString(); process.stderr.write(d) })
+  // Belt-and-suspenders: if THIS script terminates before the try/finally
+  // below runs (uncaught exception, SIGINT, SIGKILL on the parent), the
+  // child gets killed too. Without this, a parent crash leaves the child
+  // as a zombie that races future runs against the same Record — the
+  // failure shape that corrupted the production explorer during today's
+  // recovery (parent hit the PROBE_FILE ReferenceError, child kept
+  // pushing partial state).
+  const killChild = () => { try { child.kill('SIGTERM') } catch {} }
+  process.once('exit', killChild)
 
-  // Find a probe file — walk staged dir, take first regular file.
-  const stagedEntries = (await readdir(stagingDir, { withFileTypes: true, recursive: true }))
-    .filter(e => e.isFile())
-    .map(e => join(e.parentPath || stagingDir, e.name))
-  const probeFsPath = stagedEntries[0]
-  if (!probeFsPath) throw new Error(`no files in staged dir ${stagingDir}`)
-  const probeRel = probeFsPath.slice(stagingDir.length + 1)
-  const probeUrl = `https://${ORIGIN}/streams/${pubkey}/${probeRel}`
-  console.log(`  polling ${probeUrl} for 200…`)
-  const deadline = Date.now() + 60_000
   let pushed = false
-  while (Date.now() < deadline) {
-    if (connected) {
-      const res = await fetch(probeUrl).catch(() => null)
-      if (res?.status === 200) {
-        const len = res.headers.get('content-length')
-        console.log(`  ✓ ${probeRel} reachable on ${ORIGIN} (${len} bytes)`)
-        pushed = true
-        break
+  let stderrBuf = ''
+  try {
+    // Wait for origin connection, then poll streamo.dev for a probe file.
+    // The "origin: connected" line in the CLI's stdout signals the WS is
+    // up; bytes start flowing immediately after. We poll until any one
+    // file in the staged dir comes back 200. Picks the first file
+    // alphabetically as the probe — robust to apps that don't have an
+    // index.html (e.g., pure-CSS shared records like styles).
+    let connected = false
+    child.stdout.on('data', d => { process.stdout.write(d); if (d.toString().includes('origin: connected')) connected = true })
+    child.stderr.on('data', d => { stderrBuf += d.toString(); process.stderr.write(d) })
+
+    // Find a probe file — walk staged dir, take first regular file.
+    const stagedEntries = (await readdir(stagingDir, { withFileTypes: true, recursive: true }))
+      .filter(e => e.isFile())
+      .map(e => join(e.parentPath || stagingDir, e.name))
+    const probeFsPath = stagedEntries[0]
+    if (!probeFsPath) throw new Error(`no files in staged dir ${stagingDir}`)
+    const probeRel = probeFsPath.slice(stagingDir.length + 1)
+    const probeUrl = `https://${ORIGIN}/streams/${pubkey}/${probeRel}`
+    console.log(`  polling ${probeUrl} for 200…`)
+    const deadline = Date.now() + 60_000
+    while (Date.now() < deadline) {
+      if (connected) {
+        const res = await fetch(probeUrl).catch(() => null)
+        if (res?.status === 200) {
+          const len = res.headers.get('content-length')
+          console.log(`  ✓ ${probeRel} reachable on ${ORIGIN} (${len} bytes)`)
+          pushed = true
+          break
+        }
       }
+      await new Promise(r => setTimeout(r, 1000))
     }
-    await new Promise(r => setTimeout(r, 1000))
+
+    // Give the push a beat to drain any remaining chunks before we kill,
+    // so the relay's chain is fully up-to-date for this Record.
+    if (pushed) await new Promise(r => setTimeout(r, 2000))
+  } finally {
+    // Always kill the child and wait for its exit, even if the try block
+    // threw partway through. Belt-and-suspenders exit handler (above)
+    // covers the parent-died-hard case; this finally covers the normal
+    // throw paths. Both must run for full coverage.
+    child.kill('SIGTERM')
+    try { await new Promise(r => child.once('exit', r)) } catch {}
+    process.removeListener('exit', killChild)
+    await rm(stagingDir, { recursive: true, force: true })
+    await rm(dataDir,    { recursive: true, force: true })
   }
-
-  // Give the push a beat to drain any remaining chunks before we kill,
-  // so the relay's chain is fully up-to-date for this Record.
-  if (pushed) await new Promise(r => setTimeout(r, 2000))
-  child.kill('SIGTERM')
-  await new Promise(r => child.once('exit', r))
-
-  // Cleanup staging
-  await rm(stagingDir, { recursive: true, force: true })
-  await rm(dataDir,    { recursive: true, force: true })
 
   if (!pushed) {
     console.error(`  ✗ ${app}: failed to land within 60s`)

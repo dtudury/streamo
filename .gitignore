@@ -19,15 +19,14 @@ node_modules/
 .node_repl_history
 
 # dotenv environment variable files — env/ holds them as of 2026-05-28.
-# env/dev.env and env/demo.*.env are tracked as examples (demo uses
-# demo/demo with 1 PBKDF2 iteration — toy credentials, fine to commit).
-# env/prod.env lives on the server; env/claude.env lives only on author
-# machines and holds a signing password.
+# Convention: anything in env/secrets/ is private (gitignored); everything
+# else in env/ is fair game to commit. Structure declares policy — no
+# negation pattern needed; you can't accidentally leak a secret by
+# mistyping a name. env/dev.env and env/demo.*.env are tracked examples
+# (demo uses demo/demo with 1 PBKDF2 iteration — toy credentials).
 .env
 .env.*
-env/*.env
-!env/dev.env
-!env/demo.*.env
+env/secrets/
 
 # the true price of a pretty laptop
 **/.DS_Store

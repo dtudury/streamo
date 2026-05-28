@@ -154,7 +154,7 @@ async function promoteApp ({ app, username, password, pubkey }) {
       const res = await fetch(probeUrl).catch(() => null)
       if (res?.status === 200) {
         const len = res.headers.get('content-length')
-        console.log(`  ✓ ${PROBE_FILE} reachable on ${ORIGIN} (${len} bytes)`)
+        console.log(`  ✓ ${probeRel} reachable on ${ORIGIN} (${len} bytes)`)
         pushed = true
         break
       }

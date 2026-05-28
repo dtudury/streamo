@@ -113,7 +113,13 @@ program
       .env('STREAMO_ORIGIN')
   )
   .addOption(
-    new Option('--peer <url>', 'subscribe to a peer relay\'s home Record (and its mounted records via the followMounts cascade). Federation arc step 4. Can be repeated; each value opens an independent registrySync session. URL shape matches --origin.')
+    new Option('--watch <url>', 'subscribe to another relay\'s home Record (and its mounted records via the followMounts cascade) and watch for changes. Streamo\'s per-record authority model makes this an asymmetric subscription (each Record has one origin; this flag makes the local relay a subscriber). Can be repeated; each value opens an independent registrySync session. URL shape matches --origin.')
+      .env('STREAMO_WATCH')
+      .argParser((val, prev = []) => [...prev, val])
+      .default([])
+  )
+  .addOption(
+    new Option('--peer <url>', '[DEPRECATED 2026-05-28] alias for --watch. The "peer" name implied a symmetric federation relationship streamo\'s per-record authority model prohibits — every Record has exactly one origin, so a relay is either an origin or a subscriber per-Record, never a peer in the symmetric sense. Use --watch.')
       .env('STREAMO_PEER')
       .argParser((val, prev = []) => [...prev, val])
       .default([])
@@ -255,15 +261,18 @@ if (options.origin) {
   console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
 }
 
-// --peer connects this relay to upstream peer relays. Each peer's
-// home Record + mounted records flow down into our local registry
-// (via the followMounts cascade). Combined with --web's hostMap
-// option, this lets one relay serve content authored on another.
-// Repeatable: each --peer opens an independent registrySync session.
-if (options.peer && options.peer.length > 0) {
-  for (const peerUrl of options.peer) {
-    await server.peer(peerUrl)
-    console.log(`\x1b[32mpeer: subscribed to ${peerUrl}\x1b[0m`)
+// --watch (formerly --peer) subscribes this relay to another relay's
+// Records. Each watched host's home Record + mounted records flow down
+// into our local registry (via the followMounts cascade). Combined with
+// --web's hostMap option, this lets one relay serve content authored on
+// another. Repeatable: each --watch opens an independent registrySync
+// session. We honor both --watch and --peer (deprecated alias) by
+// combining them at use site, so existing callers keep working.
+const watchHosts = [...(options.watch || []), ...(options.peer || [])]
+if (watchHosts.length > 0) {
+  for (const watchUrl of watchHosts) {
+    await server.watch(watchUrl)
+    console.log(`\x1b[32mwatch: subscribed to ${watchUrl}\x1b[0m`)
   }
 }
 

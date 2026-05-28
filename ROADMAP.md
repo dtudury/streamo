@@ -263,12 +263,16 @@ Order of operations, in stages:
    artifact of the new architecture; lets us see the shape concretely
    before committing to bigger moves.
 
-4. **Cross-relay subscribe + serve.** Relays subscribe to peer
+4. **Cross-relay subscribe + serve.** Relays watch other relays'
    Records and serve them cross-domain. The federation pattern at
    small scale — streamo.social serving content from streamo.dev's
    library Record, or any relay serving content from any other.
    Mechanism already exists in `registrySync.subscribe`; the work is
-   convention + wiring, not new primitives.
+   convention + wiring, not new primitives. (Vocabulary sharpened
+   2026-05-28: the earlier writeup called this "peer subscribe,"
+   which obscured that streamo's per-record authority makes every
+   inter-relay connection asymmetric — there's no symmetric peering,
+   only watching what another relay originates.)
 
 5. **Structure-into-memory.** Frontmatter as structured data
    (typed fields), `[[link]]` resolves to a real address-reference,

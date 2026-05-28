@@ -10,6 +10,7 @@ node_modules/
 # streamo archive data (also excluded from fileSync via buildFilter)
 .streamo/
 .stream/
+.streamo-*/   # demo:relay, demo:homepage, demo:library, demo:explorer dirs and similar local data dirs
 
 # Optional REPL history
 .node_repl_history

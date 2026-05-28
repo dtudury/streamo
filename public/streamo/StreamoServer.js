@@ -151,33 +151,50 @@ export class StreamoServer {
   }
 
   /**
-   * Subscribe to a peer relay's home Record (and its mounted records,
-   * via the `followMounts` cascade). Federation arc step 4 — the
-   * cross-relay subscribe primitive. The returned session holds the
-   * connection open; bytes flow continuously while open.
+   * Subscribe to another relay's home Record (and its mounted records, via
+   * the `followMounts` cascade) and watch for changes. The returned session
+   * holds the connection open; bytes flow continuously while open.
    *
-   * Mechanism: `registrySync` opens a WebSocket to the peer, receives
+   * Streamo's per-record authority model makes this fundamentally an
+   * *asymmetric subscription* — each Record has one origin (the relay
+   * that arbitrates its chain); calling watch() makes THIS relay a
+   * subscriber to records the host relay originates. The earlier name
+   * `peer()` implied a symmetric federation relationship the design
+   * actually prohibits; renamed 2026-05-28 to `watch()` to honestly
+   * describe what's happening. `peer()` is preserved as a deprecated
+   * alias.
+   *
+   * Mechanism: `registrySync` opens a WebSocket to the host, receives
    * its `hello { home }`, auto-subscribes to that home, and the
    * `followMounts: true` cascade subscribes to every Record referenced
    * in the home's `mounts` table. Combined with `webSync`'s `hostMap`,
-   * this lets one relay serve content authored on another — federation
-   * at HTTP boundaries.
+   * this lets one relay serve content authored on another.
    *
    * @param {string} hostPort  ws/wss URL or host[:port] shorthand
    *   (same shape as `connect()`)
    * @param {object} [options]  forwarded to `registrySync` — e.g.
    *   `{ follow, followMounts, onAnnounce, onConnectionChange }`.
    *   Defaults to `followMounts: true` which is the federation-pattern
-   *   default (subscribe to everything the peer's home mounts).
+   *   default (subscribe to everything the host's home mounts).
    * @returns {Promise<ReturnType<typeof registrySync>>}
    */
-  async peer (hostPort, options = {}) {
+  async watch (hostPort, options = {}) {
     const { host, port, protocol } = parseOrigin(hostPort)
     return registrySync(this.registry, host, port, {
       protocol,
       followMounts: true,
       ...options
     })
+  }
+
+  /** @deprecated 2026-05-28 — renamed to {@link watch}. Streamo's
+   *  per-record authority model is fundamentally asymmetric (one origin
+   *  per record); "peer" implied a symmetric relationship the substrate
+   *  prohibits. Use `watch(hostPort, options)` instead. This alias is
+   *  preserved for existing callers; remove after a migration grace
+   *  period. */
+  async peer (hostPort, options = {}) {
+    return this.watch(hostPort, options)
   }
 
   async files (folder = '.', options = {}) {

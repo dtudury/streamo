@@ -274,9 +274,9 @@ const passwordEnv = name => ({
 
 await runRelays([
   { name: 'lib-mir',  args: ['--config', join(demoDir, 'library-mirror',  'streamo.json')], env: passwordEnv('library')  },
-  { name: 'exp-mir',  args: ['--config', join(demoDir, 'explorer-mirror', 'streamo.json')], env: passwordEnv('explorer'), startupDelayMs: 300 },
-  { name: 'home-mir', args: ['--config', join(demoDir, 'homepage-mirror', 'streamo.json')], env: passwordEnv('homepage'), startupDelayMs: 300 },
-  { name: 'lib-src',  args: ['--config', join(demoDir, 'library-source',  'streamo.json')], env: passwordEnv('library'),  startupDelayMs: 800 },
-  { name: 'exp-src',  args: ['--config', join(demoDir, 'explorer-source', 'streamo.json')], env: passwordEnv('explorer'), startupDelayMs: 300 },
-  { name: 'home-src', args: ['--config', join(demoDir, 'homepage-source', 'streamo.json')], env: passwordEnv('homepage'), startupDelayMs: 300 }
+  { name: 'exp-mir',  args: ['--config', join(demoDir, 'explorer-mirror', 'streamo.json')], env: passwordEnv('explorer'), staggerMs: 300 },
+  { name: 'home-mir', args: ['--config', join(demoDir, 'homepage-mirror', 'streamo.json')], env: passwordEnv('homepage'), staggerMs: 300 },
+  { name: 'lib-src',  args: ['--config', join(demoDir, 'library-source',  'streamo.json')], env: passwordEnv('library'),  staggerMs: 800 },
+  { name: 'exp-src',  args: ['--config', join(demoDir, 'explorer-source', 'streamo.json')], env: passwordEnv('explorer'), staggerMs: 300 },
+  { name: 'home-src', args: ['--config', join(demoDir, 'homepage-source', 'streamo.json')], env: passwordEnv('homepage'), staggerMs: 300 }
 ])

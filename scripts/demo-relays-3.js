@@ -277,12 +277,12 @@ await runRelays([
     name: 'explorer',
     args:  ['--config', join(demoDir, 'explorer', 'streamo.json')],
     env:   passwordEnv('explorer'),
-    startupDelayMs: 500
+    staggerMs: 500
   },
   {
     name: 'homepage',
     args:  ['--config', join(demoDir, 'homepage', 'streamo.json')],
     env:   passwordEnv('homepage'),
-    startupDelayMs: 500
+    staggerMs: 500
   }
 ])

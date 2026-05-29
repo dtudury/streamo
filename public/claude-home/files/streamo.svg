@@ -1,0 +1,24 @@
+<svg viewBox="0 0 680 680" xmlns="http://www.w3.org/2000/svg" fill="#1d4ed8">
+  <!-- streamo mark — yin-yang seam meets basketball seam, asymmetric so the
+       S flows in one direction (append-only). 7 named circles intersect to
+       define every curve in the mark; nothing is freehand, every point is
+       provably-related to every other point. -->
+  <!-- 7 circles: Ball(340,340,r280), Yang(340,200,r140), Yin(340,480,r140), -->
+  <!-- Happy(397.7,240.2,r302.4), Sad(370.9,370.9,r271.6), -->
+  <!-- Little(394,543,r70), Big(424,292,r183.2) -->
+
+  <!-- ABJ: Ball A→B, Sad B→J, Yang J→A -->
+  <path d="M 340,60 A 280,280 0 0,1 582,200 A 271.6,271.6 0 0,0 447,110 A 140,140 0 0,0 340,60 Z"/>
+
+  <!-- JDKL: Yang J→D, Yin D→K, Happy K→L, Sad L→J -->
+  <path d="M 447,110 A 140,140 0 0,1 340,340 A 140,140 0 0,0 200,465 A 302.4,302.4 0 0,1 105,319 A 271.6,271.6 0 0,1 447,110 Z"/>
+
+  <!-- BFME: Ball B→F, Happy F→M, Little M→E, Big E→B -->
+  <path d="M 582,200 A 280,280 0 0,1 582,480 A 302.4,302.4 0 0,1 327,535 A 70,70 0 0,1 402,474 A 183.2,183.2 0 0,0 582,200 Z"/>
+
+  <!-- GCL: Ball G→C, Happy C→L, Sad L→G -->
+  <path d="M 200,582 A 280,280 0 0,1 98,200 A 302.4,302.4 0 0,0 105,319 A 271.6,271.6 0 0,0 200,582 Z"/>
+
+  <!-- HIKM: Ball H→I, Yin I→K, Happy K→M, Little M→H -->
+  <path d="M 412,611 A 280,280 0 0,1 340,620 A 140,140 0 0,1 200,465 A 302.4,302.4 0 0,0 327,535 A 70,70 0 0,0 412,611 Z"/>
+</svg>

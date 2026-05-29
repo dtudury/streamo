@@ -208,17 +208,23 @@ function applyStreamoJsonConfig (configPath, opts) {
   const s = cfg.server || {}
 
   // archive:
-  //   false           → ephemeral (skip disk writes; cache still works)
-  //   string          → dataDir path (relative to config dir)
-  //   { dataDir, … }  → object form, dataDir field same shape as string
+  //   false                 → ephemeral (skip disk writes; cache still works)
+  //   <string>              → dataDir path, flat mode (back-compat)
+  //   true                  → tiered mode at default path
+  //   { mode, dataDir }     → explicit; mode ∈ {flat, tiered, preserved-only}
   //   { mode: 'ephemeral' } → same as false
   if (s.archive === false) {
-    opts.dataDir = false   // direct override; the no-disk signal
+    opts.dataDir = false
+  } else if (s.archive === true) {
+    opts.archiveMode ??= 'tiered'
   } else if (typeof s.archive === 'string') {
     opts.dataDir ??= resolveRel(s.archive)
   } else if (s.archive && typeof s.archive === 'object') {
     if (s.archive.mode === 'ephemeral') opts.dataDir = false
-    else if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
+    else {
+      if (s.archive.mode) opts.archiveMode ??= s.archive.mode
+      if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
+    }
   }
 
   // web: true → default port, number → that port
@@ -293,6 +299,7 @@ if (options.homeKey) {
     dataDir:       options.dataDir,
     keyIterations: options.keyIterations,
     preserved:     options.preserved || [],
+    archiveMode:   options.archiveMode || 'flat',
   })
 } else {
   options.name     ||= question('Name: ')
@@ -310,6 +317,7 @@ if (options.homeKey) {
     dataDir:       options.dataDir,
     keyIterations: options.keyIterations,
     preserved:     options.preserved || [],
+    archiveMode:   options.archiveMode || 'flat',
   })
 }
 

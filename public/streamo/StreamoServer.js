@@ -56,7 +56,7 @@ export class StreamoServer {
     Object.assign(this, fields)
   }
 
-  static async create ({ name, username, password, publicKeyHex, dataDir = '.streamo', keyIterations = 100000, preserved = [] }) {
+  static async create ({ name, username, password, publicKeyHex, dataDir = '.streamo', keyIterations = 100000, preserved = [], archiveMode = 'flat' }) {
     let signer = null
     let resolvedPublicKeyHex
 
@@ -87,13 +87,23 @@ export class StreamoServer {
     // Restart loses everything (no archive to rehydrate from).
     const isEphemeral = !dataDir
 
-    // Preserved keys go to `<dataDir>/preserved/<key>.bin` instead of
-    // `<dataDir>/<key>.bin`. Once eviction lands, the preserved/ dir is
-    // excluded — Claude's records and similarly-marked artifacts survive
-    // cleanup. Friction-as-feature: each preserved key is named explicitly
-    // here; no transitive walk, no auto-inclusion (see
-    // feedback_records_designed_for_human_scale memory).
     const preservedSet = new Set(preserved)
+
+    // archiveMode shapes the on-disk layout:
+    //   "flat"          — everything at <dataDir>/<key>.bin (back-compat)
+    //   "tiered"        — <dataDir>/cache/<key>.bin and
+    //                     <dataDir>/preserved/<key>.bin
+    //   "preserved-only"— only preserved keys archive; the rest stay
+    //                     in-memory (the dedicated-backup-relay shape)
+    // The cache/preserved split lets eviction (when it lands) target
+    // cache/ cleanly and leave preserved/ untouched.
+    function pickArchiveDir (key) {
+      const isPreserved = preservedSet.has(key)
+      if (archiveMode === 'preserved-only') return isPreserved ? dataDir : null
+      if (archiveMode === 'tiered') return join(dataDir, isPreserved ? 'preserved' : 'cache')
+      // flat (default)
+      return isPreserved ? join(dataDir, 'preserved') : dataDir
+    }
 
     // Writable for the primary only when we have a signer. Subscribed peer
     // keys and the relay-only primary stay slim — set() on a slim Record
@@ -106,9 +116,14 @@ export class StreamoServer {
         const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
         const record = new RecordClass({ recaller })
         if (!isEphemeral) {
-          const archiveDir = preservedSet.has(key) ? join(dataDir, 'preserved') : dataDir
-          const { close } = await archiveSync(record, archiveDir, key)
-          archiveClosers.set(key, close)
+          const archiveDir = pickArchiveDir(key)
+          // preserved-only mode returns null for non-preserved keys —
+          // they stay in-memory (their cache works as ever; nothing
+          // hits disk for them).
+          if (archiveDir !== null) {
+            const { close } = await archiveSync(record, archiveDir, key)
+            archiveClosers.set(key, close)
+          }
         }
         return record
       }

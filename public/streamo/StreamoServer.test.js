@@ -102,23 +102,22 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('preserved: when the primary key is in the preserved list, its archive goes to <dataDir>/preserved/', async ({ assert }) => {
-    const dir = mkdtempSync(join(tmpdir(), 'streamo-preserved-'))
+  test('archive flat mode (default): preserved keys → <dataDir>/preserved/, non-preserved → <dataDir>/', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-flat-'))
     try {
-      // Derive the pubkey first so we can put it in preserved.
       const probe = await StreamoServer.create({
         name: 'test', username: 'alice', password: 'hunter2',
         dataDir: false, keyIterations: 1
       })
       const key = probe.publicKeyHex
 
-      const server = await StreamoServer.create({
+      const preservedServer = await StreamoServer.create({
         name: 'test', username: 'alice', password: 'hunter2',
         dataDir: dir, keyIterations: 1,
         preserved: [key]
       })
-      server.streamo.set({ hello: 'preserved' })
-      await server.close()
+      preservedServer.streamo.set({ hello: 'preserved' })
+      await preservedServer.close()
 
       assert.ok(existsSync(join(dir, 'preserved', `${key}.bin`)),
         'preserved key wrote to <dataDir>/preserved/<key>.bin')
@@ -129,8 +128,8 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('preserved: non-preserved keys still go to <dataDir>/ (no regression)', async ({ assert }) => {
-    const dir = mkdtempSync(join(tmpdir(), 'streamo-preserved-'))
+  test('archive flat mode: non-preserved keys still go to <dataDir>/ (no regression)', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-flat-'))
     try {
       const server = await StreamoServer.create({
         name: 'test', username: 'alice', password: 'hunter2',
@@ -142,9 +141,100 @@ describe(import.meta.url, ({ test }) => {
       const key = server.publicKeyHex
 
       assert.ok(existsSync(join(dir, `${key}.bin`)),
-        'non-preserved key wrote to <dataDir>/<key>.bin (regular path)')
+        'non-preserved key wrote to <dataDir>/<key>.bin')
       assert.ok(!existsSync(join(dir, 'preserved', `${key}.bin`)),
         'non-preserved key did NOT route to preserved/')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('archive tiered mode: non-preserved → <dataDir>/cache/, preserved → <dataDir>/preserved/', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-tiered-'))
+    try {
+      const probe = await StreamoServer.create({
+        name: 'test', username: 'alice', password: 'hunter2',
+        dataDir: false, keyIterations: 1
+      })
+      const key = probe.publicKeyHex
+
+      // Preserved primary in tiered mode.
+      const preservedServer = await StreamoServer.create({
+        name: 'test', username: 'alice', password: 'hunter2',
+        dataDir: dir, keyIterations: 1,
+        preserved: [key], archiveMode: 'tiered'
+      })
+      preservedServer.streamo.set({ hello: 'preserved tier' })
+      await preservedServer.close()
+
+      assert.ok(existsSync(join(dir, 'preserved', `${key}.bin`)),
+        'preserved key → preserved/')
+      assert.ok(!existsSync(join(dir, 'cache', `${key}.bin`)),
+        'preserved key did NOT go to cache/')
+
+      // Non-preserved primary in tiered mode.
+      const dir2 = mkdtempSync(join(tmpdir(), 'streamo-tiered-'))
+      try {
+        const cacheServer = await StreamoServer.create({
+          name: 'test', username: 'alice', password: 'hunter2',
+          dataDir: dir2, keyIterations: 1,
+          archiveMode: 'tiered'
+        })
+        cacheServer.streamo.set({ hello: 'cache tier' })
+        await cacheServer.close()
+        const cacheKey = cacheServer.publicKeyHex
+
+        assert.ok(existsSync(join(dir2, 'cache', `${cacheKey}.bin`)),
+          'non-preserved key → cache/')
+        assert.ok(!existsSync(join(dir2, `${cacheKey}.bin`)),
+          'non-preserved key did NOT go to dataDir root')
+      } finally {
+        rmSync(dir2, { recursive: true, force: true })
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('archive preserved-only mode: non-preserved keys stay in-memory (no archive)', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-preserved-only-'))
+    try {
+      const server = await StreamoServer.create({
+        name: 'test', username: 'alice', password: 'hunter2',
+        dataDir: dir, keyIterations: 1,
+        archiveMode: 'preserved-only'
+        // no preserved list — every key is non-preserved
+      })
+      server.streamo.set({ hello: 'in memory only' })
+      await server.close()
+      const key = server.publicKeyHex
+
+      assert.ok(!existsSync(join(dir, `${key}.bin`)),
+        'non-preserved key in preserved-only mode wrote NOTHING to disk')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('archive preserved-only mode: preserved keys archive at <dataDir>/<key>.bin', async ({ assert }) => {
+    const dir = mkdtempSync(join(tmpdir(), 'streamo-preserved-only-'))
+    try {
+      const probe = await StreamoServer.create({
+        name: 'test', username: 'alice', password: 'hunter2',
+        dataDir: false, keyIterations: 1
+      })
+      const key = probe.publicKeyHex
+
+      const server = await StreamoServer.create({
+        name: 'test', username: 'alice', password: 'hunter2',
+        dataDir: dir, keyIterations: 1,
+        preserved: [key], archiveMode: 'preserved-only'
+      })
+      server.streamo.set({ hello: 'dedicated backup' })
+      await server.close()
+
+      assert.ok(existsSync(join(dir, `${key}.bin`)),
+        'preserved key in preserved-only mode → <dataDir>/<key>.bin (root)')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

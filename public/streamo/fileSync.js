@@ -9,13 +9,16 @@ const ALWAYS_IGNORE = '.env\n.DS_Store\n.git\nnode_modules'
 /**
  * Build a filter function from the folder's .gitignore plus hard-coded ignores.
  * @param {string} folder
- * @param {string} dataDir  the archive dir, always excluded
+ * @param {string|false} dataDir  the archive dir, always excluded; pass false
+ *   in ephemeral mode (no archive on disk → nothing to exclude)
  * @returns {(rel: string) => boolean}
  */
 function buildFilter (folder, dataDir) {
   let content = ALWAYS_IGNORE
   try { content = readFileSync(join(folder, '.gitignore'), 'utf8') + '\n' + content } catch {}
   const gitignore = compile(content)
+  // Ephemeral mode (no archive dir): filter against gitignore only.
+  if (!dataDir) return rel => gitignore.accepts(rel)
   const dataDirRel = relative(folder, dataDir)
   return rel => !rel.startsWith(dataDirRel + '/') && rel !== dataDirRel && gitignore.accepts(rel)
 }

@@ -205,16 +205,21 @@ const writeStreamoJson = async (name, server) => {
 // Each config block here is exactly what gets read by --config at startup.
 // Relative paths (./files, ./.streamo) resolve against the config file's
 // directory, not CWD, so the relay can be launched from anywhere.
+// archive: false = ephemeral mode. The in-memory cache works normally
+// (bytes still flow over the wire and accumulate per Record); nothing
+// gets written to disk. Removes the ambiguity of "is content reaching
+// the homepage via the wire, or just from a leftover archive?" — in
+// ephemeral mode the wire is the only source.
 await writeStreamoJson('library', {
   outlet: 1024,
-  archive: './.streamo',
+  archive: false,
   files: './files',
   recordFile: false,
   verbose: 'debug'
 })
 await writeStreamoJson('explorer', {
   outlet: 1025,
-  archive: './.streamo',
+  archive: false,
   files: './files',
   recordFile: false,
   verbose: 'debug'
@@ -226,7 +231,7 @@ await writeStreamoJson('explorer', {
 // to that).
 await writeStreamoJson('homepage', {
   web: 8080,
-  archive: './.streamo',
+  archive: false,
   files: './files',
   watch: ['localhost:1024', 'localhost:1025'],
   recordFile: false,

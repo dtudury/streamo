@@ -89,6 +89,12 @@ export class StreamoServer {
 
     const archiveClosers = new Map()
     const recaller = new Recaller(`server:${name ?? resolvedPublicKeyHex.slice(0, 8)}`)
+    // dataDir = falsy → ephemeral mode: no disk persistence, the in-memory
+    // cache still works identically. The cache holds whatever bytes flowed
+    // in via wire or local authoring; restart wipes the cache (no archive
+    // to rehydrate from). Useful for demos and tests that need to prove
+    // the wire path without an archive masking the result.
+    const isEphemeral = !dataDir
     // Writable for the primary IFF this server is in author mode (has a
     // signer to attach). Subscribed peer keys, and the primary in relay-
     // only mode (publicKeyHex without credentials), get the slim
@@ -101,8 +107,10 @@ export class StreamoServer {
         const isAuthorPrimary = key === resolvedPublicKeyHex && signer !== null
         const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
         const repo = new RecordClass({ recaller })
-        const { close } = await archiveSync(repo, dataDir, key)
-        archiveClosers.set(key, close)
+        if (!isEphemeral) {
+          const { close } = await archiveSync(repo, dataDir, key)
+          archiveClosers.set(key, close)
+        }
         return repo
       }
     })

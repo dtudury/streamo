@@ -49,9 +49,8 @@ program
       .env('STREAMO_HOME_KEY')
   )
   .addOption(
-    new Option('--data-dir <path>', 'directory for archive files')
+    new Option('--data-dir <path>', 'directory for archive files (defaults to .streamo). Pass `false` to skip archive writes entirely — the in-memory cache still works; just nothing hits disk.')
       .env('STREAMO_DATA_DIR')
-      .default('.streamo')
   )
   .addOption(
     new Option('--files [path]', 'mirror local files to/from streamo (defaults to current directory)')
@@ -162,6 +161,12 @@ if (options.config) {
   applyStreamoJsonConfig(options.config, options)
 }
 
+// Apply post-config defaults — fields the commander option no longer carries
+// a default for (because config might want to leave them off / drop them).
+// dataDir: false is the explicit no-archive signal; undefined defaults to
+// `.streamo`; a string path passes through.
+if (options.dataDir === undefined) options.dataDir = '.streamo'
+
 function applyStreamoJsonConfig (configPath, opts) {
   const absPath = isAbsolute(configPath) ? configPath : resolve(process.cwd(), configPath)
   const configDir = dirname(absPath)
@@ -196,12 +201,18 @@ function applyStreamoJsonConfig (configPath, opts) {
   // server → feature flags
   const s = cfg.server || {}
 
-  // archive: string = dataDir path; object = { dataDir, mode }
-  if (typeof s.archive === 'string') {
+  // archive:
+  //   false           → ephemeral (skip disk writes; cache still works)
+  //   string          → dataDir path (relative to config dir)
+  //   { dataDir, … }  → object form, dataDir field same shape as string
+  //   { mode: 'ephemeral' } → same as false
+  if (s.archive === false) {
+    opts.dataDir = false   // direct override; the no-disk signal
+  } else if (typeof s.archive === 'string') {
     opts.dataDir ??= resolveRel(s.archive)
   } else if (s.archive && typeof s.archive === 'object') {
-    if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
-    // archive.mode === 'ephemeral' → run without archiveSync (TODO)
+    if (s.archive.mode === 'ephemeral') opts.dataDir = false
+    else if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
   }
 
   // web: true → default port, number → that port

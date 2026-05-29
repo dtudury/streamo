@@ -122,10 +122,15 @@ await cp(
   { recursive: true }
 )
 
-// homepage Record: a tiny landing page + mounts.json composing the others
+// homepage Record: a tiny landing page + mounts.json + streamo.svg
 await mkdir(join(demoDir, 'homepage', 'files'), { recursive: true })
+await cp(
+  join(repoRoot, 'public', 'homepage', 'streamo.svg'),
+  join(demoDir, 'homepage', 'files', 'streamo.svg')
+)
 const indexHtml = `<!doctype html>
 <meta charset="utf-8">
+<link rel="icon" type="image/svg+xml" href="/streamo.svg">
 <title>3-relay demo</title>
 <style>
   body { font: 16px/1.5 system-ui, sans-serif; max-width: 42em; margin: 4em auto; padding: 0 1em; color: #222; }
@@ -134,7 +139,7 @@ const indexHtml = `<!doctype html>
   .fail { color: #c33; }
   .pending { color: #888; }
 </style>
-<h1>three records, three relays, one website</h1>
+<h1><img src="/streamo.svg" alt="" style="height:1em;vertical-align:-.15em">  three records, three relays, one website</h1>
 <p>The homepage relay (this server) watches a library relay and an explorer
    relay. mounts.json declares URL routing into both. <em>Composed, not
    copied.</em></p>

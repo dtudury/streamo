@@ -134,6 +134,12 @@ program
       .default([])
   )
   .addOption(
+    new Option('--subscribe <pubkey>', 'subscribe to a specific Record key beyond what the feed\'s followMounts cascade brings in. Repeatable. Requires --feed to give it a transport — subscriptions are attached to the first open feed session.')
+      .env('STREAMO_SUBSCRIBE')
+      .argParser((val, prev = []) => [...prev, val])
+      .default([])
+  )
+  .addOption(
     new Option('--interactive', 'start a REPL with streamo, signer, and helpers as globals')
       .env('STREAMO_INTERACTIVE')
   )
@@ -266,6 +272,12 @@ function applyStreamoJsonConfig (configPath, opts) {
   // here by hand. friction-as-feature; see the human-scale lens.
   if (Array.isArray(s.preserved)) {
     opts.preserved = [...(opts.preserved || []), ...s.preserved]
+  }
+
+  // subscribe: explicit pubkeys to pull beyond the feed's followMounts
+  // cascade. Merged with any CLI --subscribe.
+  if (Array.isArray(s.subscribe)) {
+    opts.subscribe = [...(opts.subscribe || []), ...s.subscribe]
   }
 }
 
@@ -404,10 +416,26 @@ if (options.origin) {
 // We honor --feed, --watch (deprecated), and --peer (deprecated) by
 // combining them at use site, so existing callers keep working.
 const feedHosts = [...(options.feed || []), ...(options.watch || []), ...(options.peer || [])]
+const feedSessions = []
 if (feedHosts.length > 0) {
   for (const feedUrl of feedHosts) {
-    await server.feed(feedUrl)
+    const session = await server.feed(feedUrl)
+    feedSessions.push(session)
     console.log(`\x1b[32mfeed: attached to ${feedUrl}\x1b[0m`)
+  }
+}
+
+// --subscribe pulls in Records that the feed's followMounts cascade
+// doesn't bring naturally — explicit keys outside the host's mount tree.
+// Attaches to the first feed session; subscriptions stick across reconnect.
+if (options.subscribe && options.subscribe.length > 0) {
+  if (feedSessions.length === 0) {
+    console.error('\x1b[31m--subscribe requires --feed to give it a transport\x1b[0m')
+    process.exit(2)
+  }
+  for (const key of options.subscribe) {
+    await feedSessions[0].subscribe(key)
+    console.log(`\x1b[32msubscribe: ${key.slice(0, 8)}…\x1b[0m`)
   }
 }
 

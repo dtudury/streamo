@@ -179,8 +179,11 @@ export class StreamoServer {
    */
   async feed (hostPort, options = {}) {
     const { host, port, protocol } = parseOrigin(hostPort)
+    // registrySync reads `secure` (boolean), not `protocol`; translate.
+    // originSync uses protocol directly, which is why --origin worked
+    // against wss while --feed didn't until this line.
     return registrySync(this.registry, host, port, {
-      protocol,
+      secure: protocol === 'wss',
       followMounts: true,
       ...options
     })

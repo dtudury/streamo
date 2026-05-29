@@ -41,7 +41,7 @@ program
       .env('STREAMO_PASSWORD')
   )
   .addOption(
-    new Option('--home-key <pubkeyhex>', 'open a repo by pubkey in relay-only mode (no signer derived; bytes arrive via sync from an author process). Mutually exclusive with --name/--username/--password and incompatible with --files/--merge-from.')
+    new Option('--home-key <pubkeyhex>', 'open a Record by pubkey in relay-only mode (no signer derived; bytes arrive via sync from an author process). Mutually exclusive with --name/--username/--password and incompatible with --files/--merge-from.')
       .env('STREAMO_HOME_KEY')
   )
   .addOption(
@@ -63,7 +63,7 @@ program
     new Option('--no-record-file', 'disable the streamo.json sync')
   )
   .addOption(
-    new Option('--merge-from <url>', 'on first run only (empty repo), fork from this URL or host. Accepts http(s)://host[:port]/streams/<keyHex> or just "host[:port]" (uses /api/info to find the primary key). Idempotent — skipped on subsequent runs.')
+    new Option('--merge-from <url>', 'on first run only (empty Record), fork from this URL or host. Accepts http(s)://host[:port]/streams/<keyHex> or just "host[:port]" (uses /api/info to find the primary key). Idempotent — skipped on subsequent runs.')
       .env('STREAMO_MERGE_FROM')
   )
   .addOption(
@@ -231,7 +231,7 @@ ${rows.map(([l, v], i) => [
 // --files so fileSync sees the merged content when it starts.
 if (options.mergeFrom) {
   if (streamo.lastCommit) {
-    logInfo(`\x1b[33mmerge-from: skipping (repo already has commits)\x1b[0m`)
+    logInfo(`\x1b[33mmerge-from: skipping (Record already has commits)\x1b[0m`)
   } else {
     try {
       const mergeOptions = options.mergeFromKey ? { from: options.mergeFromKey } : {}
@@ -343,7 +343,7 @@ if (options.web) {
   // route via `mounts` return 404. In relay-only mode (--home-key) this
   // lets a bare relay serve a homepage whose bytes arrived via origin sync.
   webOptions.serveRepoFiles = { repo: server.streamo }
-  console.log(`\x1b[32mserving from repo: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
+  console.log(`\x1b[32mserving from Record: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
 
   await server.web(+options.web, webOptions)
 }
@@ -382,7 +382,7 @@ if (options.interactive) {
   console.log(`\x1b[36m
   get(...path)          streamo.get() — read a value by path
   set(value)            streamo.set() — write a value
-  await merge(src, opts) streamo.merge() — fork or pull from another repo
+  await merge(src, opts) streamo.merge() — fork or pull from another Record
                         e.g. await merge('streamo.dev', { from: 'files' })
   ls()                  list all open streamos in the registry
   connect('host:port')  connect this streamo to a remote outlet

@@ -71,8 +71,7 @@ try {
 }
 
 const registry = new StreamoRecordRegistry({ recaller: new Recaller('watch') })
-const session = await registrySync(registry, host, port, {
-  secure,
+const session = await registrySync(registry, `${secure ? 'wss' : 'ws'}://${host}:${port}`, {
   // Subscribe to everyone who announces, so their chat repo syncs and we
   // can watch it for a reply. (`session` is assigned by the time any
   // announce fires.)

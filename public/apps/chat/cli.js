@@ -56,7 +56,7 @@ const registry = new StreamoRecordRegistry({
 // Track who we've announced ourselves back to (deduped to prevent
 // ping-pong) — see comment in chat/main.js for the discovery pattern.
 const announcedTo = new Set()
-const session = await registrySync(registry, host, port, {
+const session = await registrySync(registry, `${host}:${port}`, {
   follow: (keyHex, repo, subscribe) => {
     // Auto-follow all members listed in the root repo (only present when
     // the server has chat-room onAnnounce wiring).

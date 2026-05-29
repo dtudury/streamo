@@ -1,4 +1,5 @@
 import WebSocket from 'ws'
+import { parseOrigin } from './utils.js'
 
 const RETRY_BASE_MS = 500
 const RETRY_MAX_MS = 15000
@@ -25,7 +26,8 @@ const RETRY_MAX_MS = 15000
  *
  * After-drop reconnect is NOT implemented here — see registrySync.
  */
-export async function originSync (record, publicKeyHex, host, port, { protocol = 'ws', retryFirstConnect = true, retryBaseMs = RETRY_BASE_MS } = {}) {
+export async function originSync (record, publicKeyHex, hostPort, { retryFirstConnect = true, retryBaseMs = RETRY_BASE_MS } = {}) {
+  const { host, port, protocol } = parseOrigin(hostPort)
   const url = `${protocol}://${host}:${port}`
 
   async function tryConnect () {

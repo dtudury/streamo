@@ -55,3 +55,35 @@ export function varToNumber (bytes) {
 export function range (length) {
   return Array.from({ length }, (_, i) => i)
 }
+
+/**
+ * Parse a host specifier into { host, port, protocol }. Accepts
+ *   `ws://host[:port]`, `wss://host[:port]`, or bare `host[:port]`.
+ * Bare-spec protocol resolution:
+ *   - In a browser (globalThis.location exists), match the page's protocol
+ *     (https → wss, http → ws). Matches the SOP the browser would impose
+ *     on the WebSocket constructor anyway.
+ *   - Outside the browser, port 443 (or unspecified) → wss; else ws.
+ *     The unspecified case defaults to wss because TLS-on-443 is the
+ *     production shape; ws-on-80 has to be asked for.
+ *
+ * Single source of truth across registrySync, originSync, and
+ * StreamoServer; previously each had its own normalization.
+ */
+export function parseOrigin (hostPort) {
+  if (/^wss?:\/\//.test(hostPort)) {
+    const url = new URL(hostPort)
+    const protocol = url.protocol === 'wss:' ? 'wss' : 'ws'
+    const port = +(url.port || (protocol === 'wss' ? 443 : 80))
+    return { host: url.hostname, port, protocol }
+  }
+  const [host, portStr] = hostPort.split(':')
+  const explicitPort = portStr ? +portStr : null
+  const browserProtocol = globalThis.location?.protocol
+  let protocol
+  if (browserProtocol === 'https:') protocol = 'wss'
+  else if (browserProtocol === 'http:') protocol = 'ws'
+  else protocol = (explicitPort == null || explicitPort === 443) ? 'wss' : 'ws'
+  const port = explicitPort ?? (protocol === 'wss' ? 443 : 80)
+  return { host, port, protocol }
+}

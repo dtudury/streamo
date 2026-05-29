@@ -77,7 +77,7 @@ describe(import.meta.url, ({ test }) => {
 
     const clientRegistry = newRegistry()
     const clientStream = await clientRegistry._materialize(await ensureKey())
-    const ws = await originSync(clientStream, KEY, 'localhost', port)
+    const ws = await originSync(clientStream, KEY, `localhost:${port}`)
 
     await waitFor(clientStream, s => s.get('hello') === 'world')
     assert.equal(clientStream.get('hello'), 'world', 'client received server data')
@@ -97,7 +97,7 @@ describe(import.meta.url, ({ test }) => {
     const clientStream = await openSigned(clientRegistry)
     clientStream.set({ from: 'client' })
 
-    const ws = await originSync(clientStream, KEY, 'localhost', port)
+    const ws = await originSync(clientStream, KEY, `localhost:${port}`)
     const serverStream = await serverRegistry._materialize(KEY)
 
     await waitFor(serverStream, s => s.get('from') === 'client')
@@ -131,8 +131,8 @@ describe(import.meta.url, ({ test }) => {
     // writers but the second writer's value address is no longer valid in the
     // merged layout — known limitation; see ROADMAP "multi-device write
     // conflict detection").
-    const ws1 = await originSync(s1, KEY, 'localhost', port)
-    const ws2 = await originSync(s2, KEY, 'localhost', port)
+    const ws1 = await originSync(s1, KEY, `localhost:${port}`)
+    const ws2 = await originSync(s2, KEY, `localhost:${port}`)
 
     const serverStream = await serverRegistry._materialize(KEY)
     await waitFor(serverStream, s => s.byteLength >= s1.byteLength && s.byteLength >= s2.byteLength)
@@ -161,7 +161,7 @@ describe(import.meta.url, ({ test }) => {
     // the byte stream it receives.
     const relayRegistry = newRegistry()
     const relayStream = await relayRegistry._materialize(await ensureKey())
-    await originSync(relayStream, KEY, 'localhost', serverPort)
+    await originSync(relayStream, KEY, `localhost:${serverPort}`)
     const relayWss = outletSync(relayRegistry, 0)
     await new Promise(resolve => relayWss.on('listening', resolve))
     const relayPort = relayWss.address().port
@@ -170,7 +170,7 @@ describe(import.meta.url, ({ test }) => {
     // the keypair so it can write back through the relay.
     const clientRegistry = newRegistry()
     const clientStream = await openSigned(clientRegistry)
-    const clientWs = await originSync(clientStream, KEY, 'localhost', relayPort)
+    const clientWs = await originSync(clientStream, KEY, `localhost:${relayPort}`)
 
     // Server data reaches client via relay
     await waitFor(clientStream, s => s.get('hello') === 'from-server')
@@ -215,7 +215,7 @@ describe(import.meta.url, ({ test }) => {
 
     // Start the client connecting to a port nobody's listening on.
     // retryBaseMs: 20 keeps the test fast (retries every ~20ms with jitter).
-    const wsPromise = originSync(clientStream, KEY, 'localhost', port, { retryBaseMs: 20 })
+    const wsPromise = originSync(clientStream, KEY, `localhost:${port}`, { retryBaseMs: 20 })
 
     // Let the client miss at least once before the server comes up.
     await new Promise(r => setTimeout(r, 50))
@@ -253,7 +253,7 @@ describe(import.meta.url, ({ test }) => {
 
     let rejected = false
     try {
-      await originSync(clientStream, KEY, 'localhost', port, { retryFirstConnect: false })
+      await originSync(clientStream, KEY, `localhost:${port}`, { retryFirstConnect: false })
     } catch (e) {
       rejected = true
     }

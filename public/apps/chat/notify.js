@@ -83,7 +83,7 @@ const registry = new StreamoRecordRegistry({
     ? new WritableStreamoRecord({ recaller })
     : new StreamoRecord({ recaller })
 })
-const session = await registrySync(registry, host, port, { secure })
+const session = await registrySync(registry, `${secure ? 'wss' : 'ws'}://${host}:${port}`)
 
 // subscribe() opens my repo AND plumbs it to the wire, so the relay
 // streams my history down. attachSigner makes the commit provably mine;

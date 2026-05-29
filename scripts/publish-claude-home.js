@@ -91,7 +91,7 @@ console.log(`[publish-claude-home] target:         ${protocol}://${host}:${port}
 
 const recaller = new Recaller(`publish-claude-home`)
 const record = new WritableStreamoRecord({ recaller, name: `publish-claude-home` })
-const ws = await originSync(record, publicKeyHex, host, port, { protocol })
+const ws = await originSync(record, publicKeyHex, `${protocol}://${host}:${port}`)
 
 // Wait for relay replay before attaching the signer.
 await new Promise(r => setTimeout(r, 2500))

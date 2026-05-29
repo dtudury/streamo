@@ -2,7 +2,8 @@ import { mkdtempSync, rmSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe } from './utils/testing.js'
-import { parseOrigin, StreamoServer } from './StreamoServer.js'
+import { StreamoServer } from './StreamoServer.js'
+import { parseOrigin } from './utils.js'
 
 describe(import.meta.url, ({ test }) => {
   // ── URL-shape (explicit protocol) ──────────────────────────────────────

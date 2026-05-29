@@ -18,27 +18,11 @@ import { webSync } from './webSync.js'
  * @file StreamoServer — composes a Record with sync/serve primitives
  * (archive, file, web, outlet, feed, etc.). One canonical entry point
  * shared by bin/streamo.js, tests, and embedding contexts.
+ *
+ * Note: `parseOrigin` (hostPort → {host, port, protocol}) moved to
+ * `./utils.js` in 11.0.0 so registrySync and originSync can share the
+ * one canonical normalizer.
  */
-
-/**
- * Parse a host specifier into { host, port, protocol }. Accepts
- *   `ws://host[:port]`, `wss://host[:port]`, or bare `host[:port]`.
- * For bare specs: port 443 (or no port) → wss; any other port → ws.
- * Same heuristic as StreamoRecord.merge's URL parser; exported so
- * everywhere shares one canonical normalization.
- */
-export function parseOrigin (hostPort) {
-  let urlString = hostPort
-  if (!/^wss?:\/\//.test(hostPort)) {
-    const port = hostPort.split(':')[1]
-    const useWss = !port || port === '443'
-    urlString = (useWss ? 'wss://' : 'ws://') + hostPort
-  }
-  const url = new URL(urlString)
-  const protocol = url.protocol === 'wss:' ? 'wss' : 'ws'
-  const port = +(url.port || (protocol === 'wss' ? 443 : 80))
-  return { host: url.hostname, port, protocol }
-}
 
 export class StreamoServer {
   #dataDir
@@ -162,8 +146,7 @@ export class StreamoServer {
   }
 
   async connect (hostPort) {
-    const { host, port, protocol } = parseOrigin(hostPort)
-    return originSync(this.streamo, this.publicKeyHex, host, port, { protocol })
+    return originSync(this.streamo, this.publicKeyHex, hostPort)
   }
 
   /**
@@ -178,20 +161,7 @@ export class StreamoServer {
    * 2026-05-29.
    */
   async feed (hostPort, options = {}) {
-    const { host, port, protocol } = parseOrigin(hostPort)
-    // registrySync reads `secure` (boolean), not `protocol`; translate.
-    // originSync uses protocol directly, which is why --origin worked
-    // against wss while --feed didn't until this line.
-    return registrySync(this.registry, host, port, {
-      secure: protocol === 'wss',
-      followMounts: true,
-      ...options
-    })
-  }
-
-  /** @deprecated 2026-05-29 — renamed to {@link feed}. */
-  async watch (hostPort, options = {}) {
-    return this.feed(hostPort, options)
+    return registrySync(this.registry, hostPort, { followMounts: true, ...options })
   }
 
   async files (folder = '.', options = {}) {

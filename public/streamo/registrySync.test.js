@@ -125,7 +125,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('hello') === 'world')
     assert.equal(clientRegistry.get(keyHex).get('hello'), 'world')
@@ -141,7 +141,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
 
     await waitFor(() => clientRegistry.get(keyHex)?.get('v') === 1)
 
@@ -163,7 +163,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, homeKey)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       follow: (k, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -195,7 +195,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, homeKey)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
 
     // Home syncs (auto-subscribed via hello).
     await waitFor(() => clientRegistry.get(homeKey)?.get('members') !== undefined)
@@ -227,7 +227,7 @@ describe(import.meta.url, ({ test }) => {
     repoB.set({ owner: 'B' })
 
     const { wss, port } = await startServer(registryA)
-    const session = await registrySync(registryB, 'localhost', port)
+    const session = await registrySync(registryB, `localhost:${port}`)
 
     // B asks to sync both keys; subscribe is bidirectional, so each key flows
     // in whichever direction has data to share.
@@ -261,7 +261,7 @@ describe(import.meta.url, ({ test }) => {
     const serverRegistry = newRegistry()
 
     const { wss, port } = await startServer(serverRegistry)
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
     await session.subscribe(key)
 
     // The client's bytes flow up; the server reconstructs the chain.
@@ -288,7 +288,7 @@ describe(import.meta.url, ({ test }) => {
     // Phase 1: client connects fresh and syncs the initial state
     const clientRegistry = newRegistry()
     const { wss, port } = await startServer(serverRegistry)
-    const session1 = await registrySync(clientRegistry, 'localhost', port)
+    const session1 = await registrySync(clientRegistry, `localhost:${port}`)
     const clientRepo = await session1.subscribe(key)
     await waitFor(() => clientRepo.get('stage') === 1)
     const anchorOffset = clientRepo.signedLength
@@ -302,7 +302,7 @@ describe(import.meta.url, ({ test }) => {
     // Phase 3: client reconnects with its state — subscribe carries
     // (anchorOffset, anchorChainHash); server validates and streams only the
     // stage-2 bytes (not the full history).
-    const session2 = await registrySync(clientRegistry, 'localhost', port)
+    const session2 = await registrySync(clientRegistry, `localhost:${port}`)
     await session2.subscribe(key)
     await waitFor(() => clientRepo.get('stage') === 2)
     assert.equal(clientRepo.get('stage'), 2,
@@ -324,7 +324,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
 
     const repo = await session.subscribe(key)
     assert.ok(repo, 'subscribe should resolve to a StreamoRecord')
@@ -385,7 +385,7 @@ describe(import.meta.url, ({ test }) => {
     // StreamoRecords (no key is in writableKeys; this is the watch.js
     // / explorer / notify shape).
     const observerRegistry = newRegistry()
-    const session = await registrySync(observerRegistry, 'localhost', port)
+    const session = await registrySync(observerRegistry, `localhost:${port}`)
 
     // The down-channel works — bytes flow server → observer. Past this
     // point any echo-on-receive bug would have started pushing.
@@ -433,7 +433,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -469,7 +469,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       followMounts: true
     })
 
@@ -504,7 +504,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       follow: (k, repo, subscribe) => {
         for (const m of repo.get('members') ?? []) subscribe(m)
       },
@@ -529,7 +529,7 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
     const clientRegistry = newRegistry()
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
       }
@@ -555,12 +555,12 @@ describe(import.meta.url, ({ test }) => {
     const announced = fakeKey(21)
 
     const received = []
-    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key, t) => received.push({ key, topic: t })
     })
     sessionA.interest(topic)
 
-    const sessionB = await registrySync(newRegistry(), 'localhost', port)
+    const sessionB = await registrySync(newRegistry(), `localhost:${port}`)
 
     // Give the interest message time to reach the server
     await new Promise(r => setTimeout(r, 50))
@@ -581,12 +581,12 @@ describe(import.meta.url, ({ test }) => {
     const announced = fakeKey(23)
 
     const received = []
-    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => received.push(key)
     })
     // sessionA does NOT call interest(topic)
 
-    const sessionB = await registrySync(newRegistry(), 'localhost', port)
+    const sessionB = await registrySync(newRegistry(), `localhost:${port}`)
     await new Promise(r => setTimeout(r, 50))
     sessionB.announce(announced, topic)
 
@@ -604,16 +604,16 @@ describe(import.meta.url, ({ test }) => {
     const announced = fakeKey(25)
 
     const receivedA = [], receivedB = []
-    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => receivedA.push(key)
     })
-    const sessionB = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionB = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => receivedB.push(key)
     })
     sessionA.interest(topic)
     sessionB.interest(topic)
 
-    const sessionC = await registrySync(newRegistry(), 'localhost', port)
+    const sessionC = await registrySync(newRegistry(), `localhost:${port}`)
     await new Promise(r => setTimeout(r, 50))
     sessionC.announce(announced, topic)
 
@@ -633,7 +633,7 @@ describe(import.meta.url, ({ test }) => {
     const announced = fakeKey(27)
 
     const received = []
-    const session = await registrySync(newRegistry(), 'localhost', port, {
+    const session = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => received.push(key)
     })
     session.interest(topic)
@@ -657,14 +657,14 @@ describe(import.meta.url, ({ test }) => {
     const topic = fakeKey(40)
     const aliceKey = fakeKey(41)
 
-    const sessionAlice = await registrySync(newRegistry(), 'localhost', port)
+    const sessionAlice = await registrySync(newRegistry(), `localhost:${port}`)
     sessionAlice.announce(aliceKey, topic)
 
     // Give the announce time to register on the server before bob connects.
     await new Promise(r => setTimeout(r, 50))
 
     const received = []
-    const sessionBob = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionBob = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key, t) => received.push({ key, topic: t })
     })
     sessionBob.interest(topic)
@@ -686,7 +686,7 @@ describe(import.meta.url, ({ test }) => {
     const selfKey = fakeKey(43)
 
     const received = []
-    const session = await registrySync(newRegistry(), 'localhost', port, {
+    const session = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => received.push(key)
     })
     session.announce(selfKey, topic)
@@ -708,14 +708,14 @@ describe(import.meta.url, ({ test }) => {
     const topic = fakeKey(44)
     const aliceKey = fakeKey(45)
 
-    const sessionAlice = await registrySync(newRegistry(), 'localhost', port)
+    const sessionAlice = await registrySync(newRegistry(), `localhost:${port}`)
     sessionAlice.announce(aliceKey, topic)
     await new Promise(r => setTimeout(r, 50))
     sessionAlice.close()
     await new Promise(r => setTimeout(r, 50))
 
     const received = []
-    const sessionBob = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionBob = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => received.push(key)
     })
     sessionBob.interest(topic)
@@ -735,16 +735,16 @@ describe(import.meta.url, ({ test }) => {
     const bobKey   = fakeKey(48)
     const carolKey = fakeKey(49)
 
-    const sessionAlice = await registrySync(newRegistry(), 'localhost', port)
-    const sessionBob   = await registrySync(newRegistry(), 'localhost', port)
-    const sessionCarol = await registrySync(newRegistry(), 'localhost', port)
+    const sessionAlice = await registrySync(newRegistry(), `localhost:${port}`)
+    const sessionBob   = await registrySync(newRegistry(), `localhost:${port}`)
+    const sessionCarol = await registrySync(newRegistry(), `localhost:${port}`)
     sessionAlice.announce(aliceKey, topic)
     sessionBob.announce(bobKey,     topic)
     sessionCarol.announce(carolKey, topic)
     await new Promise(r => setTimeout(r, 50))
 
     const received = []
-    const sessionDavid = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionDavid = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => received.push(key)
     })
     sessionDavid.interest(topic)
@@ -768,12 +768,12 @@ describe(import.meta.url, ({ test }) => {
     const announced = fakeKey(29)
 
     const received = []
-    const sessionA = await registrySync(newRegistry(), 'localhost', port, {
+    const sessionA = await registrySync(newRegistry(), `localhost:${port}`, {
       onAnnounce: (key) => received.push(key)
     })
     sessionA.interest(topic)
 
-    const sessionB = await registrySync(newRegistry(), 'localhost', port)
+    const sessionB = await registrySync(newRegistry(), `localhost:${port}`)
 
     // Confirm routing works before disconnect
     await new Promise(r => setTimeout(r, 50))
@@ -817,7 +817,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => badRepo.signedLength === badRepo.byteLength, 1000)
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
-    const session = await registrySync(badRegistry, 'localhost', port)
+    const session = await registrySync(badRegistry, `localhost:${port}`)
 
     await waitFor(
       () => badRepo.pushRejected != null || badRepo.conflictDetected,
@@ -851,7 +851,7 @@ describe(import.meta.url, ({ test }) => {
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const clientRegistry = newRegistry()
     const { repo: clientRepo } = await openWriter(clientRegistry, 61)
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
 
     // Wait for sync to complete (client sees apple)
     await waitFor(() => clientRepo.get('v') === 'apple', 2000)
@@ -877,7 +877,7 @@ describe(import.meta.url, ({ test }) => {
     const { wss, port } = await startServer(serverRegistry, key)
     const clientRegistry = newRegistry()
     const events = []
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       reconnectBaseMs: 20,
       onConnectionChange: c => events.push(c)
     })
@@ -909,7 +909,7 @@ describe(import.meta.url, ({ test }) => {
     const { wss, port } = await startServer(serverRegistry, homeKey)
     const clientRegistry = newRegistry()
     const events = []
-    const session = await registrySync(clientRegistry, 'localhost', port, {
+    const session = await registrySync(clientRegistry, `localhost:${port}`, {
       reconnectBaseMs: 20,
       onConnectionChange: c => events.push(c)
     })
@@ -939,13 +939,13 @@ describe(import.meta.url, ({ test }) => {
 
     const received = []
     const events = []
-    const listener = await registrySync(newRegistry(), 'localhost', port, {
+    const listener = await registrySync(newRegistry(), `localhost:${port}`, {
       reconnectBaseMs: 20,
       onAnnounce: key => received.push(key),
       onConnectionChange: c => events.push(c)
     })
     listener.interest(topic)
-    const announcer = await registrySync(newRegistry(), 'localhost', port)
+    const announcer = await registrySync(newRegistry(), `localhost:${port}`)
     await new Promise(r => setTimeout(r, 50))
 
     // Drop the listener; once it's back, its interest must have been replayed.
@@ -965,7 +965,7 @@ describe(import.meta.url, ({ test }) => {
   test('session.close() shuts down without reconnecting', async ({ assert }) => {
     const { wss, port } = await startServer(newRegistry())
     const events = []
-    const session = await registrySync(newRegistry(), 'localhost', port, {
+    const session = await registrySync(newRegistry(), `localhost:${port}`, {
       reconnectBaseMs: 20,
       onConnectionChange: c => events.push(c)
     })
@@ -1000,7 +1000,7 @@ describe(import.meta.url, ({ test }) => {
     // Start the client BEFORE the server. retryFirstConnect defaults to
     // true; reconnectBaseMs: 20 keeps the retry tight for fast testing.
     const clientRegistry = newRegistry()
-    const sessionPromise = registrySync(clientRegistry, 'localhost', port, {
+    const sessionPromise = registrySync(clientRegistry, `localhost:${port}`, {
       reconnectBaseMs: 20
     })
 
@@ -1038,7 +1038,7 @@ describe(import.meta.url, ({ test }) => {
 
     let rejected = false
     try {
-      await registrySync(newRegistry(), 'localhost', port, {
+      await registrySync(newRegistry(), `localhost:${port}`, {
         retryFirstConnect: false
       })
     } catch (e) {
@@ -1061,7 +1061,7 @@ describe(import.meta.url, ({ test }) => {
     // WritableStreamoRecord (and the observer-doesn't-push guard
     // lets our pushes through).
     writableKeysFor.get(clientRegistry).add(keyHex)
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
     const clientRepo = await session.subscribe(keyHex)
     await waitFor(() => clientRepo.get('count') === 0)
     clientRepo.attachSigner(SIGNER, (await realKey(100)).name)
@@ -1120,7 +1120,7 @@ describe(import.meta.url, ({ test }) => {
     const baseline = recaller.watchCount
 
     async function oneCycle () {
-      const session = await registrySync(clientRegistry, 'localhost', port, { reconnectBaseMs: 20 })
+      const session = await registrySync(clientRegistry, `localhost:${port}`, { reconnectBaseMs: 20 })
       const repo = await session.subscribe(keyHex)
       await waitFor(() => repo.get('payload') === 'hello', 1000)
       session.close()
@@ -1182,7 +1182,7 @@ describe(import.meta.url, ({ test }) => {
     clientRepo.set({ branch: 'client-side' })
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
-    const session = await registrySync(clientRegistry, 'localhost', port)
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
 
     // Hello+auto-subscribe fires; the client's chain doesn't anchor on the
     // server's chain, so when the server's SIG arrives the relay-inbound

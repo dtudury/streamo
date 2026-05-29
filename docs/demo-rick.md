@@ -517,7 +517,7 @@ WebSocket.
   deterministic, fine to commit. Anyone running these commands on
   any machine gets the same pubkeys. Real production identities use
   100,000 iterations + real passwords.
-- **No `--peer streamo.dev`.** The demo cascade is fully local; the
+- **No `--feed streamo.dev`.** The demo cascade is fully local; the
   relay never reaches out. Browsers never see streamo.dev. Perfect
   for offline demos.
 

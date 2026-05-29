@@ -110,7 +110,7 @@ console.log(`[publish-identity-seed] target: ${protocol}://${host}:${port}`)
 // chunks up, accept whatever the relay has, hold the connection.
 const recaller = new Recaller(`identity-seed-${streamName}`)
 const repo = new WritableStreamoRecord({ recaller, name: `identity-seed-${streamName}` })
-const ws = await originSync(repo, publicKeyHex, host, port, { protocol })
+const ws = await originSync(repo, publicKeyHex, `${protocol}://${host}:${port}`)
 
 // Wait for the relay's replay to finish before attaching the signer.
 // Attaching too early would cover a prefix shorter than the relay's

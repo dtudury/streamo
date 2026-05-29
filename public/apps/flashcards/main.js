@@ -220,8 +220,7 @@ async function login (e) {
   registry._writableKeys = writableKeys
   session = await registrySync(
     registry,
-    location.hostname,
-    +location.port || (location.protocol === 'https:' ? 443 : 80),
+    location.host,
     {
       follow: (keyHex, repo, subscribe) => {
         const fd = repo.get('flashcardsDecks') ?? {}

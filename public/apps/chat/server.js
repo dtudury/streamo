@@ -179,24 +179,21 @@ if (server.signer) {
   console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
 }
 
-// Watch subscription — when STREAMO_WATCH (or its deprecated alias
-// STREAMO_PEER) is set, open a registrySync to that host. The
-// followMounts: true cascade subscribes to every Record the host's
-// home mounts reference, so bundled-app Records (library, chat,
-// flashcards, explorer, styles, todomvc, shared-note) come alive
-// locally without manual seeding. Canonical dev shape:
-// STREAMO_WATCH=streamo.dev in env/dev.env — a local relay that's a window
-// onto production. Unset for production itself (no self-subscription).
-// "Watch" rather than "peer" because streamo's per-record authority is
-// asymmetric: each Record has one origin, so a relay is a subscriber to
-// records the host originates, not a peer in the symmetric sense.
-const watchHost = process.env.STREAMO_WATCH ?? process.env.STREAMO_PEER
-if (watchHost) {
-  console.log(`[chat] watch:       opening registrySync → ${watchHost}`)
-  await server.watch(watchHost, {
-    onConnectionChange: c => console.log(`[chat] watch ${watchHost}: ${c ? 'connected' : 'disconnected'}`)
+// Feed subscription — when STREAMO_FEED is set, open a registrySync
+// to that host. The followMounts: true cascade subscribes to every
+// Record the host's home mounts reference, so bundled-app Records
+// (library, chat, flashcards, explorer, styles, todomvc, shared-note)
+// come alive locally without manual seeding. Canonical dev shape:
+// STREAMO_FEED=streamo.dev in env/dev.env — a local relay that's a
+// window onto production. Unset for production itself (no
+// self-subscription).
+const feedHost = process.env.STREAMO_FEED
+if (feedHost) {
+  console.log(`[chat] feed:        opening registrySync → ${feedHost}`)
+  await server.feed(feedHost, {
+    onConnectionChange: c => console.log(`[chat] feed ${feedHost}: ${c ? 'connected' : 'disconnected'}`)
   })
-  console.log(`[chat] watch:       cascade subscribing to mounted records`)
+  console.log(`[chat] feed:        cascade subscribing to mounted records`)
 }
 
 // Web Push — the relay's subscription store, endpoints, and the watcher

@@ -56,8 +56,7 @@ async function login (e) {
       : new StreamoRecord({ recaller })
   })
 
-  const port = +location.port || (location.protocol === 'https:' ? 443 : 80)
-  const session = await registrySync(registry, location.hostname, port, {
+  const session = await registrySync(registry, location.host, {
     onConnectionChange: c => ui.set('connected', c)
   })
   myRepo = await session.subscribe(myKey)

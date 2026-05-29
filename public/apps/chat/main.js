@@ -249,7 +249,7 @@ async function login (e) {
     // ping-pong forever. Without this set, every peer-back ricochets into
     // another peer-back and so on.
     const announcedTo = new Set()
-    session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
+    session = await registrySync(registry, location.host, {
       onConnectionChange: c => connected.set(c),
       follow: (keyHex, repo, subscribe) => {
         for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
@@ -302,7 +302,7 @@ async function login (e) {
       // doesn't auto-reconnect and race the fresh one we build below.
       session.close()
       const freshAnnouncedTo = new Set()
-      session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
+      session = await registrySync(registry, location.host, {
         onConnectionChange: c => connected.set(c),
         follow: (keyHex, repo, subscribe) => {
           for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)

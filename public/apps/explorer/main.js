@@ -27,8 +27,6 @@ import { AtView, handleAtViewAction } from './at-view.js'
 
 // ── Connect ───────────────────────────────────────────────────────────────
 
-const port = +location.port || (location.protocol === 'https:' ? 443 : 80)
-
 // Session reference, populated when registrySync resolves. The paste-a-key
 // form below uses session.subscribe(); the conn pill at the top tells the
 // user when the connection is ready, so submit-before-ready is rare.
@@ -46,14 +44,14 @@ const currentMembers = liveValue([], { recaller, name: 'currentMembers' })
 // home.value.journalists and cascades subscriptions. The `members`
 // list, when present (historical data on existing relays), is also
 // walked — new joins arrive via announce instead.
-registrySync(registry, location.hostname, port, {
+registrySync(registry, location.host, {
   onHello: msg => { if (msg.home) homeKey.set(msg.home) },
   // Connection pill — follows the live socket across reconnects. registrySync
   // reconnects on its own now, so a drop reads "reconnecting…" rather than the
   // old "refresh to reconnect", which no longer reflects what happens.
   onConnectionChange: connected => {
     state.set('connection', connected
-      ? { status: 'ok',  text: `connected · ${location.hostname}:${port}` }
+      ? { status: 'ok',  text: `connected · ${location.host}` }
       : { status: 'err', text: 'reconnecting…' })
   },
   follow: (keyHex, repo, subscribe) => {

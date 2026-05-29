@@ -122,18 +122,6 @@ program
       .default([])
   )
   .addOption(
-    new Option('--watch <url>', '[DEPRECATED 2026-05-29] alias for --feed. "Watch" named one side of the connection pair (the subscriber). "Feed" names the connection itself — pairs cleanly with outlet (a relay opens an outlet; other relays attach feeds). Use --feed.')
-      .env('STREAMO_WATCH')
-      .argParser((val, prev = []) => [...prev, val])
-      .default([])
-  )
-  .addOption(
-    new Option('--peer <url>', '[DEPRECATED 2026-05-28] alias for --feed. The "peer" name implied a symmetric federation relationship streamo\'s per-record authority model prohibits. Use --feed.')
-      .env('STREAMO_PEER')
-      .argParser((val, prev = []) => [...prev, val])
-      .default([])
-  )
-  .addOption(
     new Option('--subscribe <pubkey>', 'subscribe to a specific Record key beyond what the feed\'s followMounts cascade brings in. Repeatable. Requires --feed to give it a transport — subscriptions are attached to the first open feed session.')
       .env('STREAMO_SUBSCRIBE')
       .argParser((val, prev = []) => [...prev, val])
@@ -279,6 +267,13 @@ function applyStreamoJsonConfig (configPath, opts) {
   if (Array.isArray(s.subscribe)) {
     opts.subscribe = [...(opts.subscribe || []), ...s.subscribe]
   }
+
+  // hostMap: { hostname: pubkeyHex } for host-aware --web routing.
+  // Config-only (a map doesn't make sense as a CLI flag). webSync uses
+  // this to pick which Record's files serve each incoming Host: header.
+  if (s.hostMap && typeof s.hostMap === 'object') {
+    opts.hostMap = { ...(opts.hostMap || {}), ...s.hostMap }
+  }
 }
 
 if (options.verbose !== undefined) setLogLevel(options.verbose)
@@ -408,14 +403,13 @@ if (options.origin) {
   console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
 }
 
-// --feed (formerly --watch / --peer) attaches this relay's outbound
-// connections to remote outlets. Each remote's home Record + mounted
-// records flow down via the followMounts cascade. Combined with --web's
-// hostMap option, this lets one relay serve content authored on
-// another. Repeatable: each --feed opens an independent connection.
-// We honor --feed, --watch (deprecated), and --peer (deprecated) by
-// combining them at use site, so existing callers keep working.
-const feedHosts = [...(options.feed || []), ...(options.watch || []), ...(options.peer || [])]
+// --feed attaches this relay's outbound connections to remote outlets.
+// Each remote's home Record + mounted records flow down via the
+// followMounts cascade. Combined with --web's hostMap option, this lets
+// one relay serve content authored on another. Repeatable: each --feed
+// opens an independent connection. (Deprecated 10.x aliases --watch and
+// --peer retired in 11.0.)
+const feedHosts = options.feed || []
 const feedSessions = []
 if (feedHosts.length > 0) {
   for (const feedUrl of feedHosts) {
@@ -507,6 +501,12 @@ if (options.web) {
   // lets a bare relay serve a homepage whose bytes arrived via origin sync.
   webOptions.serveRepoFiles = { repo: server.streamo }
   console.log(`\x1b[32mserving from Record: value.files ↔ http://localhost:${+options.web}/\x1b[0m`)
+
+  if (options.hostMap) {
+    webOptions.hostMap = options.hostMap
+    const count = Object.keys(options.hostMap).length
+    console.log(`\x1b[32mhostMap: ${count} host${count === 1 ? '' : 's'} routed to non-primary Records\x1b[0m`)
+  }
 
   await server.web(+options.web, webOptions)
 }

@@ -5,6 +5,79 @@ for what's next.
 
 ---
 
+## 12.0.0 — sync primitives speak one dialect
+
+The two outbound sync primitives — `registrySync` (multi-Record,
+followMounts cascade, after-drop reconnect) and `originSync` (single
+Record, simplest possible wire) — used to disagree on how you told them
+*where to dial*. `registrySync` took `(host, port, { secure })`;
+`originSync` took `(host, port, { protocol })`. Same wire underneath,
+two adjacent-but-incompatible option shapes. Real footgun: passing
+`{ protocol }` to `registrySync` silently fell back to `secure: false`
+and dialed `ws://` against a TLS endpoint (HTTP 400). Spotted when the
+Fly backup relay couldn't reach `streamo.dev:443` via `--feed`.
+
+**Both now take a single `hostPort` string.** `ws://host[:port]`,
+`wss://host[:port]`, or bare `host[:port]` — one canonical parser
+(`parseOrigin`, lifted to `utils.js`) handles all three. In a browser,
+bare specs derive `ws`/`wss` from the page's protocol (matches
+the SOP the WebSocket constructor would enforce anyway); outside
+the browser, port 443 (or unspecified) → wss, else ws.
+
+The browser-app callers all collapse from:
+
+```js
+registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), opts)
+```
+
+to:
+
+```js
+registrySync(registry, location.host, opts)
+```
+
+`StreamoServer.feed()` and `.connect()` become trivial passthroughs —
+no protocol/secure translation, no parsed-pieces shuffling.
+
+### the breaking changes
+
+- **`registrySync(registry, host, port, options)` → `registrySync(registry, hostPort, options)`.**
+  The `options.secure` flag is gone; pass `wss://` (or rely on the
+  bare-host heuristic) instead.
+- **`originSync(record, pubkeyHex, host, port, options)` → `originSync(record, pubkeyHex, hostPort, options)`.**
+  The `options.protocol` flag is gone for the same reason.
+- **`claudeSync({ host, port, protocol, ... })` → `claudeSync({ hostPort, ... })`.**
+  Same collapse.
+- **`StreamoServer.watch()` removed.** Aliased to `feed()` in 11.x;
+  retired here. Use `server.feed(hostPort, options)`.
+- **`bin/streamo.js` retires `--watch` and `--peer`.** Both were
+  deprecated aliases for `--feed` in 11.x. The matching env vars
+  `STREAMO_WATCH` and `STREAMO_PEER` are gone — use `STREAMO_FEED`.
+
+### what landed alongside
+
+- **`--subscribe <pubkey>`** on `bin/streamo.js` and `streamo.json`
+  config. Pulls a Record beyond what the feed's `followMounts` cascade
+  brings in naturally. Requires `--feed` to give it a transport;
+  subscriptions attach to the first open feed session and stick
+  across reconnect.
+- **`hostMap` honored from `streamo.json`** config. The wire was already
+  there (`webSync` reads it for host-aware routing); the config-to-options
+  path is now plumbed.
+- **`parseOrigin` exported from `utils.js`** as the single canonical
+  hostPort normalizer. Previously lived inside `StreamoServer.js`.
+
+### why a major
+
+The signature changes are real breaking changes: existing callers of
+`registrySync(reg, host, port, opts)` now fail at the type system level
+(extra positional arg silently becomes the options bag). No
+compatibility shim — per the held-for-major-items-must-ship lens, this
+is exactly when to make the call sites uniform rather than leave the
+divergence as documentation-of-footgun.
+
+---
+
 ## 11.1.0 — recoveryStuck, shared-note demo, real-bug catches in the browser
 
 The "architecture-promise made visible at the app layer" release.

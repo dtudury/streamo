@@ -16,7 +16,7 @@
 // Use native WebSocket in the browser; fall back to the `ws` package in Node.
 const WS = globalThis.WebSocket ?? (await import('ws')).default
 
-import { hexToBytes, bytesToHex } from './utils.js'
+import { hexToBytes, bytesToHex, parseOrigin } from './utils.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { turtleIn, turtleOut, turtleLocal } from './utils/turtleLog.js'
@@ -678,11 +678,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *
  * ### Basic usage — sync the relay's public face
  *
- *   const session = await registrySync(myRegistry, 'localhost', 8080)
+ *   const session = await registrySync(myRegistry, 'localhost:8080')
  *
  * ### Ephemeral messaging — express interest and announce related repos
  *
- *   const session = await registrySync(myRegistry, 'localhost', 8080, {
+ *   const session = await registrySync(myRegistry, 'localhost:8080', {
  *     onAnnounce: (key, topic) => { console.log(key, 'is related to', topic) }
  *   })
  *   session.interest(rootKey)          // start receiving announcements for rootKey
@@ -690,7 +690,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *
  * ### Content-driven discovery via `follow`
  *
- *   const session = await registrySync(myRegistry, 'localhost', 8080, {
+ *   const session = await registrySync(myRegistry, 'localhost:8080', {
  *     follow: (keyHex, repo, subscribe) => {
  *       for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
  *     }
@@ -698,27 +698,22 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *
  * ### Subscribing to a specific key not reachable from the relay's home
  *
- *   const session = await registrySync(myRegistry, 'localhost', 8080)
+ *   const session = await registrySync(myRegistry, 'localhost:8080')
  *   session.subscribe(privateKeySharedOutOfBand)
  *
  * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
- * @param {string} host
- * @param {number} port
+ * @param {string} hostPort  ws://, wss://, or bare host[:port]; see parseOrigin
  * @param {RegistrySyncOptions} [options]
  * @returns {Promise<RegistrySession>}
  */
-export function registrySync (registry, host, port, options = {}) {
+export function registrySync (registry, hostPort, options = {}) {
   const {
     onConnectionChange = null,
     reconnectBaseMs = RECONNECT_BASE_MS,
     retryFirstConnect = true
   } = options
-  // In a browser served over https://, plain ws:// is blocked as mixed
-  // content, so derive the scheme from location. Node has no location —
-  // a Node client reaching a TLS relay passes `options.secure` to force
-  // wss; otherwise it falls through to plain ws://.
-  const secure = options.secure ?? (globalThis.location?.protocol === 'https:')
-  const url = `${secure ? 'wss' : 'ws'}://${host}:${port}`
+  const { host, port, protocol } = parseOrigin(hostPort)
+  const url = `${protocol}://${host}:${port}`
 
   // Intent — the keys and topics this session has asked for. A
   // handleRegistryPeer is per-connection and forgets everything when its

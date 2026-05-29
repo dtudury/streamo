@@ -200,8 +200,7 @@ describe(import.meta.url, ({ test }) => {
 
     // The federation step: B opens a registrySync session to A. The
     // hello-handshake auto-subscribes B to A's home (sharedKey).
-    const peerSession = await registrySync(registryB, '127.0.0.1', portA, {
-      protocol: 'ws',
+    const peerSession = await registrySync(registryB, `127.0.0.1:${portA}`, {
       followMounts: true
     })
 

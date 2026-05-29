@@ -51,14 +51,15 @@ const name       = process.env.STREAMO_NAME                ?? 'streamo'
 const host       = process.env.STREAMO_RELAY_HOST          ?? 'localhost'
 const port       = +(process.env.STREAMO_RELAY_PORT        ?? 8080)
 const protocol   = process.env.STREAMO_RELAY_PROTOCOL      ?? (port === 443 ? 'wss' : 'ws')
+const hostPort   = `${protocol}://${host}:${port}`
 
 if (!username || !password) {
   console.error('STREAMO_CLAUDE_USERNAME and STREAMO_CLAUDE_PASSWORD must be set')
   process.exit(2)
 }
 
-console.log(`[claude-says] ${protocol}://${host}:${port}`)
-const claude = await claudeSync({ username, password, host, port, protocol, iterations, name })
+console.log(`[claude-says] ${hostPort}`)
+const claude = await claudeSync({ username, password, hostPort, iterations, name })
 console.log(`[claude-says] pubkey: ${claude.publicKeyHex}`)
 
 const entry = await claude.appendJournalEntry(headline, body)

@@ -98,7 +98,7 @@ console.log(`[publish-memory] target:         ${protocol}://${host}:${port}`)
 // Open the Record + connect upstream.
 const recaller = new Recaller(`publish-memory-${streamName}`)
 const repo = new WritableStreamoRecord({ recaller, name: `publish-memory-${streamName}` })
-const ws = await originSync(repo, publicKeyHex, host, port, { protocol })
+const ws = await originSync(repo, publicKeyHex, `${protocol}://${host}:${port}`)
 
 // Wait for the relay's replay to finish before attaching the signer.
 await new Promise(r => setTimeout(r, 2500))

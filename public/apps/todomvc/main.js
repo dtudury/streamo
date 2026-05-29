@@ -74,7 +74,7 @@ const registry = new StreamoRecordRegistry({
     ? new WritableStreamoRecord({ recaller })
     : new StreamoRecord({ recaller })
 })
-const session = await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80))
+const session = await registrySync(registry, location.host)
 
 // Auto-subscribe to whatever key shows up in the URL. Reads `urlKey()`
 // (URL hashParts) and `registry.get(key)` (registry keys), so it

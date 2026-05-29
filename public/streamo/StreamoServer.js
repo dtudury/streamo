@@ -14,20 +14,17 @@ import { bytesToHex } from './utils.js'
 import { webSync } from './webSync.js'
 
 /**
- * Parse an origin spec into { host, port, protocol } for `originSync`.
- *
- * Accepts:
- *   - `ws://host[:port]` / `wss://host[:port]` — explicit URL shape
- *   - `host:port` shorthand — `:443` → wss, any other port → ws
- *   - `host` shorthand (no port) — wss (production default; same
- *      heuristic `StreamoRecord.merge`'s URL parser uses)
- *
- * Defaults the missing port from the protocol (wss → 443, ws → 80).
- * Exported so `bin/streamo.js`, alternative entry points, and tests
- * can share one canonical parser.
- *
- * @param {string} hostPort
- * @returns {{ host: string, port: number, protocol: 'ws'|'wss' }}
+ * @file StreamoServer — composes a Record with sync/serve primitives
+ * (archive, file, web, outlet, feed, etc.). One canonical entry point
+ * shared by bin/streamo.js, tests, and embedding contexts.
+ */
+
+/**
+ * Parse a host specifier into { host, port, protocol }. Accepts
+ *   `ws://host[:port]`, `wss://host[:port]`, or bare `host[:port]`.
+ * For bare specs: port 443 (or no port) → wss; any other port → ws.
+ * Same heuristic as StreamoRecord.merge's URL parser; exported so
+ * everywhere shares one canonical normalization.
  */
 export function parseOrigin (hostPort) {
   let urlString = hostPort
@@ -45,10 +42,6 @@ export function parseOrigin (hostPort) {
 export class StreamoServer {
   #dataDir
   #keyIterations
-  // Per-repo archive closers, keyed by pubkey. Populated by the
-  // registry factory below as each repo is opened. `close()` calls
-  // the primary's entry; if richer "close all" semantics are ever
-  // needed we have the whole map sitting here ready.
   #archiveClosers
 
   name
@@ -67,10 +60,9 @@ export class StreamoServer {
     let resolvedPublicKeyHex
 
     if (publicKeyHex) {
-      // Relay-only mode: open a repo by its pubkey, no credential derivation,
-      // no signer attached. Bytes arrive via sync (origin or outlet); commits
-      // happen elsewhere (an author process with the matching credentials).
-      // files() / merge() throw in this mode because both write signed commits.
+      // Relay-only mode: open by pubkey, no signer. Bytes arrive via sync;
+      // any author process runs elsewhere. files() / merge() throw here
+      // because both write signed commits.
       if (username || password) {
         throw new Error('StreamoServer.create: cannot combine publicKeyHex with {username, password}')
       }
@@ -89,34 +81,30 @@ export class StreamoServer {
 
     const archiveClosers = new Map()
     const recaller = new Recaller(`server:${name ?? resolvedPublicKeyHex.slice(0, 8)}`)
-    // dataDir = falsy → ephemeral mode: no disk persistence, the in-memory
-    // cache still works identically. The cache holds whatever bytes flowed
-    // in via wire or local authoring; restart wipes the cache (no archive
-    // to rehydrate from). Useful for demos and tests that need to prove
-    // the wire path without an archive masking the result.
+
+    // Ephemeral mode: in-memory cache works identically; nothing hits disk.
+    // Restart loses everything (no archive to rehydrate from).
     const isEphemeral = !dataDir
-    // Writable for the primary IFF this server is in author mode (has a
-    // signer to attach). Subscribed peer keys, and the primary in relay-
-    // only mode (publicKeyHex without credentials), get the slim
-    // StreamoRecord — read-only-by-type. Calling set() on a slim Record
-    // raises a clear TypeError instead of silently no-op'ing on the
-    // unsigned-but-appended bytes the relay would then reject.
+
+    // Writable for the primary only when we have a signer. Subscribed peer
+    // keys and the relay-only primary stay slim — set() on a slim Record
+    // raises TypeError instead of silently no-op'ing on bytes the relay
+    // would reject downstream anyway.
     const registry = new StreamoRecordRegistry({
       recaller,
       factory: async key => {
         const isAuthorPrimary = key === resolvedPublicKeyHex && signer !== null
         const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
-        const repo = new RecordClass({ recaller })
+        const record = new RecordClass({ recaller })
         if (!isEphemeral) {
-          const { close } = await archiveSync(repo, dataDir, key)
+          const { close } = await archiveSync(record, dataDir, key)
           archiveClosers.set(key, close)
         }
-        return repo
+        return record
       }
     })
     const streamo = await registry._materialize(resolvedPublicKeyHex)
-    // The factory above produced a WritableStreamoRecord IFF signer is
-    // non-null. The cast surfaces the dependent type to the checker.
+    // Type cast: factory above produced Writable iff signer !== null.
     if (signer) /** @type {WritableStreamoRecord} */ (streamo).attachSigner(signer, name)
 
     const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
@@ -127,18 +115,10 @@ export class StreamoServer {
   }
 
   /**
-   * Close the primary streamo and wait for its archive writer to drain.
-   * Signals end-of-stream to the writer, lets it finish what's in the
-   * pipe, closes the file handle. Use before `process.exit()` so the
-   * tail (typically SIG chunks appended by auto-sign) lands cleanly
-   * instead of being dropped by the exit.
-   *
-   * After this resolves the streamo is closed — no further appends.
-   * Long-lived servers (the relay) never call this; the writer runs
-   * for the lifetime of the process.
-   *
-   * Only closes the primary repo — registry peers opened in this
-   * process aren't written to from here.
+   * Drain the primary's archive writer before exiting. Lets the tail
+   * (usually auto-sign SIGs) land instead of being dropped by the exit.
+   * Long-lived servers never call this; the writer runs for the process
+   * lifetime. Only the primary's archive is closed.
    */
   async close () {
     const close = this.#archiveClosers.get(this.publicKeyHex)
@@ -151,9 +131,8 @@ export class StreamoServer {
 
   outlet (port) {
     // Pass our home pubkey so the registry-handshake `hello` carries
-    // something for `--watch` clients to auto-subscribe to. Without
-    // it, a registry session opens but the cascade has nothing to
-    // walk and the client never receives our chain.
+    // something for `--feed` clients to auto-subscribe to — without it,
+    // the registry session opens but the cascade has nothing to walk.
     return outletSync(this.registry, port, { home: this.publicKeyHex })
   }
 
@@ -163,33 +142,15 @@ export class StreamoServer {
   }
 
   /**
-   * Attach a *feed* — this relay's outbound WebSocket connection to a
-   * remote outlet. Once attached, bytes for the remote's home Record
-   * (and its mounted records via the `followMounts` cascade) flow down;
-   * any commits this relay authors flow up through the same connection.
+   * Attach a *feed* — outbound WebSocket dial to a remote outlet. Bytes
+   * for the remote's home Record (and its mounted records via the
+   * followMounts cascade) flow down; any local commits flow up the same
+   * connection. The pair: an outlet listens, a feed dials in.
    *
-   * The vocabulary: **outlet** opens a listening port; **feed** is the
-   * outbound dial that plugs into it. Renaming history:
-   *   - `peer()` — symmetric federation language; prohibited by the
-   *     per-record authority model. Deprecated 2026-05-28, retired
-   *     2026-05-29.
-   *   - `watch()` — better but still a sense-verb describing one side
-   *     of the pair, not the connection itself. Deprecated 2026-05-29.
-   *   - `feed()` — current. Pairs with `outlet` as a wall-socket-style
-   *     metaphor: a relay opens an outlet; other relays attach feeds.
-   *
-   * Mechanism: `registrySync` opens a WebSocket to the host, receives
-   * its `hello { home }`, auto-subscribes to that home, and the
-   * `followMounts: true` cascade subscribes to every Record referenced
-   * in the home's `mounts` table.
-   *
-   * @param {string} hostPort  ws/wss URL or host[:port] shorthand
-   *   (same shape as `connect()`)
-   * @param {object} [options]  forwarded to `registrySync` — e.g.
-   *   `{ follow, followMounts, onAnnounce, onConnectionChange }`.
-   *   Defaults to `followMounts: true` (the federation-pattern default —
-   *   subscribe to everything the host's home mounts).
-   * @returns {Promise<ReturnType<typeof registrySync>>}
+   * `options` forwarded to registrySync; defaults to `followMounts: true`
+   * (the federation pattern — pull everything the host's home mounts).
+   * Renaming history: peer() → watch() → feed(). Both prior names retired
+   * 2026-05-29.
    */
   async feed (hostPort, options = {}) {
     const { host, port, protocol } = parseOrigin(hostPort)
@@ -200,10 +161,7 @@ export class StreamoServer {
     })
   }
 
-  /** @deprecated 2026-05-29 — renamed to {@link feed}. Watch named one
-   *  side of the connection pair; feed names the connection. Use
-   *  `feed(hostPort, options)` instead. This alias is preserved for
-   *  existing callers; remove after a migration grace period. */
+  /** @deprecated 2026-05-29 — renamed to {@link feed}. */
   async watch (hostPort, options = {}) {
     return this.feed(hostPort, options)
   }

@@ -26,7 +26,7 @@ program
   .version(version)
 
   .addOption(
-    new Option('--config <path>', 'path to a streamo.json config file. Fields under `identity` (name/username/password/keyIterations/self) and `server` (web/outlet/watch/files/archive/verbose/recordFile) fill in any options not set on the CLI. Relative paths resolve against the config file\'s directory.')
+    new Option('--config <path>', 'path to a streamo.json config file. Fields under `identity` (name/username/password/keyIterations/self) and `server` (web/outlet/feed/files/archive/verbose/recordFile) fill in any options not set on the CLI. Relative paths resolve against the config file\'s directory.')
       .env('STREAMO_CONFIG')
   )
   .addOption(
@@ -116,13 +116,19 @@ program
       .env('STREAMO_ORIGIN')
   )
   .addOption(
-    new Option('--watch <url>', 'subscribe to another relay\'s home Record (and its mounted records via the followMounts cascade) and watch for changes. Streamo\'s per-record authority model makes this an asymmetric subscription (each Record has one origin; this flag makes the local relay a subscriber). Can be repeated; each value opens an independent registrySync session. URL shape matches --origin.')
+    new Option('--feed <url>', 'attach a feed to a remote outlet — this relay\'s outbound WebSocket dial. Bytes for the remote\'s home Record (and its mounted records via the followMounts cascade) flow down; any local commits flow up through the same connection. Can be repeated; each value opens an independent feed. URL shape matches --origin.')
+      .env('STREAMO_FEED')
+      .argParser((val, prev = []) => [...prev, val])
+      .default([])
+  )
+  .addOption(
+    new Option('--watch <url>', '[DEPRECATED 2026-05-29] alias for --feed. "Watch" named one side of the connection pair (the subscriber). "Feed" names the connection itself — pairs cleanly with outlet (a relay opens an outlet; other relays attach feeds). Use --feed.')
       .env('STREAMO_WATCH')
       .argParser((val, prev = []) => [...prev, val])
       .default([])
   )
   .addOption(
-    new Option('--peer <url>', '[DEPRECATED 2026-05-28] alias for --watch. The "peer" name implied a symmetric federation relationship streamo\'s per-record authority model prohibits — every Record has exactly one origin, so a relay is either an origin or a subscriber per-Record, never a peer in the symmetric sense. Use --watch.')
+    new Option('--peer <url>', '[DEPRECATED 2026-05-28] alias for --feed. The "peer" name implied a symmetric federation relationship streamo\'s per-record authority model prohibits. Use --feed.')
       .env('STREAMO_PEER')
       .argParser((val, prev = []) => [...prev, val])
       .default([])
@@ -225,11 +231,13 @@ function applyStreamoJsonConfig (configPath, opts) {
     opts.outlet = s.outlet === true ? '1024' : String(s.outlet)
   }
 
-  // watch: merged with any CLI --watch flags (so config can declare base
-  // upstream subscriptions and CLI can add more)
-  if (s.watch) {
-    const watches = Array.isArray(s.watch) ? s.watch : [s.watch]
-    opts.watch = [...(opts.watch || []), ...watches]
+  // feed: merged with any CLI --feed flags (so config can declare base
+  // outbound connections and CLI can add more). `feed` is canonical;
+  // `watch` is accepted as a deprecated alias.
+  const feedField = s.feed ?? s.watch
+  if (feedField) {
+    const feeds = Array.isArray(feedField) ? feedField : [feedField]
+    opts.feed = [...(opts.feed || []), ...feeds]
   }
 
   // files: directory to mirror — resolved against config's directory
@@ -371,18 +379,18 @@ if (options.origin) {
   console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)
 }
 
-// --watch (formerly --peer) subscribes this relay to another relay's
-// Records. Each watched host's home Record + mounted records flow down
-// into our local registry (via the followMounts cascade). Combined with
-// --web's hostMap option, this lets one relay serve content authored on
-// another. Repeatable: each --watch opens an independent registrySync
-// session. We honor both --watch and --peer (deprecated alias) by
+// --feed (formerly --watch / --peer) attaches this relay's outbound
+// connections to remote outlets. Each remote's home Record + mounted
+// records flow down via the followMounts cascade. Combined with --web's
+// hostMap option, this lets one relay serve content authored on
+// another. Repeatable: each --feed opens an independent connection.
+// We honor --feed, --watch (deprecated), and --peer (deprecated) by
 // combining them at use site, so existing callers keep working.
-const watchHosts = [...(options.watch || []), ...(options.peer || [])]
-if (watchHosts.length > 0) {
-  for (const watchUrl of watchHosts) {
-    await server.watch(watchUrl)
-    console.log(`\x1b[32mwatch: subscribed to ${watchUrl}\x1b[0m`)
+const feedHosts = [...(options.feed || []), ...(options.watch || []), ...(options.peer || [])]
+if (feedHosts.length > 0) {
+  for (const feedUrl of feedHosts) {
+    await server.feed(feedUrl)
+    console.log(`\x1b[32mfeed: attached to ${feedUrl}\x1b[0m`)
   }
 }
 

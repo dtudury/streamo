@@ -6,23 +6,24 @@
  * but spawned together as one orchestrator command, with each relay's
  * stdout colored by source so you can watch bytes propagate between them.
  *
- * ## Topology (Version B — "homepage watches its sources")
+ * ## Topology (Version B — "homepage's feeds attach to its sources")
  *
- *   homepage  ───watches──▶ library (outlet on 1024)
- *                ───watches──▶ explorer (outlet on 1025)
+ *   homepage  ──feed─▶ library (outlet on 1024)
+ *             ──feed─▶ explorer (outlet on 1025)
  *   homepage   serves HTTP at http://localhost:8080/
  *   homepage   owns the homepage Record's chain (--files)
  *   library    owns the library Record's chain (--files)
  *   explorer   owns the explorer Record's chain (--files)
  *
- * Each Record's relay opens an outlet for incoming connections; homepage
- * dials out to library's and explorer's outlets (--watch) and serves
- * their content composed under URL paths via mounts.json.
+ * Each Record's relay opens an outlet for incoming connections; the
+ * homepage attaches feeds (outbound WebSocket dials) to library's and
+ * explorer's outlets, and serves their content composed under URL paths
+ * via mounts.json. The pairing: outlet listens, feed dials in.
  *
- * ## In the new streamo.json shape we've been designing
+ * ## In the streamo.json shape
  *
- *   homepage: { server: { outlet: true, web: 8080, files: "./homepage/files",
- *                         watch: ["localhost:1024", "localhost:1025"] } }
+ *   homepage: { server: { web: 8080, files: "./homepage/files",
+ *                         feed: ["localhost:1024", "localhost:1025"] } }
  *   library:  { server: { outlet: 1024, files: "./library/files" } }
  *   explorer: { server: { outlet: 1025, files: "./explorer/files" } }
  *
@@ -34,7 +35,7 @@
  *
  *   1. library  (outlet)
  *   2. explorer (outlet)
- *   3. homepage (web + watches both — its watches retry-until-success, so
+ *   3. homepage (web + feeds to both — its feeds retry-until-success, so
  *                even if order flipped it'd still come together; but the
  *                deterministic order makes the log story reproducible)
  *
@@ -151,7 +152,7 @@ const indexHtml = `<!doctype html>
   .pending { color: #888; }
 </style>
 <h1><img src="/streamo.svg" alt="" style="height:1em;vertical-align:-.15em">  three records, three relays, one website</h1>
-<p>The homepage relay (this server) watches a library relay and an explorer
+<p>The homepage relay (this server) has feeds to a library relay and an explorer
    relay. mounts.json declares URL routing into both. <em>Composed, not
    copied.</em></p>
 <ul>
@@ -244,7 +245,7 @@ await writeStreamoJson('homepage', {
   web: 8080,
   archive: false,
   files: './files',
-  watch: ['localhost:1024', 'localhost:1025'],
+  feed: ['localhost:1024', 'localhost:1025'],
   recordFile: false,
   verbose: 'debug'
 })

@@ -128,6 +128,17 @@ await cp(
   join(repoRoot, 'public', 'homepage', 'streamo.svg'),
   join(demoDir, 'homepage', 'files', 'streamo.svg')
 )
+// Explorer's index.html references /apps/styles/proto.css with an absolute
+// URL. In production there's a separate styles Record mounted at
+// /apps/styles/; this 3-relay demo doesn't include one, so just put the
+// CSS in homepage's own files at the matching path. files-first lookup
+// serves it with the right MIME type. (The next demo will probably add
+// a 4th relay for styles to show the mount path cleanly.)
+await mkdir(join(demoDir, 'homepage', 'files', 'apps', 'styles'), { recursive: true })
+await cp(
+  join(repoRoot, 'public', 'apps', 'styles', 'proto.css'),
+  join(demoDir, 'homepage', 'files', 'apps', 'styles', 'proto.css')
+)
 const indexHtml = `<!doctype html>
 <meta charset="utf-8">
 <link rel="icon" type="image/svg+xml" href="/streamo.svg">

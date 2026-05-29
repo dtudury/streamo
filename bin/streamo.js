@@ -254,6 +254,13 @@ function applyStreamoJsonConfig (configPath, opts) {
   if (s.recordFile !== undefined && opts.recordFile === undefined) {
     opts.recordFile = s.recordFile
   }
+
+  // preserved: explicit list of pubkeys whose archives route to
+  // `<dataDir>/preserved/`. No transitive walk — each entry is named
+  // here by hand. friction-as-feature; see the human-scale lens.
+  if (Array.isArray(s.preserved)) {
+    opts.preserved = [...(opts.preserved || []), ...s.preserved]
+  }
 }
 
 if (options.verbose !== undefined) setLogLevel(options.verbose)
@@ -285,6 +292,7 @@ if (options.homeKey) {
     publicKeyHex:  options.homeKey,
     dataDir:       options.dataDir,
     keyIterations: options.keyIterations,
+    preserved:     options.preserved || [],
   })
 } else {
   options.name     ||= question('Name: ')
@@ -301,6 +309,7 @@ if (options.homeKey) {
     password,
     dataDir:       options.dataDir,
     keyIterations: options.keyIterations,
+    preserved:     options.preserved || [],
   })
 }
 

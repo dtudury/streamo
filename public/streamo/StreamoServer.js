@@ -1,3 +1,4 @@
+import { join } from 'path'
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
@@ -55,7 +56,7 @@ export class StreamoServer {
     Object.assign(this, fields)
   }
 
-  static async create ({ name, username, password, publicKeyHex, dataDir = '.streamo', keyIterations = 100000 }) {
+  static async create ({ name, username, password, publicKeyHex, dataDir = '.streamo', keyIterations = 100000, preserved = [] }) {
     let signer = null
     let resolvedPublicKeyHex
 
@@ -86,6 +87,14 @@ export class StreamoServer {
     // Restart loses everything (no archive to rehydrate from).
     const isEphemeral = !dataDir
 
+    // Preserved keys go to `<dataDir>/preserved/<key>.bin` instead of
+    // `<dataDir>/<key>.bin`. Once eviction lands, the preserved/ dir is
+    // excluded — Claude's records and similarly-marked artifacts survive
+    // cleanup. Friction-as-feature: each preserved key is named explicitly
+    // here; no transitive walk, no auto-inclusion (see
+    // feedback_records_designed_for_human_scale memory).
+    const preservedSet = new Set(preserved)
+
     // Writable for the primary only when we have a signer. Subscribed peer
     // keys and the relay-only primary stay slim — set() on a slim Record
     // raises TypeError instead of silently no-op'ing on bytes the relay
@@ -97,7 +106,8 @@ export class StreamoServer {
         const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
         const record = new RecordClass({ recaller })
         if (!isEphemeral) {
-          const { close } = await archiveSync(record, dataDir, key)
+          const archiveDir = preservedSet.has(key) ? join(dataDir, 'preserved') : dataDir
+          const { close } = await archiveSync(record, archiveDir, key)
           archiveClosers.set(key, close)
         }
         return record

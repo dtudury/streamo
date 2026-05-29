@@ -196,7 +196,11 @@ await writeFile(
 // Each terminal cd's into its Record's subdir. --data-dir defaults to
 // `.streamo` per CWD (per-Record isolation). --files ./files finds
 // the seeded directory and (since 9.0.0) auto-enables --record-file
-// streamo.json so value.mounts gets populated from disk.
+// streamo.json so value.mounts gets populated from disk. Note: this
+// demo is pinned to @dtudury/streamo@10.0.0 where mounts lives at
+// value.mounts; from the version after the mounts.json extraction
+// (11.2.0+), the demo will need to write mounts.json instead and the
+// npx pin will need to be bumped accordingly.
 //
 // `npx -y @dtudury/streamo@10.0.0` pins the published version the demo
 // is known to work with — defensive against version drift (the demo

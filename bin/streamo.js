@@ -55,7 +55,7 @@ program
       .preset('.')
   )
   .addOption(
-    new Option('--record-file [name]', 'sync a JSON file on disk (default: streamo.json) into the record\'s value MINUS the files key. Lets you author mounts and other top-level metadata as plain JSON. Auto-enabled when --files is set; use --no-record-file to disable.')
+    new Option('--record-file [name]', 'sync a JSON file on disk (default: streamo.json) into the record\'s value MINUS the files key. Lets you author top-level metadata (title, etc.) as plain JSON. Mounts live in their own file (mounts.json in the files map). Auto-enabled when --files is set; use --no-record-file to disable.')
       .env('STREAMO_RECORD_FILE')
       .preset('streamo.json')
   )
@@ -279,8 +279,11 @@ if (watchHosts.length > 0) {
 if (options.files) {
   const folder = typeof options.files === 'string' ? options.files : '.'
   // recordFile defaults to `'streamo.json'` whenever --files is set, so
-  // mounts authored on disk (and any other top-level metadata) reach
-  // value.mounts without a separate opt-in. --no-record-file disables.
+  // top-level metadata (title, journalists, entries, ...) authored on
+  // disk reaches the Record's value without a separate opt-in. Mounts
+  // are NOT in the recordFile mirror — they live in mounts.json (a
+  // regular file in the Record's files map), synced like any other
+  // file. --no-record-file disables the streamo.json sync entirely.
   const recordFile = options.recordFile !== undefined
     ? options.recordFile
     : 'streamo.json'

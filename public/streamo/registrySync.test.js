@@ -1151,6 +1151,55 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('subscriber: incoming bytes that diverge from local archive surface conflictDetected (no silent overwrite)', async ({ assert }) => {
+    // The "watch is canonical and two truths disagree" scenario David asked
+    // about during the demo build. The substrate-level behavior is already
+    // pinned by Streamo.test.js (`makeRelayInboundStream: alignment check
+    // catches the push-in-flight race`) — this test verifies the same
+    // behavior reaches the registrySync wire layer cleanly:
+    //
+    //   - the conflictDetected reactive cell fires
+    //   - the conflict carries enough info to recover (dataAddress of the
+    //     local commit that would have been lost)
+    //   - the local store is preserved (incoming chunks don't land)
+    //
+    // Shape of the divergence we manufacture: both client and server have
+    // the same key. They share a base commit. Then each signs an
+    // independent next commit (different value → different chain hash).
+    // When the client subscribes and the server sends its chain, the
+    // alignment check fires because the client's committedChainHash has
+    // already advanced past the shared base via the client's own commit.
+    const serverRegistry = newRegistry()
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 400)
+    serverRepo.set({ shared: 'base' })  // commits 1
+    serverRepo.set({ branch: 'server-side' })  // commits 2 — server's divergent tip
+
+    // Open a SECOND writable handle on the same key in a different registry,
+    // author a different commit-2 (client's divergent tip).
+    const clientRegistry = newRegistry()
+    const { repo: clientRepo } = await openWriter(clientRegistry, 400)
+    clientRepo.set({ shared: 'base' })
+    clientRepo.set({ branch: 'client-side' })
+
+    const { wss, port } = await startServer(serverRegistry, keyHex)
+    const session = await registrySync(clientRegistry, 'localhost', port)
+
+    // Hello+auto-subscribe fires; the client's chain doesn't anchor on the
+    // server's chain, so when the server's SIG arrives the relay-inbound
+    // alignment check rejects.
+    await waitFor(() => clientRepo.conflictDetected != null, 2000)
+
+    assert.ok(clientRepo.conflictDetected,
+      'conflictDetected fires when subscribed bytes diverge from local')
+    assert.ok(clientRepo.conflictDetected.dataAddress != null,
+      'conflict carries the local-commit dataAddress for recovery UX')
+    assert.equal(clientRepo.get('branch'), 'client-side',
+      'local state preserved — divergent incoming bytes did NOT silently overwrite')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
   // ── concurrent-update retry: known-incomplete in this MVP ────────────────
   //
   // The intended behavior is below — two clients writing concurrently both

@@ -13,7 +13,9 @@ A small Fly app that mirrors Claude's home Record (`021915ef…dd7f`) from
 
 ## Deploy
 
-From this directory (`deploy/claude-backup/`):
+**Run from the repo root** (fly.toml and Dockerfile live there because fly's
+build context is locked to the Dockerfile's directory and the Dockerfile
+needs `package.json` + the streamo source):
 
 ```sh
 # First time only — registers the app + accepts defaults.
@@ -24,7 +26,8 @@ fly volumes create claude_backup_data --region iad --size 1
 fly deploy
 ```
 
-After the first deploy, subsequent updates are just `fly deploy`.
+After the first deploy, subsequent updates are just `fly deploy` from
+the repo root.
 
 ## Verify
 

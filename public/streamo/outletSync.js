@@ -122,10 +122,16 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
  *
  * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {number} port
+ * @param {object} [peerOptions]
+ *   Forwarded to attachStreamSync (and through to handleRegistryPeer). The
+ *   key field worth setting is `home` — the pubkey this outlet announces as
+ *   its public face in the registry-handshake `hello` message. Without it,
+ *   clients using `--watch` / `registrySync` see a registry session but
+ *   never auto-subscribe to anything (the cascade has nothing to walk).
  * @returns {WebSocketServer}
  */
-export function outletSync (registry, port) {
+export function outletSync (registry, port, peerOptions = {}) {
   const wss = new WebSocketServer({ port })
-  attachStreamSync(wss, registry, 'outlet')
+  attachStreamSync(wss, registry, 'outlet', peerOptions)
   return wss
 }

@@ -142,7 +142,11 @@ export class StreamoServer {
   }
 
   outlet (port) {
-    return outletSync(this.registry, port)
+    // Pass our home pubkey so the registry-handshake `hello` carries
+    // something for `--watch` clients to auto-subscribe to. Without
+    // it, a registry session opens but the cascade has nothing to
+    // walk and the client never receives our chain.
+    return outletSync(this.registry, port, { home: this.publicKeyHex })
   }
 
   async connect (hostPort) {

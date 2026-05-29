@@ -197,19 +197,35 @@ const writeStreamoJson = async (name, server) => {
   )
 }
 
+// Each config block here is exactly what gets read by --config at startup.
+// Relative paths (./files, ./.streamo) resolve against the config file's
+// directory, not CWD, so the relay can be launched from anywhere.
 await writeStreamoJson('library', {
   outlet: 1024,
-  files: './files'
+  archive: './.streamo',
+  files: './files',
+  recordFile: false,
+  verbose: 'debug'
 })
 await writeStreamoJson('explorer', {
   outlet: 1025,
-  files: './files'
-})
-await writeStreamoJson('homepage', {
-  outlet: true,
-  web: 8080,
+  archive: './.streamo',
   files: './files',
-  watch: ['localhost:1024', 'localhost:1025']
+  recordFile: false,
+  verbose: 'debug'
+})
+// homepage doesn't need a standalone `outlet` — `web` handles both HTTP
+// and WS (via HTTP upgrade), so subscribers connect through port 8080.
+// outlet here would just be a second port doing the same thing (and
+// would collide with library on port 1024 since outlet: true defaults
+// to that).
+await writeStreamoJson('homepage', {
+  web: 8080,
+  archive: './.streamo',
+  files: './files',
+  watch: ['localhost:1024', 'localhost:1025'],
+  recordFile: false,
+  verbose: 'debug'
 })
 
 console.log('files ready. spawning relays…\n' + RULE)
@@ -219,58 +235,32 @@ console.log('files ready. spawning relays…\n' + RULE)
 // the design conversation. The orchestrator handles colored prefixes,
 // SIGINT shutdown, and stream piping.
 
-const sharedAuth = name => [
-  '--name',     name,
-  '--username', username,
-  '--password', password,
-  '--key-iterations', String(ITERATIONS),
-  '--no-record-file',           // no top-level meta to mirror to streamo.json
-  '--verbose', 'debug'
-]
+// Each relay spawn now passes ONLY --config (and the auth bits that don't
+// belong in the file — username, password). The streamo.json files are
+// load-bearing: changing them changes how each relay behaves on next
+// restart. No more JS-literal-to-CLI translation in the orchestrator.
+const passwordEnv = name => ({
+  STREAMO_USERNAME: username,
+  STREAMO_PASSWORD: password,
+  STREAMO_NAME:     name
+})
 
 await runRelays([
-  // library — outlet on 1024, owns the library Record via --files
-  // streamo.json shape: { server: { outlet: 1024, files: "./library/files" } }
   {
     name: 'library',
-    args: [
-      ...sharedAuth('library'),
-      '--files',    join(demoDir, 'library',  'files'),
-      '--data-dir', join(demoDir, 'library',  '.streamo'),
-      '--outlet',   '1024'
-    ]
+    args:  ['--config', join(demoDir, 'library',  'streamo.json')],
+    env:   passwordEnv('library')
   },
-
-  // explorer — outlet on 1025
-  // streamo.json shape: { server: { outlet: 1025, files: "./explorer/files" } }
   {
     name: 'explorer',
-    args: [
-      ...sharedAuth('explorer'),
-      '--files',    join(demoDir, 'explorer', 'files'),
-      '--data-dir', join(demoDir, 'explorer', '.streamo'),
-      '--outlet',   '1025'
-    ],
+    args:  ['--config', join(demoDir, 'explorer', 'streamo.json')],
+    env:   passwordEnv('explorer'),
     startupDelayMs: 500
   },
-
-  // homepage — web on 8080, watches both source relays, owns homepage Record
-  // streamo.json shape: {
-  //   server: {
-  //     outlet: true, web: 8080, files: "./homepage/files",
-  //     watch: ["localhost:1024", "localhost:1025"]
-  //   }
-  // }
   {
     name: 'homepage',
-    args: [
-      ...sharedAuth('homepage'),
-      '--files',    join(demoDir, 'homepage', 'files'),
-      '--data-dir', join(demoDir, 'homepage', '.streamo'),
-      '--web',      '8080',
-      '--watch',    'localhost:1024',
-      '--watch',    'localhost:1025'
-    ],
+    args:  ['--config', join(demoDir, 'homepage', 'streamo.json')],
+    env:   passwordEnv('homepage'),
     startupDelayMs: 500
   }
 ])

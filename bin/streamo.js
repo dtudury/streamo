@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, isAbsolute, resolve } from 'path'
 import { Option, program } from 'commander'
 import { config } from 'dotenv'
 import { question } from 'readline-sync'
@@ -25,6 +25,10 @@ program
   .description('streamo CLI')
   .version(version)
 
+  .addOption(
+    new Option('--config <path>', 'path to a streamo.json config file. Fields under `identity` (name/username/password/keyIterations/self) and `server` (web/outlet/watch/files/archive/verbose/recordFile) fill in any options not set on the CLI. Relative paths resolve against the config file\'s directory.')
+      .env('STREAMO_CONFIG')
+  )
   .addOption(
     new Option('--env-file <path>', 'path to .env file')
   )
@@ -150,6 +154,89 @@ if (options.envFile) {
   Object.assign(options, program.opts())
 }
 
+// streamo.json config — fields fill in defaults for any option not already
+// set on the CLI (or via env). Relative paths resolve against the config
+// file's directory, not CWD, so a config can ship next to its files dir
+// and Just Work no matter where you run from.
+if (options.config) {
+  applyStreamoJsonConfig(options.config, options)
+}
+
+function applyStreamoJsonConfig (configPath, opts) {
+  const absPath = isAbsolute(configPath) ? configPath : resolve(process.cwd(), configPath)
+  const configDir = dirname(absPath)
+  let raw
+  try {
+    raw = readFileSync(absPath, 'utf-8')
+  } catch (e) {
+    console.error(`\x1b[31m--config: failed to read ${absPath}: ${e.message}\x1b[0m`)
+    process.exit(2)
+  }
+  let cfg
+  try {
+    cfg = JSON.parse(raw)
+  } catch (e) {
+    console.error(`\x1b[31m--config: ${absPath} is not valid JSON: ${e.message}\x1b[0m`)
+    process.exit(2)
+  }
+  const resolveRel = p => (typeof p === 'string') ? (isAbsolute(p) ? p : resolve(configDir, p)) : p
+
+  // identity → credentials
+  if (cfg.identity && typeof cfg.identity === 'object') {
+    opts.name          ??= cfg.identity.name
+    opts.username      ??= cfg.identity.username
+    opts.password      ??= cfg.identity.password
+    opts.keyIterations  =  opts.keyIterations ?? cfg.identity.keyIterations ?? opts.keyIterations
+    // `self` is a soft-assert: stored for later check against the
+    // derived pubkey. Mismatch (typo'd password, wrong config) refuses
+    // to start instead of silently authoring under the wrong key.
+    if (cfg.identity.self) opts._expectedSelf = cfg.identity.self
+  }
+
+  // server → feature flags
+  const s = cfg.server || {}
+
+  // archive: string = dataDir path; object = { dataDir, mode }
+  if (typeof s.archive === 'string') {
+    opts.dataDir ??= resolveRel(s.archive)
+  } else if (s.archive && typeof s.archive === 'object') {
+    if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
+    // archive.mode === 'ephemeral' → run without archiveSync (TODO)
+  }
+
+  // web: true → default port, number → that port
+  if (s.web !== undefined && opts.web === undefined) {
+    opts.web = s.web === true ? '8080' : String(s.web)
+  }
+
+  // outlet: true → default port, number → that port
+  if (s.outlet !== undefined && opts.outlet === undefined) {
+    opts.outlet = s.outlet === true ? '1024' : String(s.outlet)
+  }
+
+  // watch: merged with any CLI --watch flags (so config can declare base
+  // upstream subscriptions and CLI can add more)
+  if (s.watch) {
+    const watches = Array.isArray(s.watch) ? s.watch : [s.watch]
+    opts.watch = [...(opts.watch || []), ...watches]
+  }
+
+  // files: directory to mirror — resolved against config's directory
+  if (s.files !== undefined && opts.files === undefined) {
+    opts.files = resolveRel(s.files)
+  }
+
+  // verbose: log level
+  if (s.verbose !== undefined && opts.verbose === undefined) {
+    opts.verbose = String(s.verbose)
+  }
+
+  // recordFile: explicit on/off/name from config
+  if (s.recordFile !== undefined && opts.recordFile === undefined) {
+    opts.recordFile = s.recordFile
+  }
+}
+
 if (options.verbose !== undefined) setLogLevel(options.verbose)
 
 // Two startup shapes:
@@ -199,6 +286,18 @@ if (options.homeKey) {
 }
 
 const { name, username, publicKeyHex, signer, streamo, registry } = server
+
+// Soft-assert: if --config declared an expected pubkey (`identity.self`),
+// refuse to start when the derived pubkey doesn't match. Catches typo'd
+// password / wrong credentials before any bytes get signed under the
+// wrong key.
+if (options._expectedSelf && options._expectedSelf !== publicKeyHex) {
+  console.error(`\x1b[31midentity.self mismatch:\x1b[0m`)
+  console.error(`\x1b[31m  config expects:  ${options._expectedSelf}\x1b[0m`)
+  console.error(`\x1b[31m  derived:         ${publicKeyHex}\x1b[0m`)
+  console.error(`\x1b[31mcheck name / username / password / keyIterations against the config\x1b[0m`)
+  process.exit(2)
+}
 
 const envDir  = options.envFile ? dirname(options.envFile).replace(/^public\//, '') : null
 const appPath = (envDir && envDir !== '.') ? `/${envDir}/` : '/'

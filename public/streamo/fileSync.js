@@ -164,9 +164,14 @@ function readRepoFiles (repo) {
  * maps a path-prefix to another record's pubkey (optionally pinned to a
  * specific `dataAddress`). Returns an empty object when there are no
  * mounts.
+ *
+ * Mounts live in the Record's files map at `files['mounts.json']`, as a
+ * regular file with shape `{ "mounts": { "<prefix>": { "key": "...", ... }, ... } }`.
  */
 function readRepoMounts (repo) {
-  const m = repo.get('mounts')
+  const mountsFile = repo.get(FILES_KEY, 'mounts.json')
+  if (!mountsFile || typeof mountsFile !== 'object' || mountsFile instanceof Uint8Array) return {}
+  const m = mountsFile.mounts
   if (!m || typeof m !== 'object' || m instanceof Uint8Array) return {}
   return m
 }
@@ -225,8 +230,16 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
     for (const [rel, v] of Object.entries(value.files)) collected[rel] = v
   }
 
-  if (value.mounts && typeof value.mounts === 'object') {
-    for (const [prefix, mount] of Object.entries(value.mounts)) {
+  // mounts live in files['mounts.json'].mounts now (a regular file in the
+  // Record's files map), not value.mounts.
+  const mountsFile = value.files && typeof value.files === 'object' && !(value.files instanceof Uint8Array)
+    ? value.files['mounts.json']
+    : undefined
+  const nestedMounts = (mountsFile && typeof mountsFile === 'object' && !(mountsFile instanceof Uint8Array))
+    ? mountsFile.mounts
+    : undefined
+  if (nestedMounts && typeof nestedMounts === 'object' && !(nestedMounts instanceof Uint8Array)) {
+    for (const [prefix, mount] of Object.entries(nestedMounts)) {
       if (!mount || typeof mount !== 'object' || typeof mount.key !== 'string') continue
       if (!/^[0-9a-f]{66}$/.test(mount.key)) continue
       const nested = await collectMountedFiles(

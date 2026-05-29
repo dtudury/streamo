@@ -77,9 +77,13 @@ function readFilesMap (repo) {
 }
 
 /**
- * Read the mounts table out of a StreamoRecord. Conventionally at `value.mounts`
- * (a sibling of `files`). Returns undefined when the repo has no mounts
- * or the structure isn't an object.
+ * Read the mounts table out of a StreamoRecord. Lives in
+ * `value.files['mounts.json']` (a regular file in the Record's files
+ * map, parsed as JSON). The file's top-level shape is
+ * `{ "mounts": { "<prefix>": { "key": "<pubkey>", ... }, ... } }`.
+ *
+ * Returns undefined when the repo has no mounts.json or the parsed
+ * structure isn't an object.
  *
  * A mount entry is `{ key: <pubkeyHex>, dataAddress?: number }`. The
  * `key` is the pubkey of the record to mount; `dataAddress`, when
@@ -92,13 +96,19 @@ function readFilesMap (repo) {
  */
 function readMounts (repo, atDataAddress) {
   if (!repo.lastCommit) return undefined
+  let mountsFile
   if (atDataAddress != null) {
     try {
       const value = repo.decode(atDataAddress)
-      return (value && typeof value === 'object') ? value.mounts : undefined
+      const files = value && typeof value === 'object' ? value[FILES_KEY] : undefined
+      mountsFile = files && typeof files === 'object' && !(files instanceof Uint8Array) ? files['mounts.json'] : undefined
     } catch { return undefined }
+  } else {
+    mountsFile = repo.get(FILES_KEY, 'mounts.json')
   }
-  return repo.get('mounts')
+  if (!mountsFile || typeof mountsFile !== 'object' || mountsFile instanceof Uint8Array) return undefined
+  const m = mountsFile.mounts
+  return (m && typeof m === 'object' && !(m instanceof Uint8Array)) ? m : undefined
 }
 
 /**

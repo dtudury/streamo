@@ -321,7 +321,12 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       const fn = () => {
         if (follow) follow(keyHex, repo, key => subscribeToKey(key))
         if (followMounts) {
-          const mounts = repo.get('mounts')
+          // mounts live in files['mounts.json'].mounts now — a regular file
+          // in the Record's files map, not value.mounts.
+          const mountsFile = repo.get('files', 'mounts.json')
+          const mounts = (mountsFile && typeof mountsFile === 'object' && !(mountsFile instanceof Uint8Array))
+            ? mountsFile.mounts
+            : undefined
           if (mounts && typeof mounts === 'object' && !(mounts instanceof Uint8Array)) {
             for (const mount of Object.values(mounts)) {
               if (!mount || typeof mount !== 'object') continue

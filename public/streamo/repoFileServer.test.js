@@ -5,8 +5,18 @@ import { serveFromRepo } from './repoFileServer.js'
 
 /**
  * Build a StreamoRecord seeded with a single commit of the given value.
+ *
+ * Test ergonomics: if `value.mounts` is supplied as a top-level key, it's
+ * migrated into `value.files['mounts.json'].mounts` — the new canonical
+ * location (a regular file in the Record's files map). Tests continue to
+ * read as "make a repo with these mounts" while exercising the substrate's
+ * current storage shape.
  */
 function makeRepo (value) {
+  if (value && value.mounts) {
+    const { mounts, files = {}, ...rest } = value
+    value = { ...rest, files: { ...files, 'mounts.json': { mounts } } }
+  }
   const repo = new WritableStreamoRecord()
   const working = repo.checkout()
   working.set(value)

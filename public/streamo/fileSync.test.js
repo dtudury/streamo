@@ -152,8 +152,18 @@ describe(import.meta.url, ({ test }) => {
   const KEY_B = 'b'.repeat(66)
   const KEY_C = 'c'.repeat(66)
 
-  /** Build a sealed StreamoRecord with a single commit of the given value. */
+  /**
+   * Build a sealed StreamoRecord with a single commit of the given value.
+   *
+   * Test ergonomics: top-level `value.mounts` is migrated into
+   * `value.files['mounts.json'].mounts` — the new canonical location.
+   * Tests stay readable while exercising the substrate's current storage.
+   */
   function sealedRepo (value, msg = 'seed') {
+    if (value && value.mounts) {
+      const { mounts, files = {}, ...rest } = value
+      value = { ...rest, files: { ...files, 'mounts.json': { mounts } } }
+    }
     const r = new WritableStreamoRecord()
     const w = r.checkout()
     w.set(value)
@@ -205,7 +215,8 @@ describe(import.meta.url, ({ test }) => {
         assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')), 'B-version')
         const files = a.get('files')
         assert.ok(!('streamo/h.js' in files), 'mount file did NOT leak into own files')
-        assert.deepEqual(Object.keys(files).sort(), ['main.js'])
+        // mounts.json lives alongside other files (carries the mounts table).
+        assert.deepEqual(Object.keys(files).sort(), ['main.js', 'mounts.json'])
       } finally {
         await sub.unsubscribe()
       }
@@ -402,6 +413,9 @@ describe(import.meta.url, ({ test }) => {
   test('recordFile: writes streamo.json on first sync when repo has meta', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
+      // sealedRepo migrates `mounts:` into `files['mounts.json']` — exercises
+      // the new shape: mounts is a regular file, streamo.json mirrors only
+      // value-top-level-minus-files.
       const a = sealedRepo({
         files: { 'index.html': '<h1>x</h1>' },
         title: 'My App',
@@ -412,8 +426,12 @@ describe(import.meta.url, ({ test }) => {
         const raw = await readFile(join(dir, 'streamo.json'), 'utf8')
         const parsed = JSON.parse(raw)
         assert.equal(parsed.title, 'My App')
-        assert.deepEqual(parsed.mounts, { 'streamo/': { key: KEY_B } })
+        assert.ok(!('mounts' in parsed), 'streamo.json should NOT contain mounts (lives in mounts.json now)')
         assert.ok(!('files' in parsed), 'streamo.json should NOT contain files key')
+        // mounts.json on disk carries the mounts table.
+        const mountsRaw = await readFile(join(dir, 'mounts.json'), 'utf8')
+        const mountsParsed = JSON.parse(mountsRaw)
+        assert.deepEqual(mountsParsed, { mounts: { 'streamo/': { key: KEY_B } } })
       } finally {
         await sub.unsubscribe()
       }
@@ -694,11 +712,16 @@ describe(import.meta.url, ({ test }) => {
         const topLevel = { ...a.get() }
         delete topLevel.files
         assert.deepEqual(filesEntry, topLevel)
-        // On-disk streamo.json reflects the full meta
+        // On-disk streamo.json reflects the full meta (mounts is a file
+        // now, not part of streamo.json's mirror).
         const raw = await readFile(join(dir, 'streamo.json'), 'utf8')
         const parsed = JSON.parse(raw)
         assert.equal(parsed.title, 'Hello')
-        assert.deepEqual(parsed.mounts, { 'lib/': { key: KEY_B } })
+        assert.ok(!('mounts' in parsed), 'streamo.json should NOT contain mounts')
+        // mounts.json on disk carries the mounts table.
+        const mountsRaw = await readFile(join(dir, 'mounts.json'), 'utf8')
+        const mountsParsed = JSON.parse(mountsRaw)
+        assert.deepEqual(mountsParsed, { mounts: { 'lib/': { key: KEY_B } } })
       } finally {
         await sub.unsubscribe()
       }

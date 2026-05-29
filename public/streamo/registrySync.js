@@ -144,6 +144,16 @@ const RECONNECT_RESET_MS = 30000
  *   Base delay for the reconnect backoff, in milliseconds (default 500).
  *   The nth retry waits up to `reconnectBaseMs · 2ⁿ` (capped at 15s), with
  *   jitter.  Lower it for a LAN, raise it for a flaky link — or for tests.
+ *
+ * @property {boolean} [retryFirstConnect=true]
+ *   Whether to retry if the *first* connect attempt fails. Default `true`
+ *   makes the substrate symmetric: it stays connected to canonical the
+ *   same way regardless of whether the host was up at startup or came up
+ *   later. The promise resolves whenever a connection eventually
+ *   succeeds. Set to `false` for short-lived callers that want
+ *   fail-fast — tests against unstarted servers, quick-check verbs,
+ *   programmatic callers needing a definitive "is this reachable?"
+ *   answer.
  */
 
 /**
@@ -649,18 +659,22 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *
  * ## Auto-reconnect
  *
- * After the first successful connection, an unexpected socket close — a
- * network blip, a PaaS idle-close, a relay restart — triggers a reconnect
- * with exponential backoff + jitter.  The returned session object is
- * *stable*: its identity survives reconnection, so callers hold onto it and
- * read `session.ws` fresh when they need the live socket.  On each fresh
- * connection the session replays its intent — every key passed to
- * `subscribe()`, every topic passed to `interest()`, every `announce()` —
- * and the relay re-sends `hello`, so the home repo and its `follow` cascade
- * rediscover themselves.  `session.close()` is the intentional-shutdown
- * verb: it closes the socket *and* opts out of reconnection.  A failure on
- * the very first connect still rejects the returned promise — reconnect
- * only covers a connection that was once live.
+ * The substrate stays connected to canonical. Both the *first* connect
+ * and any subsequent drop trigger an exponential-backoff retry loop —
+ * a host that's not up yet at startup, a network blip mid-session, a
+ * PaaS idle-close, a relay restart — all handled symmetrically. The
+ * returned promise resolves whenever a connection eventually succeeds
+ * (after the first attempt, or after N retries). The returned session
+ * object is *stable*: its identity survives reconnection, so callers
+ * hold onto it and read `session.ws` fresh when they need the live
+ * socket. On each fresh connection the session replays its intent —
+ * every key passed to `subscribe()`, every topic passed to
+ * `interest()`, every `announce()` — and the relay re-sends `hello`,
+ * so the home repo and its `follow` cascade rediscover themselves.
+ * `session.close()` is the intentional-shutdown verb: it closes the
+ * socket *and* opts out of reconnection. Set `retryFirstConnect: false`
+ * for fail-fast first-connect behavior (the old default) — useful for
+ * tests, ping-style verbs, and other short-lived callers.
  *
  * ### Basic usage — sync the relay's public face
  *
@@ -694,7 +708,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  * @returns {Promise<RegistrySession>}
  */
 export function registrySync (registry, host, port, options = {}) {
-  const { onConnectionChange = null, reconnectBaseMs = RECONNECT_BASE_MS } = options
+  const {
+    onConnectionChange = null,
+    reconnectBaseMs = RECONNECT_BASE_MS,
+    retryFirstConnect = true
+  } = options
   // In a browser served over https://, plain ws:// is blocked as mixed
   // content, so derive the scheme from location. Node has no location —
   // a Node client reaching a TLS relay passes `options.secure` to force
@@ -834,5 +852,28 @@ export function registrySync (registry, host, port, options = {}) {
     }
   }
 
-  return connect().then(() => session)
+  // First-connect: retry by default until success (symmetric with the
+  // after-drop reconnect). Opt out with retryFirstConnect: false for
+  // fail-fast callers (tests, ping-style verbs).
+  async function connectFirstWithRetry () {
+    while (true) {
+      try {
+        await connect()
+        // Reset backoff after the first successful connect so post-drop
+        // reconnects start fresh (the `close` handler also resets after
+        // RECONNECT_RESET_MS of stable uptime — this just sets the floor).
+        attempt = 0
+        return
+      } catch (e) {
+        const ceiling = Math.min(reconnectBaseMs * 2 ** attempt, RECONNECT_MAX_MS)
+        const delay = ceiling * (0.5 + Math.random() * 0.5)
+        attempt++
+        console.error(`[registry] connect to ${url} failed (${e.message}), retrying in ${Math.round(delay)}ms`)
+        await new Promise(resolve => setTimeout(resolve, delay))
+      }
+    }
+  }
+
+  const initial = retryFirstConnect ? connectFirstWithRetry() : connect()
+  return initial.then(() => session)
 }

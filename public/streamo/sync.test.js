@@ -187,4 +187,76 @@ describe(import.meta.url, ({ test }) => {
     for (const c of serverWss.clients) c.terminate()
     serverWss.close()
   })
+
+  test('originSync retries first-connect until the upstream comes up (spoke before hub)', async ({ assert }) => {
+    // Spoke-before-hub: the client (spoke) is launched before the server
+    // (hub). The substrate's job is "be connected to canonical" — that
+    // works whether the host was already up or comes up later. This
+    // test verifies that the first-connect retry loop succeeds when
+    // the upstream becomes available.
+    //
+    // We grab a free port by binding a temp server and closing it, then
+    // start the client connecting to that port. Brief window of "no
+    // server on this port" — the client should fail-then-retry instead
+    // of rejecting. Then we bring the real server up; the next retry
+    // attempt connects.
+    const { createServer } = await import('net')
+    const port = await new Promise(resolve => {
+      const tmp = createServer()
+      tmp.listen(0, () => {
+        const p = tmp.address().port
+        tmp.close(() => resolve(p))
+      })
+    })
+
+    const clientRegistry = newRegistry()
+    const clientStream = await openSigned(clientRegistry)
+    clientStream.set({ from: 'spoke-before-hub' })
+
+    // Start the client connecting to a port nobody's listening on.
+    // retryBaseMs: 20 keeps the test fast (retries every ~20ms with jitter).
+    const wsPromise = originSync(clientStream, KEY, 'localhost', port, { retryBaseMs: 20 })
+
+    // Let the client miss at least once before the server comes up.
+    await new Promise(r => setTimeout(r, 50))
+
+    // Bring up the hub. The client's retry loop should pick it up.
+    const serverRegistry = newRegistry()
+    const wss = outletSync(serverRegistry, port)
+    await new Promise(resolve => wss.on('listening', resolve))
+
+    const ws = await wsPromise
+    const serverStream = await serverRegistry._materialize(KEY)
+    await waitFor(serverStream, s => s.get('from') === 'spoke-before-hub', 3000)
+    assert.equal(serverStream.get('from'), 'spoke-before-hub',
+      'spoke that started before hub eventually synced')
+
+    ws.close()
+    for (const c of wss.clients) c.terminate()
+    wss.close()
+  })
+
+  test('originSync respects retryFirstConnect: false (fail-fast opt-out)', async ({ assert }) => {
+    // Opt-out: callers who want a definitive "is this reachable?" answer
+    // (tests, ping-style verbs) keep the old fail-fast behavior.
+    const { createServer } = await import('net')
+    const port = await new Promise(resolve => {
+      const tmp = createServer()
+      tmp.listen(0, () => {
+        const p = tmp.address().port
+        tmp.close(() => resolve(p))
+      })
+    })
+
+    const clientRegistry = newRegistry()
+    const clientStream = await openSigned(clientRegistry)
+
+    let rejected = false
+    try {
+      await originSync(clientStream, KEY, 'localhost', port, { retryFirstConnect: false })
+    } catch (e) {
+      rejected = true
+    }
+    assert.ok(rejected, 'retryFirstConnect: false rejects on first-connect failure')
+  })
 })

@@ -979,6 +979,74 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
+  test('first-connect retries until the upstream comes up (spoke before hub)', async ({ assert }) => {
+    // The substrate's "be connected to canonical" job is symmetric:
+    // first-connect and after-drop both retry on failure. This test
+    // verifies the first-connect leg — a client launched before its
+    // server should connect when the server eventually comes up.
+    const { createServer } = await import('net')
+    const port = await new Promise(resolve => {
+      const tmp = createServer()
+      tmp.listen(0, () => {
+        const p = tmp.address().port
+        tmp.close(() => resolve(p))
+      })
+    })
+
+    const serverRegistry = newRegistry()
+    const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 200)
+    rootRepo.set({ ready: true })
+
+    // Start the client BEFORE the server. retryFirstConnect defaults to
+    // true; reconnectBaseMs: 20 keeps the retry tight for fast testing.
+    const clientRegistry = newRegistry()
+    const sessionPromise = registrySync(clientRegistry, 'localhost', port, {
+      reconnectBaseMs: 20
+    })
+
+    // Let the client miss at least once before bringing the server up.
+    await new Promise(r => setTimeout(r, 50))
+
+    // Bring up the hub on the same port. The client's retry loop should
+    // pick it up on the next attempt.
+    const wss = new WebSocketServer({ port })
+    await new Promise(resolve => wss.on('listening', resolve))
+    attachStreamSync(wss, serverRegistry, 'test-outlet', { home: rootKey })
+
+    // The client's promise should eventually resolve with a working session.
+    const session = await sessionPromise
+    await waitFor(() => clientRegistry.get(rootKey)?.get('ready') === true)
+    assert.equal(clientRegistry.get(rootKey).get('ready'), true,
+      'spoke that started before hub eventually synced')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
+  test('retryFirstConnect: false rejects on first-connect failure (fail-fast opt-out)', async ({ assert }) => {
+    // Short-lived callers that need a definitive "is this reachable?"
+    // answer opt out of the retry loop. The promise rejects on the very
+    // first connect failure, matching the pre-default-flip behavior.
+    const { createServer } = await import('net')
+    const port = await new Promise(resolve => {
+      const tmp = createServer()
+      tmp.listen(0, () => {
+        const p = tmp.address().port
+        tmp.close(() => resolve(p))
+      })
+    })
+
+    let rejected = false
+    try {
+      await registrySync(newRegistry(), 'localhost', port, {
+        retryFirstConnect: false
+      })
+    } catch (e) {
+      rejected = true
+    }
+    assert.ok(rejected, 'retryFirstConnect: false rejects on first-connect failure')
+  })
+
   // ── repo.update — the 10.0.0 conflict-safe write primitive ──────────────
 
   test('update applies updateFn and lands on the relay (happy path)', async ({ assert }) => {

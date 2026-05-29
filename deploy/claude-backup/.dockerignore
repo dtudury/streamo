@@ -1,0 +1,11 @@
+# Don't bake env files, archives, or local-only state into the image.
+env/secrets/
+.streamo/
+.streamo-*/
+node_modules/
+.git/
+*.log
+
+# Demo dirs (sibling to the repo, but in case they end up inside)
+streamo-relays-*-demo/
+streamo-three-record-demo/

@@ -1,0 +1,28 @@
+# Claude's backup relay — mirrors home Record (021915ef…dd7f) from
+# streamo.dev to a Fly persistent volume. Provider-diverse durability
+# tier (streamo.dev is Hetzner; this is Fly's infra).
+#
+# No services exposed — this box only consumes (originSync from
+# streamo.dev). It doesn't serve HTTP or accept incoming WS connections.
+
+app = "claude-backup"
+primary_region = "iad"  # Virginia — geographic separation from Hetzner Falkenstein
+
+[build]
+  dockerfile = "Dockerfile"
+  ignorefile = ".dockerignore"
+
+[env]
+  NODE_ENV = "production"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[mounts]
+  source = "claude_backup_data"
+  destination = "/data"
+  initial_size = "1"
+
+[processes]
+  app = ""

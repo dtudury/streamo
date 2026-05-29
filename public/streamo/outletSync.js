@@ -4,38 +4,28 @@ import { handleRegistryPeer } from './registrySync.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 
 /**
- * Attach the streamo sync protocol to an existing WebSocketServer.
+ * @file Attach streamo's WebSocket sync protocol to a `ws` server.
  *
- * Protocol:
- *   1. Client sends a text message containing the hex-encoded public key of
- *      the streamo it wants to sync.
- *   2. Server opens (or creates) that streamo and begins full-duplex sync:
- *        server → client: all existing chunks, then new ones as they arrive
- *        client → server: chunks verified against the streamo's public key
+ * Two handshake modes, distinguished by the first text message:
+ *   "registry"            → delegate to handleRegistryPeer (multi-Record)
+ *   <hex pubkey>          → full-duplex sync of that one Record
  *
- * Duplicate chunks are silently skipped on both sides (content-addressed
- * dedup). Invalid signature chunks close the connection.
- *
- * @param {WebSocketServer} wss
- * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
- * @param {string} [label]  prefix for log messages
+ * Duplicate chunks dedup via content-addressing; bad signatures drop the
+ * connection. The relay arbitrates each Record's chain via a per-Record
+ * StreamoRecordSerializer shared across all connections to this server.
  */
+
 export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {}) {
-  // Shared routing state for the ephemeral interest/announce messaging layer.
-  // interestMap: topic → Set<ws> currently interested (for live fan-out).
-  // announcementMap: topic → Map<ws, Set<key>> of currently-live announcements
-  // (replayed to peers who express interest after the fact, so a newcomer
-  // discovers existing announcers without anyone heartbeating). Entries are
-  // cleaned up on disconnect — "live" = "by a currently-connected peer."
-  // serializers: keyHex → StreamoRecordSerializer, one per repo across all connections
-  // to this WSS. The relay is the chain authority; all incoming pushes for
-  // a given repo queue against the same serializer regardless of which
-  // client sent them.
+  // Shared per-server state. interestMap/announcementMap are the ephemeral
+  // interest+announce routing tables (live fan-out + replay-on-late-arrival);
+  // serializers holds one StreamoRecordSerializer per Record so concurrent
+  // pushes from different clients queue against the same chain-head check.
   const routing = { interestMap: new Map(), announcementMap: new Map(), serializers: new Map() }
-  // The relay is the authority — pass through to handleRegistryPeer so its
-  // incoming-chunk path routes through the serializer instead of doing
-  // per-connection chain verification.
-  const authorityOptions = { ...peerOptions, isAuthority: true }
+
+  // isAuthority tells handleRegistryPeer to route incoming chunks through
+  // the serializer (relay-side chain check) instead of doing per-connection
+  // crypto verification — this is the "relay is the chain authority" path.
+  const peerOptionsAsAuthority = { ...peerOptions, isAuthority: true }
 
   wss.on('connection', ws => {
     let reader = null
@@ -44,31 +34,34 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
       const handshake = rawHandshake.toString().trim()
 
       if (handshake === 'registry') {
-        handleRegistryPeer(ws, registry, authorityOptions, label, routing)
+        handleRegistryPeer(ws, registry, peerOptionsAsAuthority, label, routing)
         return
       }
 
       const publicKeyHex = handshake
 
-      // Buffer any data frames that arrive while we're opening the streamo,
-      // so nothing is dropped during the async gap after the handshake.
-      const pending = []
-      const buffer = data => pending.push(data)
-      ws.on('message', buffer)
+      // Materializing the Record is async; frames that arrive in that gap
+      // would otherwise be dropped. Buffer them, then drain after the
+      // handshake completes (or close on materialize failure).
+      const pendingFrames = []
+      const bufferIncoming = data => pendingFrames.push(data)
+      ws.on('message', bufferIncoming)
 
-      let streamo
+      let record
       try {
-        streamo = await registry._materialize(publicKeyHex)
+        record = await registry._materialize(publicKeyHex)
       } catch (e) {
         console.error(`[${label}] failed to materialize streamo ${publicKeyHex.slice(0, 8)}...: ${e.message}`)
         ws.close()
         return
       }
 
-      ws.off('message', buffer)
+      ws.off('message', bufferIncoming)
 
-      // Streamo → peer: replay all chunks, then stream new ones
-      reader = streamo.makeReadableStream().getReader()
+      // Outbound: replay everything, then forward new chunks as the Record
+      // grows. The IIFE keeps this loop running without blocking the
+      // inbound handler set up below.
+      reader = record.makeReadableStream().getReader()
       ;(async () => {
         try {
           while (true) {
@@ -80,19 +73,19 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
         } catch {}
       })()
 
-      // Peer → streamo: route through the per-repo serializer (the relay is
-      // the chain authority). Share serializers across all connections (incl.
-      // the registry-mode path) via the WSS-level routing.serializers map.
+      // Inbound: one serializer per Record shared across all connections to
+      // this server — concurrent pushes queue against the same chain-head
+      // check (the relay-as-authority invariant).
       const publicKey = hexToBytes(publicKeyHex)
       let serializer = routing.serializers.get(publicKeyHex)
       if (!serializer) {
-        serializer = new StreamoRecordSerializer(streamo, publicKey)
+        serializer = new StreamoRecordSerializer(record, publicKey)
         routing.serializers.set(publicKeyHex, serializer)
       }
       const accumulator = new ConnectionAccumulator(serializer, (result) => {
         if (!result.accepted) {
-          // Legacy path has no JSON channel back to the peer; on reject we
-          // just log and let the next bad batch close the connection.
+          // Legacy (non-registry) path has no JSON channel back to the
+          // peer; log the reason and let a subsequent bad batch close.
           console.error(`[${label}] rejected batch from ${publicKeyHex.slice(0, 8)}...: ${result.reason}`)
         }
       })
@@ -104,8 +97,7 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
         })
       }
 
-      // Drain buffered frames, then handle live ones
-      for (const data of pending) writeChunk(data)
+      for (const data of pendingFrames) writeChunk(data)
       ws.on('message', writeChunk)
     })
 
@@ -118,17 +110,10 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
 }
 
 /**
- * Start a standalone WebSocket server that syncs streamos from a StreamoRecordRegistry.
- *
- * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
- * @param {number} port
- * @param {object} [peerOptions]
- *   Forwarded to attachStreamSync (and through to handleRegistryPeer). The
- *   key field worth setting is `home` — the pubkey this outlet announces as
- *   its public face in the registry-handshake `hello` message. Without it,
- *   clients using `--watch` / `registrySync` see a registry session but
- *   never auto-subscribe to anything (the cascade has nothing to walk).
- * @returns {WebSocketServer}
+ * Start a standalone outlet — a WebSocketServer with streamo's sync
+ * protocol attached. `peerOptions.home` is the pubkey announced in the
+ * registry-handshake hello; without it, `--feed` clients see a session
+ * open but the auto-subscribe cascade has nothing to walk.
  */
 export function outletSync (registry, port, peerOptions = {}) {
   const wss = new WebSocketServer({ port })

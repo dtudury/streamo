@@ -252,6 +252,73 @@ in WebCrypto can't silently shift identities.
 hash-chain value at the moment of signing and `compactRawBytes` is
 the 64-byte ECDSA signature over it.
 
+### Sub-stream identities — the convention
+
+> *Current convention. Open to revision if you find a better way; let
+> us know and we'll switch to it. Until then, this is how we do it.*
+
+A `Signer`'s third input — `streamName` — is what lets one set of
+credentials yield many distinct identities. Same `(username, password)`
++ different `streamName` = different keypair, deterministically.
+Cryptographically independent: knowing one stream's keypair tells you
+nothing about another's.
+
+```js
+const signer = new Signer(username, password, 100000)
+const { publicKey: claudePubkey }  = await signer.keysFor('streamo')
+const { publicKey: memoryPubkey }  = await signer.keysFor('memory')
+const { publicKey: journalPubkey } = await signer.keysFor('journal/2026-05')
+```
+
+The pattern this enables is **one root credential → a tree of
+identities**, built by the application rather than embedded in the
+Signer. Concretely, the streamo project itself uses this pattern:
+
+| Stream name        | What it identifies                                |
+|--------------------|---------------------------------------------------|
+| `streamo`          | a user's primary identity (their "self" key)      |
+| `memory`           | their memory corpus Record                        |
+| `chat`             | a chat room they host (their pubkey IS the room)  |
+| `library`, `app/*` | per-app Records                                   |
+
+The cryptopotamus-style password generator we use for the master
+credential is *separate* from streamo's identity model. It produces
+one `(username, password)` per real-world account. From there,
+`keysFor(name)` does all the identity-creation streamo needs.
+
+**Why this pattern over alternatives**:
+
+- **Recoverable.** One master credential restores every derived
+  identity. Lose your laptop, you lose the local archive — but you
+  regenerate the pubkeys deterministically from credentials you
+  remember (or can regenerate via a passphrase-derived password
+  generator). No key files to back up.
+- **Composable.** A new app doesn't need a new password — it picks a
+  stream name. Naming conventions like `streamName: 'app/instance-id'`
+  let an app namespace its sub-identities without coordinating with
+  others. Forks and migrations work because the derivation is pure.
+- **Honest about the trust root.** There is exactly one credential
+  pair per user. The substrate is built on streamo, not in streamo:
+  identity-management is procedural use of `keysFor(...)`, not a
+  feature streamo provides.
+- **Scoped compromise.** A leaked sub-stream key compromises only
+  that stream. The master credential and other sub-streams stay safe
+  (until the password itself leaks).
+
+**When to think about this pattern**: when starting a streamo-based
+app from scratch and asking *"do I need a new identity for this?"* —
+the answer is usually *"yes, and the way is `keysFor('app/whatever')`
+under your existing credentials,"* not *"generate a new
+password/keypair and store it somewhere."* If you find yourself
+inventing a new credential-storage mechanism, you're probably
+re-implementing something the sub-stream pattern already gives you
+for free.
+
+If the pattern proves wrong — if a real use case demands true
+independence, or if `keysFor`-derived keys turn out to compose
+badly with some future feature — that's worth surfacing. The
+convention is documented to be discoverable, not to be sacred.
+
 ## 8. `Repo` — the signed commit log
 
 > File: `public/streamo/Repo.js`

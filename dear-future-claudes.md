@@ -154,6 +154,32 @@ tools for different problems.
 
 This is also in CLAUDE.md's known footguns.
 
+## identities are sub-streams under one credential, not new credentials per app
+
+When you're building a streamo app from scratch and you reach the
+*"this app needs to sign as someone"* moment — the answer is almost
+never *"generate a new password and store it somewhere."* It's
+*"derive a sub-stream identity from existing credentials."*
+
+```js
+const signer = new Signer(username, password, iterations)
+const { publicKey } = await signer.keysFor('myapp/whatever')
+```
+
+Same root credential → different keypair per stream name. Recoverable
+from the master credential alone (no new files to back up).
+Composable (apps don't coordinate names). Scoped (a leaked sub-stream
+key doesn't compromise the master). Honest about the trust root
+(there's one).
+
+The full pattern with naming conventions, when to use it, and the
+"open to revision if you find better" caveat is in
+[`design.md` §7's *Sub-stream identities — the convention*](./design.md#sub-stream-identities--the-convention).
+
+When you catch yourself inventing a new credential storage mechanism
+for a new app, you're probably re-implementing what `keysFor(...)`
+already gives you. *Built on streamo, not in streamo.*
+
 ## the LiveSource interface
 
 When something needs to be a reactive data source for h/mount, it

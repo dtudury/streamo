@@ -161,6 +161,28 @@ if (options.config) {
   applyStreamoJsonConfig(options.config, options)
 }
 
+// Translate identity.homeKey (or its deprecated alias identity.self) into
+// the right downstream signal based on whether credentials will be supplied.
+//   - credentials present → _expectedSelf (verify derived pubkey matches)
+//   - credentials absent  → homeKey (relay-only mode; no derivation)
+// This is how a single config field replaces the two previous CLI-flag /
+// config-field paths and gives the four-way matrix discussed in the
+// homeKey rename.
+if (options._configHomeKey) {
+  if (options.homeKey && options.homeKey !== options._configHomeKey) {
+    console.error('\x1b[31mconflict: --home-key flag and identity.homeKey config disagree\x1b[0m')
+    console.error(`\x1b[31m  --home-key:        ${options.homeKey}\x1b[0m`)
+    console.error(`\x1b[31m  identity.homeKey:  ${options._configHomeKey}\x1b[0m`)
+    process.exit(2)
+  }
+  const willHaveCreds = !!(options.name || options.username || options.password)
+  if (willHaveCreds) {
+    options._expectedSelf = options._configHomeKey
+  } else {
+    options.homeKey ??= options._configHomeKey
+  }
+}
+
 // Apply post-config defaults — fields the commander option no longer carries
 // a default for (because config might want to leave them off / drop them).
 // dataDir: false is the explicit no-archive signal; undefined defaults to
@@ -186,16 +208,38 @@ function applyStreamoJsonConfig (configPath, opts) {
   }
   const resolveRel = p => (typeof p === 'string') ? (isAbsolute(p) ? p : resolve(configDir, p)) : p
 
-  // identity → credentials
+  // identity → credentials + homeKey
   if (cfg.identity && typeof cfg.identity === 'object') {
     opts.name          ??= cfg.identity.name
     opts.username      ??= cfg.identity.username
     opts.password      ??= cfg.identity.password
     opts.keyIterations  =  opts.keyIterations ?? cfg.identity.keyIterations ?? opts.keyIterations
-    // `self` is a soft-assert: stored for later check against the
-    // derived pubkey. Mismatch (typo'd password, wrong config) refuses
-    // to start instead of silently authoring under the wrong key.
-    if (cfg.identity.self) opts._expectedSelf = cfg.identity.self
+
+    // `homeKey` is the canonical name for "the pubkey of the Record we're
+    // operating on." Behavior depends on what else is set:
+    //   - homeKey + credentials  → derive + verify (refuse if mismatch).
+    //                              Catches typo'd password / wrong config
+    //                              before any bytes get signed under the
+    //                              wrong key.
+    //   - homeKey alone          → relay-only mode (no derivation; same
+    //                              codepath as the --home-key CLI flag).
+    //   - credentials alone      → derive; pubkey is whatever results.
+    //   - nothing                → error (relay needs to know what Record
+    //                              it's serving).
+    //
+    // `identity.self` is the deprecated alias for `homeKey` (verification
+    // only; never triggered relay-only mode). Accepted with a warning until
+    // 13.0; do not silently fall back forever.
+    if (cfg.identity.self && !cfg.identity.homeKey) {
+      console.warn('\x1b[33m[deprecation] identity.self → identity.homeKey (alias accepted; will be removed in 13.0)\x1b[0m')
+    }
+    const homeKeyValue = cfg.identity.homeKey ?? cfg.identity.self
+    if (homeKeyValue) {
+      // Defer the mode decision to the credential-presence check below;
+      // store on _configHomeKey so the CLI's --home-key flag can take
+      // precedence (and so we can decide verify-vs-relay-only correctly).
+      opts._configHomeKey = homeKeyValue
+    }
   }
 
   // server → feature flags
@@ -330,12 +374,12 @@ if (options.homeKey) {
 
 const { name, username, publicKeyHex, signer, streamo, registry } = server
 
-// Soft-assert: if --config declared an expected pubkey (`identity.self`),
-// refuse to start when the derived pubkey doesn't match. Catches typo'd
-// password / wrong credentials before any bytes get signed under the
-// wrong key.
+// Soft-assert: if --config declared an expected pubkey (`identity.homeKey`,
+// or its deprecated alias `identity.self`), refuse to start when the derived
+// pubkey doesn't match. Catches typo'd password / wrong credentials before
+// any bytes get signed under the wrong key.
 if (options._expectedSelf && options._expectedSelf !== publicKeyHex) {
-  console.error(`\x1b[31midentity.self mismatch:\x1b[0m`)
+  console.error(`\x1b[31midentity.homeKey mismatch:\x1b[0m`)
   console.error(`\x1b[31m  config expects:  ${options._expectedSelf}\x1b[0m`)
   console.error(`\x1b[31m  derived:         ${publicKeyHex}\x1b[0m`)
   console.error(`\x1b[31mcheck name / username / password / keyIterations against the config\x1b[0m`)

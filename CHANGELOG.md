@@ -5,6 +5,50 @@ for what's next.
 
 ---
 
+## 12.1.0 — `identity.homeKey` unifies relay-only and verification modes
+
+One field, four behaviors. The `streamo.json` `identity` block gains
+`homeKey` as the canonical *"this is the pubkey of the Record we're
+operating on"* field. Behavior follows from what else is set:
+
+| What's set                  | Behavior                                                |
+|-----------------------------|---------------------------------------------------------|
+| `homeKey` only              | Relay-only mode. No derivation. Same as `--home-key`.   |
+| `homeKey` + credentials     | Derive keypair; verify pubkey matches. Refuse on mismatch. |
+| Credentials only            | Derive keypair; pubkey is whatever results.             |
+| Nothing                     | Error — relay needs to know what Record it serves.      |
+
+This collapses what was previously two separate paths (the CLI
+`--home-key` flag and the config `identity.self` field) into one
+config field with semantics that depend on context. The CLI flag still
+works as before (strict: mutually exclusive with credentials).
+
+**Deprecation:** `identity.self` is accepted as an alias for
+`identity.homeKey` with a yellow warning at startup. **Removed in
+13.0.** Migrate by replacing `self` with `homeKey` in your config;
+no behavior change for the verification case.
+
+**Conflict check:** if both the `--home-key` CLI flag and the
+`identity.homeKey` config field are set to different values, startup
+refuses with a clear mismatch error.
+
+Sets up the cleaner config story for the dumb-pipe split arc — when
+chat-room logic moves to a separate author process, the relay's
+`streamo.json` shrinks to `{ identity: { homeKey: ... }, server: { ... } }`
+with no credentials needed on the public-port process.
+
+312/312 tests pass; manual smoke-test confirms both `homeKey` and the
+deprecated `self` alias work for the relay-only case.
+
+---
+
+## 12.0.1 — post-publish patch bump
+
+Marks the post-publish boundary so the next commit goes onto a bumped
+version. Standard rhythm.
+
+---
+
 ## 12.0.0 — sync primitives speak one dialect
 
 The two outbound sync primitives — `registrySync` (multi-Record,

@@ -67,13 +67,24 @@ if (!password) {
   process.exit(2)
 }
 
-// Read all .md files in the memory directory.
-const entries = await readdir(memoryDir)
-const mdFiles = entries.filter(f => f.endsWith('.md')).sort()
-const files = {}
-for (const name of mdFiles) {
-  files[name] = await readFile(join(memoryDir, name), 'utf8')
+// Read all .md files in the memory directory (recursive — so events/ and letters/ are included).
+async function walkMdFiles (dir, prefix = '') {
+  const entries = await readdir(dir, { withFileTypes: true })
+  const result = {}
+  for (const entry of entries) {
+    const fullPath = join(dir, entry.name)
+    const key = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) {
+      const sub = await walkMdFiles(fullPath, key)
+      for (const [k, v] of Object.entries(sub)) result[k] = v
+    } else if (entry.name.endsWith('.md')) {
+      result[key] = await readFile(fullPath, 'utf8')
+    }
+  }
+  return result
 }
+const files = await walkMdFiles(memoryDir)
+const mdFiles = Object.keys(files).sort()
 const totalBytes = Object.values(files).reduce((a, s) => a + s.length, 0)
 
 // Capture streamo's git HEAD as the version anchor.

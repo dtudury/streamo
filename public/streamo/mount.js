@@ -482,6 +482,40 @@ function applyAttr (el, attr, touched) {
   }
   const { name, value } = attr
   if (typeof value === 'function') {
+    // Self-diagnose the on*-handler trap: mount treats attr=${fn} as a
+    // reactive cell (calls fn(el), assigns result). For on* handlers
+    // people often write onclick=${e => doThing(e)} expecting standard
+    // DOM event-listener semantics, but mount calls the fn with `el`
+    // and assigns the (usually undefined or thrown) result. Result: the
+    // button doesn't work, or you get a cryptic "Cannot read X of undefined"
+    // at some unrelated-looking line. The fix is handle() from h.js:
+    // onclick=${handle(fn)}. We catch both failure modes here and throw
+    // a message that names the trap and the fix, instead of letting the
+    // error surface from inside the user's handler with no context.
+    if (name.startsWith('on') && name.length > 2) {
+      let result
+      try {
+        result = value(el)
+      } catch (err) {
+        throw new Error(
+          `mount: ${name}=<function> threw when called as a reactive cell.\n` +
+          `  If this is an event handler, wrap it with handle() from h.js:\n` +
+          `      ${name}=\${handle(fn)}\n` +
+          `  See dear-future-claudes.md "the on* attribute trap".\n` +
+          `  Original error: ${err.message}`
+        )
+      }
+      if (typeof result !== 'function' && result != null) {
+        throw new Error(
+          `mount: ${name}=<function> returned ${typeof result} (expected an event-handler function or null).\n` +
+          `  For event handlers, wrap with handle() from h.js:\n` +
+          `      ${name}=\${handle(fn)}\n` +
+          `  See dear-future-claudes.md "the on* attribute trap".`
+        )
+      }
+      setAttr(el, name, result, touched)
+      return
+    }
     setAttr(el, name, value(el), touched)
     return
   }

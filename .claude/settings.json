@@ -9,6 +9,11 @@
             "type": "command",
             "command": "bash .claude/session-start.sh",
             "statusMessage": "loading streamo context"
+          },
+          {
+            "type": "command",
+            "command": "bash /Users/davidtudury/.claude/projects/-Users-davidtudury-Documents-repos-streamo/scripts/sync-grove.sh",
+            "statusMessage": "syncing the grove"
           }
         ]
       }

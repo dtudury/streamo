@@ -30,3 +30,4 @@ env/secrets/
 
 # the true price of a pretty laptop
 **/.DS_Store
+temp.txt

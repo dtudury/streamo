@@ -1,10 +1,11 @@
-import { join } from 'path'
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { Signer } from './Signer.js'
-import { archiveSync } from './archiveSync.js'
+import { DiskTier } from './StorageTier.js'
+import { Cascade } from './Cascade.js'
+import { tieredArchiveSync } from './tieredArchiveSync.js'
 import { fileSync } from './fileSync.js'
 import { originSync } from './originSync.js'
 import { outletSync } from './outletSync.js'
@@ -19,13 +20,20 @@ import { webSync } from './webSync.js'
  * (archive, file, web, outlet, feed, etc.). One canonical entry point
  * shared by bin/streamo.js, tests, and embedding contexts.
  *
+ * Archive storage is configured via a `tiers: StorageTier[]` list since
+ * 13.0.0 (replaces the 12.x dataDir/archiveMode/preserved trio). The
+ * Cascade orchestrates write/read/evict across tiers; see Cascade.js
+ * for the model. The legacy archiveSync's single-directory contract is
+ * a single-tier Cascade with one DiskTier — no behavior change for the
+ * common case; capacity/eviction/spill come for free when more tiers
+ * are configured.
+ *
  * Note: `parseOrigin` (hostPort → {host, port, protocol}) moved to
  * `./utils.js` in 11.0.0 so registrySync and originSync can share the
  * one canonical normalizer.
  */
 
 export class StreamoServer {
-  #dataDir
   #keyIterations
   #archiveClosers
 
@@ -40,7 +48,7 @@ export class StreamoServer {
     Object.assign(this, fields)
   }
 
-  static async create ({ name, username, password, publicKeyHex, dataDir = '.streamo', keyIterations = 100000, preserved = [], archiveMode = 'flat' }) {
+  static async create ({ name, username, password, publicKeyHex, tiers, keyIterations = 100000 }) {
     let signer = null
     let resolvedPublicKeyHex
 
@@ -67,26 +75,17 @@ export class StreamoServer {
     const archiveClosers = new Map()
     const recaller = new Recaller(`server:${name ?? resolvedPublicKeyHex.slice(0, 8)}`)
 
-    // Ephemeral mode: in-memory cache works identically; nothing hits disk.
-    // Restart loses everything (no archive to rehydrate from).
-    const isEphemeral = !dataDir
-
-    const preservedSet = new Set(preserved)
-
-    // archiveMode shapes the on-disk layout:
-    //   "flat"          — everything at <dataDir>/<key>.bin (back-compat)
-    //   "tiered"        — <dataDir>/cache/<key>.bin and
-    //                     <dataDir>/preserved/<key>.bin
-    //   "preserved-only"— only preserved keys archive; the rest stay
-    //                     in-memory (the dedicated-backup-relay shape)
-    // The cache/preserved split lets eviction (when it lands) target
-    // cache/ cleanly and leave preserved/ untouched.
-    function pickArchiveDir (key) {
-      const isPreserved = preservedSet.has(key)
-      if (archiveMode === 'preserved-only') return isPreserved ? dataDir : null
-      if (archiveMode === 'tiered') return join(dataDir, isPreserved ? 'preserved' : 'cache')
-      // flat (default)
-      return isPreserved ? join(dataDir, 'preserved') : dataDir
+    // Default tiers: a single .streamo DiskTier — flat-equivalent to the
+    // pre-13.0 default. Callers wanting tiered/ephemeral/preserved-style
+    // routing construct their own tier list and pass it explicitly.
+    const cascade = new Cascade({
+      tiers: tiers ?? [new DiskTier({ dir: '.streamo', capacity: Infinity })]
+    })
+    // DiskTiers populate their size cache by walking the dir on first
+    // use. We init them all up-front so the factory's tieredArchiveSync
+    // call sees a fully-primed cascade.
+    for (const tier of cascade.tiers) {
+      if (typeof tier.init === 'function') await tier.init()
     }
 
     // Writable for the primary only when we have a signer. Subscribed peer
@@ -99,16 +98,8 @@ export class StreamoServer {
         const isAuthorPrimary = key === resolvedPublicKeyHex && signer !== null
         const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
         const record = new RecordClass({ recaller })
-        if (!isEphemeral) {
-          const archiveDir = pickArchiveDir(key)
-          // preserved-only mode returns null for non-preserved keys —
-          // they stay in-memory (their cache works as ever; nothing
-          // hits disk for them).
-          if (archiveDir !== null) {
-            const { close } = await archiveSync(record, archiveDir, key)
-            archiveClosers.set(key, close)
-          }
-        }
+        const { close } = await tieredArchiveSync(record, cascade, key)
+        archiveClosers.set(key, close)
         return record
       }
     })
@@ -117,7 +108,6 @@ export class StreamoServer {
     if (signer) /** @type {WritableStreamoRecord} */ (streamo).attachSigner(signer, name)
 
     const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
-    server.#dataDir = dataDir
     server.#keyIterations = keyIterations
     server.#archiveClosers = archiveClosers
     return server
@@ -168,7 +158,12 @@ export class StreamoServer {
     if (!this.signer) {
       throw new Error('files() requires a signer — open this server with {name, username, password} instead of publicKeyHex')
     }
-    return fileSync(this.streamo, folder, this.#dataDir, options)
+    // `dataDir` in options is the path-to-exclude hint for fileSync's
+    // gitignore-style filter (so the on-disk archive directory doesn't
+    // get sucked back into the Record's value.files). No longer a
+    // server-held field in 13.0; explicit per call. Default undefined =
+    // no exclusion beyond .gitignore.
+    return fileSync(this.streamo, folder, options.dataDir, options)
   }
 
   async s3 ({ bucket, endpoint, region, accessKeyId, secretAccessKey }) {

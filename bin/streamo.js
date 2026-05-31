@@ -9,6 +9,7 @@ import { start as startRepl } from 'repl'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
 import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
 import { StreamoRecordRegistry } from '../public/streamo/StreamoRecordRegistry.js'
+import { MemoryTier, DiskTier } from '../public/streamo/StorageTier.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { outletSync } from '../public/streamo/outletSync.js'
@@ -246,23 +247,19 @@ function applyStreamoJsonConfig (configPath, opts) {
   const s = cfg.server || {}
 
   // archive:
-  //   false                 → ephemeral (skip disk writes; cache still works)
-  //   <string>              → dataDir path, flat mode (back-compat)
-  //   true                  → tiered mode at default path
-  //   { mode, dataDir }     → explicit; mode ∈ {flat, tiered, preserved-only}
+  //   false                 → ephemeral (no DiskTier; MemoryTier only)
+  //   <string>              → dataDir path
+  //   { dataDir }           → explicit dataDir
   //   { mode: 'ephemeral' } → same as false
+  // The old `mode: 'flat'/'tiered'/'preserved-only'` switch was removed
+  // in 13.0; explicit tier construction handles those shapes now.
   if (s.archive === false) {
     opts.dataDir = false
-  } else if (s.archive === true) {
-    opts.archiveMode ??= 'tiered'
   } else if (typeof s.archive === 'string') {
     opts.dataDir ??= resolveRel(s.archive)
   } else if (s.archive && typeof s.archive === 'object') {
     if (s.archive.mode === 'ephemeral') opts.dataDir = false
-    else {
-      if (s.archive.mode) opts.archiveMode ??= s.archive.mode
-      if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
-    }
+    else if (s.archive.dataDir) opts.dataDir ??= resolveRel(s.archive.dataDir)
   }
 
   // web: true → default port, number → that port
@@ -299,13 +296,6 @@ function applyStreamoJsonConfig (configPath, opts) {
     opts.recordFile = s.recordFile
   }
 
-  // preserved: explicit list of pubkeys whose archives route to
-  // `<dataDir>/preserved/`. No transitive walk — each entry is named
-  // here by hand. friction-as-feature; see the human-scale lens.
-  if (Array.isArray(s.preserved)) {
-    opts.preserved = [...(opts.preserved || []), ...s.preserved]
-  }
-
   // subscribe: explicit pubkeys to pull beyond the feed's followMounts
   // cascade. Merged with any CLI --subscribe.
   if (Array.isArray(s.subscribe)) {
@@ -321,6 +311,18 @@ function applyStreamoJsonConfig (configPath, opts) {
 }
 
 if (options.verbose !== undefined) setLogLevel(options.verbose)
+
+// Build the tier list for StreamoServer.create from legacy --data-dir
+// semantics. `options.dataDir === false` → MemoryTier-only (ephemeral);
+// otherwise a single DiskTier at the resolved path. Callers wanting
+// multi-tier setups (memory + disk with eviction, preserved/cache split,
+// etc.) construct their own tiers and pass via --config or embedding.
+function buildTiers (opts) {
+  if (opts.dataDir === false) {
+    return [new MemoryTier({ capacity: Infinity })]
+  }
+  return [new DiskTier({ dir: opts.dataDir, capacity: Infinity })]
+}
 
 // Two startup shapes:
 //   (1) Author — derives a signer from {name, username, password}; can
@@ -347,10 +349,8 @@ if (options.homeKey) {
   }
   server = await StreamoServer.create({
     publicKeyHex:  options.homeKey,
-    dataDir:       options.dataDir,
+    tiers:         buildTiers(options),
     keyIterations: options.keyIterations,
-    preserved:     options.preserved || [],
-    archiveMode:   options.archiveMode || 'flat',
   })
 } else {
   options.name     ||= question('Name: ')
@@ -365,10 +365,8 @@ if (options.homeKey) {
     name:          options.name,
     username:      options.username,
     password,
-    dataDir:       options.dataDir,
+    tiers:         buildTiers(options),
     keyIterations: options.keyIterations,
-    preserved:     options.preserved || [],
-    archiveMode:   options.archiveMode || 'flat',
   })
 }
 
@@ -488,7 +486,7 @@ if (options.files) {
   const recordFile = options.recordFile !== undefined
     ? options.recordFile
     : 'streamo.json'
-  await server.files(folder, { recordFile })
+  await server.files(folder, { recordFile, dataDir: options.dataDir })
   const recordFileNote = recordFile
     ? ` (recordFile: ${recordFile === true ? 'streamo.json' : recordFile})`
     : ''
@@ -561,7 +559,7 @@ if (options.outlet) {
   console.log(`\x1b[32moutlet: listening on port ${port}\x1b[0m`)
 }
 
-logInfo(`archive: ${options.dataDir}/${publicKeyHex}.bin (${streamo.byteLength} bytes loaded)`)
+logInfo(`archive: ${options.dataDir === false ? 'ephemeral (memory only)' : `${options.dataDir}/${publicKeyHex}.bin`} (${streamo.byteLength} bytes loaded)`)
 logDebug(() => `options: ${JSON.stringify(options, null, 2)}`)
 
 if (options.interactive) {

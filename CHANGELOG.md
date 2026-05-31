@@ -5,6 +5,81 @@ for what's next.
 
 ---
 
+## 13.0.0 — `tiers: StorageTier[]` replaces `dataDir` / `archiveMode` / `preserved`
+
+The archive substrate is now a tier list. `StreamoServer.create` takes
+a single `tiers` argument — an ordered hot-to-cold list of `StorageTier`
+instances (each with its own capacity + eviction policy) — and a
+`Cascade` orchestrates write/spill/read across them.
+
+The 12.x trio (`dataDir`, `archiveMode: 'flat' | 'tiered' | 'preserved-only'`,
+`preserved: [keys]`) is **removed**. Migration:
+
+| 12.x shape                                       | 13.0 equivalent                                                                |
+|--------------------------------------------------|--------------------------------------------------------------------------------|
+| `dataDir: '.streamo'` (default)                  | `tiers: [new DiskTier({ dir: '.streamo', capacity: Infinity })]` (also default)|
+| `dataDir: false`                                 | `tiers: [new MemoryTier({ capacity: Infinity })]`                              |
+| `dataDir: dir, archiveMode: 'tiered'`            | construct two DiskTiers explicitly (`<dir>/cache`, `<dir>/preserved`)          |
+| `dataDir: dir, preserved: [key]`                 | route preserved keys to a second DiskTier explicitly                            |
+| `archiveMode: 'preserved-only'`                  | construct a MemoryTier (the rest) + a DiskTier (the preserved ones)             |
+
+**Why the move.** The 12.x archive options were three knobs trying to
+express tier topology — capacity, eviction routing, preservation —
+through enum-shaped flags. The flags couldn't express anything the
+enum didn't anticipate (heterogeneous backends, pinned-to-memory keys,
+LRU caps at the hot tier). `tiers` lets the caller construct the
+topology directly. The Cascade handles eviction-spill automatically
+when a hot tier overflows; the eviction-tier substrate this release
+ships is the foundation for the planned hundreds-active-thousands-cold
+relay scale.
+
+**What ships:**
+
+- `public/streamo/StorageTier.js` — abstract `StorageTier` + concrete
+  `MemoryTier` and `DiskTier`. JS-Map and one-file-per-key respectively.
+  Both implement append, read, evict, LRU-pick-victim, capacity
+  enforcement.
+- `public/streamo/Cascade.js` — write/read/evict orchestrator over a
+  tier list. Exclusive cascade (each key in one tier at a time),
+  write-back with eager pre-spill, per-tier LRU, optional read-promote.
+- `public/streamo/tieredArchiveSync.js` — adapts Records to a Cascade
+  (drop-in replacement for the old `archiveSync(record, dir, key)`).
+  Preserves the wireByteLength sanity check from `archiveSync.js:96`
+  verbatim — same defense-in-depth against process-racing-on-same-key.
+- `StreamoServer.create({ tiers })` — single archive option.
+- `bin/streamo.js` — `buildTiers(options)` helper translates legacy
+  `--data-dir` / `dataDir: false` flags into the default tier shape.
+  The 12.x `s.archive.mode` and `s.preserved` config-file fields are
+  no longer parsed (no deprecation warning; just dropped).
+- `StreamoServer.files()` — `dataDir` moves from a server-held private
+  field to a per-call option. Callers that want the archive-dir
+  exclusion pass `{ dataDir }` explicitly.
+
+**Deviations from the sketch** *(documented per [[feedback_document_deviations_in_commits]])*:
+
+- `bin/streamo.js`'s `buildTiers` is simpler than the design notes
+  prescribed — no "preserved-set semantics mapping" since preserved
+  is gone entirely; just `false → MemoryTier`, anything else → DiskTier.
+- `StreamoServer.test.js` rewrote the archive-mode tests rather than
+  porting them — those tests validated routing behavior that no longer
+  exists. Three new tier-focused tests replace them (DiskTier persists,
+  MemoryTier-only is ephemeral, default tier construction).
+- `s.archive: true` (which mapped to `archiveMode: 'tiered'`) is no
+  longer accepted as a special form; explicit tier construction is the
+  path.
+
+310/310 tests pass. The migration touched 4 files (StreamoServer.js,
+Cascade.js, bin/streamo.js, StreamoServer.test.js) for ~140 lines of
+substantive change.
+
+**For relay operators**: production `streamo.json` files with
+`server.archive.mode` or `server.preserved` need to drop those keys.
+`server.archive` as a string path or `{ dataDir }` continues to work.
+streamo.dev's own config will need updating in the post-publish step;
+the relay-only mode otherwise behaves identically.
+
+---
+
 ## 12.1.0 — `identity.homeKey` unifies relay-only and verification modes
 
 One field, four behaviors. The `streamo.json` `identity` block gains

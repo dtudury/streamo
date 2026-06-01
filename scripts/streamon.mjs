@@ -104,10 +104,13 @@ async function handleRequest (req) {
 
 async function handleWrite ({ name, body }) {
   if (!name || typeof body !== 'string') return { ok: false, error: 'write requires {name, body}' }
-  if (!/^[a-z0-9][a-z0-9-]*$/i.test(name)) return { ok: false, error: 'name must be alphanumeric/hyphen' }
+  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name)) return { ok: false, error: 'name must be alphanumeric/hyphen/dot/underscore' }
 
   const current = server.streamo.get() ?? { files: {}, identityType: 'sketch-substrate' }
-  const files = { ...(current.files ?? {}), [`${name}.md`]: body }
+  // If name already has an extension (contains a dot), use as-is; otherwise
+  // default to .md (sketch entries are markdown by convention).
+  const filename = name.includes('.') ? name : `${name}.md`
+  const files = { ...(current.files ?? {}), [filename]: body }
   const next = { ...current, files, writtenAt: new Date().toISOString() }
 
   server.streamo.set(next)
@@ -116,7 +119,7 @@ async function handleWrite ({ name, body }) {
   // source of truth — no file mirror. Clients read via the `read` verb.
   await new Promise(r => setTimeout(r, 1500))
   const rejected = server.streamo.pushRejected
-  const url = `https://${RELAY_HOST}/streams/${pubkey}/${name}.md`
+  const url = `https://${RELAY_HOST}/streams/${pubkey}/${filename}`
   return rejected
     ? { ok: false, error: `relay rejected: ${rejected.reason ?? 'unknown'}`, url, pubkey }
     : { ok: true, url, pubkey, chainHash: toHex(server.streamo.committedChainHash) }
@@ -125,8 +128,9 @@ async function handleWrite ({ name, body }) {
 async function handleRead ({ name }) {
   if (!name) return { ok: false, error: 'read requires {name}' }
   const value = server.streamo.get()
-  const body = value?.files?.[`${name}.md`]
-  if (body == null) return { ok: false, error: `no record named "${name}"` }
+  const filename = name.includes('.') ? name : `${name}.md`
+  const body = value?.files?.[filename]
+  if (body == null) return { ok: false, error: `no record named "${filename}"` }
   return { ok: true, body }
 }
 

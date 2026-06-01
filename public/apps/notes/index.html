@@ -8,28 +8,64 @@
   <style>
     html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, sans-serif; }
     body { display: flex; flex-direction: column; background: #fafafa; }
-    header { padding: 0.6rem 1rem; border-bottom: 1px solid #e5e5e5; background: #fff; font-size: 0.9rem; color: #666; }
+    header { padding: 0.5rem 1rem; border-bottom: 1px solid #e5e5e5; background: #fff; font-size: 0.85rem; color: #666; display: flex; gap: 1rem; align-items: center; }
     header strong { color: #333; }
-    #editor { flex: 1; max-width: 820px; width: 100%; margin: 0 auto; padding: 1.5rem 1rem; box-sizing: border-box; display: flex; }
-    #editor textarea {
-      flex: 1;
-      width: 100%;
-      border: none;
-      outline: none;
-      resize: none;
-      background: transparent;
-      font-family: ui-monospace, "SF Mono", Menlo, monospace;
-      font-size: 0.95rem;
-      line-height: 1.6;
-      color: #222;
+    header .status { margin-left: auto; color: #888; font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; }
+    main { flex: 1; display: flex; overflow: hidden; }
+
+    aside { width: 240px; border-right: 1px solid #e5e5e5; background: #fff; overflow-y: auto; }
+    aside .list-item {
+      padding: 0.55rem 1rem; cursor: pointer; border-bottom: 1px solid #f3f3f3;
+      font-size: 0.9rem; color: #333; user-select: none;
     }
+    aside .list-item:hover { background: #f5f5f5; }
+    aside .list-item.active { background: #eaf3ff; color: #2858a3; }
+    aside .new-btn {
+      padding: 0.6rem 1rem; cursor: pointer; color: #2858a3; font-size: 0.9rem;
+      border-bottom: 1px solid #f3f3f3; user-select: none;
+    }
+    aside .new-btn:hover { background: #f5f5f5; }
+
+    section { flex: 1; display: flex; flex-direction: column; padding: 1.2rem 1.5rem; box-sizing: border-box; }
+    section .name-row { display: flex; gap: 0.6rem; align-items: center; margin-bottom: 0.8rem; }
+    section .name-row input {
+      flex: 1; border: 1px solid #ddd; padding: 0.4rem 0.6rem; border-radius: 4px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 0.9rem; outline: none;
+    }
+    section .name-row input:focus { border-color: #2858a3; }
+    section button {
+      padding: 0.4rem 1rem; background: #2858a3; color: #fff; border: 0; border-radius: 4px;
+      cursor: pointer; font-size: 0.85rem;
+    }
+    section button:disabled { background: #aab; cursor: not-allowed; }
+    section button.dirty { background: #d97706; }
+    section textarea {
+      flex: 1; border: 1px solid #e5e5e5; outline: none; resize: none;
+      background: #fff; padding: 0.8rem 1rem; border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.9rem; line-height: 1.6; color: #222;
+    }
+    section textarea:focus { border-color: #2858a3; }
     #loading { text-align: center; color: #888; padding: 3rem; }
   </style>
 </head>
 <body>
-  <header><strong>streamo · notes</strong> &nbsp; <span style="color:#aaa">v0 — plain textarea, smart surfaces coming</span></header>
+  <header>
+    <strong>streamo · notes</strong>
+    <span style="color:#aaa">v1 — sketch substrate via streamon</span>
+    <span class="status" id="status">connecting to streamon…</span>
+  </header>
   <p id="loading">loading notes…</p>
-  <div id="editor"></div>
+  <main id="main" style="display:none">
+    <aside id="sidebar"></aside>
+    <section>
+      <div class="name-row">
+        <input id="name-input" placeholder="entry-slug-here" spellcheck="false" autocomplete="off">
+        <button id="save-btn" disabled>save</button>
+      </div>
+      <textarea id="editor" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="write here…"></textarea>
+    </section>
+  </main>
   <script type="module" src="./main.js"></script>
 </body>
 </html>

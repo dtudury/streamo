@@ -46,16 +46,23 @@
     const recaller = new Recaller('hello-world')
     const state = liveObject({ count: 0 }, { recaller })
 
+    console.log('[hello] script loaded; state.target:', state.target, 'recaller:', recaller)
+
     const pubkey = location.pathname.split('/')[2] ?? '(unknown)'
 
     mount(h`
       <h1>hello, world</h1>
       <p class="sub">a page served from a signed streamo Record</p>
       <p class="pubkey">${pubkey}</p>
-      <div class="count">clicks: ${() => state.get('count')}</div>
+      <div class="count">clicks: ${() => { const v = state.get('count'); console.log('[hello] slot read count =', v); return v }}</div>
       <!-- liveObject.set is path-based: set(...path, value).
            setState-style set({ count: N }) silently no-ops — see [[setState-vs-set-path-confusion]]. -->
-      <button onclick=${handle(() => state.set('count', state.get('count') + 1))}>click me</button>
+      <button onclick=${handle(() => {
+        const before = state.get('count')
+        console.log('[hello] click fired; count before =', before)
+        state.set('count', before + 1)
+        console.log('[hello] after set; state.target.count =', state.target.count, '; state.get =', state.get('count'))
+      })}>click me</button>
       <div class="leaf">🌿</div>
     `, document.body, recaller)
   </script>

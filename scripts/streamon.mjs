@@ -36,6 +36,7 @@
  *   STREAMON_RELAY_PORT          upstream relay port (default 443)
  */
 import { createServer as createSocketServer } from 'node:net'
+import { createServer as createHttpServer }   from 'node:http'
 import { mkdir, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
@@ -47,6 +48,7 @@ import { bytesToHex } from '../public/streamo/utils.js'
 const toHex = u8 => (u8 instanceof Uint8Array ? bytesToHex(u8) : u8)
 
 const SOCKET_PATH    = process.env.STREAMON_SOCKET    ?? '/tmp/streamon.sock'
+const HTTP_PORT      = +(process.env.STREAMON_HTTP_PORT ?? 8088)
 const STREAM_NAME    = process.env.STREAMON_STREAM    ?? 'sketch'
 const IDLE_TIMEOUT   = (+(process.env.STREAMON_IDLE_MIN ?? 5)) * 60 * 1000
 const RELAY_HOST     = process.env.STREAMON_RELAY_HOST ?? 'streamo.dev'
@@ -166,6 +168,7 @@ async function shutdown () {
   shuttingDown = true
   console.error('streamon: shutting down (idle timeout or signal)')
   try { socketServer.close() } catch {}
+  try { httpServer.close()   } catch {}
   try { await server.close() } catch {}
   try { await unlink(SOCKET_PATH) } catch {}
   process.exit(0)
@@ -198,6 +201,74 @@ const socketServer = createSocketServer(client => {
 })
 
 socketServer.listen(SOCKET_PATH, () => {
-  console.error(`streamon: listening on ${SOCKET_PATH} (idle-timeout ${IDLE_TIMEOUT / 60000} min)`)
+  console.error(`streamon: socket listening on ${SOCKET_PATH} (idle-timeout ${IDLE_TIMEOUT / 60000} min)`)
   bumpIdle()
+})
+
+// ── HTTP server (for browser apps: notes app, future surfaces) ────────────
+// Listens on 127.0.0.1 only — not exposed to network. CORS-open since the
+// daemon is per-user-per-machine; cross-origin from localhost:8087 (dev-
+// static notes app) is expected and intentional.
+
+function corsHeaders () {
+  return {
+    'Access-Control-Allow-Origin':  '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  }
+}
+
+async function readBody (req) {
+  return new Promise((resolve, reject) => {
+    let buf = ''
+    req.on('data', chunk => { buf += chunk.toString('utf8') })
+    req.on('end',  () => resolve(buf))
+    req.on('error', reject)
+  })
+}
+
+const httpServer = createHttpServer(async (req, res) => {
+  bumpIdle()
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`)
+  const path = url.pathname
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, corsHeaders())
+    return res.end()
+  }
+
+  let result
+  try {
+    if (req.method === 'GET' && path === '/api/head') {
+      result = await handleHead()
+    } else if (req.method === 'GET' && path === '/api/list') {
+      result = await handleList()
+    } else if (req.method === 'GET' && path === '/api/read') {
+      result = await handleRead({ name: url.searchParams.get('name') })
+    } else if (req.method === 'GET' && path === '/api/ping') {
+      result = { ok: true, pubkey, idleMs: IDLE_TIMEOUT, uptime: process.uptime() }
+    } else if (req.method === 'POST' && path === '/api/write') {
+      const body = await readBody(req)
+      let parsed
+      try { parsed = JSON.parse(body) }
+      catch (e) { parsed = null }
+      if (!parsed) {
+        result = { ok: false, error: 'POST body must be JSON {name, body}' }
+      } else {
+        result = await handleWrite(parsed)
+      }
+    } else {
+      res.writeHead(404, { ...corsHeaders(), 'Content-Type': 'application/json' })
+      return res.end(JSON.stringify({ ok: false, error: `unknown route: ${req.method} ${path}` }))
+    }
+    res.writeHead(result.ok ? 200 : 400, { ...corsHeaders(), 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(result))
+  } catch (e) {
+    res.writeHead(500, { ...corsHeaders(), 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: false, error: e.message }))
+  }
+})
+
+httpServer.listen(HTTP_PORT, '127.0.0.1', () => {
+  console.error(`streamon: http listening on http://127.0.0.1:${HTTP_PORT}/api/* (CORS open for browser apps)`)
 })

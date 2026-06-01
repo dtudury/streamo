@@ -53,7 +53,7 @@
       <p class="sub">a page served from a signed streamo Record</p>
       <p class="pubkey">${pubkey}</p>
       <div class="count">clicks: ${() => state.get('count')}</div>
-      <button onclick=${handle(() => state.set({ count: state.get('count') + 1 }))}>click me</button>
+      <button onclick=${handle(() => state.set('count', state.get('count') + 1))}>click me</button>
       <div class="leaf">🌿</div>
     `, document.body, recaller)
   </script>

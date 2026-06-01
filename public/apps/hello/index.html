@@ -53,6 +53,8 @@
       <p class="sub">a page served from a signed streamo Record</p>
       <p class="pubkey">${pubkey}</p>
       <div class="count">clicks: ${() => state.get('count')}</div>
+      <!-- liveObject.set is path-based: set(...path, value).
+           setState-style set({ count: N }) silently no-ops — see [[setState-vs-set-path-confusion]]. -->
       <button onclick=${handle(() => state.set('count', state.get('count') + 1))}>click me</button>
       <div class="leaf">🌿</div>
     `, document.body, recaller)

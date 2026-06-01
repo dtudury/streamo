@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamo · hello world</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; min-height: 100vh;
+      font-family: system-ui, -apple-system, sans-serif;
+      background: #fafafa; color: #222;
+    }
+    body {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 2rem; box-sizing: border-box; text-align: center;
+    }
+    h1 { margin: 0 0 0.6rem; font-weight: 500; font-size: 2.2rem; }
+    .sub { color: #666; margin: 0 0 1.6rem; }
+    .pubkey {
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 0.8rem; color: #aaa;
+      word-break: break-all; max-width: 32rem; margin: 0 0 2rem;
+    }
+    button {
+      padding: 0.55rem 1.4rem; border: 1px solid #ddd;
+      background: #fff; border-radius: 6px; cursor: pointer;
+      font-size: 1rem; transition: background 0.15s, border-color 0.15s;
+    }
+    button:hover { background: #f3f3f3; border-color: #ccc; }
+    .count {
+      font-weight: 600; font-size: 1.3rem;
+      margin: 1.5rem 0 0.6rem; color: #2858a3;
+    }
+    .leaf { margin-top: 3rem; opacity: 0.55; font-size: 1.5rem; }
+  </style>
+</head>
+<body>
+  <script type="module">
+    const LIB = 'https://streamo.dev/streams/02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a'
+    const { h, handle }    = await import(`${LIB}/h.js`)
+    const { mount }        = await import(`${LIB}/mount.js`)
+    const { Recaller }     = await import(`${LIB}/utils/Recaller.js`)
+    const { liveObject }   = await import(`${LIB}/LiveSource.js`)
+
+    const recaller = new Recaller('hello-world')
+    const state = liveObject({ count: 0 }, { recaller })
+
+    const pubkey = location.pathname.split('/')[2] ?? '(unknown)'
+
+    mount(h`
+      <h1>hello, world</h1>
+      <p class="sub">a page served from a signed streamo Record</p>
+      <p class="pubkey">${pubkey}</p>
+      <div class="count">clicks: ${() => state.get('count')}</div>
+      <button onclick=${handle(() => state.set({ count: state.get('count') + 1 }))}>click me</button>
+      <div class="leaf">🌿</div>
+    `, document.body, recaller)
+  </script>
+</body>
+</html>

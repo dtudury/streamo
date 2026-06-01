@@ -42,6 +42,9 @@ import { resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
 import { DiskTier } from '../public/streamo/StorageTier.js'
+import { bytesToHex } from '../public/streamo/utils.js'
+
+const toHex = u8 => (u8 instanceof Uint8Array ? bytesToHex(u8) : u8)
 
 const SOCKET_PATH    = process.env.STREAMON_SOCKET    ?? '/tmp/streamon.sock'
 const STREAM_NAME    = process.env.STREAMON_STREAM    ?? 'sketch'
@@ -114,7 +117,7 @@ async function handleWrite ({ name, body }) {
   const url = `https://${RELAY_HOST}/streams/${pubkey}/${name}.md`
   return rejected
     ? { ok: false, error: `relay rejected: ${rejected.reason ?? 'unknown'}`, url, pubkey }
-    : { ok: true, url, pubkey, chainHash: server.streamo.committedChainHash?.slice(0, 16) }
+    : { ok: true, url, pubkey, chainHash: toHex(server.streamo.committedChainHash) }
 }
 
 async function handleRead ({ name }) {
@@ -132,7 +135,7 @@ async function handleHead () {
   const files = value?.files ?? {}
   return {
     ok: true,
-    chainHash:     server.streamo.committedChainHash,
+    chainHash:     toHex(server.streamo.committedChainHash),
     signedLength:  server.streamo.signedLength,
     fileCount:     Object.keys(files).length,
     writtenAt:     value?.writtenAt ?? null,

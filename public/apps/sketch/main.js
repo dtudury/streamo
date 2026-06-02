@@ -83,7 +83,13 @@
 // importmap at streamo.dev doesn't resolve `/streamo/*` from non-homepage
 // mounts, so absolute URLs to /streams/<library-pubkey>/ instead.
 // See [[importmap-vs-stream-mount-gap]].
-const LIB = 'https://streamo.dev/streams/02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a'
+// 2026-06-02 fork: library forked from 02e77190…b93a → 028d6969…78f1c9.
+// Old library Record was stuck pre-11.0 (Repo.js/RepoRegistry.js names);
+// chain-adoption attempts failed all afternoon; we forked under
+// keysFor('streamo-library-2') from the same streamo-library credentials.
+// See [[fork-and-replace-as-the-actual-unblock]] + design.md §14.5 +
+// scripts/file-history.sh public/apps/sketch/main.js for the chain.
+const LIB = 'https://streamo.dev/streams/028d69692fccb952e4e3f5d6e42123602daafc402d8ea34483383415a7e178f1c9'
 const { h, handle }            = await import(`${LIB}/h.js`)
 const { mount }                = await import(`${LIB}/mount.js`)
 const { Recaller }             = await import(`${LIB}/utils/Recaller.js`)

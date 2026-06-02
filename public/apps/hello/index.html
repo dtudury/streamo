@@ -37,7 +37,12 @@
 </head>
 <body>
   <script type="module">
-    const LIB = 'https://streamo.dev/streams/02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a'
+    // 2026-06-02 fork: library forked from 02e77190…b93a → 028d6969…78f1c9.
+    // Old library Record had no 11.0 slim/Writable split (Repo.js → StreamoRecord.js
+    // rename never propagated). See feedback_dont_invent_events + the chain-adoption
+    // arc in events/2026-06-02.md. New library at keysFor('streamo-library-2')
+    // under streamo-library credentials.
+    const LIB = 'https://streamo.dev/streams/028d69692fccb952e4e3f5d6e42123602daafc402d8ea34483383415a7e178f1c9'
     const { h, handle }    = await import(`${LIB}/h.js`)
     const { mount }        = await import(`${LIB}/mount.js`)
     const { Recaller }     = await import(`${LIB}/utils/Recaller.js`)

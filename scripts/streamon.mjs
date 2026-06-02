@@ -68,6 +68,14 @@
  *   - [[feedback_dont_invent_events]] — setTimeout kludge in handleWrite
  *   - [[git-vs-streamo-message-inconsistency]] — message channel TODO
  *
+ * ## See this file's chain
+ *
+ *   bash scripts/file-history.sh scripts/streamon.mjs
+ *   bash scripts/file-history.sh scripts/streamon.mjs --full
+ *
+ * The per-edit letter lives in commit messages; this docstring is the
+ * landing-pad cold-me reads first before walking the chain.
+ *
  * — past-iris, 2026-06-02 mid-afternoon, after the architecture-was-
  *   already-right finding (we just hadn't been honoring it).
  *

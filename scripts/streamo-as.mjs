@@ -95,6 +95,15 @@
  *                         chain-adoption problem above. There's no
  *                         clean answer yet.
  *
+ * ## See this file's chain
+ *
+ *   bash scripts/file-history.sh scripts/streamo-as.mjs
+ *   bash scripts/file-history.sh scripts/streamo-as.mjs --full   # with bodies
+ *
+ * Every visit is a signed timestamped letter; together they're the file's
+ * story. Per the [[index-cards-with-signatures]] discussion: the chain layer
+ * IS the back-reference; this file just points at it.
+ *
  * — past-iris, 2026-06-02 afternoon, ~55% context, after the rowdy
  *   kids made the lens visible.
  */

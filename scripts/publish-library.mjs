@@ -90,6 +90,13 @@
  *   PUBLISH_LIBRARY_ENV      override env file path
  *                            (default env/secrets/streamo-library.env)
  *
+ * ## See this file's chain
+ *
+ *   bash scripts/file-history.sh scripts/publish-library.mjs
+ *   bash scripts/file-history.sh scripts/publish-library.mjs --full
+ *
+ * The chain layer carries the per-edit letter; this file is the snapshot.
+ *
  * — past-iris, 2026-06-02 mid-afternoon, after the rabbit hole that
  *   produced the chain-adoption finding.
  */

@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>streamo · sketch</title>
+  <style>
+    :root {
+      --fg: #1f2330;
+      --fg-soft: #4a5060;
+      --fg-mute: #8a909e;
+      --bg: #fafafa;
+      --bg-panel: #ffffff;
+      --bg-soft: #f4f4f5;
+      --line: #e4e6eb;
+      --accent: #2858a3;
+      --accent-soft: #eaf3ff;
+      --warn: #d97706;
+    }
+    html, body { margin: 0; height: 100%; font-family: system-ui, -apple-system, sans-serif; color: var(--fg); }
+    body { display: flex; flex-direction: column; background: var(--bg); }
+
+    header {
+      display: flex; gap: 1rem; align-items: baseline;
+      padding: 0.5rem 1rem; border-bottom: 1px solid var(--line);
+      background: var(--bg-panel); font-size: 0.85rem; color: var(--fg-soft);
+    }
+    header .brand { font-weight: 600; color: var(--fg); }
+    header .sub   { color: var(--fg-mute); font-size: 0.75rem; }
+    header .status {
+      margin-left: auto; color: var(--fg-mute);
+      font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem;
+    }
+
+    main { flex: 1; display: flex; overflow: hidden; }
+
+    /* Login */
+    .login {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; padding: 2rem; gap: 1rem;
+    }
+    .login h1 { font-weight: 500; font-size: 1.6rem; margin: 0 0 0.4rem; }
+    .login .hint { color: var(--fg-mute); font-size: 0.85rem; max-width: 28rem; text-align: center; margin: 0 0 1rem; }
+    .login form { display: flex; flex-direction: column; gap: 0.6rem; width: 22rem; max-width: 100%; }
+    .login label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: var(--fg-soft); }
+    .login input {
+      border: 1px solid var(--line); padding: 0.5rem 0.7rem; border-radius: 4px;
+      font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem; outline: none;
+    }
+    .login input:focus { border-color: var(--accent); }
+    .login button {
+      padding: 0.55rem; background: var(--accent); color: #fff;
+      border: 0; border-radius: 4px; cursor: pointer; font-size: 0.9rem;
+    }
+    .login button:disabled { background: #aab; cursor: not-allowed; }
+    .login .error { color: #b03030; font-size: 0.8rem; min-height: 1.2em; }
+
+    /* Editor */
+    aside {
+      width: 260px; border-right: 1px solid var(--line); background: var(--bg-panel);
+      overflow-y: auto; display: flex; flex-direction: column;
+    }
+    aside .new-btn {
+      padding: 0.6rem 1rem; cursor: pointer; color: var(--accent);
+      font-size: 0.9rem; border-bottom: 1px solid var(--line); user-select: none;
+    }
+    aside .new-btn:hover { background: var(--bg-soft); }
+    aside .list-item {
+      padding: 0.55rem 1rem; cursor: pointer; border-bottom: 1px solid var(--bg-soft);
+      font-size: 0.85rem; color: var(--fg); user-select: none;
+      font-family: ui-monospace, Menlo, monospace;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    aside .list-item:hover { background: var(--bg-soft); }
+    aside .list-item.active { background: var(--accent-soft); color: var(--accent); }
+    aside .empty {
+      padding: 1.5rem 1rem; color: var(--fg-mute); font-size: 0.85rem; font-style: italic;
+    }
+
+    section {
+      flex: 1; display: flex; flex-direction: column; padding: 1rem 1.4rem;
+      gap: 0.6rem; box-sizing: border-box;
+    }
+    section .name-row { display: flex; gap: 0.6rem; align-items: center; }
+    section .name-row input {
+      flex: 1; border: 1px solid var(--line); padding: 0.4rem 0.6rem;
+      border-radius: 4px; outline: none;
+      font-family: ui-monospace, Menlo, monospace; font-size: 0.85rem;
+    }
+    section .name-row input:focus { border-color: var(--accent); }
+    section button {
+      padding: 0.4rem 1rem; background: var(--accent); color: #fff;
+      border: 0; border-radius: 4px; cursor: pointer; font-size: 0.85rem;
+    }
+    section button:disabled { background: #aab; cursor: not-allowed; }
+    section button.dirty { background: var(--warn); }
+    section textarea {
+      flex: 1; border: 1px solid var(--line); outline: none; resize: none;
+      background: var(--bg-panel); padding: 0.8rem 1rem; border-radius: 4px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      font-size: 0.85rem; line-height: 1.55; color: var(--fg);
+    }
+    section textarea:focus { border-color: var(--accent); }
+
+    .loading { padding: 3rem; color: var(--fg-mute); text-align: center; }
+    .banner {
+      padding: 0.5rem 1rem; background: #fff7e0; border-bottom: 1px solid #f1d97a;
+      font-size: 0.8rem; color: #6c510a;
+    }
+  </style>
+</head>
+<body>
+  <script type="module" src="./main.js"></script>
+</body>
+</html>

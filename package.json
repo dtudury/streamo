@@ -65,7 +65,10 @@
     "demo:explorer": "node bin/streamo.js --env-file env/demo.explorer.env",
     "seed-history": "node scripts/seed-history.js",
     "fork-homepage": "node scripts/fork-homepage.js",
-    "deploy": "bash scripts/deploy.sh"
+    "deploy": "bash scripts/deploy.sh",
+    "streamo:as":        "node scripts/streamo-as.mjs",
+    "streamo:as:lib":    "node scripts/streamo-as.mjs streamo-library",
+    "streamo:as:claude": "node scripts/streamo-as.mjs claude"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

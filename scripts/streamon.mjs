@@ -163,7 +163,7 @@ async function handleRequest (req) {
   return { ok: false, error: `unknown verb: ${verb}` }
 }
 
-async function handleWrite ({ name, body }) {
+async function handleWrite ({ name, body, message }) {
   if (!name || typeof body !== 'string') return { ok: false, error: 'write requires {name, body}' }
   // Names are opaque filename keys in `value.files`. Slashes are allowed
   // (e.g., 'entries/2026-06-02.md') — they're object-key chars, structurally
@@ -176,14 +176,22 @@ async function handleWrite ({ name, body }) {
     return { ok: false, error: 'name must be alphanumeric/hyphen/dot/underscore/slash' }
   }
 
-  const current = server.streamo.get() ?? { files: {}, identityType: 'sketch-substrate' }
-  // No .md magic — caller specifies the full filename including extension.
-  // The previous auto-append assumed everything is markdown; that's a
-  // sketch-app-specific aesthetic, not streamon's job.
-  const files = { ...(current.files ?? {}), [name]: body }
-  const next = { ...current, files, writtenAt: new Date().toISOString() }
-
-  server.streamo.set(next)
+  // Use repo.update(fn, { message }) so the commit carries narrative on the
+  // chain layer. Per [[git-vs-streamo-message-inconsistency]] (named earlier
+  // 2026-06-02 afternoon, closed here): wherever I author a commit — git OR
+  // streamo — the message channel is the substrate-surface for *why*.
+  // Previously `streamo.set(next)` bypassed it entirely; every sketch entry
+  // landed silent on the chain. update() with retry-safety is the right
+  // shape: read → modify → write, retried on chain advance.
+  const updateOpts = message ? { message } : undefined
+  await server.streamo.update(c => {
+    const current = c ?? { files: {}, identityType: 'sketch-substrate' }
+    // No .md magic — caller specifies the full filename including extension.
+    // The previous auto-append assumed everything is markdown; that's a
+    // sketch-app-specific aesthetic, not streamon's job.
+    const files = { ...(current.files ?? {}), [name]: body }
+    return { ...current, files, writtenAt: new Date().toISOString() }
+  }, updateOpts)
 
   // FUTURE: replace this 1500ms wait with an explicit signal — chainHash
   // advance or pushRejected fire. See [[feedback_dont_invent_events]]:

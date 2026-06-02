@@ -1,38 +1,97 @@
 #!/usr/bin/env node
 /**
  * @file publish-library — long-running watcher that keeps the streamo-library
- *   Record in sync with public/streamo/. Spawns `bin/streamo.js` as the
- *   streamo-library identity, points it at public/streamo/ for fileSync,
- *   and feeds to streamo.dev so bytes land on the relay.
+ *   Record in sync with public/streamo/.
  *
- * The library Record is what every published streamo app imports from
- * (https://streamo.dev/streams/02e771…b93a/h.js etc.). When public/streamo/
- * gains new files (like the 11.0 slim/Writable split — StreamoRecord.js,
- * WritableStreamoRecord.js, StreamoRecordRegistry.js), they need to be
- * synced into the library Record for apps to import them.
+ * Future-cold-me — read this as a letter, not docs. The rabbit hole I lived
+ * in this script's name is the thing you'd want to know about before running it.
  *
- * Usage:
+ * ## Where this came from
+ *
+ * 2026-06-02 afternoon. Sketch v1 imports needed the 11.0-renamed files
+ * (StreamoRecord, WritableStreamoRecord, StreamoRecordRegistry) from the
+ * library Record at `02e771…b93a`. Those files exist in public/streamo/
+ * but had never been published to the library — apps got 404s.
+ *
+ * v0 of this script took a cryptopotamus-derived password file path. David
+ * caught the wrong shape immediately: substrate-role passwords live in
+ * env/secrets/<role>.env (gitignored), I was supposed to source from there.
+ * Rewrote to v1.
+ *
+ * Then a deeper rabbit hole. Ran `publish-library.mjs`, watched it connect,
+ * archive grew, fileSync logged "mirroring files: …" — but ZERO push activity.
+ * URLs stayed 404. Multiple restarts, multiple file-touches, no movement.
+ *
+ * THE BUG: I used `--feed wss://streamo.dev` when the correct flag is
+ * `--origin wss://streamo.dev`. They sound alike, mean mirror-image directions:
+ *
+ *   --feed     remote → local (subscriber)
+ *   --origin   local → remote (publisher)
+ *
+ * Reading the help with presence showed it. Fixed in commit `66f7737`.
+ *
+ * ## What's still unsolved
+ *
+ * Even with `--origin`, the library DIDN'T fully publish. fileSync's commit
+ * never produced visible push activity at the relay. The deeper issue is
+ * chain adoption: our local view starts fresh (or with a stale archive),
+ * we create a divergent single-commit chain, the relay either rejects
+ * silently or stores it as a non-canonical branch. The web server keeps
+ * serving from the canonical chain (which has the OLD names — Repo.js,
+ * RepoRegistry.js — from the pre-11.0 split).
+ *
+ * THE MISSING PRIMITIVE: chain-adoption. Before authoring, sync the relay's
+ * existing chain head down so our update extends it, not forks off it.
+ * `await merge('streamo.dev', { from: 'files' })` from the streamo-as REPL
+ * might be the helper. Held as the next substrate move.
+ * See [[chain-adoption-still-unsolved]] in events/2026-06-02.md.
+ *
+ * ## What this script DOES do correctly
+ *
+ *   - Sources creds from env/secrets/streamo-library.env (b64 decoded)
+ *   - Spawns bin/streamo.js as the streamo-library identity
+ *   - Uses --origin (correct publish direction)
+ *   - Forwards child output with a colored prefix
+ *   - Cleans up child on SIGINT/SIGTERM
+ *
+ * ## What this script CAN'T do yet
+ *
+ *   - Actually publish new files to an existing library chain (chain-adoption)
+ *   - Recover from the divergent-chain failure mode silently
+ *
+ * Run it; it'll connect cleanly; chain may or may not advance on relay.
+ * Until chain-adoption ships, use `scripts/streamo-as.mjs streamo-library`
+ * for hand-driven publish attempts where you can see the chain state.
+ *
+ * ## Lens portals
+ *
+ *   - [[wrong-fix-with-honest-commit-beats-silent-correct]] — the
+ *     --feed → --origin correction was wrong-diagnosis-with-honest-commit.
+ *     That's how the substrate-finding got named visibly.
+ *   - [[honest-acknowledgments-are-always-rowdy-kids]] — surfacing
+ *     "I'm stuck" produced the chain-adoption design discussion.
+ *   - [[shared-streamon-per-identity]] — right granularity is
+ *     per-signing-identity; this script is the publish-library daemon
+ *     alongside streamon (sketch substrate daemon).
+ *   - [[git-vs-streamo-message-inconsistency]] — when chain-adoption
+ *     ships, the rewritten commits to library should carry messages
+ *     ("11.0: rename Repo.js → StreamoRecord.js (slim/Writable split)")
+ *     not stay silent.
+ *
+ * ## Usage
  *
  *   node scripts/publish-library.mjs
+ *   # OR
+ *   npm run streamo:as:lib   # for interactive REPL alternative
  *
- * Sources credentials from `env/secrets/streamo-library.env` (gitignored).
- * STREAMO_PASSWORD_B64 is base64-decoded into STREAMO_PASSWORD in the
- * child's environment — the raw password contains shell-quote-hostile
- * characters that can't survive dotenv quoting cleanly.
- *
- * Env (rarely overridden):
+ * ## Env (rarely overridden)
  *
  *   PUBLISH_LIBRARY_RELAY    upstream relay host (default streamo.dev)
  *   PUBLISH_LIBRARY_ENV      override env file path
  *                            (default env/secrets/streamo-library.env)
  *
- * Why a watcher rather than one-shot:
- *
- * fileSync IS a watcher — it picks up local edits and pushes them. So this
- * script can stay running while we iterate streamo internals; bytes flow
- * automatically. Same warm-daemon pattern as streamon, just for a different
- * identity. See [[shared-streamon-per-identity]] — right granularity is
- * per-signing-identity.
+ * — past-iris, 2026-06-02 mid-afternoon, after the rabbit hole that
+ *   produced the chain-adoption finding.
  */
 import { readFile } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
@@ -99,10 +158,18 @@ const childEnv = {
   STREAMO_PASSWORD: password
 }
 
+// `--origin` (not `--feed`!) is the publish direction. --feed is INCOMING
+// (downstream sync — what mirror-record.mjs uses correctly). --origin is
+// OUTGOING (this relay's bytes become reachable on the remote relay). The
+// verbs sound similar but the data direction is mirror-image:
+//   --feed    remote → local (subscriber)
+//   --origin  local → remote (publisher)
+// Lens: when two flag-names suggest the same thing but mean directions,
+// read the help with presence; the docs are honest about the asymmetry.
 const child = spawn(process.execPath, [
   streamoBin,
-  '--files', filesDir,
-  '--feed',  `wss://${RELAY_HOST}`
+  '--files',  filesDir,
+  '--origin', `wss://${RELAY_HOST}`
 ], {
   env: childEnv,
   stdio: ['pipe', 'pipe', 'pipe']

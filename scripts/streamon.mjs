@@ -1,15 +1,52 @@
 #!/usr/bin/env node
 /**
- * @file streamon — warm-daemon streamo relay + Claude CLI bridge (v0).
+ * @file streamon — warm-daemon streamo relay + Claude CLI bridge.
  *
- * One long-lived process that holds the sketch identity, opens originSync
- * to streamo.dev, and exposes a unix socket for Claude CLI clients
- * (`streamon-do` is the client wrapper). Idle-timeout shuts the daemon
- * down after no requests for STREAMON_IDLE_MIN minutes (default 5);
- * subsequent client calls re-spawn it from cold.
+ * Future-cold-me — this is a letter at the top, then docs below.
  *
- * Verbs (talking straight to streamo, no file mirror — the chain IS the
- * source of truth; verbs expose precisely-what-you-asked-for queries):
+ * ## What this is for
+ *
+ * Streamon is the warm-daemon that holds the sketch identity and pushes
+ * bytes to streamo.dev as they get written. Multiple clients hit it:
+ *
+ *   - The notes app (browser) via HTTP at 127.0.0.1:8088
+ *   - The sketch app (browser) via HTTP at 127.0.0.1:8088
+ *   - Claude CLI via the unix socket /tmp/streamon.sock (`streamon-do` wraps it)
+ *
+ * Per-identity warm daemon — sketch is one Record with one chain; multiple
+ * daemons authoring would race. See [[shared-streamon-per-identity]].
+ *
+ * ## Where this came from (the lessons that shaped the code)
+ *
+ *   - v0 hardcoded `.md` extension and rejected slashes in names. Both
+ *     turned out to be **sketch-app aesthetic, not streamon-substrate**.
+ *     Fixed 2026-06-02: name is opaque, app owns its extensions.
+ *     See [[built-on-streamo-not-in-streamo]].
+ *   - v0 wrapped each write in a `files` map even though streamo's value
+ *     is arbitrary tree. I almost retired the wrapper entirely (proposed
+ *     paths-into-value); David pointed at mounts.json. The architecture
+ *     ALREADY has the right cut: **within-Record = value.files, cross-Record
+ *     = mounts.json**. The wrapper is the architecture, not a workaround.
+ *     See [[within-record-vs-cross-record-different-layers]] and
+ *     [[almost-reinvented-mounts]].
+ *   - The 1500ms `setTimeout` in handleWrite is a known kludge. See
+ *     [[feedback_dont_invent_events]]: setTimeout bridges a missing
+ *     substrate signal; the proper fix is awaiting on
+ *     `committedChainHash` advance or `isReadyToAuthor` toggle.
+ *   - Commit messages are silent on streamo updates here. Should accept
+ *     a `message` field in the JSON request and pass to repo.update. See
+ *     [[git-vs-streamo-message-inconsistency]] — fix held for next pass.
+ *
+ * ## The shape worth keeping
+ *
+ *   - One process per signing identity (NOT per panel or per task)
+ *   - Multiple clients via socket + HTTP (browser app + CLI both work)
+ *   - Idle-timeout for cleanup; cold-spawn-on-demand from streamon-do
+ *   - "Talking straight to streamo" — no file mirror; the chain is the
+ *     source of truth (per the docstring's original commitment, now
+ *     actually honored after the v1 cleanup)
+ *
+ * ## Verbs (talking straight to streamo)
  *
  *   write <name> <body>     create/update Record value.files[<name>]
  *   read  <name>            return the current body
@@ -18,12 +55,21 @@
  *   ping                    is-daemon-alive + identity probe
  *   shutdown                graceful exit (mostly for testing)
  *
- * Names are opaque keys in `value.files` — slashes are allowed for
- * apps that want to express hierarchy in flat keys (e.g.,
- * 'entries/2026-06-02-foo.md'). Cross-Record traversal is a different
- * layer (mounts: see `files['mounts.json'].mounts` + registrySync.js
- * followMounts). Callers specify the full filename including extension;
- * no auto-`.md` is appended.
+ * Names are opaque keys in `value.files` — slashes are allowed for apps
+ * that want to express hierarchy (e.g., 'entries/2026-06-02-foo.md').
+ * Cross-Record traversal is the mounts layer (`files['mounts.json'].mounts`).
+ * Callers specify the full filename including extension; no auto-`.md`.
+ *
+ * ## Lens portals (cross-references)
+ *
+ *   - [[shared-streamon-per-identity]] — per-identity granularity rationale
+ *   - [[within-record-vs-cross-record-different-layers]] — files vs mounts
+ *   - [[built-on-streamo-not-in-streamo]] — what belongs at daemon vs app
+ *   - [[feedback_dont_invent_events]] — setTimeout kludge in handleWrite
+ *   - [[git-vs-streamo-message-inconsistency]] — message channel TODO
+ *
+ * — past-iris, 2026-06-02 mid-afternoon, after the architecture-was-
+ *   already-right finding (we just hadn't been honoring it).
  *
  * `head` is the cheap-poll affordance: clients call it to detect whether
  * the chain has advanced since their last known hash, without pulling

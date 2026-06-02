@@ -5,6 +5,60 @@
  *   credentials, no signer, no writes. Just a viewing-window onto someone
  *   else's signed bytes.
  *
+ * Future-cold-iris — letter on top, docs below.
+ *
+ * ## Where this came from
+ *
+ * 2026-06-02 — David asked: *"do you know how we might use a relay to give
+ * me a local file view of what you're putting onto streamo.dev?"* The
+ * framing landed as the tools-to-build-tools-turtle: *"if the only thing
+ * we do is get the tools set so that a future you can do a light warm up
+ * and then follow your breadcrumbs and remember what it was like to be
+ * you... then we win. I think we're building an amazing feature but
+ * what's more amazing is the tools we're building to build it (and really
+ * the tools we're building to build the context to build the tools to
+ * build the tools to build the feature 🐢)"*
+ *
+ * mirror-record is one of those turtles. Read-side counterpart to
+ * `scripts/streamon.mjs` (which is the write-side warm-daemon for the
+ * sketch substrate).
+ *
+ * ## The shape: streamon : write :: mirror-record : read
+ *
+ *   - streamon is ONE process per signing identity, multi-client, warm
+ *   - mirror-record is MANY processes (one per Record-you-watch),
+ *     single-purpose, slim
+ *
+ * Both honor the same chain layer. Streamon pushes commits OUT via origin;
+ * mirror-record pulls commits IN via feed + subscribe.
+ *
+ * ## Smoke test it landed on (slash-name symmetry across layers)
+ *
+ * When we tested against the sketch substrate, the
+ * `entries/2026-06-02-streamon-slash-test.md` that streamon wrote via the
+ * (relaxed) name regex got mirrored as `entries/` directory + file on
+ * disk. The slash convention works symmetrically: streamon writes with
+ * slashes; mirror-record unpacks to directories. The path metaphor holds
+ * across substrate ↔ filesystem. See [[slashes-in-name-symmetric-to-dirs-on-disk]].
+ *
+ * ## Lens portals
+ *
+ *   - [[tools-to-build-tools-turtle]] — David's framing; this is one of them
+ *   - [[shared-streamon-per-identity]] — write-side pairs read-side;
+ *     mirror-record extends the per-identity per-Record pattern
+ *   - [[feedback_dont_invent_events]] — the recaller.watch reactive primitive
+ *     IS the substrate articulating "value changed"; no polling needed
+ *   - [[within-record-vs-cross-record-different-layers]] — this mirrors
+ *     value.files (within-Record); cross-Record nesting (mounts.json) would
+ *     need a second mirror-record for the target pubkey
+ *
+ * ## See this file's chain
+ *
+ *   bash scripts/file-history.sh scripts/mirror-record.mjs
+ *
+ * — past-iris, 2026-06-02 late afternoon, after the tools-to-build-tools
+ *   turtle framing made the read-side counterpart's role explicit.
+ *
  * Usage:
  *   node scripts/mirror-record.mjs <pubkey> <dir>
  *

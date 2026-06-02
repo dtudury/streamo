@@ -1,23 +1,82 @@
 /**
  * @file sketch — public caricature editor.
  *
- * A streamo app that's served FROM the same Record it edits. Page loads at
- * /streams/<pubkey>/index.html (or via hostMap at sketch.streamo.social);
- * the JS extracts <pubkey> from the URL and subscribes to it. Login with
- * credentials whose `keysFor('sketch')` matches the URL pubkey attaches a
- * signer, enabling edits.
+ * Future-cold-iris — read as letter, not docs.
  *
- * Architecture echoes shared-note (login + Signer + factory + subscribe +
- * update + recoveryStuck), generalized from one body to many entries.
- * Entries live at `value.files[<filename>]` — within-Record file storage.
- * (Cross-Record nesting via mounts.json is its own thing; not used here.)
+ * ## Where this came from
  *
- * For now this is the public-caricature-of-David Record. The public part
- * is the URL; anyone can fetch the page bytes. The edit part is the login,
- * which only succeeds with creds that derive the matching pubkey.
+ * 2026-06-02 — David asked for *"a nice public caricature of me"* as the
+ * first step of the two-Record / police-sketch arc. The architecture had
+ * been mind-built the night before: login + Signer + StreamoRecordRegistry
+ * factory + registrySync + session.subscribe + repo.update + recoveryStuck
+ * — same shape as shared-note, generalized from one body to many entries.
+ *
+ * ## What this app is for
+ *
+ * The sketch substrate (`keysFor('sketch')` at `029dc16a…`) is a curated
+ * portrait of David, authored by claude. This app edits it through a
+ * browser. The Record is signed by claude credentials; only someone with
+ * those credentials can author. Anyone can FETCH the page bytes (it's
+ * served from streamo.dev); the EDIT part is gated by login.
  *
  * v1 scope: login-required to even view (matches shared-note). A view-only
  * anonymous mode is a v2 layer.
+ *
+ * ## Real frictions hit while building this
+ *
+ *   - **importmap-vs-stream-mount gap**: streamo.dev injects
+ *     `<script type="importmap">{"@dtudury/streamo/":"/streamo/"}</script>`
+ *     into all served HTML — but `/streamo/*` only resolves on the
+ *     homepage Record's mount. Pages served at `/streams/<other>/...`
+ *     get the importmap but the targets 404. Worked around with absolute
+ *     URLs to `/streams/02e77190.../`. See [[importmap-vs-stream-mount-gap]].
+ *   - **pubkey-from-URL is path-only**: the page extracts pubkey from
+ *     `/streams/<66-hex>/`. Doesn't work via the friendly subdomain
+ *     (sketch.streamo.social) because the path is just `/index.html`.
+ *     The hyper-school for this friction is a meta-tag injection from
+ *     streamo.dev's mount server — same family as the importmap gap.
+ *     See [[sketch-app-needs-its-record-identity]] +
+ *     [[hyper-school-meta-tag-injection]].
+ *   - **library Record missing files**: imports from
+ *     `/streams/02e77190.../StreamoRecord.js` and similar — at the time
+ *     this app shipped, those files were 404 because the library Record
+ *     hadn't been re-synced post-11.0-rename. Sketch worked only after
+ *     the library was caught up (which itself is its own arc — see
+ *     [[chain-adoption-still-unsolved]]).
+ *
+ * ## What works in v1
+ *
+ *   - Login derives Signer.keysFor('sketch'); only succeeds if creds match URL pubkey
+ *   - Subscribe → entries list on the left, editor on the right
+ *   - Save commits with a real message (sketch-specific compose: verb + name)
+ *   - New-entry pre-fills `entries/<today>-` so the slash convention from
+ *     streamon's relaxation gets used naturally
+ *   - Rename support (selectedName ≠ draftName → delete-then-write atomic)
+ *
+ * ## What v2 would add
+ *
+ *   - Anonymous view-only mode (currently login-required to even view)
+ *   - Markdown preview pane
+ *   - Frontmatter parsing (born-from links rendered as portals)
+ *   - Cross-Record suggestions (David's own sketch-of-self Record alongside)
+ *
+ * ## Lens portals
+ *
+ *   - [[importmap-vs-stream-mount-gap]] — workaround for non-homepage Records
+ *   - [[git-vs-streamo-message-inconsistency]] — sketch save uses {message}
+ *     so the chain reads as narrative; sister to commit-message discipline
+ *   - [[police-sketch-architecture]] — the two-Record arc this is step 1 of
+ *   - [[within-record-vs-cross-record-different-layers]] — entries live at
+ *     value.files; sub-sketches (when v2 wants them) go via mounts.json
+ *
+ * ## See this file's chain
+ *
+ *   bash scripts/file-history.sh public/apps/sketch/main.js
+ *
+ * The chain layer carries the per-edit letter; this file is the snapshot.
+ *
+ * — past-iris, 2026-06-02 late afternoon, after sketch v1 deployed and the
+ *   {message} retrofit aligned chain-narrative with git-narrative.
  */
 
 // Library Record's URL — same pattern as hello.html. The auto-injected
@@ -152,16 +211,23 @@ async function save (e) {
   if (!myRepo || !nameIsValid()) return
   const name = ui.get('draftName')
   const body = ui.get('draftBody')
+  const old = ui.get('selectedName')
+  // Compose a real commit message so the chain reads as narrative, not
+  // silent byte-ship. See [[git-vs-streamo-message-inconsistency]]: every
+  // streamo update deserves the same articulation discipline as a git
+  // commit. Caller-context here is "the user edited <name> via the sketch
+  // app" — that IS the why; encode it.
+  const verb    = (old && old === name) ? 'edit' : (old ? `rename ${old} →` : 'add')
+  const message = `${verb} ${name} via sketch app`
   ui.set({ saving: true, status: 'saving…' })
   try {
     await myRepo.update(c => {
       const files = { ...(c?.files ?? {}) }
       // If renaming (selectedName ≠ draftName), drop the old key.
-      const old = ui.get('selectedName')
       if (old && old !== name) delete files[old]
       files[name] = body
       return { ...(c ?? {}), files, writtenAt: new Date().toISOString() }
-    })
+    }, { message })
     ui.set({ selectedName: name, loadedBody: body, status: 'saved' })
   } catch (err) {
     ui.set('status', `save failed: ${err.message ?? err}`)

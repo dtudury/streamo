@@ -130,8 +130,11 @@ const value = {
   identityType: 'who-i-am-with-david'
 }
 
-repo.defaultMessage = `publish identity seed @ ${streamoVersion.slice(0, 8)}`
-repo.set(value)
+// repo.update(fn, {message}) — retry-safe + explicit message at the call
+// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02).
+await repo.update(c => value, {
+  message: `publish identity seed @ ${streamoVersion.slice(0, 8)}`
+})
 console.log(`[publish-identity-seed] set ${seedContent.length} bytes of content`)
 
 // Hold the connection long enough for sign + push to reach the relay.

@@ -97,11 +97,14 @@ const ws = await originSync(record, publicKeyHex, `${protocol}://${host}:${port}
 await new Promise(r => setTimeout(r, 2500))
 record.attachSigner(signer, streamName)
 
-record.defaultMessage = `publish claude-home @ ${streamoVersion.slice(0, 8)} (${Object.keys(files).length} files)`
-record.set({
+// record.update(fn, {message}) — retry-safe + explicit message at the call
+// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02).
+await record.update(c => ({
   files,
   streamoVersion,
   writtenAt: new Date().toISOString()
+}), {
+  message: `publish claude-home @ ${streamoVersion.slice(0, 8)} (${Object.keys(files).length} files)`
 })
 
 console.log(`[publish-claude-home] set ${Object.keys(files).length} files / ${totalBytes.toLocaleString()} bytes`)

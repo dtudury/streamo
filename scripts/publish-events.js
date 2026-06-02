@@ -121,8 +121,11 @@ const value = {
   identityType: 'bubbles-stream'
 }
 
-repo.defaultMessage = `publish bubble events @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
-repo.set(value)
+// repo.update(fn, {message}) — retry-safe + explicit message at the call
+// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02).
+await repo.update(c => value, {
+  message: `publish bubble events @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
+})
 console.log(`[publish-events] set ${mdFiles.length} files / ${totalBytes.toLocaleString()} bytes`)
 
 // Hold the connection long enough for sign + push to reach the relay.

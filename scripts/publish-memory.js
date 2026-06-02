@@ -123,8 +123,14 @@ const value = {
   identityType: 'memory-corpus'
 }
 
-repo.defaultMessage = `publish memory corpus @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
-repo.set(value)
+// repo.update(fn, {message}) — retry-safe + explicit message at the call
+// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02): the
+// old `defaultMessage + repo.set(value)` pattern is retired; new code
+// uses update() with the message passed explicitly so the chain reads
+// as narrative without a separate defaultMessage line above.
+await repo.update(c => value, {
+  message: `publish memory corpus @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
+})
 console.log(`[publish-memory] set ${mdFiles.length} files / ${totalBytes.toLocaleString()} bytes`)
 
 // Hold the connection long enough for sign + push to reach the relay.

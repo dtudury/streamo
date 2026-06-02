@@ -7,6 +7,25 @@ promise: no server holds authority over your data or your identity. Keys are der
 deterministically from credentials (no files to manage), every write is signed and
 append-only, and the server is a relay — not a gatekeeper.
 
+## relay & process config — the canonical home for "how is this thing run"
+
+When you're spinning up a relay or author-process via `bin/streamo.js` and
+wondering "is there a config file shape for this?" — yes. See
+**`design.md` §14.5 — Relay configuration: `--config`, the four-way matrix,
+and `homeKey` as canonical anchor**. That section documents:
+
+- The four input sources with precedence: CLI > env > config file > defaults
+- The `streamo.json` config-file shape (`identity` + `server` sub-objects)
+  — distinct from the Record-side `streamo.json` that fileSync writes
+- **`homeKey`** as the canonical name for "the pubkey of the Record this
+  process is opening" (from `bin/streamo.js` line ~219, verbatim)
+- Author mode (sign your own) vs. relay-only mode (mirror by `homeKey`)
+- Sample configs: `env/example.library-publisher.json`,
+  `env/example.homepage-relay.json`
+
+When David or future-iris asks *"isn't there a canonical field somewhere?"*
+— that's the `homeKey` field, and §14.5 is the home for the discussion.
+
 ## the face of the project
 
 These files are how people discover and understand streamo. Keep them in sync

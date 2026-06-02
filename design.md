@@ -549,6 +549,140 @@ A whole-system test of the design:
   `{name, messages: [...]}`. Other clients see them via the
   subscription set up by `follow`.
 
+## 14.5. Relay configuration — `--config`, the four-way matrix, and `homeKey` as canonical anchor
+
+> File: `bin/streamo.js` (the `applyStreamoJsonConfig` function lives
+> here, around lines 193–280). Help text via `node bin/streamo.js --help`.
+
+`bin/streamo.js` is the standalone executable that brings a streamo
+relay or author-process to life. Its configuration accepts inputs from
+**four sources**, with a defined precedence:
+
+1. **CLI flags** (`--files`, `--origin`, `--name`, etc.) — highest
+   priority; what's on the command line wins.
+2. **Env vars** (`STREAMO_USERNAME`, `STREAMO_PASSWORD`,
+   `STREAMO_HOME_KEY`, etc.) — fill in anything CLI didn't set.
+3. **Config file** (`--config <path>`, default name `streamo.json`) —
+   JSON file with `identity` and `server` sub-objects; fills in
+   anything CLI + env didn't set.
+4. **Built-in defaults** — lowest; whatever `commander` carries.
+
+CLI > env > config > defaults. This lets a config file ship next to a
+relay's data directory as the "this is how this relay is normally run"
+declaration, while CLI flags and env vars override for one-off variants
+(debugging, alternate origins, etc.).
+
+### Config file shape
+
+`streamo.json` (the **config file** — distinct from the `streamo.json`
+that fileSync writes into a Record's value; same filename, different
+role; the context is unambiguous given where each lives):
+
+```json
+{
+  "identity": {
+    "name":          "streamo-library",
+    "username":      "streamo-library",
+    "password":      "...",
+    "keyIterations": 100000,
+    "self":          "<expected pubkey>",
+    "homeKey":       "<pubkey-hex>"
+  },
+  "server": {
+    "web":        true,
+    "outlet":     1024,
+    "feed":       ["wss://streamo.dev"],
+    "files":      "./public/streamo",
+    "archive":    "./.streamo",
+    "verbose":    "info",
+    "recordFile": "streamo.json"
+  }
+}
+```
+
+Relative paths resolve against the **config file's directory**, not
+CWD — so a relay's config can ship in `~/relay/streamo.json` and
+reference `./files/` or `./.streamo/` without absolute paths.
+
+### `homeKey`: the canonical anchor
+
+The most load-bearing field is `identity.homeKey` (or the
+`--home-key <pubkey-hex>` CLI flag, env `STREAMO_HOME_KEY`).
+`homeKey` is the **canonical name for "the pubkey of the Record this
+process is opening,"** verbatim from `bin/streamo.js` line ~219:
+
+> *"`homeKey` is the canonical name for 'the pubkey of the Record
+> we're [authoring]'."*
+
+Two modes follow from whether you supply `homeKey`:
+
+- **Author mode** (sign your own bytes): supply `name` + `username` +
+  `password`. The pubkey is *derived* via `keysFor(name)`. If you also
+  supply `homeKey`, it's checked against the derived pubkey — a
+  password-typo check that catches "wrong creds for this Record"
+  before bytes hit the chain.
+- **Relay-only mode** (mirror someone else's signed bytes): supply
+  `homeKey` *alone*. No `--name`/`--username`/`--password`. The Record
+  is opened by pubkey; the process can't sign new commits to it, but
+  it serves the bytes (and pulls updates from upstream via
+  `--feed`/`--origin`). Mutually exclusive with `--files` and
+  `--merge-from`.
+
+Relay-only mode is how the fly.io claude-backup mirror works: it
+opens the streamo-library / claude-home / argo-net Records by pubkey
+and mirrors them without holding any signing identity.
+
+### Field-by-field (server section)
+
+- `web: true | <port>` — start an HTTP server. `true` = port 80,
+  number = explicit port.
+- `outlet: <port>` — accept incoming WebSocket dial-ins from author
+  processes feeding bytes UP to this relay.
+- `feed: [url, ...]` — outbound WebSocket dials. Subscribes to remote
+  outlets; bytes flow DOWN. Combines with CLI `--feed` flags
+  (config-provided + CLI-provided merge).
+- `files: "<path>"` — mirror this local directory into the Record's
+  `value.files`. Bidirectional via `fileSync`.
+- `archive: "<path>" | false` — directory for chain bytes; `false`
+  skips disk writes (in-memory only — useful for tests, dangerous
+  for production).
+- `verbose: "off"/"warn"/"info"/"debug"/"trace"/"silly"` — turtle-log
+  level.
+- `recordFile: "<name>" | false` — JSON file on disk synced as the
+  *non-`files`* portion of `value` (the meta layer: title, journalists,
+  etc.). Auto-enabled when `files` is set; `false` disables.
+
+### Sample configs in this repo
+
+- `env/example.library-publisher.json` — what
+  `scripts/publish-library.mjs` would look like as a config file
+  (author mode for the streamo-library identity).
+- `env/example.homepage-relay.json` — full-relay shape (web + outlet +
+  feed + files + recordFile).
+
+### Cross-references
+
+- `bin/streamo.js` lines 193–280 (`applyStreamoJsonConfig` function)
+  — the actual parse + precedence logic, with inline comments on each
+  field's canonical name.
+- §7 *Sub-stream identities* — what `name` + `username` + `password`
+  derive, and why one credential pair yields many identities.
+- `scripts/publish-library.mjs` + `scripts/streamon.mjs` +
+  `scripts/streamo-as.mjs` — three live use cases, each spawning
+  `bin/streamo.js` with env + CLI flags rather than a config file. A
+  natural future refactor is to express each as a config file shipped
+  next to its data dir.
+
+### When to use which
+
+- **CLI flags + env**: ad-hoc, debugging, scripts that compose multiple
+  identities (like `streamo-as.mjs`).
+- **Config file**: long-running relays, identity-bound services that
+  want their setup version-controlled, deployments where the same
+  config ships with the code.
+- **Combination**: config file for the stable shape, CLI overrides for
+  the variant-of-the-day.
+
 ## 15. The module boundary — three layers in one package
 
 streamo ships as one npm package, but it's really three loosely-coupled

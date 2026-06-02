@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Example config for a homepage-serving relay (the streamo.dev shape).",
+    "Authors the homepage Record's chain, mirrors content for mounted apps,",
+    "serves HTTP on the web port, and accepts incoming feeds from author processes.",
+    "Use with: node bin/streamo.js --config env/example.homepage-relay.json",
+    "",
+    "DO NOT commit a real password here. This sample uses '<...>' placeholders.",
+    "See design.md §14.5 for field-by-field semantics."
+  ],
+  "identity": {
+    "name":          "streamo-relay",
+    "username":      "streamo-relay",
+    "password":      "<32-char-from-cryptopotamus>",
+    "keyIterations": 100000,
+    "homeKey":       "<homepage-Record-pubkey-hex>"
+  },
+  "server": {
+    "web":        true,
+    "outlet":     1024,
+    "feed":       [
+      "wss://library-publisher.example",
+      "wss://app-publisher.example"
+    ],
+    "files":      "./homepage/files",
+    "archive":    "./homepage/archive",
+    "verbose":    "info",
+    "recordFile": "streamo.json"
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "_comment": [
+    "Example config for publishing/maintaining the streamo-library Record.",
+    "Equivalent to what scripts/publish-library.mjs spawns (after b64-decoding",
+    "the password). Use with: node bin/streamo.js --config env/example.library-publisher.json",
+    "",
+    "homeKey is set so it's checked against the derived pubkey on startup —",
+    "catches a password typo before bytes hit the chain. See design.md §14.5.",
+    "",
+    "DO NOT commit a real password here. This sample uses '<...>' placeholders."
+  ],
+  "identity": {
+    "name":          "streamo-library",
+    "username":      "streamo-library",
+    "password":      "<32-char-from-cryptopotamus>",
+    "keyIterations": 100000,
+    "homeKey":       "02e77190d3761da3dc3e4cc69d2daca2e946a32fe212e62209de42c68c51bdb93a"
+  },
+  "server": {
+    "files":      "./public/streamo",
+    "origin":     "wss://streamo.dev",
+    "archive":    "./.streamo",
+    "verbose":    "info",
+    "recordFile": "streamo.json"
+  }
+}

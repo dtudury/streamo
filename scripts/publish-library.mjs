@@ -90,6 +90,16 @@
  *   PUBLISH_LIBRARY_ENV      override env file path
  *                            (default env/secrets/streamo-library.env)
  *
+ * ## Alternative shape: config file
+ *
+ * The spawn that this script wraps could equivalently be expressed as a
+ * `bin/streamo.js --config <path>` invocation pointing at a streamo.json
+ * config file. See `env/example.library-publisher.json` for the shape
+ * (identity + server sub-objects), and `design.md` §14.5 for the
+ * four-way precedence (CLI > env > config > defaults) and `homeKey`
+ * as canonical anchor. A future refactor could move this script's
+ * env-decoding + spawn logic into a config-file convention.
+ *
  * ## See this file's chain
  *
  *   bash scripts/file-history.sh scripts/publish-library.mjs

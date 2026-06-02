@@ -36,14 +36,25 @@ async function api (path, options = {}) {
   return res.json()
 }
 
+// Notes is a markdown app — slugs become `<slug>.md` filenames.
+// streamon used to auto-append `.md`; that magic moved out (sketch-specific
+// aesthetic doesn't belong in the daemon). Apps own their extensions now.
+const toFilename = slug => slug.endsWith('.md') ? slug : `${slug}.md`
+const toSlug     = name => name.replace(/\.md$/, '')
+
 async function ping ()             { return api('/ping') }
-async function listEntries ()      { return api('/list') }
-async function readEntry (name)    { return api(`/read?name=${encodeURIComponent(name)}`) }
-async function writeEntry (name, body) {
+async function listEntries ()      {
+  const r = await api('/list')
+  if (!r.ok) return r
+  // streamon now returns raw filenames; strip .md for the UI slug-view.
+  return { ...r, names: r.names.filter(n => n.endsWith('.md')).map(toSlug) }
+}
+async function readEntry (slug)    { return api(`/read?name=${encodeURIComponent(toFilename(slug))}`) }
+async function writeEntry (slug, body) {
   return api('/write', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, body })
+    body: JSON.stringify({ name: toFilename(slug), body })
   })
 }
 

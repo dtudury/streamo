@@ -11,12 +11,19 @@
  * Verbs (talking straight to streamo, no file mirror — the chain IS the
  * source of truth; verbs expose precisely-what-you-asked-for queries):
  *
- *   write <name> <body>     create/update Record value.files[<name>.md]
+ *   write <name> <body>     create/update Record value.files[<name>]
  *   read  <name>            return the current body
  *   head                    chain-hash + file count + signed length + lastWrite
  *   list                    file names in current value (index without bodies)
  *   ping                    is-daemon-alive + identity probe
  *   shutdown                graceful exit (mostly for testing)
+ *
+ * Names are opaque keys in `value.files` — slashes are allowed for
+ * apps that want to express hierarchy in flat keys (e.g.,
+ * 'entries/2026-06-02-foo.md'). Cross-Record traversal is a different
+ * layer (mounts: see `files['mounts.json'].mounts` + registrySync.js
+ * followMounts). Callers specify the full filename including extension;
+ * no auto-`.md` is appended.
  *
  * `head` is the cheap-poll affordance: clients call it to detect whether
  * the chain has advanced since their last known hash, without pulling
@@ -104,22 +111,35 @@ async function handleRequest (req) {
 
 async function handleWrite ({ name, body }) {
   if (!name || typeof body !== 'string') return { ok: false, error: 'write requires {name, body}' }
-  if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name)) return { ok: false, error: 'name must be alphanumeric/hyphen/dot/underscore' }
+  // Names are opaque filename keys in `value.files`. Slashes are allowed
+  // (e.g., 'entries/2026-06-02.md') — they're object-key chars, structurally
+  // fine, and let apps express hierarchy in flat keys. Cross-Record
+  // traversal is a different layer: it lives in `files['mounts.json'].mounts`
+  // (see registrySync.js followMounts + repoFileServer.js readMountsFromRepo).
+  // Earlier regex rejected slashes; relaxed 2026-06-02 after reading-with-
+  // presence revealed the constraint was incidental, not structural.
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(name)) {
+    return { ok: false, error: 'name must be alphanumeric/hyphen/dot/underscore/slash' }
+  }
 
   const current = server.streamo.get() ?? { files: {}, identityType: 'sketch-substrate' }
-  // If name already has an extension (contains a dot), use as-is; otherwise
-  // default to .md (sketch entries are markdown by convention).
-  const filename = name.includes('.') ? name : `${name}.md`
-  const files = { ...(current.files ?? {}), [filename]: body }
+  // No .md magic — caller specifies the full filename including extension.
+  // The previous auto-append assumed everything is markdown; that's a
+  // sketch-app-specific aesthetic, not streamon's job.
+  const files = { ...(current.files ?? {}), [name]: body }
   const next = { ...current, files, writtenAt: new Date().toISOString() }
 
   server.streamo.set(next)
 
-  // Brief wait for push; check rejection if connected. The chain IS the
-  // source of truth — no file mirror. Clients read via the `read` verb.
+  // FUTURE: replace this 1500ms wait with an explicit signal — chainHash
+  // advance or pushRejected fire. See [[feedback_dont_invent_events]]:
+  // setTimeout bridges a missing substrate signal; the proper fix is
+  // awaiting on `committedChainHash` advance or `isReadyToAuthor` toggle.
+  // Held as its own thread; this placeholder is good enough until we
+  // build the real signal.
   await new Promise(r => setTimeout(r, 1500))
   const rejected = server.streamo.pushRejected
-  const url = `https://${RELAY_HOST}/streams/${pubkey}/${filename}`
+  const url = `https://${RELAY_HOST}/streams/${pubkey}/${name}`
   return rejected
     ? { ok: false, error: `relay rejected: ${rejected.reason ?? 'unknown'}`, url, pubkey }
     : { ok: true, url, pubkey, chainHash: toHex(server.streamo.committedChainHash) }
@@ -128,9 +148,9 @@ async function handleWrite ({ name, body }) {
 async function handleRead ({ name }) {
   if (!name) return { ok: false, error: 'read requires {name}' }
   const value = server.streamo.get()
-  const filename = name.includes('.') ? name : `${name}.md`
-  const body = value?.files?.[filename]
-  if (body == null) return { ok: false, error: `no record named "${filename}"` }
+  // No .md magic — symmetric with handleWrite. Caller specifies full filename.
+  const body = value?.files?.[name]
+  if (body == null) return { ok: false, error: `no record named "${name}"` }
   return { ok: true, body }
 }
 
@@ -151,9 +171,10 @@ async function handleHead () {
 
 async function handleList () {
   // Names only (no bodies). Cheap index for "what's currently in this Record."
+  // Returns raw filename keys (no extension stripping — symmetric with read/write).
   const value = server.streamo.get()
   const files = value?.files ?? {}
-  const names = Object.keys(files).map(k => k.replace(/\.md$/, '')).sort()
+  const names = Object.keys(files).sort()
   return { ok: true, names, fileCount: names.length }
 }
 

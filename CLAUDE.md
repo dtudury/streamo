@@ -7,6 +7,27 @@ promise: no server holds authority over your data or your identity. Keys are der
 deterministically from credentials (no files to manage), every write is signed and
 append-only, and the server is a relay — not a gatekeeper.
 
+## value is NOT JSON — the type system is richer
+
+Common mistake (mine, repeatedly today): treating a Record's `value` as if
+it's JSON-shaped. It isn't. Streamo's codec layer supports `Date`,
+`Uint8Array`, `Signature`, `undefined`, plus the usual primitives and
+composites. Real Dates and real Uint8Arrays go into the value directly —
+not ISO strings, not base64.
+
+When you import the `value.files[<filename>]` convention (notes / sketch
+v1 / homepage), you flatten value to a string-or-bytes-per-file shape.
+That's a *choice* of one shape, not the substrate's only shape. For apps
+where the natural value is a typed object, the files-map wrapper is
+cruft and should be skipped — see [[what's-.md-is-cruft]] +
+[[files-map-is-one-convention-not-truth]].
+
+See **`design.md` §14.4 — The value type system** for the full type table,
+practical examples, and the 2026-06-02 round-trip investigation flagged
+during testing (Date and Uint8Array unexpectedly came back as plain Object
+via `streamo.update` → `streamo.get`; whether codec bug or path issue,
+needs follow-up).
+
 ## relay & process config — the canonical home for "how is this thing run"
 
 When you're spinning up a relay or author-process via `bin/streamo.js` and

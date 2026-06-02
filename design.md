@@ -549,6 +549,68 @@ A whole-system test of the design:
   `{name, messages: [...]}`. Other clients see them via the
   subscription set up by `follow`.
 
+## 14.4. The value type system — what a Record's value can actually hold
+
+> File: `public/streamo/codecs.js` (the `makeCodecs()` factory at line ~259
+> registers one codec per type). Read alongside §3 (`codecs.js` — the
+> type system, lines 58–106 of this design doc).
+
+A Record's `value` is **NOT** JSON. It's richer. Streamo's codec layer encodes
+and decodes native JS types beyond what JSON natively supports. The
+canonical type list (codec registrations in `makeCodecs()`):
+
+| Codec name      | JS type                                        |
+|-----------------|------------------------------------------------|
+| `UNDEFINED`     | `undefined`                                    |
+| `NULL`          | `null`                                         |
+| `FALSE` / `TRUE`| `false` / `true`                               |
+| `WORD`          | numbers (var-encoded)                          |
+| `EMPTY_STRING` / `STRING`  | `''` / non-empty strings            |
+| `DATE`          | `Date` instances (encoded via `getTime()` Float64Array) |
+| `SIGNATURE`     | `Signature` instances (97-byte fixed chunk)    |
+| `DUPLE`         | the internal tree node (not exported)          |
+| `EMPTY_ARRAY` / `ARRAY`    | `[]` / arrays                       |
+| `EMPTY_OBJECT` / `OBJECT`  | `{}` / objects                      |
+| `VARIABLE` / `EMPTY_UINT8ARRAY` | `Uint8Array` / `new Uint8Array(0)`    |
+
+What this means in practice:
+
+```js
+// LEGAL — these are real Dates and Uint8Arrays in the value, not strings:
+await streamo.update(c => ({
+  ...c,
+  updatedAt: new Date(),                  // not '2026-06-02T...' — real Date
+  thumbnail: new Uint8Array([/* PNG */ ]) // not base64-encoded — real bytes
+}))
+```
+
+### The convention you import matters
+
+Apps that flatten value into `value.files[<filename>]` (homepage, notes,
+sketch v1, etc.) are **imposing a string-or-bytes-per-file convention**
+on top of the substrate's richer model. That's a *choice*, not a
+substrate constraint. For apps where the natural shape is a typed object
+(`{ body: string, updatedAt: Date, attachments: Uint8Array[] }`), the
+files-map wrapper is *cruft* and should be skipped.
+
+### Open investigation flagged 2026-06-02
+
+In testing the round-trip `streamo.update(c => ({...c, payload: {...nested}}))`
+→ `streamo.get().payload`, **native Date and Uint8Array did NOT preserve
+through the in-memory round-trip** — they came back as plain `Object`
+without their original type. The codecs exist; whether the issue is in
+codec dispatch, registration in this path, or in-memory mutation skipping
+the encode-decode boundary — needs further investigation. See
+[[round-trip-flattens-native-types-investigation-needed]] in
+events/2026-06-02.md.
+
+### Where this fits
+
+This section sits above §14.5 *Relay configuration* because the value
+type system is a **substrate-level** truth (what bytes can carry), while
+§14.5 is **process-level** (how a relay is configured to host them).
+Cold-iris arriving via "but value is just JSON, right?" lands here.
+
 ## 14.5. Relay configuration — `--config`, the four-way matrix, and `homeKey` as canonical anchor
 
 > File: `bin/streamo.js` (the `applyStreamoJsonConfig` function lives

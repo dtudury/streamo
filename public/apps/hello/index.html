@@ -55,8 +55,6 @@
       <p class="sub">a page served from a signed streamo Record</p>
       <p class="pubkey">${pubkey}</p>
       <div class="count">clicks: ${() => { const v = state.get('count'); console.log('[hello] slot read count =', v); return v }}</div>
-      <!-- liveObject.set is path-based: set(...path, value).
-           setState-style set({ count: N }) silently no-ops — see [[setState-vs-set-path-confusion]]. -->
       <button onclick=${handle(() => {
         const before = state.get('count')
         console.log('[hello] click fired; count before =', before)

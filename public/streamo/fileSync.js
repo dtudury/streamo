@@ -558,7 +558,6 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // legacy race (chain-mismatch on first push) re-appears in that
   // configuration — but the user sees a clear log line saying so, not
   // an unexplained hang.
-  console.error('[DBG fileSync] entering ready-to-author gate; isReadyToAuthor=', repo.isReadyToAuthor, 'hasRelay=', repo.hasRelay, 'relaySubscribedAtOffset=', repo.relaySubscribedAtOffset)
   if (typeof repo.isReadyToAuthor === 'boolean' && !repo.isReadyToAuthor) {
     const controller = new AbortController()
     const ready = repo.recaller.when(
@@ -579,7 +578,6 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     await ready
     clearTimeout(timer)
   }
-  console.error('[DBG fileSync] past ready-to-author gate; isReadyToAuthor=', repo.isReadyToAuthor)
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)
   const diskRecordMeta = await readRecordFileMeta(folder, recordFile)
@@ -589,19 +587,8 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // streamo.json is in diskFiles now (no exclusion), so its mtime is
   // already included in diskMtime — no separate recordFile mtime read.
   const maxDiskMtime = diskMtime
-  console.error('[DBG fileSync] init-sync decision inputs:', {
-    diskFilesCount: Object.keys(diskFiles).length,
-    diskFilesSample: Object.keys(diskFiles).slice(0, 3),
-    diskRecordMeta: diskRecordMeta ? Object.keys(diskRecordMeta) : null,
-    lastCommit: lastCommit ? { date: lastCommit.date, message: lastCommit.message } : null,
-    commitTime,
-    maxDiskMtime,
-    repoFilesCount: repoFiles ? Object.keys(repoFiles).length : null,
-    diskNewerThanCommit: maxDiskMtime > commitTime
-  })
 
   if (lastCommit && repoFiles && maxDiskMtime <= commitTime) {
-    console.error('[DBG fileSync] taking Record-wins branch (Record overwrites disk)')
     // StreamoRecord wins: write committed files to disk + materialize mounts.
     // streamo.json is a regular file in value.files now — writeToFolder
     // handles it like any other file. Heal the invariant first if the
@@ -617,7 +604,6 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
   } else if (Object.keys(diskFiles).length > 0 || (recordFile && diskRecordMeta)) {
-    console.error('[DBG fileSync] taking Disk-wins branch (disk commits to chain)')
     // Disk wins: commit current disk state in a single operation —
     // value.files (including streamo.json) AND top-level meta extracted
     // from streamo.json. setRecordMeta merges meta keys; setRepoFiles
@@ -634,23 +620,15 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     }
     const hasFiles = Object.keys(filesToCommit).length > 0
     const hasMeta = recordFile && diskRecordMeta
-    console.error('[DBG fileSync] disk-wins: hasFiles=', hasFiles, 'filesToCommitCount=', Object.keys(filesToCommit).length, 'hasMeta=', hasMeta)
     if (hasFiles || hasMeta) {
-      console.error('[DBG fileSync] calling repo.update for seed commit...')
       await repo.update(c => {
-        console.error('[DBG fileSync] inside repo.update callback; current value keys:', c ? Object.keys(c) : 'undefined')
         let v = c
         if (hasMeta) v = applyMetaToValue(v, diskRecordMeta)
         return applyFilesToValue(v, filesToCommit)
       }, { message: `seed ${FILES_KEY}` })
-      console.error('[DBG fileSync] repo.update returned; new committedChainHash=', repo.committedChainHash && repo.committedChainHash.toString().slice(0, 32))
       // After the commit lands, the repo→disk watcher (below) will fire
       // and materialize any mounts.
-    } else {
-      console.error('[DBG fileSync] disk-wins branch: no files or meta to commit; skipping update')
     }
-  } else {
-    console.error('[DBG fileSync] NEITHER branch fired — lastCommit:', !!lastCommit, 'repoFiles:', !!repoFiles, 'diskFilesCount:', Object.keys(diskFiles).length)
   }
 
   // StreamoRecord → disk: retries if a write is in progress so no commit is ever dropped

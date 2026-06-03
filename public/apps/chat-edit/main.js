@@ -258,3 +258,35 @@ if (hisFromHash) {
     ui.set({ status: `connect error: ${e.message}`, phase: 'login' })
   })
 }
+
+// Back-button support: when the hash is cleared (browser back from a
+// post-login state), reset UI to the login form. login() sets
+// location.hash on success, which pushes a history entry; pressing
+// back pops to the pre-login URL (no hash) and fires hashchange.
+window.addEventListener('hashchange', () => {
+  const raw = location.hash.startsWith('#') ? location.hash.slice(1) : ''
+  const validPubkey = /^[0-9a-f]{66}$/i.test(raw) ? raw : null
+  if (validPubkey) {
+    // Forward-nav or someone hand-typed a hash; reconnect read-only
+    // unless it matches who we already have.
+    if (ui.get('hisPubkey') !== validPubkey) {
+      hisSigner = null  // can't author for a hash we didn't derive
+      ui.set({ hisPubkey: validPubkey, phase: 'connecting', status: 'connecting…' })
+      connect(validPubkey, null).catch(e => {
+        ui.set({ status: `connect error: ${e.message}`, phase: 'login' })
+      })
+    }
+  } else {
+    // Hash cleared → back to login. Drop signer + repo references so a
+    // re-login derives fresh.
+    hisSigner = null
+    hisRepo = null
+    ui.set({
+      phase: 'login',
+      hisPubkey: null,
+      loginError: null,
+      acceptError: null,
+      status: 'idle'
+    })
+  }
+})

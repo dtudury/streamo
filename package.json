@@ -63,6 +63,7 @@
     "demo:homepage": "node bin/streamo.js --env-file env/demo.homepage.env",
     "demo:library": "node bin/streamo.js --env-file env/demo.library.env",
     "demo:explorer": "node bin/streamo.js --env-file env/demo.explorer.env",
+    "david": "node bin/streamo.js --config env/david-home.json",
     "seed-history": "node scripts/seed-history.js",
     "fork-homepage": "node scripts/fork-homepage.js",
     "deploy": "bash scripts/deploy.sh",

@@ -210,8 +210,12 @@ export class StreamoRecord extends Streamo {
   }
 
   /**
-   * The committed data from the last commit, decoded.
+   * Eager-decoded value at the last commit's dataAddress.
    * Returns undefined if nothing has been committed yet.
+   *
+   * NB: the name is historical — this returns the WHOLE value; the
+   * files map (if there is one) is at `.files` of the return. Reach
+   * for `get()` with no path when you want the same thing lazily.
    */
   get files () {
     const commit = this.lastCommit

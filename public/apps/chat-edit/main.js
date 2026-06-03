@@ -300,36 +300,39 @@ if (hisFromHash) {
   })
 }
 
-// Back-button support: when the hash is cleared (browser back from a
-// post-login state), reset UI to the login form. login() sets
-// location.hash on success, which pushes a history entry; pressing
-// back pops to the pre-login URL (no hash) and fires hashchange.
+// Back-button support: when the hash changes, navigate the VIEW —
+// don't tear down credentials. login() sets location.hash on success,
+// pushing a history entry; back pops to the pre-login URL (no hash).
+// We just change the displayed phase; hisSigner / hisRepo stay alive
+// in memory so going forward again restores the editor seamlessly.
+// Actual logout (clearing the signer) is the explicit log-out button.
 window.addEventListener('hashchange', () => {
   const raw = location.hash.startsWith('#') ? location.hash.slice(1) : ''
   const validPubkey = /^[0-9a-f]{66}$/i.test(raw) ? raw : null
-  if (validPubkey) {
-    // Forward-nav or someone hand-typed a hash; reconnect read-only
-    // unless it matches who we already have.
-    if (ui.get('hisPubkey') !== validPubkey) {
-      hisSigner = null  // can't author for a hash we didn't derive
-      uset({ hisPubkey: validPubkey, phase: 'connecting', status: 'connecting…' })
-      connect(validPubkey, null).catch(e => {
-        uset({ status: `connect error: ${e.message}`, phase: 'login' })
-      })
-    }
-  } else {
-    // Hash cleared → back to login. Drop signer + repo references so a
-    // re-login derives fresh.
-    hisSigner = null
-    hisRepo = null
-    refreshSignerCell()
-    uset({
-      phase: 'login',
-      hisPubkey: null,
-      username: null,
-      loginError: null,
-      acceptError: null,
-      status: 'idle'
-    })
+
+  if (!validPubkey) {
+    // Hash cleared (back-press). Show login VIEW without touching
+    // signer state. If user has a live signer + repo, going forward
+    // will restore them.
+    ui.set('phase', 'login')
+    return
   }
+
+  // Hash present.
+  const currentHis = ui.get('hisPubkey')
+  if (validPubkey === currentHis) {
+    // Forward-nav back to the pubkey we already knew about. Just
+    // restore the editor view (no reconnect — session is still alive).
+    ui.set('phase', 'editor')
+    return
+  }
+
+  // Different pubkey hand-typed/pasted — open it read-only. Drop the
+  // editor-mode references but KEEP hisSigner intact (it's for the
+  // OTHER pubkey we logged in to; user may go back to it).
+  hisRepo = null
+  uset({ hisPubkey: validPubkey, phase: 'connecting', status: 'connecting…' })
+  connect(validPubkey, null).catch(e => {
+    uset({ status: `connect error: ${e.message}`, phase: 'login' })
+  })
 })

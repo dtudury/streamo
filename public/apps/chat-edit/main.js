@@ -92,6 +92,11 @@ let myRepo = null         // mine (slim — we only read my proposed edits)
 let hisRepo = null        // his (Writable after login — we sign acceptances)
 let session = null
 
+// `signerPresent` is a live cell so the header re-renders when login/logout
+// flips. The `hisSigner` JS var alone doesn't trigger recaller, so we mirror
+// its presence into ui.
+function refreshSignerCell () { ui.set('signerPresent', !!hisSigner) }
+
 // The streamName David's identity uses for THIS page's Record. v1 picks
 // one arbitrary name; phase 2 could let the user pick per page.
 const HIS_STREAM_NAME = 'chat-edit-page-v1'
@@ -118,6 +123,7 @@ async function login (e) {
     }
     hisSigner = signer
     ui.set({ deriving: false, username, hisPubkey: derivedHisPubkey, phase: 'connecting', status: 'connecting…' })
+    refreshSignerCell()
     location.hash = derivedHisPubkey
     await connect(derivedHisPubkey, signer)
   } catch (err) {
@@ -190,7 +196,35 @@ async function acceptSuggestion (s) {
   }
 }
 
+// Logout: clear signer state + hash; hashchange listener handles the rest.
+function logout () {
+  hisSigner = null
+  hisRepo = null
+  refreshSignerCell()
+  // Trigger hashchange by clearing the fragment; the listener resets ui.
+  history.pushState(null, '', location.pathname + location.search)
+  window.dispatchEvent(new HashChangeEvent('hashchange'))
+}
+
 // ── views ─────────────────────────────────────────────────────────────────
+function whoIndicator () {
+  return () => {
+    const phase = ui.get('phase')
+    const signed = ui.get('signerPresent')
+    const username = ui.get('username')
+    if (phase === 'login' || (!ui.get('hisPubkey'))) {
+      return h`<span class="who none" data-key="who-none"><span class="dot"></span>not logged in</span>`
+    }
+    if (signed) {
+      return h`<span data-key="who-author">
+        <span class="who author"><span class="dot"></span>${username ? `signed in as ${username}` : 'signed in'}</span>
+        <button class="logout" onclick=${handle(logout)}>log out</button>
+      </span>`
+    }
+    return h`<span class="who read" data-key="who-read"><span class="dot"></span>read-only · log in to accept</span>`
+  }
+}
+
 function loginView () {
   return h`<div class="login">
     <h1>chat-edit</h1>
@@ -213,8 +247,8 @@ function suggestionsView () {
       <div class="proposed">${s.value ?? ''}</div>
       ${s.reason ? h`<div class="reason">— ${s.reason}</div>` : null}
       <div class="row">
-        <button class="accept" disabled=${() => ui.get('accepting')}
-                onclick=${handle(() => acceptSuggestion(s))}>accept &amp; set ${s.field ?? '?'}</button>
+        <button class="accept" disabled=${() => ui.get('accepting') || !ui.get('signerPresent')}
+                onclick=${handle(() => acceptSuggestion(s))}>${() => ui.get('signerPresent') ? `accept & set ${s.field ?? '?'}` : 'log in to accept'}</button>
         <button class="dismiss" disabled=${() => ui.get('accepting')}>dismiss</button>
       </div>
     </div>
@@ -241,6 +275,7 @@ mount(h`
   <header>
     <span class="brand">streamo · chat-edit</span>
     <span class="sub">${() => ui.get('hisPubkey') ? ui.get('hisPubkey').slice(0, 12) + '…' : '(awaiting login)'}</span>
+    ${whoIndicator()}
     <span class="status">${() => ui.get('status')}</span>
   </header>
   ${() => {
@@ -281,9 +316,11 @@ window.addEventListener('hashchange', () => {
     // re-login derives fresh.
     hisSigner = null
     hisRepo = null
+    refreshSignerCell()
     ui.set({
       phase: 'login',
       hisPubkey: null,
+      username: null,
       loginError: null,
       acceptError: null,
       status: 'idle'

@@ -174,6 +174,7 @@ function currentValue (field) {
 // is keyed as 'chat-edit/proposed-edits.json' in the Record's files map.
 // Hardcoded for v1; could derive from location.pathname for genericity later.
 const PROPOSED_EDITS_PATH = 'chat-edit/proposed-edits.json'
+const WORKED_ON_PATH = 'chat-edit/worked-on.json'
 
 function proposedEdits () {
   if (!myRepo) return []
@@ -183,6 +184,19 @@ function proposedEdits () {
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
     return Array.isArray(parsed.suggestions) ? parsed.suggestions : []
+  } catch {
+    return []
+  }
+}
+
+function workedOnFiles () {
+  if (!myRepo) return []
+  const v = myRepo.get()
+  const raw = v?.files?.[WORKED_ON_PATH]
+  if (!raw) return []
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
+    return Array.isArray(parsed.files) ? parsed.files : []
   } catch {
     return []
   }
@@ -323,10 +337,27 @@ function fieldCard (field) {
   </div>`
 }
 
+function workedOnSection () {
+  return h`<div class="field-card worked-on" data-key="card-worked-on">
+    <div class="field-name">files we've been working on</div>
+    ${() => {
+      const files = workedOnFiles()
+      if (files.length === 0) return h`<div class="field-empty">(no files listed yet)</div>`
+      return h`<ul class="list-value worked-list">${files.map((f, i) => h`
+        <li data-key=${`f-${i}`}>
+          <code class="path">${f.path ?? '?'}</code>
+          ${f.what ? h`<span class="what"> — ${f.what}</span>` : null}
+        </li>
+      `)}</ul>`
+    }}
+  </div>`
+}
+
 function editorView () {
   return h`<main>
     <div class="hint">chat with iris elsewhere to direct edits.</div>
     ${KNOWN_FIELDS.map(f => fieldCard(f))}
+    ${workedOnSection()}
     <div class="hint">${() => ui.get('acceptError') ? `error: ${ui.get('acceptError')}` : ''}</div>
   </main>`
 }

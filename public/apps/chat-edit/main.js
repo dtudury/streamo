@@ -97,6 +97,12 @@ let session = null
 // its presence into ui.
 function refreshSignerCell () { ui.set('signerPresent', !!hisSigner) }
 
+// `uset({...})` on a liveObject is WHOLE-VALUE replacement (LiveSource.js
+// lines ~90-114, David's 2026-05-26 fix) — it drops all keys not in the
+// passed object. We want MERGE here, so use this helper that does per-key
+// path-based set for each entry. See [[ui-set-object-drops-other-keys]].
+function uset (obj) { for (const [k, v] of Object.entries(obj)) ui.set(k, v) }
+
 // The streamName David's identity uses for THIS page's Record. v1 picks
 // one arbitrary name; phase 2 could let the user pick per page.
 const HIS_STREAM_NAME = 'chat-edit-page-v1'
@@ -108,13 +114,13 @@ async function login (e) {
   const username = f.elements.username.value.trim()
   const password = f.elements.password.value
   if (!username || !password) return
-  ui.set({ deriving: true, loginError: null, status: 'deriving identity…' })
+  uset({ deriving: true, loginError: null, status: 'deriving identity…' })
   try {
     const signer = new Signer(username, password, 100000)
     const { publicKey } = await signer.keysFor(HIS_STREAM_NAME)
     const derivedHisPubkey = bytesToHex(publicKey)
     if (hisFromHash && hisFromHash !== derivedHisPubkey) {
-      ui.set({
+      uset({
         deriving: false,
         loginError: `credentials derive ${derivedHisPubkey.slice(0, 12)}… but URL hash is ${hisFromHash.slice(0, 12)}…`,
         status: 'idle'
@@ -122,12 +128,12 @@ async function login (e) {
       return
     }
     hisSigner = signer
-    ui.set({ deriving: false, username, hisPubkey: derivedHisPubkey, phase: 'connecting', status: 'connecting…' })
+    uset({ deriving: false, username, hisPubkey: derivedHisPubkey, phase: 'connecting', status: 'connecting…' })
     refreshSignerCell()
     location.hash = derivedHisPubkey
     await connect(derivedHisPubkey, signer)
   } catch (err) {
-    ui.set({ deriving: false, loginError: err.message ?? String(err), status: 'idle' })
+    uset({ deriving: false, loginError: err.message ?? String(err), status: 'idle' })
   }
 }
 
@@ -149,7 +155,7 @@ async function connect (hisPubkey, signer) {
     hisRepo.attachSigner(signer, HIS_STREAM_NAME)
     hisRepo.defaultMessage = `${ui.get('username')}'s page`
   }
-  ui.set({ phase: 'editor', status: 'connected' })
+  uset({ phase: 'editor', status: 'connected' })
   window.__chatEdit = { myRepo, hisRepo, ui }
 }
 
@@ -182,7 +188,7 @@ async function acceptSuggestion (s) {
     ui.set('acceptError', `v1 only supports bio field; got ${s.field}`)
     return
   }
-  ui.set({ accepting: true, acceptError: null, status: 'accepting…' })
+  uset({ accepting: true, acceptError: null, status: 'accepting…' })
   try {
     await hisRepo.update(
       c => ({ ...(c ?? {}), [s.field]: s.value, updatedAt: new Date() }),
@@ -290,7 +296,7 @@ mount(h`
 // (no signer; we can show his current value but can't accept until login).
 if (hisFromHash) {
   connect(hisFromHash, null).catch(e => {
-    ui.set({ status: `connect error: ${e.message}`, phase: 'login' })
+    uset({ status: `connect error: ${e.message}`, phase: 'login' })
   })
 }
 
@@ -306,9 +312,9 @@ window.addEventListener('hashchange', () => {
     // unless it matches who we already have.
     if (ui.get('hisPubkey') !== validPubkey) {
       hisSigner = null  // can't author for a hash we didn't derive
-      ui.set({ hisPubkey: validPubkey, phase: 'connecting', status: 'connecting…' })
+      uset({ hisPubkey: validPubkey, phase: 'connecting', status: 'connecting…' })
       connect(validPubkey, null).catch(e => {
-        ui.set({ status: `connect error: ${e.message}`, phase: 'login' })
+        uset({ status: `connect error: ${e.message}`, phase: 'login' })
       })
     }
   } else {
@@ -317,7 +323,7 @@ window.addEventListener('hashchange', () => {
     hisSigner = null
     hisRepo = null
     refreshSignerCell()
-    ui.set({
+    uset({
       phase: 'login',
       hisPubkey: null,
       username: null,

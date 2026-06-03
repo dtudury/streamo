@@ -133,6 +133,10 @@ program
       .env('STREAMO_CAT')
   )
   .addOption(
+    new Option('--eval <expr>', 'one-shot: evaluate <expr> with streamo/signer/registry/recaller/repo in scope, print result to stdout, exit')
+      .env('STREAMO_EVAL')
+  )
+  .addOption(
     new Option('--interactive', 'start a REPL with streamo, signer, and helpers as globals')
       .env('STREAMO_INTERACTIVE')
   )
@@ -152,8 +156,8 @@ program
 
 const options = program.opts()
 
-// keep --cat's stdout clean
-if (options.cat) {
+// keep one-shot modes' stdout clean
+if (options.cat || options.eval) {
   console.log = (...a) => process.stderr.write(a.join(' ') + '\n')
 }
 
@@ -519,6 +523,44 @@ if (options.cat) {
   const c = result.content
   process.stdout.write(typeof c === 'string' ? c : (c instanceof Uint8Array ? c : JSON.stringify(c, null, 2)))
   process.exit(0)
+}
+
+if (options.eval) {
+  const recaller = server.registry.recaller
+  const repo = server.streamo
+  const timeoutMs = 30000
+
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for record to materialize')),
+        timeoutMs
+      )
+      recaller.watch('eval-wait', () => {
+        if (repo.get() != null) {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+    })
+
+    const AsyncFunction = (async () => {}).constructor
+    const fn = new AsyncFunction(
+      'streamo', 'signer', 'registry', 'recaller', 'repo',
+      `return (${options.eval})`
+    )
+    const result = await fn(
+      server.streamo, server.signer, server.registry,
+      server.registry.recaller, server.streamo
+    )
+    if (typeof result === 'string') process.stdout.write(result)
+    else if (result instanceof Uint8Array) process.stdout.write(result)
+    else if (result !== undefined) process.stdout.write(JSON.stringify(result, null, 2))
+    process.exit(0)
+  } catch (e) {
+    process.stderr.write(`--eval: ${e.message}\n`)
+    process.exit(1)
+  }
 }
 
 if (options.files) {

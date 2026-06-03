@@ -9,6 +9,7 @@ import { start as startRepl } from 'repl'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
 import { StreamoRecord } from '../public/streamo/StreamoRecord.js'
 import { StreamoRecordRegistry } from '../public/streamo/StreamoRecordRegistry.js'
+import { FolderRecord } from '../public/streamo/FolderRecord.js'
 import { MemoryTier, DiskTier } from '../public/streamo/StorageTier.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
@@ -500,29 +501,35 @@ if (options.cat) {
   const targetFile = options.cat
   const recaller = server.registry.recaller
   const repo = server.streamo
+  const session = feedSessions[0] ?? null
   const timeoutMs = 30000
 
-  const result = await Promise.race([
-    new Promise((resolve) => {
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for record to materialize')),
+        timeoutMs
+      )
       recaller.watch('cat-wait', () => {
-        const value = repo.get()
-        if (value == null) return
-        const files = value.files
-        if (files && files[targetFile] !== undefined) {
-          resolve({ ok: true, content: files[targetFile] })
+        if (repo.lastCommit) {
+          clearTimeout(timer)
+          resolve()
         }
       })
-    }),
-    new Promise((resolve) => setTimeout(() => resolve({ ok: false }), timeoutMs))
-  ])
+    })
 
-  if (!result.ok) {
-    process.stderr.write(`--cat: timed out waiting for value.files[${JSON.stringify(targetFile)}]\n`)
+    const folder = new FolderRecord(repo, server.registry, { session, materializeTimeoutMs: timeoutMs })
+    const content = await folder.resolvePath(targetFile)
+    if (content === null || content === undefined) {
+      process.stderr.write(`--cat: ${JSON.stringify(targetFile)} not found in this record or any mounted record\n`)
+      process.exit(1)
+    }
+    process.stdout.write(typeof content === 'string' ? content : (content instanceof Uint8Array ? content : JSON.stringify(content, null, 2)))
+    process.exit(0)
+  } catch (e) {
+    process.stderr.write(`--cat: ${e.message}\n`)
     process.exit(1)
   }
-  const c = result.content
-  process.stdout.write(typeof c === 'string' ? c : (c instanceof Uint8Array ? c : JSON.stringify(c, null, 2)))
-  process.exit(0)
 }
 
 if (options.eval) {

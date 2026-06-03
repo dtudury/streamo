@@ -129,6 +129,10 @@ program
       .default([])
   )
   .addOption(
+    new Option('--cat <file>', 'one-shot: print value.files[<file>] to stdout and exit (use with --home-key + --feed)')
+      .env('STREAMO_CAT')
+  )
+  .addOption(
     new Option('--interactive', 'start a REPL with streamo, signer, and helpers as globals')
       .env('STREAMO_INTERACTIVE')
   )
@@ -147,6 +151,11 @@ program
   .parse()
 
 const options = program.opts()
+
+// keep --cat's stdout clean
+if (options.cat) {
+  console.log = (...a) => process.stderr.write(a.join(' ') + '\n')
+}
 
 if (options.envFile) {
   config({ path: options.envFile })
@@ -481,6 +490,35 @@ if (options.subscribe && options.subscribe.length > 0) {
     await feedSessions[0].subscribe(key)
     console.log(`\x1b[32msubscribe: ${key.slice(0, 8)}…\x1b[0m`)
   }
+}
+
+if (options.cat) {
+  const targetFile = options.cat
+  const recaller = server.registry.recaller
+  const repo = server.streamo
+  const timeoutMs = 30000
+
+  const result = await Promise.race([
+    new Promise((resolve) => {
+      recaller.watch('cat-wait', () => {
+        const value = repo.get()
+        if (value == null) return
+        const files = value.files
+        if (files && files[targetFile] !== undefined) {
+          resolve({ ok: true, content: files[targetFile] })
+        }
+      })
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ ok: false }), timeoutMs))
+  ])
+
+  if (!result.ok) {
+    process.stderr.write(`--cat: timed out waiting for value.files[${JSON.stringify(targetFile)}]\n`)
+    process.exit(1)
+  }
+  const c = result.content
+  process.stdout.write(typeof c === 'string' ? c : (c instanceof Uint8Array ? c : JSON.stringify(c, null, 2)))
+  process.exit(0)
 }
 
 if (options.files) {

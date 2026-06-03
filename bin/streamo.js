@@ -201,8 +201,10 @@ if (options._configHomeKey) {
 // Apply post-config defaults — fields the commander option no longer carries
 // a default for (because config might want to leave them off / drop them).
 // dataDir: false is the explicit no-archive signal; undefined defaults to
-// `.streamo`; a string path passes through.
-if (options.dataDir === undefined) options.dataDir = '.streamo'
+// `.streamo` (or `false` for one-shot reads — see --cat / --eval).
+if (options.dataDir === undefined) {
+  options.dataDir = (options.cat || options.eval) ? false : '.streamo'
+}
 
 function applyStreamoJsonConfig (configPath, opts) {
   const absPath = isAbsolute(configPath) ? configPath : resolve(process.cwd(), configPath)

@@ -168,10 +168,17 @@ function currentValue (field) {
   return hisValue()[field] ?? null
 }
 
+// Proposed edits live in MY Record at value.files[<relative-path>] where
+// <relative-path> is computed from the app's URL. The app lives at
+// /streams/<my-pubkey>/chat-edit/index.html → its sibling proposed-edits.json
+// is keyed as 'chat-edit/proposed-edits.json' in the Record's files map.
+// Hardcoded for v1; could derive from location.pathname for genericity later.
+const PROPOSED_EDITS_PATH = 'chat-edit/proposed-edits.json'
+
 function proposedEdits () {
   if (!myRepo) return []
   const v = myRepo.get()
-  const raw = v?.files?.['proposed-edits.json']
+  const raw = v?.files?.[PROPOSED_EDITS_PATH]
   if (!raw) return []
   try {
     const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw

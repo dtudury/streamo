@@ -324,15 +324,12 @@ function buildTiers (opts) {
   return [new DiskTier({ dir: opts.dataDir, capacity: Infinity })]
 }
 
-// When --home-key is set and a feed is configured, ensure home-key is in
-// the subscribe list. Without this, --feed alone only brings the remote's
-// home Record + its followMounts-cascade-mounted-records; bytes for an
-// arbitrary --home-key pubkey don't flow unless --subscribe spells out
-// the same pubkey separately. The natural intent — "open this Record,
-// pulling from that relay" — reads as `--home-key X --feed Y`; requiring
-// an extra `--subscribe X` was friction without information gain.
-// Idempotent: existing entries are preserved (no double-add). Applies to
-// both CLI flags and streamo.json config since this runs after the merge.
+// --feed alone only brings the remote's home Record + its followMounts-
+// cascade-mounted-records; bytes for an arbitrary --home-key pubkey don't
+// flow unless --subscribe names the same pubkey. Auto-linking here lets
+// the natural `--home-key X --feed Y` invocation work without repeating.
+// Lands after the merge so streamo.json's identity.homeKey + server.feed
+// gets the same treatment as the CLI flags.
 if (options.homeKey && options.feed?.length > 0) {
   options.subscribe = options.subscribe ?? []
   if (!options.subscribe.includes(options.homeKey)) {

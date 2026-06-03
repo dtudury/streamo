@@ -220,6 +220,7 @@ async function acceptSuggestion (s) {
       { message: `accept iris edit: ${s.field}${s.reason ? ` (${s.reason})` : ''}` }
     )
     ui.set('status', 'accepted')
+    markAccepted(s)  // collapse this suggestion from the UI
   } catch (err) {
     ui.set('acceptError', err.message ?? String(err))
   } finally {
@@ -237,6 +238,27 @@ function logout () {
   window.dispatchEvent(new HashChangeEvent('hashchange'))
 }
 
+// Go to login view without touching the signer. Used by read-only pill +
+// "log in to accept" buttons so those affordances are functional links.
+function goToLogin () {
+  if (location.hash) {
+    history.pushState(null, '', location.pathname + location.search)
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+  } else {
+    ui.set('phase', 'login')
+  }
+}
+
+// Track accepted suggestions so they collapse from the UI after accept.
+// Module-level Set keyed by field+value-hash; bump an `acceptedTick` cell
+// to fire reactivity on the suggestions-filter.
+const accepted = new Set()
+function suggestionId (s) { return `${s.field}|${JSON.stringify(s.value)}` }
+function markAccepted (s) {
+  accepted.add(suggestionId(s))
+  ui.set('acceptedTick', (ui.get('acceptedTick') ?? 0) + 1)
+}
+
 // ── views ─────────────────────────────────────────────────────────────────
 function whoIndicator () {
   return () => {
@@ -252,7 +274,7 @@ function whoIndicator () {
         <button class="logout" onclick=${handle(logout)}>log out</button>
       </span>`
     }
-    return h`<span class="who read" data-key="who-read"><span class="dot"></span>read-only · log in to accept</span>`
+    return h`<button class="who read" data-key="who-read" onclick=${handle(goToLogin)}><span class="dot"></span>read-only · log in to accept</button>`
   }
 }
 
@@ -270,7 +292,8 @@ function loginView () {
 }
 
 function suggestionsForField (field) {
-  return proposedEdits().filter(s => s.field === field)
+  ui.get('acceptedTick')  // register reactivity so accept-then-collapse re-renders
+  return proposedEdits().filter(s => s.field === field && !accepted.has(suggestionId(s)))
 }
 
 function fieldCard (field) {
@@ -290,8 +313,8 @@ function fieldCard (field) {
           <div class="proposed">${() => renderValue(s.value) ?? ''}</div>
           ${s.reason ? h`<div class="reason">— ${s.reason}</div>` : null}
           <div class="row">
-            <button class="accept" disabled=${() => ui.get('accepting') || !ui.get('signerPresent')}
-                    onclick=${handle(() => acceptSuggestion(s))}>${() => ui.get('signerPresent') ? `accept & set ${field}` : 'log in to accept'}</button>
+            <button class="accept" disabled=${() => ui.get('accepting')}
+                    onclick=${handle(() => ui.get('signerPresent') ? acceptSuggestion(s) : goToLogin())}>${() => ui.get('signerPresent') ? `accept & set ${field}` : 'log in to accept'}</button>
             <button class="dismiss" disabled=${() => ui.get('accepting')}>dismiss</button>
           </div>
         </div>

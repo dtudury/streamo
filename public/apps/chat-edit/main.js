@@ -160,9 +160,12 @@ async function connect (hisPubkey, signer) {
 }
 
 // ── readers ───────────────────────────────────────────────────────────────
-function currentBio () {
-  const v = hisRepo?.get()
-  return v?.bio ?? null
+function hisValue () {
+  return hisRepo?.get() ?? {}
+}
+
+function currentValue (field) {
+  return hisValue()[field] ?? null
 }
 
 function proposedEdits () {
@@ -178,14 +181,29 @@ function proposedEdits () {
   }
 }
 
+// Render a value: arrays become bulleted lists; strings render as prose.
+// Null/undefined → null (caller decides how to show empty state).
+function renderValue (v) {
+  if (v == null) return null
+  if (Array.isArray(v)) {
+    return h`<ul class="list-value">${v.map((item, i) => h`<li data-key=${`li-${i}`}>${item}</li>`)}</ul>`
+  }
+  return h`<div class="prose-value">${v}</div>`
+}
+
+// Which fields to render cards for. v1.2: derive from suggestions + repo
+// values; v1.1 hardcodes the known set so cards always show even before
+// suggestions arrive.
+const KNOWN_FIELDS = ['bio', 'idioms']
+
 // ── accept ────────────────────────────────────────────────────────────────
 async function acceptSuggestion (s) {
   if (!hisRepo || !hisSigner) {
     ui.set('acceptError', 'must be logged in to accept (need signer)')
     return
   }
-  if (s.field !== 'bio') {
-    ui.set('acceptError', `v1 only supports bio field; got ${s.field}`)
+  if (!s.field || typeof s.field !== 'string') {
+    ui.set('acceptError', `suggestion has no field name`)
     return
   }
   uset({ accepting: true, acceptError: null, status: 'accepting…' })
@@ -244,34 +262,41 @@ function loginView () {
   </div>`
 }
 
-function suggestionsView () {
-  const suggestions = proposedEdits()
-  if (suggestions.length === 0) return h`<div class="empty-suggestion">no proposed edits yet — iris will write some here</div>`
-  return suggestions.map((s, i) => h`
-    <div class="suggestion" data-key=${`s-${i}`}>
-      <div class="from">iris proposes</div>
-      <div class="proposed">${s.value ?? ''}</div>
-      ${s.reason ? h`<div class="reason">— ${s.reason}</div>` : null}
-      <div class="row">
-        <button class="accept" disabled=${() => ui.get('accepting') || !ui.get('signerPresent')}
-                onclick=${handle(() => acceptSuggestion(s))}>${() => ui.get('signerPresent') ? `accept & set ${s.field ?? '?'}` : 'log in to accept'}</button>
-        <button class="dismiss" disabled=${() => ui.get('accepting')}>dismiss</button>
-      </div>
-    </div>
-  `)
+function suggestionsForField (field) {
+  return proposedEdits().filter(s => s.field === field)
+}
+
+function fieldCard (field) {
+  return h`<div class="field-card" data-key=${`card-${field}`}>
+    <div class="field-name">${field}</div>
+    <div class="field-current">${() => {
+      const v = currentValue(field)
+      const rendered = renderValue(v)
+      return rendered ?? h`<span class="field-empty">(empty — accept a suggestion to seed it)</span>`
+    }}</div>
+    ${() => {
+      const ss = suggestionsForField(field)
+      if (ss.length === 0) return null
+      return ss.map((s, i) => h`
+        <div class="suggestion" data-key=${`s-${field}-${i}`}>
+          <div class="from">iris proposes</div>
+          <div class="proposed">${() => renderValue(s.value) ?? ''}</div>
+          ${s.reason ? h`<div class="reason">— ${s.reason}</div>` : null}
+          <div class="row">
+            <button class="accept" disabled=${() => ui.get('accepting') || !ui.get('signerPresent')}
+                    onclick=${handle(() => acceptSuggestion(s))}>${() => ui.get('signerPresent') ? `accept & set ${field}` : 'log in to accept'}</button>
+            <button class="dismiss" disabled=${() => ui.get('accepting')}>dismiss</button>
+          </div>
+        </div>
+      `)
+    }}
+  </div>`
 }
 
 function editorView () {
   return h`<main>
-    <div class="hint">v1: one field (<code>bio</code>). chat with iris elsewhere to direct edits.</div>
-    <div class="field-card">
-      <div class="field-name">bio</div>
-      <div class="field-current">${() => {
-        const v = currentBio()
-        return v ? v : h`<span class="field-empty">(empty — accept a suggestion to seed it)</span>`
-      }}</div>
-    </div>
-    ${suggestionsView}
+    <div class="hint">chat with iris elsewhere to direct edits.</div>
+    ${KNOWN_FIELDS.map(f => fieldCard(f))}
     <div class="hint">${() => ui.get('acceptError') ? `error: ${ui.get('acceptError')}` : ''}</div>
   </main>`
 }

@@ -55,8 +55,13 @@
       display: flex; flex-direction: column; gap: 0.6rem;
     }
     .field-card .field-name { font-family: ui-monospace, Menlo, monospace; font-size: 0.75rem; color: var(--fg-mute); }
-    .field-card .field-current { font-size: 1.05rem; line-height: 1.55; color: var(--fg); white-space: pre-wrap; }
+    .field-card .field-current { font-size: 1.05rem; line-height: 1.55; color: var(--fg); }
     .field-card .field-empty { color: var(--fg-mute); font-style: italic; }
+    .field-card .prose-value { white-space: pre-wrap; }
+    .field-card .list-value { margin: 0; padding-left: 1.4rem; }
+    .field-card .list-value li { margin: 0.25rem 0; line-height: 1.5; }
+    .suggestion .list-value { margin: 0; padding-left: 1.4rem; }
+    .suggestion .list-value li { margin: 0.25rem 0; line-height: 1.5; }
 
     .suggestion {
       background: var(--accent-soft); border: 1px solid #bcd4f0; border-radius: 6px; padding: 0.8rem 1rem;

@@ -324,12 +324,7 @@ function buildTiers (opts) {
   return [new DiskTier({ dir: opts.dataDir, capacity: Infinity })]
 }
 
-// --feed alone only brings the remote's home Record + its followMounts-
-// cascade-mounted-records; bytes for an arbitrary --home-key pubkey don't
-// flow unless --subscribe names the same pubkey. Auto-linking here lets
-// the natural `--home-key X --feed Y` invocation work without repeating.
-// Lands after the merge so streamo.json's identity.homeKey + server.feed
-// gets the same treatment as the CLI flags.
+// --feed doesn't auto-push --home-key
 if (options.homeKey && options.feed?.length > 0) {
   options.subscribe = options.subscribe ?? []
   if (!options.subscribe.includes(options.homeKey)) {

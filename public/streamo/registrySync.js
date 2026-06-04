@@ -331,26 +331,12 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       const fn = () => {
         if (follow) follow(keyHex, repo, key => subscribeToKey(key))
         if (followMounts) {
-          // mounts lookup during the flatten transition (2026-06-04) —
-          // see [[the-flatten-arc-2026-06-04]] in memory/notes/. Three
-          // historical shapes coexist: legacy 8.x (value.mounts at top
-          // level — streamo.dev homepage), nested 9.0.0 (value.files
-          // ['mounts.json'].mounts), and flat target (value['mounts.json']
-          // .mounts). Try in preference order.
-          let mounts
-          const legacy = repo.get('mounts')
-          if (legacy && typeof legacy === 'object' && !(legacy instanceof Uint8Array)) {
-            mounts = legacy
-          } else {
-            const filesField = repo.get('files')
-            const useNested = filesField && typeof filesField === 'object' && !(filesField instanceof Uint8Array)
-            const mountsFile = useNested
-              ? repo.get('files', 'mounts.json')
-              : repo.get('mounts.json')
-            if (mountsFile && typeof mountsFile === 'object' && !(mountsFile instanceof Uint8Array)) {
-              mounts = mountsFile.mounts
-            }
-          }
+          // Flat-shape: mounts live at value['mounts.json'].mounts.
+          // See [[the-flatten-arc-2026-06-04]] for the convention.
+          const mountsFile = repo.get('mounts.json')
+          const mounts = (mountsFile && typeof mountsFile === 'object' && !(mountsFile instanceof Uint8Array))
+            ? mountsFile.mounts
+            : undefined
           if (mounts && typeof mounts === 'object' && !(mounts instanceof Uint8Array)) {
             for (const mount of Object.values(mounts)) {
               if (!mount || typeof mount !== 'object') continue

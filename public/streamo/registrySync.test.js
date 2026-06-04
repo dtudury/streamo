@@ -459,12 +459,10 @@ describe(import.meta.url, ({ test }) => {
     const { repo: rootRepo, hex: rootKey } = await openWriter(serverRegistry, 30)
     const { repo: libRepo,  hex: libKey  } = await openWriter(serverRegistry, 31)
 
-    libRepo.set({ files: { 'h.js': 'library' } })
+    libRepo.set({ 'h.js': 'library' })
     rootRepo.set({
-      files: {
-        'main.js': 'app',
-        'mounts.json': { mounts: { 'streamo/': { key: libKey } } }
-      }
+      'main.js': 'app',
+      'mounts.json': { mounts: { 'streamo/': { key: libKey } } }
     })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
@@ -474,10 +472,10 @@ describe(import.meta.url, ({ test }) => {
     })
 
     // Root subscribes via hello; lib cascades via followMounts.
-    await waitFor(() => clientRegistry.get(libKey)?.get('files', 'h.js') === 'library')
+    await waitFor(() => clientRegistry.get(libKey)?.get('h.js') === 'library')
 
-    assert.equal(clientRegistry.get(rootKey).get('files', 'main.js'), 'app')
-    assert.equal(clientRegistry.get(libKey).get('files', 'h.js'), 'library')
+    assert.equal(clientRegistry.get(rootKey).get('main.js'), 'app')
+    assert.equal(clientRegistry.get(libKey).get('h.js'), 'library')
 
     session.close()
     await new Promise(r => wss.close(r))
@@ -494,12 +492,10 @@ describe(import.meta.url, ({ test }) => {
     const { repo: libRepo,   hex: libKey   } = await openWriter(serverRegistry, 34)
 
     aliceRepo.set({ name: 'alice' })
-    libRepo.set({ files: { 'h.js': 'L' } })
+    libRepo.set({ 'h.js': 'L' })
     rootRepo.set({
       members: [aliceKey],
-      files: {
-        'mounts.json': { mounts: { 'lib/': { key: libKey } } }
-      }
+      'mounts.json': { mounts: { 'lib/': { key: libKey } } }
     })
 
     const { wss, port } = await startServer(serverRegistry, rootKey)
@@ -512,10 +508,10 @@ describe(import.meta.url, ({ test }) => {
     })
 
     await waitFor(() => clientRegistry.get(aliceKey)?.get('name') === 'alice')
-    await waitFor(() => clientRegistry.get(libKey)?.get('files', 'h.js') === 'L')
+    await waitFor(() => clientRegistry.get(libKey)?.get('h.js') === 'L')
 
     assert.equal(clientRegistry.get(aliceKey).get('name'), 'alice')
-    assert.equal(clientRegistry.get(libKey).get('files', 'h.js'), 'L')
+    assert.equal(clientRegistry.get(libKey).get('h.js'), 'L')
 
     session.close()
     await new Promise(r => wss.close(r))

@@ -21,27 +21,12 @@
  */
 import { extname } from 'path'
 
-// The structured-record shape: files live under `value.files`. Hardcoded
-// since 9.0.0 — the legacy "value IS files" mode is gone (see fileSync.js).
-const FILES_KEY = 'files'
-
-// Shape detection for the flatten transition (2026-06-04).
-// See [[the-flatten-arc-2026-06-04]] in memory/notes/. Two reader shapes
-// during migration: nested (value.files is the file map — 9.0.0 era) and
-// flat (value IS the file map — target shape). Detect by whether value.files
-// is itself a map. readMounts also has a legacy 8.x branch (value.mounts
-// at top level) for streamo.dev's homepage which hasn't been re-published
-// to either shape yet.
-function isNestedShape (repo) {
-  if (!repo.lastCommit) return false
-  const f = repo.get(FILES_KEY)
-  return f != null && typeof f === 'object' && !(f instanceof Uint8Array)
-}
-function isNestedShapeValue (value) {
-  if (value == null || typeof value !== 'object') return false
-  const f = value[FILES_KEY]
-  return f != null && typeof f === 'object' && !(f instanceof Uint8Array)
-}
+// Flat-shape convention (2026-06-04): value IS the files map. Filenames are
+// top-level keys; mounts at `value['mounts.json'].mounts`; meta at
+// `value['streamo.json']`. Records still in nested 9.0.0 shape
+// (value.files['<path>']) or 8.x legacy (value.mounts) are not read by this
+// reader — they need re-publishing to be visible. See
+// [[the-flatten-arc-2026-06-04]] in memory/notes/.
 
 const MIME = {
   '.html':  'text/html; charset=utf-8',
@@ -91,8 +76,6 @@ function normalize (urlPath) {
  */
 function readFilesMap (repo) {
   if (!repo.lastCommit) return undefined
-  if (isNestedShape(repo)) return repo.get(FILES_KEY)
-  // Flat shape: value IS the file map.
   const v = repo.get()
   if (v != null && typeof v === 'object' && !(v instanceof Uint8Array)) return v
   return undefined
@@ -118,7 +101,6 @@ function readFilesMap (repo) {
  */
 function readMounts (repo, atDataAddress) {
   if (!repo.lastCommit) return undefined
-  // Resolve the underlying value the same way for both HEAD and pinned reads.
   let value
   if (atDataAddress != null) {
     try { value = repo.decode(atDataAddress) }
@@ -127,15 +109,7 @@ function readMounts (repo, atDataAddress) {
     value = repo.get()
   }
   if (value == null || typeof value !== 'object' || value instanceof Uint8Array) return undefined
-
-  // Legacy 8.x: top-level `value.mounts` (streamo.dev homepage as of 2026-06-04).
-  const legacy = value.mounts
-  if (legacy != null && typeof legacy === 'object' && !(legacy instanceof Uint8Array)) return legacy
-
-  // Nested or flat: mounts.json lives where the file map lives.
-  const mountsFile = isNestedShapeValue(value)
-    ? value[FILES_KEY]['mounts.json']
-    : value['mounts.json']
+  const mountsFile = value['mounts.json']
   if (!mountsFile || typeof mountsFile !== 'object' || mountsFile instanceof Uint8Array) return undefined
   const m = mountsFile.mounts
   return (m != null && typeof m === 'object' && !(m instanceof Uint8Array)) ? m : undefined
@@ -156,18 +130,13 @@ function readFile (repo, path, atDataAddress) {
     try {
       const value = repo.decode(atDataAddress)
       if (!value || typeof value !== 'object') return undefined
-      // Shape-detect: nested uses value.files[path]; flat uses value[path].
-      return isNestedShapeValue(value) ? value[FILES_KEY][path] : value[path]
+      return value[path]
     } catch { return undefined }
   }
   if (!repo.lastCommit) return undefined
-  // Two-arg get → lazy descent through the files map; only the leaf chunk
-  // (the requested file's bytes) gets fully decoded. Previously this called
-  // `readFilesMap(repo)[path]`, which forced a full decode of every file
-  // in the map on every request — the actual cause of streamo.dev's
-  // ~200ms-per-asset waterfall before 10.2.1. The codec already has the
-  // chunk-graph references; just had to ask for the path we wanted.
-  return isNestedShape(repo) ? repo.get(FILES_KEY, path) : repo.get(path)
+  // Single-arg get → lazy descent; only the requested file's bytes are
+  // decoded. The codec already has the chunk-graph references.
+  return repo.get(path)
 }
 
 /**

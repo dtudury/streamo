@@ -6,20 +6,21 @@ import { serveFromRepo } from './repoFileServer.js'
 /**
  * Build a StreamoRecord seeded with a single commit of the given value.
  *
- * Test ergonomics: if `value.mounts` is supplied as a top-level key, it's
- * migrated into `value.files['mounts.json'].mounts` — the new canonical
- * location (a regular file in the Record's files map). Tests continue to
- * read as "make a repo with these mounts" while exercising the substrate's
- * current storage shape.
+ * Test ergonomics: accepts the legacy "make a repo with these files and
+ * mounts" shape, translates to flat-shape canonical storage (filenames
+ * top-level, mounts under value['mounts.json'].mounts).
+ * See [[the-flatten-arc-2026-06-04]].
  */
 function makeRepo (value) {
-  if (value && value.mounts) {
+  let next = {}
+  if (value) {
     const { mounts, files = {}, ...rest } = value
-    value = { ...rest, files: { ...files, 'mounts.json': { mounts } } }
+    next = { ...rest, ...files }
+    if (mounts) next['mounts.json'] = { mounts }
   }
   const repo = new WritableStreamoRecord()
   const working = repo.checkout()
-  working.set(value)
+  working.set(next)
   repo.commit(working, 'seed')
   return repo
 }
@@ -416,11 +417,11 @@ describe(import.meta.url, ({ test }) => {
     // matches the pinned commit, not HEAD.
     const b = new WritableStreamoRecord()
     let w = b.checkout()
-    w.set({ files: { 'x.txt': 'v1' } })
+    w.set({ 'x.txt': 'v1' })
     b.commit(w, 'v1')
     const v1DataAddress = b.lastCommit.dataAddress
     w = b.checkout()
-    w.set({ files: { 'x.txt': 'v2' } })
+    w.set({ 'x.txt': 'v2' })
     b.commit(w, 'v2')
 
     const a = makeRepo({ files: {}, mounts: { 'lib/': { key: KEY_B, dataAddress: v1DataAddress } } })

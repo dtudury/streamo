@@ -155,9 +155,10 @@ describe(import.meta.url, ({ test }) => {
   /**
    * Build a sealed StreamoRecord with a single commit of the given value.
    *
-   * Test ergonomics: top-level `value.mounts` is migrated into
-   * `value.files['mounts.json'].mounts` — the new canonical location.
-   * Tests stay readable while exercising the substrate's current storage.
+   * **Pending the fileSync flat-shape migration** (Phase 2 of the flatten
+   * arc — see [[the-flatten-arc-2026-06-04]]): fileSync still writes and
+   * reads NESTED shape internally, so its tests keep the nested fixture
+   * shape here. When fileSync migrates to flat-write, flip this helper.
    */
   function sealedRepo (value, msg = 'seed') {
     if (value && value.mounts) {

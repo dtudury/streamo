@@ -127,7 +127,7 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex } = await makeKey('serveRepo-smoke')
     const homepage = new WritableStreamoRecord()
     const working = homepage.checkout()
-    working.set({ files: { 'index.html': '<!doctype html><html><head><title>x</title></head><body>hi</body></html>' } })
+    working.set({ 'index.html': '<!doctype html><html><head><title>x</title></head><body>hi</body></html>' })
     homepage.commit(working, 'seed homepage')
 
     const { port, close } = await startServer(publicKeyHex, new Streamo(), {
@@ -165,7 +165,7 @@ describe(import.meta.url, ({ test }) => {
     const fork = new WritableStreamoRecord()
     fork.attachSigner(forkSigner, 'multi-home-fork')
     const working = fork.checkout()
-    working.set({ files: { 'index.html': '<!doctype html><title>fork</title><p>forked site</p>' } })
+    working.set({ 'index.html': '<!doctype html><title>fork</title><p>forked site</p>' })
     fork.commit(working, 'seed fork homepage')
 
     // Key-aware factory: primary key gets a fresh Streamo (so the JSON view
@@ -207,7 +207,7 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex } = await makeKey('fallthrough-smoke')
     const homepage = new WritableStreamoRecord()
     const working = homepage.checkout()
-    working.set({ files: { 'something-else.html': 'not the request' } })
+    working.set({ 'something-else.html': 'not the request' })
     homepage.commit(working, 'seed')
 
     const { port, close } = await startServer(publicKeyHex, new Streamo(), {
@@ -225,15 +225,15 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex } = await makeKey('merge-url')
     const sourceRepo = new WritableStreamoRecord()
     const sw = sourceRepo.checkout()
-    sw.set({ files: { 'index.html': '<from-url>' }, members: ['ignored'] })
+    sw.set({ 'index.html': '<from-url>', members: ['ignored'] })
     sourceRepo.commit(sw, 'seed')
 
     const { port, close } = await startServer(publicKeyHex, sourceRepo)
     try {
       const target = new WritableStreamoRecord()
-      await target.merge(`http://localhost:${port}/streams/${publicKeyHex}`, { from: 'files' })
+      await target.merge(`http://localhost:${port}/streams/${publicKeyHex}`, { from: 'index.html', into: 'index.html' })
 
-      assert.deepEqual(target.get(), { files: { 'index.html': '<from-url>' } })
+      assert.deepEqual(target.get(), { 'index.html': '<from-url>' })
       const c = target.lastCommit
       assert.equal(c.parent, undefined)                                   // pure-copy fork
       assert.equal(c.remoteParent.host, `localhost:${port}`)              // auto-filled from URL
@@ -248,16 +248,16 @@ describe(import.meta.url, ({ test }) => {
     const { publicKeyHex } = await makeKey('merge-host')
     const sourceRepo = new WritableStreamoRecord()
     const sw = sourceRepo.checkout()
-    sw.set({ files: { 'p.html': '<host-mode>' } })
+    sw.set({ 'p.html': '<host-mode>' })
     sourceRepo.commit(sw, 'seed')
 
     const { port, close } = await startServer(publicKeyHex, sourceRepo)
     try {
       const target = new WritableStreamoRecord()
       // host shorthand — no path; merge fetches /api/info to find the key
-      await target.merge(`localhost:${port}`, { from: 'files' })
+      await target.merge(`localhost:${port}`, { from: 'p.html', into: 'p.html' })
 
-      assert.equal(target.get('files', 'p.html'), '<host-mode>')
+      assert.equal(target.get('p.html'), '<host-mode>')
       assert.equal(target.lastCommit.remoteParent.repo, publicKeyHex)
     } finally {
       await close()

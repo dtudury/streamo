@@ -38,21 +38,14 @@
  * files in front of them.
  */
 
-const FILES_KEY = 'files'
 const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 
-// Shape detection for the flatten transition (2026-06-04).
-// See [[the-flatten-arc-2026-06-04]] in memory/notes/. Two reader shapes
-// during migration: nested (value.files is the file map — 9.0.0 era) and
-// flat (value IS the file map — target shape). Detect by whether value.files
-// is itself a map. A separate legacy branch in mounts() catches 8.x Records
-// (still in production on streamo.dev's homepage) that keep mounts at
-// top-level value.mounts.
-function isNestedShape (record) {
-  if (!record.lastCommit) return false
-  const f = record.get(FILES_KEY)
-  return f != null && typeof f === 'object' && !(f instanceof Uint8Array)
-}
+// Flat-shape convention (2026-06-04): value IS the files map. Filenames
+// are top-level keys; `value['mounts.json'].mounts` is the routing table;
+// `value['streamo.json']` is the meta. Records still in the 9.0.0 nested
+// shape (value.files['<path>']) or 8.x legacy (value.mounts at top level)
+// are not read by this reader — they need re-publishing in flat shape to
+// be visible. See [[the-flatten-arc-2026-06-04]] in memory/notes/.
 
 export class FolderRecord {
   /**
@@ -73,8 +66,6 @@ export class FolderRecord {
 
   files () {
     if (!this.record.lastCommit) return {}
-    if (isNestedShape(this.record)) return this.record.get(FILES_KEY)
-    // Flat shape: value IS the file map.
     const v = this.record.get()
     if (v != null && typeof v === 'object' && !(v instanceof Uint8Array)) return v
     return {}
@@ -82,14 +73,7 @@ export class FolderRecord {
 
   mounts () {
     if (!this.record.lastCommit) return {}
-    // Legacy 8.x: mounts as a top-level field on value (streamo.dev's
-    // homepage still has this shape as of 2026-06-04).
-    const legacy = this.record.get('mounts')
-    if (legacy != null && typeof legacy === 'object' && !(legacy instanceof Uint8Array)) return legacy
-    // Nested or flat: mounts.json lives where the file map lives.
-    const mountsFile = isNestedShape(this.record)
-      ? this.record.get(FILES_KEY, 'mounts.json')
-      : this.record.get('mounts.json')
+    const mountsFile = this.record.get('mounts.json')
     if (!mountsFile || typeof mountsFile !== 'object' || mountsFile instanceof Uint8Array) return {}
     const m = mountsFile.mounts
     return (m != null && typeof m === 'object' && !(m instanceof Uint8Array)) ? m : {}
@@ -105,11 +89,9 @@ export class FolderRecord {
    * @returns {Promise<string | Uint8Array | object | null>}
    */
   async resolvePath (path, visited = new Set()) {
-    // Files-first on this Record (detected shape).
+    // Files-first on this Record.
     if (this.record.lastCommit) {
-      const direct = isNestedShape(this.record)
-        ? this.record.get(FILES_KEY, path)
-        : this.record.get(path)
+      const direct = this.record.get(path)
       if (direct !== undefined) return direct
     }
 

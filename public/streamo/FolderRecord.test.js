@@ -9,9 +9,17 @@ const PK_B = '02' + 'b'.repeat(64)
 const PK_C = '02' + 'c'.repeat(64)
 const PK_D = '02' + 'd'.repeat(64)
 
+// Test ergonomics: accepts the legacy { files: {...} } fixture shape and
+// translates to flat-shape storage (filenames at top level).
+// See [[the-flatten-arc-2026-06-04]].
 function commit (repo, value) {
+  let next = value
+  if (value && value.files) {
+    const { files, ...rest } = value
+    next = { ...rest, ...files }
+  }
   const working = repo.checkout()
-  working.set(value)
+  working.set(next)
   repo.commit(working, 'test')
   return repo
 }

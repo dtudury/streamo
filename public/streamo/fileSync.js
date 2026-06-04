@@ -146,33 +146,34 @@ function filesEqual (a, b) {
   return true
 }
 
-// The structured-record shape: files live under `value.files`, leaving
-// room for sibling keys (`mounts`, `title`, `members`, ...). Hardcoded
-// since 9.0.0 — the legacy "value IS files" mode is gone.
-const FILES_KEY = 'files'
+// Flat-shape convention (2026-06-04): value IS the files map. Filenames
+// at top-level (`value['index.html']`, `value['mounts.json']`,
+// `value['streamo.json']`). No more `value.files` nesting, no more
+// redundancy invariant between top-level meta and a streamo.json mirror.
+// See [[the-flatten-arc-2026-06-04]] in memory/notes/.
+//
+// Records still in the 9.0.0 nested shape are still valid StreamoRecords
+// (chain interpretation lens) — they just aren't valid FolderRecords any
+// more. fileSync writes flat; pointing it at a nested-shape Record will
+// produce a new flat-shape commit on top of the nested history.
 
 /**
- * Read the files-map this fileSync owns — `repo.value.files`.
- * Returns a plain map (possibly empty), or null if the repo has no files
- * at the key (lastCommit may still exist for other sibling state).
+ * Read this repo's files map — in flat shape, the value IS the map.
  */
 function readRepoFiles (repo) {
-  const v = repo.get(FILES_KEY)
+  if (!repo.lastCommit) return null
+  const v = repo.get()
   if (!v || typeof v !== 'object' || v instanceof Uint8Array) return null
   return v
 }
 
 /**
- * Read this repo's `mounts` table — declarative composition: each entry
- * maps a path-prefix to another record's pubkey (optionally pinned to a
- * specific `dataAddress`). Returns an empty object when there are no
- * mounts.
- *
- * Mounts live in the Record's files map at `files['mounts.json']`, as a
- * regular file with shape `{ "mounts": { "<prefix>": { "key": "...", ... }, ... } }`.
+ * Read this repo's mounts table — `value['mounts.json'].mounts`. Each
+ * entry maps a path-prefix to another record's pubkey (optionally pinned
+ * to a `dataAddress`). Returns an empty object when there are no mounts.
  */
 function readRepoMounts (repo) {
-  const mountsFile = repo.get(FILES_KEY, 'mounts.json')
+  const mountsFile = repo.get('mounts.json')
   if (!mountsFile || typeof mountsFile !== 'object' || mountsFile instanceof Uint8Array) return {}
   const m = mountsFile.mounts
   if (!m || typeof m !== 'object' || m instanceof Uint8Array) return {}
@@ -225,19 +226,14 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
     if (!targetRepo.lastCommit) return {}
     value = targetRepo.get()
   }
-  if (!value || typeof value !== 'object') return {}
+  if (!value || typeof value !== 'object' || value instanceof Uint8Array) return {}
 
-  const collected = {}
+  // Flat shape: value IS the files map. Every top-level key is a file.
+  const collected = { ...value }
 
-  if (value.files && typeof value.files === 'object' && !(value.files instanceof Uint8Array)) {
-    for (const [rel, v] of Object.entries(value.files)) collected[rel] = v
-  }
-
-  // mounts live in files['mounts.json'].mounts now (a regular file in the
-  // Record's files map), not value.mounts.
-  const mountsFile = value.files && typeof value.files === 'object' && !(value.files instanceof Uint8Array)
-    ? value.files['mounts.json']
-    : undefined
+  // Nested mounts: walk into mounts targets and inherit their files
+  // under each mount prefix.
+  const mountsFile = value['mounts.json']
   const nestedMounts = (mountsFile && typeof mountsFile === 'object' && !(mountsFile instanceof Uint8Array))
     ? mountsFile.mounts
     : undefined
@@ -332,85 +328,29 @@ function resolveRecordFileName (opt) {
 }
 
 /**
- * Read the record's "meta" from disk — the JSON at folder/<recordFile>,
- * parsed and validated. If a `files` key is present it's stripped with
- * a warning (files come from the file tree, not from here). Returns
- * an object on success, or null on absent/malformed input.
+ * Two-way sync between a folder and a StreamoRecord (flat shape).
  *
- * Mid-edit JSON-invalid is a transient state, not a footgun — we warn
- * but don't crash; the next valid save will commit cleanly.
- */
-async function readRecordFileMeta (folder, recordFile) {
-  if (!recordFile) return null
-  let raw
-  try { raw = await readFile(join(folder, recordFile), 'utf8') }
-  catch (e) {
-    if (e.code === 'ENOENT') return null
-    return null
-  }
-  let parsed
-  try { parsed = JSON.parse(raw) }
-  catch (e) {
-    console.warn(`fileSync: ${recordFile} parse error, skipping commit: ${e.message}`)
-    return null
-  }
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
-  if ('files' in parsed) {
-    console.warn(`fileSync: ${recordFile} contains a 'files' key — ignoring it (files come from the file tree)`)
-    const { files: _ignored, ...meta } = parsed
-    return meta
-  }
-  return parsed
-}
-
-/**
- * Read the record's meta from the repo's in-memory value — everything
- * except the `files` key. Returns null when the repo has no commit yet
- * or the value isn't an object.
- */
-function readRepoRecordMeta (repo) {
-  if (!repo.lastCommit) return null
-  const value = repo.get()
-  if (!value || typeof value !== 'object' || value instanceof Uint8Array) return null
-  const meta = { ...value }
-  delete meta[FILES_KEY]
-  return meta
-}
-
-/** Deep-equality for meta objects, via JSON serialization. */
-function metaEqual (a, b) {
-  return JSON.stringify(a ?? {}) === JSON.stringify(b ?? {})
-}
-
-/**
- * Two-way sync between a folder and a StreamoRecord.
+ * The Record's value IS the files map — every top-level key is a file.
+ * `value['index.html']`, `value['mounts.json']`, `value['streamo.json']`.
  *
  * Initial state (startup authority via timestamps):
- *   - repo has files at `value.files` AND no disk file is newer than the
- *     last commit → repo wins
- *   - repo has no files at `value.files`, OR any disk file is newer than
- *     the last commit → disk wins
+ *   - repo has a committed value AND no disk file is newer than the last
+ *     commit → repo wins (write committed files to disk)
+ *   - repo has no commits OR any disk file is newer → disk wins (commit
+ *     the disk state as the new value)
  *
  * Ongoing:
- *   - StreamoRecord changes (new commit from peer/archive) → write changed files to disk
- *   - Disk changes → checkout, update files, commit to repo
- *
- * The sync is mounted at `repo.value.files` — other top-level keys on the
- * value (the chat home's `members`, `journalists`, `entries`, etc.) are
- * preserved across writes.
+ *   - StreamoRecord changes (peer/archive) → write changed files to disk
+ *   - Disk changes → re-read folder, commit the flat map
  *
  * **Mounts (when both `registry` and `pubkeyHex` are provided).** This
- * repo's `mounts` table — declarative composition referring to other
- * records by pubkey — is materialized one-way (read-only) onto disk.
- * Mount files appear at the prefix paths the table declares, so the
- * editor sees the composed tree (e.g. `./streamo/h.js` from a mounted
- * library record), but writes to those paths are silently filtered out
- * of the disk→repo commit path. Your record's chain only signs your
- * own files; the mounted records' chains stay independent.
+ * repo's `mounts.json` declares composition references to other Records
+ * by pubkey. Mount files are materialized one-way (read-only) onto disk
+ * at the declared prefix paths; writes to those paths are filtered out
+ * of the disk→repo commit and re-materialized from the mount target.
  *
- * Cycle detection during materialization stops at loops (own key
- * marked visited; mounts back to it short-circuit). Diamonds (same
- * record at two top-level paths) materialize at both locations.
+ * Cycle detection during materialization stops at loops; diamonds (same
+ * Record at two top-level mount paths) materialize at both locations.
  *
  * @param {import('./WritableStreamoRecord.js').WritableStreamoRecord} repo
  *   Must be Writable — fileSync commits the disk's state into the Record.
@@ -421,33 +361,18 @@ function metaEqual (a, b) {
  *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
  *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
  * }|null} [options.registry=null]
- *   registry whose stored StreamoRecords provide the bytes for any mounted record.
- *   When unset, mount materialization is disabled (files-only behavior).
+ *   registry providing the bytes for mount targets. Unset → files-only.
  * @param {string|null} [options.pubkeyHex=null]  the pubkey of `repo`,
  *   used as the cycle-detection seed for mount materialization.
- *   Required alongside `registry` for mounts to take effect.
- * @param {boolean|string} [options.recordFile=false]  when truthy,
- *   syncs a JSON file on disk (`streamo.json` by default; pass a
- *   string to override the name) to the record's value MINUS the
- *   `files` key. Lets you edit `mounts` and other top-level keys
- *   (`title`, `description`, `members`, etc.) in your editor as plain
- *   JSON, with the file tree continuing to own the `files` key.
- * @param {'merge'|'replace'} [options.meta='merge']  how a streamo.json
- *   edit composes into the Record's value. `'merge'` (default) spreads
- *   the file's keys into the existing value — keys not mentioned in
- *   streamo.json are preserved (e.g., journalists set by code, files
- *   set by the tree). Use `key: null` in streamo.json to explicitly
- *   remove a key. `'replace'` mirrors the file literally: any key not
- *   in streamo.json is removed from the Record's meta. Pick `replace`
- *   when streamo.json is the sole authority for meta (no other writers
- *   contribute keys); `merge` otherwise.
+ * @param {boolean|string} [options.recordFile=false]  reserved for the
+ *   mid-edit grace check — when set, this filename's parse failure during
+ *   a watcher batch causes that one file to be dropped from the commit
+ *   (so a transient broken JSON doesn't overwrite the previous valid
+ *   object). Default `streamo.json`. Pass `false` to disable.
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
-  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, meta: metaStrategy = 'merge' } = options
-  if (metaStrategy !== 'merge' && metaStrategy !== 'replace') {
-    throw new Error(`fileSync: meta option must be 'merge' or 'replace', got: ${metaStrategy}`)
-  }
+  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false } = options
   const recordFile = resolveRecordFileName(recordFileOpt)
   // Resolve symlinks in the folder path up front so the watcher's
   // event paths (which come back resolved on some OSes — notably
@@ -477,65 +402,9 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
 
   const getRepoFiles = () => readRepoFiles(repo)
-  // Value-in / value-out helper for `repo.update(c => applyFilesToValue(c, files))`.
-  // On a fresh record (`current === undefined`), materialize the wrapping
-  // object explicitly so the value has structural shape.
-  const applyFilesToValue = (current, files) => {
-    if (current === undefined) return { [FILES_KEY]: files }
-    return { ...current, [FILES_KEY]: files }
-  }
-
-  // Invariant: value.files[recordFile] mirrors top-level meta.
-  // Returns true iff a heal commit was made (caller may want to re-read
-  // state). Code that updates meta directly (e.g., server.streamo.set
-  // bypassing fileSync) breaks the invariant temporarily — this restores
-  // it by committing value.files[recordFile] = current top-level meta.
-  // No-op when invariant already holds.
-  const healMetaInvariant = async (origin = 'heal') => {
-    if (!recordFile || !repo.lastCommit) return false
-    const ownFiles = getRepoFiles() ?? {}
-    const topLevelMeta = readRepoRecordMeta(repo) ?? {}
-    const filesEntry = ownFiles[recordFile]
-    const filesEntryIsValidMeta = filesEntry && typeof filesEntry === 'object' && !Array.isArray(filesEntry) && !(filesEntry instanceof Uint8Array)
-    const hasTopLevel = Object.keys(topLevelMeta).length > 0
-    if (!hasTopLevel) return false
-    if (filesEntryIsValidMeta && metaEqual(filesEntry, topLevelMeta)) return false
-    // Warn only on REAL divergence (a non-empty file entry that doesn't
-    // match) — initial population from a sealed-StreamoRecord with no entry yet
-    // is expected and noiseless.
-    if (filesEntryIsValidMeta && Object.keys(filesEntry).length > 0) {
-      console.warn(`fileSync: ${recordFile} out of sync with top-level meta; healing`)
-    }
-    await repo.update(
-      c => applyFilesToValue(c, { ...ownFiles, [recordFile]: topLevelMeta }),
-      { message: `${origin}: sync ${recordFile}` }
-    )
-    return true
-  }
-  // applyMetaToValue composes the streamo.json edit into the Record's
-  // value, per `metaStrategy`. Value-in / value-out for repo.update():
-  //   - 'merge' (default): spread the file's keys into the existing
-  //     value. Keys not mentioned in streamo.json survive (other
-  //     writers — seed steps, code — keep their keys). A `null` value
-  //     in streamo.json explicitly removes that key from the Record.
-  //   - 'replace': the file is the sole truth for meta; keys absent
-  //     from streamo.json are removed. `files` is always preserved
-  //     (it's owned by the file tree, not the meta channel).
-  const applyMetaToValue = (current, meta) => {
-    if (metaStrategy === 'replace') {
-      const next = { ...(meta ?? {}) }
-      const currentFiles = current?.[FILES_KEY]
-      if (currentFiles !== undefined) next[FILES_KEY] = currentFiles
-      return next
-    } else {
-      const next = { ...(current ?? {}) }
-      for (const [k, v] of Object.entries(meta ?? {})) {
-        if (v === null) delete next[k]
-        else next[k] = v
-      }
-      return next
-    }
-  }
+  // Flat shape: the file map IS the value. A fresh Record gets the files
+  // map as its initial value, no wrapping object.
+  const applyFilesToValue = (_current, files) => files
 
   // Gate the disk-vs-repo authority decision on "is the upstream view
   // in?" — when an origin session is attached but initial replay hasn't
@@ -580,54 +449,33 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   }
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)
-  const diskRecordMeta = await readRecordFileMeta(folder, recordFile)
   const lastCommit = repo.lastCommit
   const commitTime = lastCommit ? lastCommit.date.getTime() : 0
   const repoFiles = getRepoFiles()
-  // streamo.json is in diskFiles now (no exclusion), so its mtime is
-  // already included in diskMtime — no separate recordFile mtime read.
-  const maxDiskMtime = diskMtime
 
-  if (lastCommit && repoFiles && maxDiskMtime <= commitTime) {
+  if (lastCommit && repoFiles && diskMtime <= commitTime) {
     // StreamoRecord wins: write committed files to disk + materialize mounts.
-    // streamo.json is a regular file in value.files now — writeToFolder
-    // handles it like any other file. Heal the invariant first if the
-    // Record's value has top-level meta but value.files[recordFile] is
-    // missing or stale (e.g., sealed StreamoRecords authored by code that didn't
-    // go through fileSync).
-    await healMetaInvariant('init')
-    const refreshedRepoFiles = getRepoFiles() ?? {}
     const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
-    const target = { ...mountedFiles, ...refreshedRepoFiles }
+    const target = { ...mountedFiles, ...repoFiles }
     const { files: managed } = await readFolder(folder, acceptsForDisk)
     const toDelete = Object.keys(managed).filter(k => !(k in target))
     await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
-  } else if (Object.keys(diskFiles).length > 0 || (recordFile && diskRecordMeta)) {
-    // Disk wins: commit current disk state in a single operation —
-    // value.files (including streamo.json) AND top-level meta extracted
-    // from streamo.json. setRecordMeta merges meta keys; setRepoFiles
-    // writes the files map (which now includes streamo.json).
+  } else if (Object.keys(diskFiles).length > 0) {
+    // Disk wins: commit current disk state. streamo.json is just another
+    // file — its parsed object lands at value['streamo.json'] alongside
+    // every other top-level key.
     //
-    // Mid-edit grace: if streamo.json failed to parse, diskFiles holds
-    // it as the raw string. Drop that entry so the broken JSON doesn't
-    // land in value.files (and meta stays unchanged) — the next valid
-    // save will commit cleanly. If after dropping it nothing remains
-    // and there's no valid meta, skip the commit entirely.
+    // Mid-edit grace: if `recordFile` (default streamo.json) failed to
+    // parse, decodeFile leaves it as the raw string. Drop that entry so
+    // a broken-mid-edit JSON doesn't overwrite the previous valid object.
+    // The next clean save commits.
     const filesToCommit = { ...diskFiles }
     if (recordFile && typeof filesToCommit[recordFile] === 'string') {
       delete filesToCommit[recordFile]
     }
-    const hasFiles = Object.keys(filesToCommit).length > 0
-    const hasMeta = recordFile && diskRecordMeta
-    if (hasFiles || hasMeta) {
-      await repo.update(c => {
-        let v = c
-        if (hasMeta) v = applyMetaToValue(v, diskRecordMeta)
-        return applyFilesToValue(v, filesToCommit)
-      }, { message: `seed ${FILES_KEY}` })
-      // After the commit lands, the repo→disk watcher (below) will fire
-      // and materialize any mounts.
+    if (Object.keys(filesToCommit).length > 0) {
+      await repo.update(c => applyFilesToValue(c, filesToCommit), { message: 'seed files' })
     }
   }
 
@@ -640,20 +488,6 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     writingToDisk = true
     pendingDiskFlush = false
     try {
-      // Code that updates meta directly (e.g., server.streamo.set
-      // bypassing fileSync) breaks the invariant temporarily. Heal with
-      // a fix-up commit — the commit re-triggers this watcher, the
-      // queue guard makes the re-entry safe, and the second flush sees
-      // the invariant restored and proceeds normally.
-      if (!committingFromDisk) {
-        committingFromDisk = true
-        try {
-          if (await healMetaInvariant()) return  // heal triggered a re-flush
-        } finally {
-          committingFromDisk = false
-        }
-      }
-
       const ownFiles = getRepoFiles() ?? {}
       const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
       const target = { ...mountedFiles, ...ownFiles }
@@ -759,10 +593,10 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       })()
     }
 
-    // Own-file edits — the commit path. streamo.json is one of these
-    // (a first-class file in value.files); when it changes, we also
-    // extract its parsed content as the top-level meta update, so the
-    // file content and meta land in one commit.
+    // Own-file edits — the commit path. streamo.json (recordFile) is
+    // just one of these; mid-edit grace drops it from the commit if its
+    // JSON failed to parse, so a transient broken object doesn't
+    // overwrite the previous valid value['streamo.json'].
     const relevant = events.filter(e => acceptsForCommit(relative(folder, e.path)))
     if (!relevant.length) return
     if (committingFromDisk) return
@@ -772,37 +606,13 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         const { files: newFiles } = await readFolder(folder, acceptsForCommit)
         const current = getRepoFiles() ?? {}
 
-        // Extract meta from streamo.json if it's present and parsable.
-        // The file's content is JSON.parse'd by decodeFile in readFolder;
-        // a string here means parse failed (transient mid-edit) — drop
-        // it from newFiles so the broken JSON doesn't land in value.files
-        // and meta stays unchanged. Other file edits in the same event
-        // batch still commit. A `files` key inside the JSON is stripped
-        // + warned (it'd shadow the real files key otherwise).
-        let newMeta = null
-        if (recordFile && recordFile in newFiles) {
-          const parsed = newFiles[recordFile]
-          if (typeof parsed === 'string') {
-            console.warn(`fileSync: ${recordFile} parse error, leaving meta + this file unchanged`)
-            delete newFiles[recordFile]
-          } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-            if ('files' in parsed) {
-              console.warn(`fileSync: ${recordFile} contains a 'files' key — ignoring it (files come from the file tree)`)
-              const { files: _ignored, ...meta } = parsed
-              newMeta = meta
-              newFiles[recordFile] = meta  // strip from the file too, so invariant is maintainable
-            } else {
-              newMeta = parsed
-            }
-          }
+        if (recordFile && typeof newFiles[recordFile] === 'string') {
+          console.warn(`fileSync: ${recordFile} parse error, leaving value[${recordFile}] unchanged`)
+          delete newFiles[recordFile]
         }
 
         if (filesEqual(current, newFiles)) return
-        await repo.update(c => {
-          let v = c
-          if (newMeta !== null) v = applyMetaToValue(v, newMeta)
-          return applyFilesToValue(v, newFiles)
-        }, { message: 'file change' })
+        await repo.update(c => applyFilesToValue(c, newFiles), { message: 'file change' })
       } finally {
         committingFromDisk = false
       }

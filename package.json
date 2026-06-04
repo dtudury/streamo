@@ -44,6 +44,7 @@
   ],
   "bin": "./bin/streamo.js",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.100.1",
     "@aws-sdk/client-s3": "^3.958.0",
     "@gerhobbelt/gitignore-parser": "^0.2.0-9",
     "@parcel/watcher": "^2.5.1",
@@ -67,8 +68,8 @@
     "seed-history": "node scripts/seed-history.js",
     "fork-homepage": "node scripts/fork-homepage.js",
     "deploy": "bash scripts/deploy.sh",
-    "streamo:as":        "node scripts/streamo-as.mjs",
-    "streamo:as:lib":    "node scripts/streamo-as.mjs streamo-library",
+    "streamo:as": "node scripts/streamo-as.mjs",
+    "streamo:as:lib": "node scripts/streamo-as.mjs streamo-library",
     "streamo:as:claude": "node scripts/streamo-as.mjs claude"
   },
   "devDependencies": {

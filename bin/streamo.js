@@ -138,6 +138,10 @@ program
       .env('STREAMO_EVAL')
   )
   .addOption(
+    new Option('--chat <message>', 'one-shot: open a context Record (--home-key) and chat with it; sends <message>, prints assistant response to stdout. Requires ANTHROPIC_API_KEY env var.')
+      .env('STREAMO_CHAT')
+  )
+  .addOption(
     new Option('--interactive', 'start a REPL with streamo, signer, and helpers as globals')
       .env('STREAMO_INTERACTIVE')
   )
@@ -158,7 +162,7 @@ program
 const options = program.opts()
 
 // keep one-shot modes' stdout clean
-if (options.cat || options.eval) {
+if (options.cat || options.eval || options.chat) {
   console.log = (...a) => process.stderr.write(a.join(' ') + '\n')
 }
 
@@ -203,7 +207,7 @@ if (options._configHomeKey) {
 // dataDir: false is the explicit no-archive signal; undefined defaults to
 // `.streamo` (or `false` for one-shot reads — see --cat / --eval).
 if (options.dataDir === undefined) {
-  options.dataDir = (options.cat || options.eval) ? false : '.streamo'
+  options.dataDir = (options.cat || options.eval || options.chat) ? false : '.streamo'
 }
 
 function applyStreamoJsonConfig (configPath, opts) {
@@ -568,6 +572,48 @@ if (options.eval) {
     process.exit(0)
   } catch (e) {
     process.stderr.write(`--eval: ${e.message}\n`)
+    process.exit(1)
+  }
+}
+
+if (options.chat) {
+  const userMessage = options.chat
+  const recaller = server.registry.recaller
+  const repo = server.streamo
+  const timeoutMs = 30000
+
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error('timed out waiting for record to materialize')),
+        timeoutMs
+      )
+      recaller.watch('chat-wait', () => {
+        if (repo.lastCommit) {
+          clearTimeout(timer)
+          resolve()
+        }
+      })
+    })
+
+    const existingMessages = repo.get('messages') ?? []
+    const next = [...existingMessages, { role: 'user', content: userMessage }]
+
+    const { default: Anthropic } = await import('@anthropic-ai/sdk')
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
+    const response = await client.messages.create({
+      model: 'claude-opus-4-7',
+      max_tokens: 4096,
+      messages: next
+    })
+
+    for (const block of response.content) {
+      if (block.type === 'text') process.stdout.write(block.text)
+    }
+    process.stdout.write('\n')
+    process.exit(0)
+  } catch (e) {
+    process.stderr.write(`--chat: ${e.message}\n`)
     process.exit(1)
   }
 }

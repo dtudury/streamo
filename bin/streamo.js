@@ -247,19 +247,11 @@ function applyStreamoJsonConfig (configPath, opts) {
     //   - credentials alone      → derive; pubkey is whatever results.
     //   - nothing                → error (relay needs to know what Record
     //                              it's serving).
-    //
-    // `identity.self` is the deprecated alias for `homeKey` (verification
-    // only; never triggered relay-only mode). Accepted with a warning until
-    // 13.0; do not silently fall back forever.
-    if (cfg.identity.self && !cfg.identity.homeKey) {
-      console.warn('\x1b[33m[deprecation] identity.self → identity.homeKey (alias accepted; will be removed in 13.0)\x1b[0m')
-    }
-    const homeKeyValue = cfg.identity.homeKey ?? cfg.identity.self
-    if (homeKeyValue) {
+    if (cfg.identity.homeKey) {
       // Defer the mode decision to the credential-presence check below;
       // store on _configHomeKey so the CLI's --home-key flag can take
       // precedence (and so we can decide verify-vs-relay-only correctly).
-      opts._configHomeKey = homeKeyValue
+      opts._configHomeKey = cfg.identity.homeKey
     }
   }
 

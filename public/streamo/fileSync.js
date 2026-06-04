@@ -48,18 +48,32 @@ function decodeFile (rel, value) {
 }
 
 /**
- * Encode a file value for writing to disk: objects stored under a .json path
- * are serialized back to pretty-printed JSON.
+ * Encode a file value for writing to disk. Strict shape contract:
+ *   - `.json` files: value must be a plain object or array → JSON-encoded
+ *   - other files:   value must be a string or Uint8Array → written as bytes
+ * Any other combination throws. The earlier null-return + silent-skip
+ * behavior hid contract violations; throwing surfaces them at the write
+ * site where they can be debugged.
+ *
  * @param {string} rel
  * @param {any} value
- * @returns {string|Uint8Array|null}  null means skip
+ * @returns {string|Uint8Array}
  */
 function encodeFile (rel, value) {
-  if (rel.endsWith('.json') && value != null && typeof value === 'object' && !(value instanceof Uint8Array)) {
+  const isJsonPath = rel.endsWith('.json')
+  const typeDesc = value === null ? 'null'
+    : value === undefined ? 'undefined'
+    : value instanceof Uint8Array ? 'Uint8Array'
+    : typeof value === 'object' ? (Array.isArray(value) ? 'array' : 'object')
+    : typeof value
+  if (isJsonPath) {
+    if (value == null || typeof value !== 'object' || value instanceof Uint8Array) {
+      throw new Error(`fileSync.encodeFile: ${rel} is a .json path but value is ${typeDesc}; .json slots require an object or array`)
+    }
     return JSON.stringify(value, null, 2) + '\n'
   }
   if (typeof value === 'string' || value instanceof Uint8Array) return value
-  return null
+  throw new Error(`fileSync.encodeFile: ${rel} requires a string or Uint8Array value; got ${typeDesc}`)
 }
 
 /**
@@ -99,8 +113,7 @@ async function writeToFolder (folder, files) {
   for (const [rel, content] of Object.entries(files)) {
     const abs = join(folder, rel)
     await mkdir(dirname(abs), { recursive: true })
-    const encoded = encodeFile(rel, content)
-    if (encoded === null) continue
+    const encoded = encodeFile(rel, content)  // throws on shape mismatch
     const bytes = typeof encoded === 'string' ? new TextEncoder().encode(encoded) : encoded
     await writeFile(abs, bytes)
   }
@@ -407,45 +420,19 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   const applyFilesToValue = (_current, files) => files
 
   // Gate the disk-vs-repo authority decision on "is the upstream view
-  // in?" — when an origin session is attached but initial replay hasn't
-  // completed, the local archive looks empty (or incomplete) but the
-  // relay has weeks of history. Authoring against the empty view here
-  // produces a fresh-chain commit that the relay rejects with
-  // chain-mismatch. Wait until either there's no relay (local-only mode,
-  // safe to author immediately) or we've caught up to the relay's chain
-  // head as of subscribe time.
+  // in?" — authoring against an empty-looking local archive when the
+  // relay has weeks of history produces a fresh-chain commit the relay
+  // rejects with chain-mismatch. Wait for repo.isReadyToAuthor (a
+  // reactive predicate composing hasRelay + caughtUpToRelay). Records
+  // without this predicate (non-StreamoRecord Streamos) fall through
+  // immediately.
   //
-  // Implemented via repo.isReadyToAuthor — a reactive predicate that
-  // composes hasRelay + caughtUpToRelay. Old Records without this
-  // predicate (or non-StreamoRecord Streamos) fall through to immediate
-  // ready, preserving prior behavior.
-  //
-  // OLD-RELAY FALLBACK: relays older than this version don't send the
-  // `{type: 'subscribed'}` ack the gate waits on. To avoid a hard
-  // deadlock against such a relay, the await is bounded: after 3 s with
-  // hasRelay=true but no watermark, log a warning and proceed. The
-  // legacy race (chain-mismatch on first push) re-appears in that
-  // configuration — but the user sees a clear log line saying so, not
-  // an unexplained hang.
+  // If the relay never acks subscribed, this hangs — that's honest.
+  // The OLD-RELAY 3-second timeout fallback was removed in the flatten
+  // arc: relays older than the initial-replay handshake (10.2.3+) need
+  // updating, not working around.
   if (typeof repo.isReadyToAuthor === 'boolean' && !repo.isReadyToAuthor) {
-    const controller = new AbortController()
-    const ready = repo.recaller.when(
-      () => repo.isReadyToAuthor,
-      { signal: controller.signal, name: 'fileSync:await-ready-to-author' }
-    ).catch(() => {})  // timeout aborts; swallow and proceed
-    const timer = setTimeout(() => {
-      if (repo.hasRelay && repo.relaySubscribedAtOffset === null) {
-        console.warn(
-          'fileSync: relay did not send a `subscribed` ack within 3 s — ' +
-          'proceeding without the initial-replay gate. If your author push ' +
-          'gets rejected with chain-mismatch, your relay is older than 10.2.3; ' +
-          'update it to use the new initial-replay handshake.'
-        )
-      }
-      controller.abort('timeout')
-    }, 3000)
-    await ready
-    clearTimeout(timer)
+    await repo.recaller.when(() => repo.isReadyToAuthor, { name: 'fileSync:await-ready-to-author' })
   }
 
   const { files: diskFiles, maxMtime: diskMtime } = await readFolder(folder, acceptsForCommit)
@@ -545,8 +532,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     if (expected === undefined) return false  // mount entry was removed
     let onDisk
     try { onDisk = await readFile(join(folder, rel)) } catch { return false }
-    const encoded = encodeFile(rel, expected)
-    if (encoded === null) return false
+    const encoded = encodeFile(rel, expected)  // throws on shape mismatch
     const expectedBytes = typeof encoded === 'string' ? new TextEncoder().encode(encoded) : encoded
     if (onDisk.length !== expectedBytes.byteLength) return true
     for (let i = 0; i < onDisk.length; i++) {

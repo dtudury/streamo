@@ -113,23 +113,25 @@ const ws = await originSync(repo, publicKeyHex, `${protocol}://${host}:${port}`)
 await new Promise(r => setTimeout(r, 2500))
 repo.attachSigner(signer, streamName)
 
-// Build the Record's value.
+// Flat shape: value IS the files map. Daily .md files at top-level;
+// streamo.json carries the per-publish meta (version anchor, timestamp,
+// identityType) — just another file alongside the events.
+// See [[the-flatten-arc-2026-06-04]].
 const value = {
-  files,
-  streamoVersion,
-  writtenAt: new Date().toISOString(),
-  identityType: 'bubbles-stream'
+  ...files,
+  'streamo.json': {
+    streamoVersion,
+    writtenAt: new Date().toISOString(),
+    identityType: 'bubbles-stream'
+  }
 }
 
-// repo.update(fn, {message}) — retry-safe + explicit message at the call
-// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02).
+// repo.update awaits the relay ack internally (the _awaitChainHash wait);
+// no extra timer-kludge needed for the round-trip.
 await repo.update(c => value, {
   message: `publish bubble events @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
 })
 console.log(`[publish-events] set ${mdFiles.length} files / ${totalBytes.toLocaleString()} bytes`)
-
-// Hold the connection long enough for sign + push to reach the relay.
-await new Promise(r => setTimeout(r, 3000))
 if (repo.pushRejected) {
   console.error(`[publish-events] relay rejected: ${repo.pushRejected.reason ?? 'unknown'}`)
   ws.close()

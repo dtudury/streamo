@@ -135,48 +135,51 @@ if (server.signer) {
   // Note: no `members` seed. Chat-room membership is now discovered live
   // via the announce/interest layer (see `onAnnounce` replay in
   // registrySync.js) — no signed roster, no server-written list.
+  // Flat shape: each piece of seeded meta becomes its own top-level
+  // file. value['journalists.json'] holds the array; value['entries.json']
+  // holds the journal entries; value['flashcardsDecks.json'] holds the
+  // bundled-deck address map. The homepage's main.js reads them via
+  // repo.get('<name>.json'). See [[the-flatten-arc-2026-06-04]].
   const current = server.streamo.get() ?? {}
-  const seed = { ...current }
-  let needsCommit = false
-  if (!Array.isArray(seed.journalists)) { seed.journalists = []; needsCommit = true }
+  const currentJournalists = Array.isArray(current['journalists.json']) ? current['journalists.json'] : []
+  const currentEntries = Array.isArray(current['entries.json']) ? current['entries.json'] : []
+  const currentDecks = (current['flashcardsDecks.json'] && typeof current['flashcardsDecks.json'] === 'object') ? current['flashcardsDecks.json'] : {}
+
   const wantSet = new Set([server.publicKeyHex, historyKeyHex, ...extraJournalists])
-  const missingJournalists = [...wantSet].filter(k => !seed.journalists.includes(k))
-  const staleJournalists = seed.journalists.filter(k => !wantSet.has(k))
-  if (missingJournalists.length || staleJournalists.length) {
-    // Add anything in want-but-not-present; drop anything present-but-not-wanted.
-    // Without the prune, removing a journalist from the env required manual
-    // archive surgery — the seed logic only added, never removed.
-    seed.journalists = [...seed.journalists.filter(k => wantSet.has(k)), ...missingJournalists]
-    needsCommit = true
-  }
-  if (!Array.isArray(seed.entries) || seed.entries.length === 0) {
-    seed.entries = [{
-      headline: 'running streamo',
-      body: 'this is the streamo journal. each entry is a signed commit on this repo; the homepage walks them and the relay link in the explorer leads here. append-only history made visible.',
-      at: new Date()
-    }]
-    needsCommit = true
-  }
-  // Publish the bundled-deck address map on the home repo so the
-  // flashcards client can discover what's served without hardcoding.
-  if (JSON.stringify(seed.flashcardsDecks ?? {}) !== JSON.stringify(flashcardsDecks)) {
-    seed.flashcardsDecks = flashcardsDecks
-    needsCommit = true
-  }
-  if (needsCommit) {
-    server.streamo.defaultMessage = seed.entries[seed.entries.length - 1].headline
-    server.streamo.set(seed)
+  const nextJournalists = [
+    ...currentJournalists.filter(k => wantSet.has(k)),
+    ...[...wantSet].filter(k => !currentJournalists.includes(k))
+  ]
+  const nextEntries = currentEntries.length > 0 ? currentEntries : [{
+    headline: 'running streamo',
+    body: 'this is the streamo journal. each entry is a signed commit on this repo; the homepage walks them and the relay link in the explorer leads here. append-only history made visible.',
+    at: new Date()
+  }]
+  const nextDecks = flashcardsDecks
+
+  const journalistsChanged = JSON.stringify(currentJournalists) !== JSON.stringify(nextJournalists)
+  const entriesChanged = currentEntries.length === 0
+  const decksChanged = JSON.stringify(currentDecks) !== JSON.stringify(nextDecks)
+
+  if (journalistsChanged || entriesChanged || decksChanged) {
+    await server.streamo.update(c => ({
+      ...(c ?? {}),
+      'journalists.json': nextJournalists,
+      'entries.json': nextEntries,
+      'flashcardsDecks.json': nextDecks
+    }), { message: nextEntries[nextEntries.length - 1].headline })
     console.log('[chat] initialized chat room + journal seed')
   }
 
-  // Mirror the authored homepage at public/homepage/ to/from the home repo's
-  // `files` key.  fileSync is bidirectional: edits on disk become commits,
-  // commits become disk writes. `recordFile: 'streamo.json'` separates the
-  // home Record's metadata (mounts, title, etc.) from the file tree so a
-  // homepage's `mounts` table can be authored on disk as plain JSON.
+  // Mirror the authored homepage at public/homepage/ to/from the home
+  // Record's value. fileSync is bidirectional: edits on disk become
+  // commits at value['<filename>']; commits become disk writes. In flat
+  // shape, the recordFile (streamo.json) is still treated specially for
+  // mid-edit grace (broken JSON drops from the commit instead of
+  // overwriting the previous valid object).
   const homepageDir = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'homepage')
   await server.files(homepageDir, { recordFile: 'streamo.json' })
-  console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.files`)
+  console.log(`[chat] mirroring homepage: ${homepageDir} ↔ home.value`)
 }
 
 // Feed subscription — when STREAMO_FEED is set, open a registrySync

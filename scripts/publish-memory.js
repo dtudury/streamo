@@ -115,26 +115,24 @@ const ws = await originSync(repo, publicKeyHex, `${protocol}://${host}:${port}`)
 await new Promise(r => setTimeout(r, 2500))
 repo.attachSigner(signer, streamName)
 
-// Build the Record's value.
+// Flat shape: value IS the files map. Memory .md files at top-level;
+// streamo.json carries the per-publish meta (version anchor, timestamp,
+// identityType) — just another file alongside the memories.
+// See [[the-flatten-arc-2026-06-04]].
 const value = {
-  files,
-  streamoVersion,
-  writtenAt: new Date().toISOString(),
-  identityType: 'memory-corpus'
+  ...files,
+  'streamo.json': {
+    streamoVersion,
+    writtenAt: new Date().toISOString(),
+    identityType: 'memory-corpus'
+  }
 }
 
-// repo.update(fn, {message}) — retry-safe + explicit message at the call
-// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02): the
-// old `defaultMessage + repo.set(value)` pattern is retired; new code
-// uses update() with the message passed explicitly so the chain reads
-// as narrative without a separate defaultMessage line above.
+// repo.update awaits the relay ack internally — no timer-kludge needed.
 await repo.update(c => value, {
   message: `publish memory corpus @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
 })
 console.log(`[publish-memory] set ${mdFiles.length} files / ${totalBytes.toLocaleString()} bytes`)
-
-// Hold the connection long enough for sign + push to reach the relay.
-await new Promise(r => setTimeout(r, 3000))
 if (repo.pushRejected) {
   console.error(`[publish-memory] relay rejected: ${repo.pushRejected.reason ?? 'unknown'}`)
   ws.close()

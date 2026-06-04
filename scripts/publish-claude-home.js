@@ -97,20 +97,20 @@ const ws = await originSync(record, publicKeyHex, `${protocol}://${host}:${port}
 await new Promise(r => setTimeout(r, 2500))
 record.attachSigner(signer, streamName)
 
-// record.update(fn, {message}) — retry-safe + explicit message at the call
-// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02).
+// Flat shape: value IS the files map. HTML + assets at top-level;
+// streamo.json carries the per-publish meta.
+// See [[the-flatten-arc-2026-06-04]].
 await record.update(c => ({
-  files,
-  streamoVersion,
-  writtenAt: new Date().toISOString()
+  ...files,
+  'streamo.json': {
+    streamoVersion,
+    writtenAt: new Date().toISOString()
+  }
 }), {
   message: `publish claude-home @ ${streamoVersion.slice(0, 8)} (${Object.keys(files).length} files)`
 })
 
 console.log(`[publish-claude-home] set ${Object.keys(files).length} files / ${totalBytes.toLocaleString()} bytes`)
-
-// Hold open long enough for sign + push to land on the relay.
-await new Promise(r => setTimeout(r, 3000))
 if (record.pushRejected) {
   console.error(`[publish-claude-home] relay rejected: ${record.pushRejected.reason ?? 'unknown'}`)
   ws.close()

@@ -15,12 +15,20 @@ it's JSON-shaped. It isn't. Streamo's codec layer supports `Date`,
 composites. Real Dates and real Uint8Arrays go into the value directly —
 not ISO strings, not base64.
 
-When you import the `value.files[<filename>]` convention (notes / sketch
-v1 / homepage), you flatten value to a string-or-bytes-per-file shape.
-That's a *choice* of one shape, not the substrate's only shape. For apps
-where the natural value is a typed object, the files-map wrapper is
-cruft and should be skipped — see [[what's-.md-is-cruft]] +
-[[files-map-is-one-convention-not-truth]].
+**Folder shape (canonical since the 2026-06-04 flatten arc): value IS
+the files map.** Filenames at top-level: `value['index.html']`,
+`value['mounts.json']`, `value['streamo.json']`. No more `value.files`
+nesting; no more redundancy invariant between top-level meta and a
+mirrored streamo.json. This is the FolderRecord convention; webSync,
+fileSync, repoFileServer, FolderRecord, and registrySync's followMounts
+all expect it. Records still in the 9.0.0 nested shape (value.files['x'])
+are valid StreamoRecords (chain interpretation) but not valid
+FolderRecords — they need re-publishing in flat shape to be served.
+
+For apps where the natural value is a typed object (no files at all),
+the folder convention doesn't apply — `value` can hold any structured
+content the codec supports. See [[the-flatten-arc-2026-06-04]] for the
+substrate-deposit on the migration history.
 
 See **`design.md` §14.4 — The value type system** for the full type table,
 practical examples, and the 2026-06-02 round-trip investigation flagged

@@ -408,7 +408,7 @@
           // it on every settle is safe and self-healing if the list grows.
           follow: (keyHex, repo, subscribe) => {
             if (keyHex !== info.primaryKeyHex) return
-            for (const k of repo.get('journalists') ?? []) subscribe(k)
+            for (const k of repo.get('journalists.json') ?? []) subscribe(k)
           }
         })
         const entriesEl = document.getElementById('journal-entries')
@@ -424,14 +424,14 @@
         mount(h`${() => {
           const homeRepo = registry.get(info.primaryKeyHex)
           if (!homeRepo) return h`<p class="dim" style="font-size: 0.85rem;">connecting…</p>`
-          const journalists = homeRepo.get('journalists') ?? [info.primaryKeyHex]
+          const journalists = homeRepo.get('journalists.json') ?? [info.primaryKeyHex]
           // Pull entries from every journalist's repo, tagging each with
           // its author so we can show provenance after the merge.
           const merged = []
           for (const author of journalists) {
             const repo = registry.get(author)
             if (!repo) continue
-            for (const e of repo.get('entries') ?? []) merged.push({ ...e, author })
+            for (const e of repo.get('entries.json') ?? []) merged.push({ ...e, author })
           }
           if (merged.length === 0) {
             return h`<p class="dim" style="font-size: 0.85rem;">no entries yet.</p>`

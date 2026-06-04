@@ -60,8 +60,8 @@ registrySync(registry, location.host, {
     // `journalists` (peers whose repos contribute named slices —
     // currently entries + the history streamo). Both are "interesting
     // to the explorer" lists.
-    for (const memberKey of repo.get('members') ?? []) subscribe(memberKey)
-    for (const journalistKey of repo.get('journalists') ?? []) subscribe(journalistKey)
+    for (const memberKey of repo.get('members.json') ?? []) subscribe(memberKey)
+    for (const journalistKey of repo.get('journalists.json') ?? []) subscribe(journalistKey)
   },
   onAnnounce: (key, topic) => {
     // The relay replays current announces to us on interest, and fans

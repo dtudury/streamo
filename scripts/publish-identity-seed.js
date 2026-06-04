@@ -119,27 +119,25 @@ const ws = await originSync(repo, publicKeyHex, `${protocol}://${host}:${port}`)
 await new Promise(resolve => setTimeout(resolve, 2500))
 repo.attachSigner(signer, streamName)
 
-// Build the Record's value. `files` is the streamo convention for
-// servable content — webSync/serveFromRepo can render this Record as a
-// webpage natively. Top-level meta (streamoVersion, writtenAt,
-// identityType) is the per-record version anchor + self-description.
+// Flat shape: value IS the files map. The seed markdown is a top-level
+// file; streamo.json carries the per-publish meta (version anchor,
+// timestamp, identityType). webSync/serveFromRepo renders this Record
+// as a folder natively.
+// See [[the-flatten-arc-2026-06-04]].
 const value = {
-  files: { 'who_i_am_with_david.md': seedContent },
-  streamoVersion,
-  writtenAt: new Date().toISOString(),
-  identityType: 'who-i-am-with-david'
+  'who_i_am_with_david.md': seedContent,
+  'streamo.json': {
+    streamoVersion,
+    writtenAt: new Date().toISOString(),
+    identityType: 'who-i-am-with-david'
+  }
 }
 
-// repo.update(fn, {message}) — retry-safe + explicit message at the call
-// site. See [[git-vs-streamo-message-inconsistency]] (2026-06-02).
+// repo.update awaits the relay ack internally — no timer-kludge needed.
 await repo.update(c => value, {
   message: `publish identity seed @ ${streamoVersion.slice(0, 8)}`
 })
 console.log(`[publish-identity-seed] set ${seedContent.length} bytes of content`)
-
-// Hold the connection long enough for sign + push to reach the relay.
-// originSync has no ack channel; flat wait matches claudeSync.close().
-await new Promise(resolve => setTimeout(resolve, 2000))
 if (repo.pushRejected) {
   console.error(`[publish-identity-seed] relay rejected: ${repo.pushRejected.reason ?? 'unknown'}`)
   ws.close()

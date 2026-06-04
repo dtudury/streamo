@@ -223,9 +223,9 @@ async function login (e) {
     location.host,
     {
       follow: (keyHex, repo, subscribe) => {
-        const fd = repo.get('flashcardsDecks') ?? {}
+        const fd = repo.get('flashcardsDecks.json') ?? {}
         for (const deckKey of Object.values(fd)) subscribe(deckKey)
-        const myDecks = repo.get('decks') ?? []
+        const myDecks = repo.get('decks.json') ?? []
         for (const deckKey of myDecks) {
           // Every entry in myDeckIndex.decks is a fork the user owns
           // (they authored it) — pre-declare Writable so the factory

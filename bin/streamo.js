@@ -134,7 +134,7 @@ program
       .env('STREAMO_CAT')
   )
   .addOption(
-    new Option('--eval <expr>', 'one-shot: evaluate <expr> with streamo/signer/registry/recaller/repo in scope, print result to stdout, exit')
+    new Option('--eval <expr>', 'one-shot: evaluate <expr> with streamo/signer/registry/recaller/record in scope, print result to stdout, exit')
       .env('STREAMO_EVAL')
   )
   .addOption(
@@ -506,7 +506,7 @@ if (options.subscribe && options.subscribe.length > 0) {
 if (options.cat) {
   const targetFile = options.cat
   const recaller = server.registry.recaller
-  const repo = server.streamo
+  const record = server.streamo
   const session = feedSessions[0] ?? null
   const timeoutMs = 30000
 
@@ -517,14 +517,14 @@ if (options.cat) {
         timeoutMs
       )
       recaller.watch('cat-wait', () => {
-        if (repo.lastCommit) {
+        if (record.lastCommit) {
           clearTimeout(timer)
           resolve()
         }
       })
     })
 
-    const folder = new FolderRecord(repo, server.registry, { session, materializeTimeoutMs: timeoutMs })
+    const folder = new FolderRecord(record, server.registry, { session, materializeTimeoutMs: timeoutMs })
     const content = await folder.resolvePath(targetFile)
     if (content === null || content === undefined) {
       process.stderr.write(`--cat: ${JSON.stringify(targetFile)} not found in this record or any mounted record\n`)
@@ -540,7 +540,7 @@ if (options.cat) {
 
 if (options.eval) {
   const recaller = server.registry.recaller
-  const repo = server.streamo
+  const record = server.streamo
   const timeoutMs = 30000
 
   try {
@@ -550,7 +550,7 @@ if (options.eval) {
         timeoutMs
       )
       recaller.watch('eval-wait', () => {
-        if (repo.get() != null) {
+        if (record.get() != null) {
           clearTimeout(timer)
           resolve()
         }
@@ -559,7 +559,7 @@ if (options.eval) {
 
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction(
-      'streamo', 'signer', 'registry', 'recaller', 'repo',
+      'streamo', 'signer', 'registry', 'recaller', 'record',
       `return (${options.eval})`
     )
     const result = await fn(
@@ -579,7 +579,7 @@ if (options.eval) {
 if (options.chat) {
   const userMessage = options.chat
   const recaller = server.registry.recaller
-  const repo = server.streamo
+  const record = server.streamo
   const timeoutMs = 30000
 
   try {
@@ -589,14 +589,14 @@ if (options.chat) {
         timeoutMs
       )
       recaller.watch('chat-wait', () => {
-        if (repo.lastCommit) {
+        if (record.lastCommit) {
           clearTimeout(timer)
           resolve()
         }
       })
     })
 
-    const existingMessages = repo.get('messages') ?? []
+    const existingMessages = record.get('messages') ?? []
     const next = [...existingMessages, { role: 'user', content: userMessage }]
 
     const { default: Anthropic } = await import('@anthropic-ai/sdk')

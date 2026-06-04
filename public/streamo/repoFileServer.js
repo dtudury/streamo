@@ -25,6 +25,24 @@ import { extname } from 'path'
 // since 9.0.0 — the legacy "value IS files" mode is gone (see fileSync.js).
 const FILES_KEY = 'files'
 
+// Shape detection for the flatten transition (2026-06-04).
+// See [[the-flatten-arc-2026-06-04]] in memory/notes/. Two reader shapes
+// during migration: nested (value.files is the file map — 9.0.0 era) and
+// flat (value IS the file map — target shape). Detect by whether value.files
+// is itself a map. readMounts also has a legacy 8.x branch (value.mounts
+// at top level) for streamo.dev's homepage which hasn't been re-published
+// to either shape yet.
+function isNestedShape (repo) {
+  if (!repo.lastCommit) return false
+  const f = repo.get(FILES_KEY)
+  return f != null && typeof f === 'object' && !(f instanceof Uint8Array)
+}
+function isNestedShapeValue (value) {
+  if (value == null || typeof value !== 'object') return false
+  const f = value[FILES_KEY]
+  return f != null && typeof f === 'object' && !(f instanceof Uint8Array)
+}
+
 const MIME = {
   '.html':  'text/html; charset=utf-8',
   '.htm':   'text/html; charset=utf-8',
@@ -73,7 +91,11 @@ function normalize (urlPath) {
  */
 function readFilesMap (repo) {
   if (!repo.lastCommit) return undefined
-  return repo.get(FILES_KEY)
+  if (isNestedShape(repo)) return repo.get(FILES_KEY)
+  // Flat shape: value IS the file map.
+  const v = repo.get()
+  if (v != null && typeof v === 'object' && !(v instanceof Uint8Array)) return v
+  return undefined
 }
 
 /**
@@ -96,19 +118,27 @@ function readFilesMap (repo) {
  */
 function readMounts (repo, atDataAddress) {
   if (!repo.lastCommit) return undefined
-  let mountsFile
+  // Resolve the underlying value the same way for both HEAD and pinned reads.
+  let value
   if (atDataAddress != null) {
-    try {
-      const value = repo.decode(atDataAddress)
-      const files = value && typeof value === 'object' ? value[FILES_KEY] : undefined
-      mountsFile = files && typeof files === 'object' && !(files instanceof Uint8Array) ? files['mounts.json'] : undefined
-    } catch { return undefined }
+    try { value = repo.decode(atDataAddress) }
+    catch { return undefined }
   } else {
-    mountsFile = repo.get(FILES_KEY, 'mounts.json')
+    value = repo.get()
   }
+  if (value == null || typeof value !== 'object' || value instanceof Uint8Array) return undefined
+
+  // Legacy 8.x: top-level `value.mounts` (streamo.dev homepage as of 2026-06-04).
+  const legacy = value.mounts
+  if (legacy != null && typeof legacy === 'object' && !(legacy instanceof Uint8Array)) return legacy
+
+  // Nested or flat: mounts.json lives where the file map lives.
+  const mountsFile = isNestedShapeValue(value)
+    ? value[FILES_KEY]['mounts.json']
+    : value['mounts.json']
   if (!mountsFile || typeof mountsFile !== 'object' || mountsFile instanceof Uint8Array) return undefined
   const m = mountsFile.mounts
-  return (m && typeof m === 'object' && !(m instanceof Uint8Array)) ? m : undefined
+  return (m != null && typeof m === 'object' && !(m instanceof Uint8Array)) ? m : undefined
 }
 
 /**
@@ -126,17 +156,18 @@ function readFile (repo, path, atDataAddress) {
     try {
       const value = repo.decode(atDataAddress)
       if (!value || typeof value !== 'object') return undefined
-      const map = value[FILES_KEY]
-      return (map && typeof map === 'object') ? map[path] : undefined
+      // Shape-detect: nested uses value.files[path]; flat uses value[path].
+      return isNestedShapeValue(value) ? value[FILES_KEY][path] : value[path]
     } catch { return undefined }
   }
+  if (!repo.lastCommit) return undefined
   // Two-arg get → lazy descent through the files map; only the leaf chunk
   // (the requested file's bytes) gets fully decoded. Previously this called
   // `readFilesMap(repo)[path]`, which forced a full decode of every file
   // in the map on every request — the actual cause of streamo.dev's
   // ~200ms-per-asset waterfall before 10.2.1. The codec already has the
   // chunk-graph references; just had to ask for the path we wanted.
-  return repo.get(FILES_KEY, path)
+  return isNestedShape(repo) ? repo.get(FILES_KEY, path) : repo.get(path)
 }
 
 /**

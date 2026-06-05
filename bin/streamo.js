@@ -26,6 +26,7 @@ program
   .name('streamo')
   .description('streamo CLI')
   .version(version)
+  .allowExcessArguments(true)
 
   .addOption(
     new Option('--config <path>', 'path to a streamo.json config file. Fields under `identity` (name/username/password/keyIterations/self) and `server` (web/outlet/feed/files/archive/verbose/recordFile) fill in any options not set on the CLI. Relative paths resolve against the config file\'s directory.')
@@ -161,6 +162,30 @@ program
 
 const options = program.opts()
 
+// Positional dispatch: streamo <object> [<method> [<args>...]] becomes an
+// --eval expression. Pure reflection of the JS API into bash positional
+// args — no escape characters for typical method calls.
+//
+//   streamo signer publicKeyHex            → signer.publicKeyHex
+//   streamo record                         → record  (whole object)
+//   streamo record update bio "hello"      → await record.update("bio", "hello")
+//   streamo record get index.html          → record.get("index.html")
+//
+// Args are JSON.stringified, so strings keep their quotes and the user
+// doesn't escape anything. Numbers come in as strings — call sites that
+// want number args use --eval explicitly with the right types.
+if (program.args.length >= 1 && !options.eval) {
+  const [objName, methodOrProp, ...rest] = program.args
+  if (!methodOrProp) {
+    options.eval = objName
+  } else if (rest.length === 0) {
+    options.eval = `${objName}.${methodOrProp}`
+  } else {
+    const jsArgs = rest.map(a => JSON.stringify(a)).join(', ')
+    options.eval = `await ${objName}.${methodOrProp}(${jsArgs})`
+  }
+}
+
 // keep one-shot modes' stdout clean
 if (options.cat || options.eval || options.chat) {
   console.log = (...a) => process.stderr.write(a.join(' ') + '\n')
@@ -206,6 +231,11 @@ if (options._configHomeKey) {
 // a default for (because config might want to leave them off / drop them).
 // dataDir: false is the explicit no-archive signal; undefined defaults to
 // `.streamo` (or `false` for one-shot reads — see --cat / --eval).
+//
+// Shell coercion: --data-dir false comes in as the string "false" from
+// argv; coerce to actual boolean false so MemoryTier-only mode triggers
+// instead of creating a directory literally named `false/`.
+if (options.dataDir === 'false') options.dataDir = false
 if (options.dataDir === undefined) {
   options.dataDir = (options.cat || options.eval || options.chat) ? false : '.streamo'
 }
@@ -533,21 +563,22 @@ if (options.cat) {
 if (options.eval) {
   const recaller = server.registry.recaller
   const record = server.streamo
-  const timeoutMs = 30000
 
   try {
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error('timed out waiting for record to materialize')),
-        timeoutMs
-      )
-      recaller.watch('eval-wait', () => {
-        if (record.get() != null) {
-          clearTimeout(timer)
-          resolve()
-        }
-      })
-    })
+    // Soft-wait for record materialization ONLY if the expression
+    // references the record. Otherwise (e.g., `signer.publicKeyHex`)
+    // run immediately. Soft wait caps at 3s — past that, the eval
+    // runs against whatever the local record has.
+    if (/\brecord\b/.test(options.eval)) {
+      await Promise.race([
+        new Promise(resolve => {
+          recaller.watch('eval-wait', () => {
+            if (record.get() != null) resolve()
+          })
+        }),
+        new Promise(resolve => setTimeout(resolve, 3000))
+      ])
+    }
 
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction(

@@ -5,6 +5,94 @@ for what's next.
 
 ---
 
+## 15.0.0 — auto-sharding: one-command deploy via keysFor namespace
+
+The headline outcome of 2026-06-04. **The deploy is now one command:**
+
+```bash
+node bin/streamo.js --env-file env/secrets/streamo-relay.env \
+                    --files public --origin wss://streamo.dev
+```
+
+`fileSync` auto-shards the whole `public/` tree across the relay's
+identity-family. Files at the public/ root commit to the home Record;
+files under each mounts.json prefix route to derived child Records
+via `signer.keysFor(parentName + '/' + mountPrefix)`. **One root
+signer, every shard derivable.** No per-shard credential storage;
+the mount tree IS the sub-stream namespace.
+
+See `memory/notes/2026-06-04-late-the-one-command-deploy-landed.md`
+for the substrate-deposit on what landed + how to extend it.
+
+### New substrate APIs
+
+- **`FolderRecord.write(path, value, options)`** — single-path write.
+  Bounded to this Record; throws on read-only mounts; recurses
+  through `ours: true` mounts via keysFor derivation.
+- **`FolderRecord.writeMany(filesMap, options)`** — route many files
+  in one call. Groups by destination Record; one commit per
+  destination. `options.replace: true` for fileSync's mirror-disk
+  semantics; default merges.
+- **`FolderRecord.resolveReactive(path)`** — synchronous reactive
+  read. Returns undefined-pending; fires-and-forgets subscribe /
+  materialize on pending mounts; watcher re-fires when bytes
+  arrive. The "drop the awaits, let the Recaller fire" shape.
+
+### `mounts.json` — `ours: true` marker is load-bearing
+
+Mounts now distinguish `ours: true` (shards we author into via
+keysFor derivation) from default (read-only mounts pointing at
+other identity-families). `fileSync` routes writes only to
+ours-true mounts; non-ours paths are silently skipped on the
+write side (they remain readable through the mount cascade).
+
+### `fileSync` gains opt-in auto-sharding
+
+When `(signer, signerName, registry)` are all passed to
+fileSync (and `StreamoServer.files()` now threads these from
+server self by default), writes route through
+`FolderRecord.writeMany` instead of a single `repo.update`.
+Backward-compatible: callers that don't pass signer/signerName
+see the existing single-Record path.
+
+### Production migration
+
+The 7 streamo.dev Records were re-published as one identity-family:
+- Home: `keysFor('streamo-relay')` → 03820c0b…
+- Library: `keysFor('streamo-relay/streamo/')` → 0358f79a…
+- chat: `keysFor('streamo-relay/apps/chat/')` → 02bff71d…
+- flashcards: `keysFor('streamo-relay/apps/flashcards/')` → 034c0f2a…
+- explorer: `keysFor('streamo-relay/apps/explorer/')` → 03e20368…
+- todomvc: `keysFor('streamo-relay/apps/todomvc/')` → 03ad2768…
+- styles: `keysFor('streamo-relay/apps/styles/')` → 02088c8a…
+
+`public/homepage/` was flattened up to `public/` root so
+`--files public/` is the literal deploy. The 6 legacy
+random-password env files were deleted (no longer needed —
+derive from streamo-relay).
+
+### Reactivity-is-free-when-Recaller-shared
+
+The substrate was always reactive at the (Record, Recaller)
+layer; today's commits prove it. `record.get` inside a watched
+function auto-registers the dep; mutations elsewhere re-fire the
+watcher. **The reactive `resolvePath` isn't an architectural
+move; it's stopping fighting the substrate with imperative
+awaits.** 3 probe tests confirm; resolveReactive is the embodiment.
+
+### Queued for 15.x
+
+- Reader consolidation: `repoFileServer`, `registrySync followMounts`,
+  `fileSync` each still have their own mount-walkers (~120 LOC).
+  All can become thin calls into `FolderRecord.resolveReactive`.
+  Pure cleanup; no behavior change.
+- `streamo identity new <name>` verb — wraps the password-gen +
+  derive-pubkey + write-env-file dance.
+- `mounts.json` `version` field per entry — for re-sharding
+  scenarios; bump when shard structure or key changes.
+
+---
+
 ## 14.0.0 — the flatten arc: `value` IS the files map
 
 The 9.0.0-era nested shape (`value.files['<path>']` + top-level meta

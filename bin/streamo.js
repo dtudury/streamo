@@ -14,6 +14,7 @@ import { MemoryTier, DiskTier } from '../public/streamo/StorageTier.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { identity } from '../public/streamo/identity.js'
+import { dispatch } from '../public/streamo/dispatch.js'
 import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
@@ -176,19 +177,16 @@ const options = program.opts()
 // doesn't escape anything. Numbers come in as strings — call sites that
 // want number args use --eval explicitly with the right types.
 if (program.args.length >= 1 && !options.eval) {
-  const [objName, methodOrProp, ...rest] = program.args
-  if (!methodOrProp) {
-    options.eval = objName
-  } else if (rest.length === 0) {
-    options.eval = `${objName}.${methodOrProp}`
-  } else {
-    const jsArgs = rest.map(a => JSON.stringify(a)).join(', ')
-    options.eval = `await ${objName}.${methodOrProp}(${jsArgs})`
+  const [objName, methodName, ...rest] = program.args
+  options._dispatch = {
+    objName,
+    methodName,                       // may be undefined → returns the object itself
+    args: rest.length ? rest : undefined  // may be undefined → returns the property
   }
 }
 
 // keep one-shot modes' stdout clean
-if (options.cat || options.eval || options.chat) {
+if (options.cat || options.eval || options.chat || options._dispatch) {
   console.log = (...a) => process.stderr.write(a.join(' ') + '\n')
 }
 
@@ -196,13 +194,11 @@ if (options.cat || options.eval || options.chat) {
 // canonical example: `streamo identity new <name>` creates a fresh
 // signing identity (random password + derived pubkey + env file)
 // BEFORE you have any credentials. No server needed; no env required.
-// Detected by the positional dispatch transforming `identity ...` into
-// an --eval string that references `identity` as the first symbol.
-if (options.eval && /^(await\s+)?identity\./.test(options.eval.trim())) {
+// Detected by positional dispatch's objName === 'identity'.
+if (options._dispatch?.objName === 'identity') {
   try {
-    const AsyncFunction = (async () => {}).constructor
-    const fn = new AsyncFunction('identity', `return (${options.eval})`)
-    const result = await fn(identity)
+    const { methodName, args } = options._dispatch
+    const result = await dispatch({ identity }, 'identity', methodName, args)
     // CLI convention: stdout = the data, stderr = the human metadata.
     // For `identity new <name>`, that means: env-file content to stdout
     // (pipe it: `streamo identity new foo > env/secrets/foo.env`), and
@@ -620,12 +616,12 @@ if (options.eval) {
 
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction(
-      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity',
+      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity', 'dispatch',
       `return (${options.eval})`
     )
     const result = await fn(
       server.streamo, server.signer, server.registry,
-      server.registry.recaller, server.streamo, identity
+      server.registry.recaller, server.streamo, identity, dispatch
     )
     if (typeof result === 'string') process.stdout.write(result)
     else if (result instanceof Uint8Array) process.stdout.write(result)
@@ -633,6 +629,47 @@ if (options.eval) {
     process.exit(0)
   } catch (e) {
     process.stderr.write(`--eval: ${e.message}\n`)
+    process.exit(1)
+  }
+}
+
+// Positional dispatch (post-server). The early `_dispatch` block above
+// handles the server-less identity case; this block handles everything
+// else: `streamo record get index.html`, `streamo signer publicKeyHex`,
+// `streamo record update bio "new bio"`, etc. Single primitive (dispatch)
+// across all surfaces — see public/streamo/dispatch.js.
+if (options._dispatch) {
+  const recaller = server.registry.recaller
+  const record = server.streamo
+  try {
+    // Soft-wait for record materialization (same heuristic as --eval)
+    // when the call targets the record.
+    if (options._dispatch.objName === 'record') {
+      await Promise.race([
+        new Promise(resolve => {
+          recaller.watch('dispatch-wait', () => {
+            if (record.get() != null) resolve()
+          })
+        }),
+        new Promise(resolve => setTimeout(resolve, 3000))
+      ])
+    }
+    const scope = {
+      streamo: server.streamo,
+      signer:  server.signer,
+      registry: server.registry,
+      recaller: server.registry.recaller,
+      record:  server.streamo,
+      identity
+    }
+    const { objName, methodName, args } = options._dispatch
+    const result = await dispatch(scope, objName, methodName, args)
+    if (typeof result === 'string') process.stdout.write(result)
+    else if (result instanceof Uint8Array) process.stdout.write(result)
+    else if (result !== undefined) process.stdout.write(JSON.stringify(result, null, 2))
+    process.exit(0)
+  } catch (e) {
+    process.stderr.write(`streamo: ${e.message}\n`)
     process.exit(1)
   }
 }

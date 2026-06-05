@@ -2,64 +2,46 @@ import { describe } from './utils/testing.js'
 import { identity } from './identity.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
-import { mkdtemp, readFile, access } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
 describe(import.meta.url, ({ test }) => {
-  async function tmpDir () {
-    return mkdtemp(join(tmpdir(), 'streamo-identity-test-'))
-  }
-
-  test('identity.new generates a fresh keypair + writes env file + returns derived info', async ({ assert }) => {
-    const dir = await tmpDir()
-    const result = await identity.new('streamo-fresh', { dir, iterations: 1 })
-    assert.equal(result.name, 'streamo-fresh')
-    assert.equal(typeof result.pubkeyHex, 'string')
-    assert.equal(result.pubkeyHex.length, 66, '33-byte compressed pubkey = 66 hex chars')
-    assert.equal(typeof result.password, 'string')
-    assert.equal(result.password.length, 64, '32 random bytes = 64 hex chars')
-    assert.equal(result.envPath, join(dir, 'streamo-fresh.env'))
-    // env file landed
-    const env = await readFile(result.envPath, 'utf8')
-    assert.ok(env.includes('STREAMO_NAME=streamo-fresh'))
-    assert.ok(env.includes('STREAMO_PASSWORD=' + result.password))
-    assert.ok(env.includes('Pubkey: ' + result.pubkeyHex))
+  test('identity.new generates a fresh keypair + returns env content (pure — no fs)', async ({ assert }) => {
+    const r = await identity.new('streamo-fresh', { iterations: 1 })
+    assert.equal(r.name, 'streamo-fresh')
+    assert.equal(typeof r.pubkeyHex, 'string')
+    assert.equal(r.pubkeyHex.length, 66, '33-byte compressed pubkey = 66 hex chars')
+    assert.equal(typeof r.password, 'string')
+    assert.equal(r.password.length, 64, '32 random bytes = 64 hex chars')
+    assert.equal(typeof r.envContent, 'string')
+    assert.ok(r.envContent.includes('STREAMO_NAME=streamo-fresh'))
+    assert.ok(r.envContent.includes('STREAMO_USERNAME=streamo-fresh'))
+    assert.ok(r.envContent.includes('STREAMO_PASSWORD=' + r.password))
+    assert.ok(r.envContent.includes('STREAMO_KEY_ITERATIONS=1'))
+    assert.ok(r.envContent.includes('Pubkey: ' + r.pubkeyHex))
   })
 
-  test('identity.new derivation is reproducible — same name+password → same pubkey', async ({ assert }) => {
-    const dir = await tmpDir()
-    const r = await identity.new('streamo-reprod', { dir, iterations: 1 })
-    // Re-derive manually with the same creds; pubkey should match.
+  test('identity.new derivation is reproducible — same name+password+iters → same pubkey', async ({ assert }) => {
+    const r = await identity.new('streamo-reprod', { iterations: 1 })
     const signer = new Signer('streamo-reprod', r.password, 1)
     const { publicKey } = await signer.keysFor('streamo-reprod')
     assert.equal(bytesToHex(publicKey), r.pubkeyHex)
   })
 
-  test('identity.new throws when env file exists (no overwrite by default)', async ({ assert }) => {
-    const dir = await tmpDir()
-    await identity.new('streamo-collide', { dir, iterations: 1 })
-    await assert.rejects(
-      () => identity.new('streamo-collide', { dir, iterations: 1 }),
-      /already exists.*force.*overwrite/
-    )
+  test('identity.new is pure — two calls with same name produce DIFFERENT passwords/keys', async ({ assert }) => {
+    // (No "already exists" check; the caller decides what to do with the
+    // result — overwrite, refuse, append-as-new, etc. The verb is pure
+    // generation.)
+    const a = await identity.new('streamo-twice', { iterations: 1 })
+    const b = await identity.new('streamo-twice', { iterations: 1 })
+    assert.notEqual(a.password, b.password)
+    assert.notEqual(a.pubkeyHex, b.pubkeyHex)
   })
 
-  test('identity.new with force:true overwrites + generates a NEW identity', async ({ assert }) => {
-    const dir = await tmpDir()
-    const a = await identity.new('streamo-force', { dir, iterations: 1 })
-    const b = await identity.new('streamo-force', { dir, iterations: 1, force: true })
-    assert.notEqual(a.password, b.password, 'fresh password')
-    assert.notEqual(a.pubkeyHex, b.pubkeyHex, 'fresh pubkey')
-  })
-
-  test('identity.new with dryRun:true derives without writing the env file', async ({ assert }) => {
-    const dir = await tmpDir()
-    const r = await identity.new('streamo-dry', { dir, iterations: 1, dryRun: true })
-    assert.equal(typeof r.pubkeyHex, 'string')
-    let exists = false
-    try { await access(r.envPath); exists = true } catch {}
-    assert.equal(exists, false, 'env file NOT written on dry run')
+  test('identity.new defaults iterations to 100000', async ({ assert }) => {
+    // Don't actually run 100k iters in the test (slow); just verify the
+    // envContent advertises the default. Reproducibility checks above use
+    // iterations: 1 to stay fast.
+    const r = await identity.new('streamo-iter-default')
+    assert.ok(r.envContent.includes('STREAMO_KEY_ITERATIONS=100000'))
   })
 
   test('identity.new throws on missing/invalid name', async ({ assert }) => {

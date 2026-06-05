@@ -203,18 +203,24 @@ if (options.eval && /^(await\s+)?identity\./.test(options.eval.trim())) {
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction('identity', `return (${options.eval})`)
     const result = await fn(identity)
-    // CLI output: human-friendly + password redacted (file has it).
-    // Programmatic callers (--eval inside a server context) get the
-    // full object below, password included.
+    // CLI convention: stdout = the data, stderr = the human metadata.
+    // For `identity new <name>`, that means: env-file content to stdout
+    // (pipe it: `streamo identity new foo > env/secrets/foo.env`), and
+    // the pubkey + usage hint to stderr (visible in terminal even when
+    // stdout's redirected). For other identity verbs that return strings
+    // or bytes directly, just write them.
     if (typeof result === 'string') {
-      process.stdout.write(result + '\n')
+      process.stdout.write(result.endsWith('\n') ? result : result + '\n')
     } else if (result instanceof Uint8Array) {
       process.stdout.write(result)
+    } else if (result && typeof result === 'object' && typeof result.envContent === 'string') {
+      // identity.new shape — pipe-friendly: env content to stdout.
+      process.stdout.write(result.envContent)
+      process.stderr.write(`\nidentity: ${result.name}\n`)
+      process.stderr.write(`pubkey:   ${result.pubkeyHex}\n`)
+      process.stderr.write(`save it:  streamo identity new ${result.name} > env/secrets/${result.name}.env\n`)
     } else if (result !== undefined) {
-      const safe = (result && typeof result === 'object' && 'password' in result)
-        ? { ...result, password: '<redacted — in env file>' }
-        : result
-      process.stdout.write(JSON.stringify(safe, null, 2) + '\n')
+      process.stdout.write(JSON.stringify(result, null, 2) + '\n')
     }
     process.exit(0)
   } catch (e) {

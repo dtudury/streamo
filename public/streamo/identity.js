@@ -1,96 +1,72 @@
 /**
- * @file identity — bootstrap helpers for streamo signing identities.
+ * @file identity — pure helpers for streamo signing identities.
  *
- * Wraps the password-gen + derive-pubkey + write-env-file dance into
- * one verb. Before this module, creating a new identity-family root
- * meant ~30 lines of inline node code (the migration script David and
- * I hand-rolled during the 2026-06-04 flatten arc). Now it's:
+ * `identity.new(name)` generates a fresh random password, derives the
+ * pubkey, and returns the env-file content as a string. Doesn't write
+ * anything. The caller composes — programmatically with fs, on the CLI
+ * with shell redirection:
+ *
+ *   streamo identity new streamo-mysite > env/secrets/streamo-mysite.env
+ *
+ * Programmatic:
  *
  *   import { identity } from '@dtudury/streamo'
- *   const { pubkeyHex, envPath } = await identity.new('streamo-mysite')
+ *   import { writeFile } from 'node:fs/promises'
+ *   const { pubkeyHex, envContent } = await identity.new('streamo-mysite')
+ *   await writeFile('env/secrets/streamo-mysite.env', envContent, { mode: 0o600 })
  *
- * Or from the CLI (via bin/streamo.js's positional dispatch):
- *
- *   streamo identity new streamo-mysite
- *
- * Both routes do the same thing: random 32-byte hex password →
- * Signer(name, password, 100000) → keysFor(name) → write
- * env/secrets/<name>.env → return the pubkey + env path.
- *
- * The env file is intentionally minimal — STREAMO_NAME, STREAMO_USERNAME,
- * STREAMO_PASSWORD, STREAMO_KEY_ITERATIONS. It's what bin/streamo.js
- * loads via --env-file; what publish-*.mjs scripts load directly; what
- * any future caller would expect. Random-password creds aren't
- * cryptopotamus-recoverable — the env file IS the source of truth.
+ * The env-file content is intentionally minimal — STREAMO_NAME,
+ * STREAMO_USERNAME, STREAMO_PASSWORD, STREAMO_KEY_ITERATIONS. It's
+ * what bin/streamo.js loads via --env-file. Random-password creds
+ * aren't cryptopotamus-recoverable — the env file IS the source of
+ * truth; back it up like any other secret.
  *
  * Sister-shape to: the keysFor namespace approach (see
  * memory/notes/2026-06-04-late-the-one-command-deploy-landed.md).
- * One root identity created via `identity.new('foo')`; all shards
+ * One root credential created via `identity.new('foo')`; all shards
  * derive from it via signer.keysFor('foo/<mountPrefix>'). The mount
  * tree IS the sub-stream namespace; this verb creates the root.
  */
 import { randomBytes } from 'node:crypto'
-import { writeFile, mkdir, access } from 'node:fs/promises'
-import { join, dirname, resolve } from 'node:path'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
 
-const DEFAULT_DIR = 'env/secrets'
 const DEFAULT_ITERATIONS = 100000
-
-async function fileExists (path) {
-  try { await access(path); return true } catch { return false }
-}
 
 export const identity = {
   /**
-   * Create a fresh signing identity: random password + derived pubkey
-   * + env file. Returns `{ pubkeyHex, password, envPath, name }`.
+   * Generate a fresh signing identity. Pure — returns the derived info
+   * and the env-file content as a string; doesn't touch disk. Caller
+   * composes with fs.writeFile or shell redirection.
    *
-   * @param {string} name  the keysFor name + filename base. Conventionally
-   *   `streamo-<role>` (e.g. `streamo-relay`, `streamo-mysite`).
+   * @param {string} name  the keysFor name + conventional filename base
+   *   (e.g. `streamo-relay`, `streamo-mysite`). What `streamo --name`
+   *   reads back.
    *
    * @param {object} [options]
-   * @param {string} [options.dir='env/secrets']  directory for the env file
    * @param {number} [options.iterations=100000]  PBKDF2 iterations
-   * @param {boolean} [options.force=false]  overwrite existing env file
-   * @param {boolean} [options.dryRun=false]  derive + return; don't write
-   * @returns {Promise<{ pubkeyHex, password, envPath, name }>}
+   * @returns {Promise<{ pubkeyHex: string, password: string, name: string, envContent: string }>}
    */
   async new (name, options = {}) {
     if (!name || typeof name !== 'string') {
       throw new TypeError('identity.new(name): name is required (e.g. "streamo-mysite")')
     }
-    const dir = options.dir ?? DEFAULT_DIR
     const iterations = options.iterations ?? DEFAULT_ITERATIONS
-    const envPath = resolve(dir, name + '.env')
-    if (!options.dryRun && !options.force && await fileExists(envPath)) {
-      throw new Error(
-        `identity.new: ${envPath} already exists. Pass {force: true} to overwrite, ` +
-        `or delete the file first. (Overwriting creates a NEW identity — anything ` +
-        `signed by the old one becomes unauthorable.)`
-      )
-    }
     const password = randomBytes(32).toString('hex')
     const signer = new Signer(name, password, iterations)
     const { publicKey } = await signer.keysFor(name)
     const pubkeyHex = bytesToHex(publicKey)
-
-    if (!options.dryRun) {
-      await mkdir(dirname(envPath), { recursive: true })
-      const content = [
-        `# ${name} signing identity — gitignored. Generated by streamo.identity.new.`,
-        `# Random-password creds: env file IS the source of truth; not cryptopotamus-recoverable.`,
-        `# Pubkey: ${pubkeyHex}`,
-        ``,
-        `STREAMO_NAME=${name}`,
-        `STREAMO_USERNAME=${name}`,
-        `STREAMO_PASSWORD=${password}`,
-        `STREAMO_KEY_ITERATIONS=${iterations}`,
-        ``
-      ].join('\n')
-      await writeFile(envPath, content, { mode: 0o600 })
-    }
-    return { pubkeyHex, password, envPath, name }
+    const envContent = [
+      `# ${name} signing identity — gitignored. Generated by streamo.identity.new.`,
+      `# Random-password creds: env file IS the source of truth; not cryptopotamus-recoverable.`,
+      `# Pubkey: ${pubkeyHex}`,
+      ``,
+      `STREAMO_NAME=${name}`,
+      `STREAMO_USERNAME=${name}`,
+      `STREAMO_PASSWORD=${password}`,
+      `STREAMO_KEY_ITERATIONS=${iterations}`,
+      ``
+    ].join('\n')
+    return { pubkeyHex, password, name, envContent }
   }
 }

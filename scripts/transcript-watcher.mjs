@@ -66,11 +66,17 @@ const pending = new Map()       // sessionId -> Promise (in-flight publish)
 
 async function ensureSessionRecord (sessionId) {
   if (sessionState.has(sessionId)) return sessionState.get(sessionId)
-  // 'chat/<sessionId>' — fresh derivation; publishes the parsed API-shape
-  // (light, summon-ready). The earlier 'transcript/<sessionId>' name was
-  // for the heavy raw-JSONL-objects shape — abandoned in favor of this
-  // smaller-and-faster v0 substrate.
-  const subStreamName = 'chat/' + sessionId
+  // 'engineer/<sessionId>' — full-fidelity raw JSONL-objects shape. David's
+  // 2026-06-05 framing: "the Engineer oracle is more important than the
+  // code oracle; the thinking is the most important part. definitely A
+  // (store everything raw)."
+  //
+  // Earlier derivation history:
+  //   transcript/<id>  — heavy raw, hung on wire push (10MB chain)
+  //   chat/<id>        — aggressive parsed (text-only, lossy on tools/thinking)
+  //   engineer/<id>    — this: raw parse output, lossless, ContextRecord
+  //                      filters at read time for API calls
+  const subStreamName = 'engineer/' + sessionId
   const { publicKey } = await signer.keysFor(subStreamName)
   const pubkeyHex = bytesToHex(publicKey)
   const recaller = new Recaller('tw-' + sessionId.slice(0, 8))
@@ -98,39 +104,21 @@ async function publishSession (sessionId) {
       for (const line of lines) {
         try { jsonlObjects.push(JSON.parse(line)) } catch { /* skip malformed */ }
       }
-      // Transform JSONL → API shape (filter sidechains/thinking/tool blocks,
-      // collapse consecutive same-role). Tiny + summon-ready.
-      const filtered = []
-      for (const m of jsonlObjects) {
-        if (m.isSidechain) continue
-        if (m.type !== 'user' && m.type !== 'assistant') continue
-        const c = m.message?.content
-        const role = m.message?.role
-        if (role !== 'user' && role !== 'assistant') continue
-        let text
-        if (typeof c === 'string') text = c
-        else if (Array.isArray(c)) {
-          text = c.filter(b => b?.type === 'text' && typeof b.text === 'string')
-            .map(b => b.text).join('\n')
-        } else continue
-        if (!text || !text.trim()) continue
-        filtered.push({ role, content: text })
-      }
-      const apiMessages = []
-      for (const m of filtered) {
-        const last = apiMessages[apiMessages.length - 1]
-        if (last && last.role === m.role) last.content = last.content + '\n\n' + m.content
-        else apiMessages.push({ ...m })
-      }
+      // No transform — store raw parsed objects. Full fidelity (tool calls,
+      // tool results, thinking blocks, sidechains, all bookkeeping
+      // preserved). ContextRecord.apiMessages does the read-time filter
+      // when feeding to the Anthropic API; other lenses can extract other
+      // views from the same source.
       const t0 = Date.now()
       await entry.record.update(
-        () => ({ transcript: apiMessages }),
-        { message: `chat ${apiMessages.length} turns (parsed from ${jsonlObjects.length} jsonl entries)` }
+        () => ({ transcript: jsonlObjects }),
+        { message: `engineer-oracle ${jsonlObjects.length} entries (full-fidelity raw)` }
       )
       entry.lastSize = raw.length
+      const ratio = (entry.record.byteLength / raw.length * 100).toFixed(0)
       console.log(
-        `[watcher] ${sessionId.slice(0, 8)}... ${apiMessages.length} turns (from ${jsonlObjects.length} raw), ` +
-        `chain ${entry.record.byteLength.toLocaleString()}b, ${Date.now() - t0}ms`
+        `[watcher] ${sessionId.slice(0, 8)}... ${jsonlObjects.length} entries, ` +
+        `chain ${entry.record.byteLength.toLocaleString()}b (${ratio}% of ${raw.length.toLocaleString()} jsonl bytes), ${Date.now() - t0}ms`
       )
     } catch (e) {
       console.error(`[watcher] publish error ${sessionId.slice(0, 8)}: ${e.message}`)

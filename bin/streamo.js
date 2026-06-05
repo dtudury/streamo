@@ -13,6 +13,7 @@ import { FolderRecord } from '../public/streamo/FolderRecord.js'
 import { MemoryTier, DiskTier } from '../public/streamo/StorageTier.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
+import { identity } from '../public/streamo/identity.js'
 import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
@@ -189,6 +190,37 @@ if (program.args.length >= 1 && !options.eval) {
 // keep one-shot modes' stdout clean
 if (options.cat || options.eval || options.chat) {
   console.log = (...a) => process.stderr.write(a.join(' ') + '\n')
+}
+
+// Server-less verbs (run before server creation). `identity` is the
+// canonical example: `streamo identity new <name>` creates a fresh
+// signing identity (random password + derived pubkey + env file)
+// BEFORE you have any credentials. No server needed; no env required.
+// Detected by the positional dispatch transforming `identity ...` into
+// an --eval string that references `identity` as the first symbol.
+if (options.eval && /^(await\s+)?identity\./.test(options.eval.trim())) {
+  try {
+    const AsyncFunction = (async () => {}).constructor
+    const fn = new AsyncFunction('identity', `return (${options.eval})`)
+    const result = await fn(identity)
+    // CLI output: human-friendly + password redacted (file has it).
+    // Programmatic callers (--eval inside a server context) get the
+    // full object below, password included.
+    if (typeof result === 'string') {
+      process.stdout.write(result + '\n')
+    } else if (result instanceof Uint8Array) {
+      process.stdout.write(result)
+    } else if (result !== undefined) {
+      const safe = (result && typeof result === 'object' && 'password' in result)
+        ? { ...result, password: '<redacted — in env file>' }
+        : result
+      process.stdout.write(JSON.stringify(safe, null, 2) + '\n')
+    }
+    process.exit(0)
+  } catch (e) {
+    process.stderr.write(`streamo identity: ${e.message}\n`)
+    process.exit(1)
+  }
 }
 
 if (options.envFile) {
@@ -582,12 +614,12 @@ if (options.eval) {
 
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction(
-      'streamo', 'signer', 'registry', 'recaller', 'record',
+      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity',
       `return (${options.eval})`
     )
     const result = await fn(
       server.streamo, server.signer, server.registry,
-      server.registry.recaller, server.streamo
+      server.registry.recaller, server.streamo, identity
     )
     if (typeof result === 'string') process.stdout.write(result)
     else if (result instanceof Uint8Array) process.stdout.write(result)

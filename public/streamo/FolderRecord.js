@@ -139,6 +139,63 @@ export class FolderRecord {
     return child.resolvePath(innerPath || 'index.html', visited)
   }
 
+  /**
+   * Write `value` to this Record at top-level key `path`. Uses
+   * `repo.update` (the await-the-relay-ack primitive) so the returned
+   * Promise resolves only after streamo.dev has acknowledged the bytes.
+   *
+   * Bounded shape (2026-06-04): only commits to THIS Record. If `path`
+   * falls under a mount prefix, throws — cross-Record writes through
+   * mounts are a queued primitive that needs signer-routing across
+   * mount targets (the `ours: true` marker enables it but we haven't
+   * built the lookup machinery yet). For cross-Record writes today,
+   * construct a FolderRecord around the mounted Record and write to it
+   * directly with that Record's signer.
+   *
+   * @param {string} path  top-level key (e.g. 'mounts.json' or 'entries.json')
+   * @param {any} value    the file's value — strings, Uint8Arrays, plain
+   *                       objects/arrays (.json-shape files), etc.
+   * @param {object} [options]  forwarded to repo.update (e.g. `{message}`)
+   */
+  async write (path, value, options = {}) {
+    const mountPrefix = this.#mountPrefixFor(path)
+    if (mountPrefix) {
+      const mount = this.mounts()[mountPrefix]
+      const ours = mount && mount.ours === true
+      throw new Error(
+        `FolderRecord.write: '${path}' is under mount '${mountPrefix}'` +
+        (ours
+          ? ' marked ours:true — cross-Record writes through mounts are a queued primitive; for now construct a FolderRecord around the mounted Record and write to it directly with that Record\'s signer'
+          : ' (read-only mount — we don\'t own it)')
+      )
+    }
+    if (typeof this.record.update !== 'function') {
+      throw new Error('FolderRecord.write: this Record is not Writable (slim StreamoRecord has no author surface — use WritableStreamoRecord)')
+    }
+    return this.record.update(
+      v => ({ ...(v ?? {}), [path]: value }),
+      options
+    )
+  }
+
+  /**
+   * Longest-prefix mount match for a path. Returns the prefix key
+   * (e.g. 'apps/chat/') or null if no mount covers the path. Mirrors
+   * resolvePath's matching rules: trailing-slash optional, bare-prefix
+   * match (path === 'apps/chat' as well as path.startsWith('apps/chat/')).
+   */
+  #mountPrefixFor (path) {
+    const mounts = this.mounts()
+    let best = null
+    for (const prefix of Object.keys(mounts)) {
+      const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
+      if (path === bare || path.startsWith(prefix)) {
+        if (!best || prefix.length > best.length) best = prefix
+      }
+    }
+    return best
+  }
+
   #waitForCommit (repo) {
     if (repo.lastCommit) return Promise.resolve()
     const recaller = this.registry.recaller

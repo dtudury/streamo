@@ -184,4 +184,70 @@ describe(import.meta.url, ({ test }) => {
     const result = await new FolderRecord(root, registry).resolvePath('b/c/leaf.txt')
     assert.equal(result, 'deep')
   })
+
+  // ─── write — bounded primitive: commits to THIS Record only ───────────
+
+  test('write commits value at top-level path', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('w1') })
+    const folder = new FolderRecord(repo)
+    await folder.write('hello.txt', 'world')
+    assert.equal(repo.get('hello.txt'), 'world')
+  })
+
+  test('write preserves siblings (spread-then-set shape)', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('w2') })
+    const folder = new FolderRecord(repo)
+    await folder.write('a.txt', 'A')
+    await folder.write('b.txt', 'B')
+    assert.equal(repo.get('a.txt'), 'A')
+    assert.equal(repo.get('b.txt'), 'B')
+  })
+
+  test('write accepts options.message (forwarded to repo.update)', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('w3') })
+    const folder = new FolderRecord(repo)
+    await folder.write('greeting.txt', 'hi', { message: 'add greeting' })
+    assert.equal(repo.lastCommit.message, 'add greeting')
+  })
+
+  test('write of object at .json path stores the parsed object', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('w4') })
+    const folder = new FolderRecord(repo)
+    await folder.write('streamo.json', { title: 'home', count: 3 })
+    assert.deepEqual(repo.get('streamo.json'), { title: 'home', count: 3 })
+  })
+
+  test('write throws when path falls under a mount (read-only)', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('w5') })
+    const w = repo.checkout()
+    w.set({ 'mounts.json': { mounts: { 'apps/chat/': { key: PK_B } } } })
+    repo.commit(w, 'seed mounts')
+    const folder = new FolderRecord(repo)
+    await assert.rejects(
+      () => folder.write('apps/chat/index.html', '<html>'),
+      /apps\/chat\/.*read-only.*we don't own/
+    )
+  })
+
+  test('write throws with the cross-Record hint when mount has ours:true', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('w6') })
+    const w = repo.checkout()
+    w.set({ 'mounts.json': { mounts: { 'apps/chat/': { key: PK_B, ours: true } } } })
+    repo.commit(w, 'seed mounts')
+    const folder = new FolderRecord(repo)
+    await assert.rejects(
+      () => folder.write('apps/chat/messages.json', []),
+      /ours:true.*cross-Record writes through mounts are a queued primitive/
+    )
+  })
+
+  test('write throws on a slim StreamoRecord (no author surface)', async ({ assert }) => {
+    const { StreamoRecord } = await import('./StreamoRecord.js')
+    const slim = new StreamoRecord()
+    const folder = new FolderRecord(slim)
+    await assert.rejects(
+      () => folder.write('hello.txt', 'world'),
+      /not Writable.*slim StreamoRecord/
+    )
+  })
 })

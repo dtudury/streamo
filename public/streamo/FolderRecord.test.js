@@ -394,6 +394,86 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(f.resolveReactive('lib/foo.txt'), 'mounted-foo')
   })
 
+  test('writeMany routes flat files to home Record (no mounts)', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('wm1') })
+    const folder = new FolderRecord(repo)
+    await folder.writeMany({ 'a.txt': 'A', 'b.txt': 'B', 'sub/c.txt': 'C' })
+    assert.equal(repo.get('a.txt'), 'A')
+    assert.equal(repo.get('b.txt'), 'B')
+    assert.equal(repo.get('sub/c.txt'), 'C')
+  })
+
+  test('writeMany with replace:true wipes prior siblings (mirror-disk semantics)', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('wm2') })
+    const folder = new FolderRecord(repo)
+    await folder.writeMany({ 'a.txt': 'A', 'b.txt': 'B' })
+    await folder.writeMany({ 'c.txt': 'C' }, { replace: true })
+    assert.equal(repo.get('a.txt'), undefined, 'a.txt wiped')
+    assert.equal(repo.get('b.txt'), undefined, 'b.txt wiped')
+    assert.equal(repo.get('c.txt'), 'C', 'c.txt landed')
+  })
+
+  test('writeMany silently skips files under read-only mounts', async ({ assert }) => {
+    const repo = new WritableStreamoRecord({ recaller: new Recaller('wm3') })
+    const w = repo.checkout()
+    w.set({ 'mounts.json': { mounts: { 'theirs/': { key: PK_B } } } })  // no ours:true
+    repo.commit(w, 'seed')
+    const folder = new FolderRecord(repo)
+    await folder.writeMany({ 'mine.txt': 'M', 'theirs/x.txt': 'X' })
+    assert.equal(repo.get('mine.txt'), 'M', 'home file landed')
+    assert.equal(repo.get('theirs/x.txt'), undefined, 'read-only mount file skipped')
+  })
+
+  test('writeMany auto-shards: files under ours:true mounts route to derived child Records', async ({ assert }) => {
+    const { Signer } = await import('./Signer.js')
+    const { bytesToHex } = await import('./utils.js')
+    const recaller = new Recaller('wm-auto')
+    const signer = new Signer('test-root', 'test-pwd', 1)
+    const parentName = 'parent'
+    const childAName = parentName + '/apps/a/'
+    const childBName = parentName + '/apps/b/'
+    const { publicKey: cAPub } = await signer.keysFor(childAName)
+    const { publicKey: cBPub } = await signer.keysFor(childBName)
+    const cAKey = bytesToHex(cAPub)
+    const cBKey = bytesToHex(cBPub)
+
+    const registry = new StreamoRecordRegistry({
+      recaller,
+      factory: async () => new WritableStreamoRecord({ recaller })
+    })
+    await registry._materialize(cAKey)
+    await registry._materialize(cBKey)
+    const parent = await registry._materialize(PK_A)
+    const w = parent.checkout()
+    w.set({
+      'mounts.json': {
+        mounts: {
+          'apps/a/': { key: cAKey, ours: true },
+          'apps/b/': { key: cBKey, ours: true }
+        }
+      }
+    })
+    parent.commit(w, 'seed parent mounts')
+
+    const folder = new FolderRecord(parent, registry, { signer, signerName: parentName })
+    await folder.writeMany({
+      'index.html':       '<html>home</html>',
+      'apps/a/index.html': '<html>app a</html>',
+      'apps/a/main.js':    'console.log("a")',
+      'apps/b/index.html': '<html>app b</html>'
+    })
+
+    // home Record gets home files only
+    assert.equal(parent.get('index.html'), '<html>home</html>')
+    assert.equal(parent.get('apps/a/index.html'), undefined, 'shard files NOT in parent')
+    // each shard gets its own files at the inner path
+    const childA = await registry._materialize(cAKey)
+    const childB = await registry._materialize(cBKey)
+    assert.equal(childA.get('index.html'), '<html>app a</html>')
+    assert.equal(childA.get('main.js'), 'console.log("a")')
+    assert.equal(childB.get('index.html'), '<html>app b</html>')
+  })
+
   test('resolveReactive returns undefined for pending mount target + watcher re-fires after materialization', async ({ assert }) => {
     const { root, registry } = await setup({
       [PK_A]: {

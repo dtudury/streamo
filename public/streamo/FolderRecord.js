@@ -213,6 +213,99 @@ export class FolderRecord {
   }
 
   /**
+   * Route a whole files map through the mount tree in one call. Groups
+   * files by destination Record (home vs each ours:true mount), then
+   * commits one update per destination — so a single fileSync run that
+   * touches files in 5 shards produces 5 commits (one per Record), not
+   * one-per-file.
+   *
+   * Read-only mounts (no ours:true) silently swallow their files —
+   * those shards belong to someone else; we don't author there. The
+   * substrate is honest about it (reading the shard still works), the
+   * write-side just no-ops.
+   *
+   * @param {Object} filesMap  { 'path/to/file': value, ... }
+   * @param {object} [options]
+   * @param {boolean} [options.replace=false]  if true, each destination
+   *   Record's value is REPLACED with the routed files map (fileSync's
+   *   mirror-disk-to-Record semantics). Default merges into existing
+   *   value (preserving sibling files at the destination).
+   * @param {string} [options.message]  forwarded to repo.update
+   */
+  async writeMany (filesMap, options = {}) {
+    const { replace = false, message } = options
+    const updateOpts = message !== undefined ? { message } : {}
+
+    const mounts = this.mounts()
+    const homeFiles = {}
+    const shardFiles = {}  // { mountPrefix: { innerPath: value } }
+
+    for (const [path, value] of Object.entries(filesMap)) {
+      // Find longest-prefix mount match.
+      let bestPrefix = null
+      for (const prefix of Object.keys(mounts)) {
+        const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
+        if (path === bare || path.startsWith(prefix)) {
+          if (!bestPrefix || prefix.length > bestPrefix.length) bestPrefix = prefix
+        }
+      }
+      if (!bestPrefix) {
+        homeFiles[path] = value
+        continue
+      }
+      const mount = mounts[bestPrefix]
+      if (mount && mount.ours === true) {
+        const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
+        if (!innerPath) continue  // path === mount prefix bare; skip
+        if (!shardFiles[bestPrefix]) shardFiles[bestPrefix] = {}
+        shardFiles[bestPrefix][innerPath] = value
+      }
+      // Non-ours mount: silently skip — read-only territory.
+    }
+
+    // Commit home Record's files.
+    if (Object.keys(homeFiles).length > 0) {
+      if (typeof this.record.update !== 'function') {
+        throw new Error('FolderRecord.writeMany: home Record is not Writable')
+      }
+      await this.record.update(
+        v => replace ? homeFiles : { ...(v ?? {}), ...homeFiles },
+        updateOpts
+      )
+    }
+
+    // Commit each shard. Recurse via writeMany so nested sharding works.
+    for (const [mountPrefix, files] of Object.entries(shardFiles)) {
+      if (!this.signer || !this.signerName) {
+        throw new Error(`FolderRecord.writeMany: cross-Record writes for '${mountPrefix}' need {signer, signerName} on FolderRecord — ${Object.keys(files).length} files unroutable`)
+      }
+      if (!this.registry) {
+        throw new Error(`FolderRecord.writeMany: cross-Record writes for '${mountPrefix}' need a registry — ${Object.keys(files).length} files unroutable`)
+      }
+      const mount = mounts[mountPrefix]
+      const childName = this.signerName + '/' + mountPrefix
+      const { publicKey } = await this.signer.keysFor(childName)
+      const { bytesToHex } = await import('./utils.js')
+      const derivedHex = bytesToHex(publicKey)
+      if (derivedHex !== mount.key) {
+        throw new Error(`FolderRecord.writeMany: derived child pubkey ${derivedHex.slice(0, 16)}... doesn't match mount target ${mount.key.slice(0, 16)}... for '${mountPrefix}' — fix mounts.json to use the derived pubkey`)
+      }
+      const mountedRepo = await this.registry._materialize(mount.key)
+      if (typeof mountedRepo.attachSigner !== 'function') {
+        throw new Error(`FolderRecord.writeMany: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mounts`)
+      }
+      mountedRepo.attachSigner(this.signer, childName)
+      const child = new FolderRecord(mountedRepo, this.registry, {
+        session: this.session,
+        materializeTimeoutMs: this.materializeTimeoutMs,
+        signer: this.signer,
+        signerName: childName
+      })
+      await child.writeMany(files, options)
+    }
+  }
+
+  /**
    * Longest-prefix mount match for a path. Returns the prefix key
    * (e.g. 'apps/chat/') or null if no mount covers the path. Mirrors
    * resolvePath's matching rules: trailing-slash optional, bare-prefix

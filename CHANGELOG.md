@@ -5,6 +5,69 @@ for what's next.
 
 ---
 
+## 14.1.0 — `streamo identity new <name>` verb (substrate-ergonomics)
+
+The deploy ritual is now **two unix-shaped commands**:
+
+```bash
+streamo identity new streamo-mysite > env/secrets/streamo-mysite.env
+streamo --env-file env/secrets/streamo-mysite.env --files public --origin wss://streamo.dev
+```
+
+Step 1 generates a fresh signing credential (random 32-byte password +
+derived primary pubkey + env-file content). Step 2 auto-shards public/
+across the new identity-family via keysFor derivation. The first
+command's stdout is what the second command's `--env-file` expects —
+shell composition wires them together.
+
+### `identity` is a real export
+
+```js
+import { identity } from '@dtudury/streamo'
+const { pubkeyHex, password, name, envContent } = await identity.new('streamo-mysite')
+```
+
+Pure verb. Returns the credential info + env-file content as a string.
+Doesn't touch disk; caller composes with fs.writeFile or shell redirection.
+
+### CLI shape (unix-honest)
+
+- stdout = the env-file content (pipeable)
+- stderr = pubkey + suggested redirect command (visible on terminal
+  even when stdout's redirected)
+- Detected via the positional dispatch: `streamo identity ...` runs
+  the verb BEFORE server creation (creating a new identity is by
+  definition something you do before having credentials)
+
+### Verified by rotating streamo.dev's identity-family
+
+This release was shipped by using the new verb to rotate the
+streamo-relay credential end-to-end. Steps:
+
+1. `streamo identity new streamo-relay > env/secrets/streamo-relay.env`
+2. Derive 6 shard pubkeys via `signer.keysFor('streamo-relay/<prefix>')`
+   and rewrite public/mounts.json
+3. Update streamo.dev's STREAMO_HOME_KEY + restart
+4. `streamo --env-file env/secrets/streamo-relay.env --files public --origin wss://streamo.dev`
+5. All paths 200; new mounts.json on relay carries the derived pubkeys
+
+The whole-site one-command deploy proven by USING IT to rotate the
+production credential.
+
+### Queued for 14.x
+
+- Reader consolidation: `repoFileServer`, `registrySync followMounts`,
+  `fileSync` mount-walkers onto `FolderRecord.resolveReactive`
+  (~120 LOC out, ~30 LOC of thin wrappers in)
+- `streamo identity derive <name> <subname>` — wraps the
+  keysFor-then-update-mounts.json step in the rotation flow above
+- `mounts.json` `version` field per entry — for re-sharding scenarios
+- Substrate could auto-detect derivation mismatch in mounts.json and
+  prompt to regenerate (avoids the "derived child pubkey doesn't
+  match mount target" error on rotation)
+
+---
+
 ## 14.0.0 — the flatten arc + auto-sharding deploy
 
 The headline outcome of 2026-06-04: **the deploy is now one command,**

@@ -71,7 +71,8 @@
     "streamo:as": "node scripts/streamo-as.mjs",
     "streamo:as:lib": "node scripts/streamo-as.mjs streamo-library",
     "streamo:as:claude": "node scripts/streamo-as.mjs claude",
-    "summon": "node --env-file=env/secrets/anthropic.env scripts/summon.mjs"
+    "summon": "node --env-file=env/secrets/anthropic.env scripts/summon.mjs",
+    "transcripts:watch": "node scripts/transcript-watcher.mjs"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",

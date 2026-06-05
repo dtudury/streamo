@@ -230,6 +230,83 @@ export class FolderRecord {
     return best
   }
 
+  /**
+   * Reactive counterpart to `resolvePath`. Synchronous, returns the value
+   * if known, `undefined` if pending (bytes not yet here). Called inside a
+   * `recaller.watch(...)`, the watcher auto-re-fires when:
+   *   - this Record's value at `path` arrives
+   *   - mount targets get materialized into the registry
+   *   - mount targets' chains advance
+   * because record.get + registry.get + the mounted Record's get are all
+   * reactive on the shared Recaller.
+   *
+   * Fire-and-forget side effects for pending mounts:
+   *   - session.subscribe(mountKey) — tells the relay to start pushing bytes
+   *   - registry._materialize(mountKey) — kicks off local materialization
+   * Both are best-effort, errors swallowed. The watcher will re-fire when
+   * their async work lands; the next call to resolveReactive returns the
+   * value.
+   *
+   * David's evening insight (2026-06-04): reactivity is free when the
+   * Recaller is shared. The substrate-articulate shape is "stop fighting
+   * the substrate with imperative awaits" — exactly what this method
+   * embodies.
+   *
+   * @param {string} path
+   * @param {Set<string>} [visited]  cycle-detection set (fresh per call by default)
+   * @returns {string | Uint8Array | object | undefined}
+   */
+  resolveReactive (path, visited = new Set()) {
+    // Files-first on this Record (reactive — record.get registers the dep).
+    if (this.record.lastCommit) {
+      const direct = this.record.get(path)
+      if (direct !== undefined) return direct
+    }
+
+    // Cycle detection.
+    const myKey = this.record.publicKeyHex
+    if (myKey && visited.has(myKey)) return undefined
+    if (myKey) visited.add(myKey)
+
+    // Longest-prefix mount match.
+    const mounts = this.mounts()
+    let bestPrefix = null
+    for (const prefix of Object.keys(mounts)) {
+      const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
+      if (path === bare || path.startsWith(prefix)) {
+        if (!bestPrefix || prefix.length > bestPrefix.length) bestPrefix = prefix
+      }
+    }
+    if (!bestPrefix) return undefined
+
+    const mount = mounts[bestPrefix]
+    if (!mount || typeof mount.key !== 'string') return undefined
+    if (!PUBKEY_HEX_RE.test(mount.key)) return undefined
+    if (!this.registry) return undefined
+
+    // Try to get the mounted Record reactively — registry.get is reactive
+    // on (registry, 'keys'), so this watcher will re-fire when the mount
+    // target lands via _materialize.
+    const mountedRepo = this.registry.get(mount.key)
+    if (!mountedRepo) {
+      // Fire-and-forget: kick off subscribe + materialize. The watcher
+      // re-fires when either lands.
+      if (this.session) this.session.subscribe(mount.key).catch(() => {})
+      this.registry._materialize(mount.key).catch(() => {})
+      return undefined
+    }
+
+    // Recurse into a child FolderRecord (signer/session propagate).
+    const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
+    const child = new FolderRecord(mountedRepo, this.registry, {
+      session: this.session,
+      materializeTimeoutMs: this.materializeTimeoutMs,
+      signer: this.signer,
+      signerName: this.signerName
+    })
+    return child.resolveReactive(innerPath || 'index.html', visited)
+  }
+
   #waitForCommit (repo) {
     if (repo.lastCommit) return Promise.resolve()
     const recaller = this.registry.recaller

@@ -353,6 +353,75 @@ describe(import.meta.url, ({ test }) => {
     assert.deepEqual(lastKeys, ['hello.txt', 'world.txt'])
   })
 
+  test('resolveReactive returns value for direct file + re-fires when value arrives', async ({ assert }) => {
+    const recaller = new Recaller('rr-direct')
+    const repo = new WritableStreamoRecord({ recaller })
+    const folder = new FolderRecord(repo)
+    let calls = 0
+    let lastValue
+    recaller.watch('probe', () => {
+      lastValue = folder.resolveReactive('readme.md')
+      calls++
+    })
+    assert.equal(calls, 1)
+    assert.equal(lastValue, undefined, 'no commit yet → undefined')
+    await folder.write('readme.md', '# hi')
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(calls, 2, 'watcher re-fired on commit')
+    assert.equal(lastValue, '# hi', 'second call saw the new value')
+  })
+
+  test('resolveReactive returns undefined for unknown path (no mount, no file)', async ({ assert }) => {
+    const recaller = new Recaller('rr-nope')
+    const repo = new WritableStreamoRecord({ recaller })
+    const folder = new FolderRecord(repo)
+    assert.equal(folder.resolveReactive('does/not/exist.txt'), undefined)
+  })
+
+  test('resolveReactive walks a static mount synchronously when the mount target is already materialized', async ({ assert }) => {
+    const { root, registry } = await setup({
+      [PK_A]: {
+        files: {
+          'mounts.json': { mounts: { 'lib/': { key: PK_B } } }
+        }
+      },
+      [PK_B]: { files: { 'foo.txt': 'mounted-foo' } }
+    })
+    // Setup's factory only materializes on _materialize; pre-load PK_B
+    // so the walk's registry.get hits sync.
+    await registry._materialize(PK_B)
+    const f = new FolderRecord(root, registry)
+    assert.equal(f.resolveReactive('lib/foo.txt'), 'mounted-foo')
+  })
+
+  test('resolveReactive returns undefined for pending mount target + watcher re-fires after materialization', async ({ assert }) => {
+    const { root, registry } = await setup({
+      [PK_A]: {
+        files: {
+          'mounts.json': { mounts: { 'lib/': { key: PK_B } } }
+        }
+      },
+      [PK_B]: { files: { 'foo.txt': 'arrived!' } }
+    })
+    // PK_B is NOT pre-materialized — first call should return undefined,
+    // then resolveReactive fires _materialize internally (fire-and-forget),
+    // and the watcher should re-fire when PK_B lands.
+    const recaller = registry.recaller
+    const folder = new FolderRecord(root, registry)
+    let calls = 0
+    let lastValue
+    recaller.watch('probe', () => {
+      lastValue = folder.resolveReactive('lib/foo.txt')
+      calls++
+    })
+    assert.equal(calls, 1)
+    assert.equal(lastValue, undefined, 'PK_B not materialized yet → undefined')
+    // _materialize was kicked off by resolveReactive; let it land.
+    await new Promise(r => setTimeout(r, 10))
+    assert.ok(calls >= 2, `watcher re-fired (calls=${calls})`)
+    assert.equal(lastValue, 'arrived!', 'value arrived through the reactive walk')
+  })
+
   test('reactivity: FolderRecord.mounts() inside a watcher re-fires when mounts.json is written', async ({ assert }) => {
     const recaller = new Recaller('reactive-mounts')
     const repo = new WritableStreamoRecord({ recaller })

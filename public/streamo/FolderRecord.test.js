@@ -250,4 +250,69 @@ describe(import.meta.url, ({ test }) => {
       /not Writable.*slim StreamoRecord/
     )
   })
+
+  // ─── reactivity probe ─────────────────────────────────────────────────
+  // David's hypothesis (2026-06-04 evening): "if you get something off of
+  // a record that has no data and then it gets data, the function that
+  // called the get should get queued to get called again." Proving the
+  // substrate-is-already-reactive case before building the reactive
+  // resolvePath on top of it.
+
+  test('reactivity: record.get inside a watcher re-fires when value arrives', async ({ assert }) => {
+    const recaller = new Recaller('reactive-record')
+    const repo = new WritableStreamoRecord({ recaller })
+    let calls = 0
+    let lastValue
+    recaller.watch('probe', () => {
+      lastValue = repo.get('x')
+      calls++
+    })
+    assert.equal(calls, 1, 'watcher fires once on register')
+    assert.equal(lastValue, undefined, 'no data yet → undefined')
+    await repo.update(v => ({ ...(v ?? {}), x: 'hello' }))
+    // Recaller flushes asynchronously via nextTick — give it a beat.
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(calls, 2, 'watcher re-fired after value arrived')
+    assert.equal(lastValue, 'hello', 'second call saw the new value')
+  })
+
+  test('reactivity: FolderRecord.files() inside a watcher re-fires on commit', async ({ assert }) => {
+    const recaller = new Recaller('reactive-folder')
+    const repo = new WritableStreamoRecord({ recaller })
+    const folder = new FolderRecord(repo)
+    let calls = 0
+    let lastKeys = []
+    recaller.watch('probe', () => {
+      lastKeys = Object.keys(folder.files()).sort()
+      calls++
+    })
+    assert.equal(calls, 1)
+    assert.deepEqual(lastKeys, [], 'no files yet')
+    await folder.write('hello.txt', 'world')
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(calls, 2)
+    assert.deepEqual(lastKeys, ['hello.txt'], 'watcher saw the new file')
+    await folder.write('world.txt', '!')
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(calls, 3)
+    assert.deepEqual(lastKeys, ['hello.txt', 'world.txt'])
+  })
+
+  test('reactivity: FolderRecord.mounts() inside a watcher re-fires when mounts.json is written', async ({ assert }) => {
+    const recaller = new Recaller('reactive-mounts')
+    const repo = new WritableStreamoRecord({ recaller })
+    const folder = new FolderRecord(repo)
+    let calls = 0
+    let lastMounts = {}
+    recaller.watch('probe', () => {
+      lastMounts = folder.mounts()
+      calls++
+    })
+    assert.equal(calls, 1)
+    assert.deepEqual(lastMounts, {})
+    await folder.write('mounts.json', { mounts: { 'lib/': { key: PK_B } } })
+    await new Promise(r => setTimeout(r, 0))
+    assert.equal(calls, 2)
+    assert.deepEqual(lastMounts, { 'lib/': { key: PK_B } })
+  })
 })

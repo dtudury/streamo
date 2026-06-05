@@ -5,6 +5,91 @@ for what's next.
 
 ---
 
+## 14.0.0 — the flatten arc: `value` IS the files map
+
+The 9.0.0-era nested shape (`value.files['<path>']` + top-level meta
+mirrored through `value.files['streamo.json']` via `healMetaInvariant`)
+is gone. **Records' values are now flat folders:** filenames at the
+top level (`value['index.html']`, `value['mounts.json']`,
+`value['streamo.json']`). No nesting, no redundancy invariant.
+
+This completes the 9.0.0 Phase A simplification arc — Phase A killed
+the "value IS files" mode on the *legacy* side; this kills the
+nested-with-meta-mirror side, leaving "value-IS-filesmap" as the
+single shape. See `memory/notes/2026-06-04-the-flatten-arc.md` for
+the substrate-deposit on the migration.
+
+### Reader-side
+
+- `FolderRecord` reads files at top-level keys; mounts at
+  `value['mounts.json'].mounts`. Records still in nested shape are
+  not visible to it — they need re-publishing in flat shape.
+- `repoFileServer`, `registrySync` followMounts, and FolderRecord all
+  expect the flat shape; no compatibility branches for the old shape.
+
+### Writer-side
+
+- `fileSync` mirrors disk → `value['<path>']` directly. No
+  `applyMetaToValue`, no `healMetaInvariant`, no `meta: 'merge'|'replace'`
+  option. `streamo.json` is just a file like any other; edits to it
+  on disk land at `value['streamo.json']`.
+- New: **`FolderRecord.write(path, value, options)`** — symmetric
+  counterpart to `resolvePath`. Bounded: commits to this Record only;
+  throws on cross-mount writes (queued primitive that needs
+  signer-routing across mount targets).
+- `publish-*` scripts (publish-memory, publish-events, publish-claude-home,
+  publish-library, publish-identity-seed) all write the flat shape.
+
+### CLI
+
+- `bin/streamo.js` gains **positional dispatch** (Reading C). The shape
+  `streamo record update field value` reflects the JS API
+  `record.update('field', 'value')` directly — the CLI IS the eval line
+  for the substrate's methods.
+- `--eval` scope: `repo` was renamed to `record` (the canonical class
+  name has been `StreamoRecord` since 9.x; the `--eval` symbol catches
+  up). Help text and internal vars updated.
+- `--chat` is now a soft-wait one-shot (matches `--eval` /
+  `--cat` ergonomics).
+
+### Removed / simplified
+
+- `applyMetaToValue`, `healMetaInvariant`, `readRecordFileMeta`,
+  `readRepoRecordMeta`, `metaEqual`, the `meta: 'merge'|'replace'`
+  option, the `FILES_KEY` constant in fileSync — all artifacts of
+  the redundancy invariant the flatten arc dissolves.
+- Three "unhelpful fallbacks" cut per the substrate-honest discipline:
+  dual-read in readers (single-shape only); the
+  `identity.self` deprecated alias (just bump the version);
+  `encodeFile`'s silent-skip on shape mismatch (throws now).
+- The OLD-RELAY 3-second deadlock-fallback in fileSync — its own
+  comment said "the legacy race re-appears"; deleted.
+
+### `mounts.json` shape: `ours: true` marker
+
+Mount entries now optionally carry `ours: true` to mark mounts whose
+Records are signed by the parent's credential-family (i.e., we have
+authority to write through them). The marker is read by
+`FolderRecord.write` to distinguish "this mount is queued for the
+cross-Record write primitive" from "this mount is read-only — someone
+else's content." Default is read-only; opt in to `ours: true` for
+authoring mounts.
+
+Migration: every existing Record needs re-publishing. The 7 bundled
+streamo.dev Records (homepage + library + chat/flashcards/explorer/
+todomvc/styles) were re-published as part of this release with fresh
+random-password identities. Their old pubkeys still exist on the
+relay's disk but are no longer referenced.
+
+### scripts/sync-all.mjs
+
+New one-command "pull every Record reachable from this root" verb.
+Walks the mount cascade from a root pubkey, subscribes to each
+discovered Record, waits for the whole tree to settle, exits with a
+status line per Record.
+
+---
+
 ## 13.0.0 — `tiers: StorageTier[]` replaces `dataDir` / `archiveMode` / `preserved`
 
 The archive substrate is now a tier list. `StreamoServer.create` takes

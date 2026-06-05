@@ -163,7 +163,21 @@ export class StreamoServer {
     // get sucked back into the Record's value.files). No longer a
     // server-held field in 13.0; explicit per call. Default undefined =
     // no exclusion beyond .gitignore.
-    return fileSync(this.streamo, folder, options.dataDir, options)
+    //
+    // Defaults from this server: registry + pubkeyHex (for mount-walking),
+    // signer + signerName (for the auto-sharding path in fileSync —
+    // when both are present, writes route through FolderRecord.writeMany
+    // and files under ours:true mounts go to derived child Records via
+    // signer.keysFor(signerName + '/' + mountPrefix)). Callers can
+    // override by passing them explicitly.
+    const opts = {
+      registry:   options.registry   ?? this.registry,
+      pubkeyHex:  options.pubkeyHex  ?? this.publicKeyHex,
+      signer:     options.signer     ?? this.signer,
+      signerName: options.signerName ?? this.name,
+      ...options
+    }
+    return fileSync(this.streamo, folder, options.dataDir, opts)
   }
 
   async s3 ({ bucket, endpoint, region, accessKeyId, secretAccessKey }) {

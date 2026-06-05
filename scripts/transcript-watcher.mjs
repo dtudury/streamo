@@ -30,6 +30,7 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join, basename } from 'node:path'
+import { parseArgs } from 'node:util'
 import subscribe from '@parcel/watcher'
 import { Signer } from '../public/streamo/Signer.js'
 import { WritableStreamoRecord } from '../public/streamo/WritableStreamoRecord.js'
@@ -37,6 +38,13 @@ import { Recaller } from '../public/streamo/utils/Recaller.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { bytesToHex } from '../public/streamo/utils.js'
 import { config } from 'dotenv'
+
+const { values: args } = parseArgs({
+  options: {
+    session: { type: 'string' },   // limit to a specific session uuid
+    all:     { type: 'boolean', default: false }  // include initial publish for all existing sessions
+  }
+})
 
 // ── load claude's identity ───────────────────────────────────────────
 config({ path: 'env/secrets/claude.env' })
@@ -122,10 +130,23 @@ console.log(`[watcher] signing as ${username} (claude); pubkey derivation: keysF
 
 const initial = await readdir(watchDir)
 const jsonls = initial.filter(f => f.endsWith('.jsonl'))
-console.log(`[watcher] found ${jsonls.length} existing session JSONL(s); initial publish for each`)
-for (const file of jsonls) {
+const targetSession = args.session ?? process.env.CLAUDE_CODE_SESSION_ID
+let toPublishInitially
+if (args.all) {
+  console.log(`[watcher] found ${jsonls.length} existing session JSONL(s); --all → publishing all (sequentially)`)
+  toPublishInitially = jsonls
+} else if (targetSession) {
+  const matched = jsonls.filter(f => f.startsWith(targetSession))
+  console.log(`[watcher] scoping to session ${targetSession.slice(0, 8)}... (${matched.length} match); --all to publish more`)
+  toPublishInitially = matched
+} else {
+  console.log(`[watcher] no --session or CLAUDE_CODE_SESSION_ID; only newly-changed sessions will publish`)
+  toPublishInitially = []
+}
+// Sequential, not parallel — parallel OOM'd the watcher on 29 sessions.
+for (const file of toPublishInitially) {
   const sessionId = file.replace(/\.jsonl$/, '')
-  scheduleSession(sessionId, 0)  // immediate
+  await publishSession(sessionId)
 }
 
 await subscribe.subscribe(watchDir, (err, events) => {

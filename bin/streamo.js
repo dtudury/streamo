@@ -15,6 +15,7 @@ import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { identity } from '../public/streamo/identity.js'
 import { dispatch } from '../public/streamo/dispatch.js'
+import { context } from '../public/streamo/contextTurner.js'
 import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
@@ -616,12 +617,12 @@ if (options.eval) {
 
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction(
-      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity', 'dispatch',
+      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity', 'dispatch', 'context',
       `return (${options.eval})`
     )
     const result = await fn(
       server.streamo, server.signer, server.registry,
-      server.registry.recaller, server.streamo, identity, dispatch
+      server.registry.recaller, server.streamo, identity, dispatch, context
     )
     if (typeof result === 'string') process.stdout.write(result)
     else if (result instanceof Uint8Array) process.stdout.write(result)
@@ -660,7 +661,8 @@ if (options._dispatch) {
       registry: server.registry,
       recaller: server.registry.recaller,
       record:  server.streamo,
-      identity
+      identity,
+      context
     }
     const { objName, methodName, args } = options._dispatch
     const result = await dispatch(scope, objName, methodName, args)
@@ -814,7 +816,7 @@ if (options.interactive) {
     // identity
     name, username, publicKeyHex, signer,
     // data
-    streamo, registry,
+    streamo, registry, record: streamo,
     // shorthands
     get, set, merge, ls,
     // networking
@@ -823,6 +825,8 @@ if (options.interactive) {
     archiveSync, fileSync, s3Sync,
     // class
     StreamoRecord, StreamoRecordRegistry,
+    // substrate verbs
+    identity, dispatch, context,
   })
 
   console.log(`\x1b[36m
@@ -835,7 +839,13 @@ if (options.interactive) {
   streamo / registry    the live streamo and registry instances
   signer                sign / verify data
   originSync(s,k,h,p)   attach any streamo as an origin
-  outletSync(reg,port)  start a new outlet server\x1b[0m`)
+  outletSync(reg,port)  start a new outlet server
+
+  ── substrate verbs ──
+  identity.new(name)               create a fresh signing identity
+  dispatch(scope, obj, m?, args?)  safe named-method dispatch (REPL/config/chat)
+  context.turn(record, q, opts?)   ask a past-instance a question via Anthropic API
+  context.history() / context.reset()   inspect / clear consultation history\x1b[0m`)
 
   const replServer = startRepl({ breakEvalOnSigint: true })
   replServer.setupHistory('.node_repl_history', err => {

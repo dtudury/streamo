@@ -81,9 +81,14 @@ export class ContextRecord {
    * sourced from a Claude Code session (`{type, message, isSidechain,
    * uuid, ...}` per line). Other producers may use other shapes;
    * the raw view is verbatim.
+   *
+   * Reads `value['transcript']` (canonical, per the 2026-06-05 naming
+   * convention from the transcript-watcher) with fallback to
+   * `value['messages']` for older Records (wren's snapshots, my
+   * earliest ContextRecord publishes pre-rename).
    */
   rawMessages () {
-    return this.record.get('messages') ?? []
+    return this.record.get('transcript') ?? this.record.get('messages') ?? []
   }
 
   /**

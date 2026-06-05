@@ -95,7 +95,9 @@ async function loadPubkey (pubkey, feed) {
       timeoutMs
     )
     recaller.watch('summon-wait', () => {
-      if (record.lastCommit && (record.get('messages') ?? []).length > 0) {
+      if (!record.lastCommit) return
+      const transcript = record.get('transcript') ?? record.get('messages') ?? []
+      if (transcript.length > 0) {
         clearTimeout(t)
         resolve()
       }

@@ -229,15 +229,70 @@ describe(import.meta.url, ({ test }) => {
     )
   })
 
-  test('write throws with the cross-Record hint when mount has ours:true', async ({ assert }) => {
+  test('write throws when ours:true mount lacks {signer, signerName} on FolderRecord', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w6') })
     const w = repo.checkout()
     w.set({ 'mounts.json': { mounts: { 'apps/chat/': { key: PK_B, ours: true } } } })
     repo.commit(w, 'seed mounts')
-    const folder = new FolderRecord(repo)
+    const folder = new FolderRecord(repo)  // no signer
     await assert.rejects(
       () => folder.write('apps/chat/messages.json', []),
-      /ours:true.*cross-Record writes through mounts are a queued primitive/
+      /ours:true mount.*pass \{signer, signerName\}/
+    )
+  })
+
+  test('write recurses through ours:true mount via keysFor derivation', async ({ assert }) => {
+    const { Signer } = await import('./Signer.js')
+    const { bytesToHex } = await import('./utils.js')
+    const recaller = new Recaller('w-cross')
+    // Root signer + parent name. Child name = parentName + '/' + mountPrefix.
+    const signer = new Signer('test-root', 'test-pwd', 1)  // 1 iteration for fast test
+    const parentName = 'parent'
+    const childName = parentName + '/sub/'
+    const { publicKey: childPub } = await signer.keysFor(childName)
+    const childKey = bytesToHex(childPub)
+
+    // Registry with both Records — child must be Writable to accept attachSigner.
+    const registry = new StreamoRecordRegistry({
+      recaller,
+      factory: async () => new WritableStreamoRecord({ recaller })
+    })
+    // Materialize the child Record up-front (so it exists in registry).
+    await registry._materialize(childKey)
+
+    // Build parent with mounts.json pointing at the derived child key.
+    const parent = await registry._materialize(PK_A)
+    const w = parent.checkout()
+    w.set({ 'mounts.json': { mounts: { 'sub/': { key: childKey, ours: true } } } })
+    parent.commit(w, 'seed parent mounts')
+
+    // FolderRecord with signer + signerName — enables cross-Record write.
+    const folder = new FolderRecord(parent, registry, { signer, signerName: parentName })
+    await folder.write('sub/hello.txt', 'world!')
+
+    // Child Record should now hold the file.
+    const child = await registry._materialize(childKey)
+    assert.equal(child.get('hello.txt'), 'world!', 'cross-Record write landed in child')
+    assert.equal(parent.get('hello.txt'), undefined, 'did not touch parent')
+  })
+
+  test('write throws when ours:true mount points at wrong pubkey (derivation mismatch)', async ({ assert }) => {
+    const { Signer } = await import('./Signer.js')
+    const recaller = new Recaller('w-mismatch')
+    const signer = new Signer('test-root', 'test-pwd', 1)
+    const registry = new StreamoRecordRegistry({
+      recaller,
+      factory: async () => new WritableStreamoRecord({ recaller })
+    })
+    const parent = await registry._materialize(PK_A)
+    const w = parent.checkout()
+    // mounts.json points at PK_B but the derived child would be different
+    w.set({ 'mounts.json': { mounts: { 'apps/x/': { key: PK_B, ours: true } } } })
+    parent.commit(w, 'seed wrong key')
+    const folder = new FolderRecord(parent, registry, { signer, signerName: 'parent' })
+    await assert.rejects(
+      () => folder.write('apps/x/f.txt', 'hi'),
+      /derived child pubkey.*doesn't match mount target.*different naming convention/
     )
   })
 

@@ -62,6 +62,12 @@ export class FolderRecord {
     this.registry = registry
     this.session = options.session ?? null
     this.materializeTimeoutMs = options.materializeTimeoutMs ?? 30000
+    // The (signer, signerName) tuple drives cross-Record writes through
+    // ours:true mounts. signerName is what was passed to attachSigner —
+    // the keysFor input. Child shards' signer-names derive deterministically
+    // as `signerName + '/' + mountPrefix`. See [[keysFor-as-sharding-namespace]].
+    this.signer = options.signer ?? null
+    this.signerName = options.signerName ?? null
   }
 
   files () {
@@ -162,12 +168,40 @@ export class FolderRecord {
     if (mountPrefix) {
       const mount = this.mounts()[mountPrefix]
       const ours = mount && mount.ours === true
-      throw new Error(
-        `FolderRecord.write: '${path}' is under mount '${mountPrefix}'` +
-        (ours
-          ? ' marked ours:true — cross-Record writes through mounts are a queued primitive; for now construct a FolderRecord around the mounted Record and write to it directly with that Record\'s signer'
-          : ' (read-only mount — we don\'t own it)')
-      )
+      if (!ours) {
+        throw new Error(`FolderRecord.write: '${path}' is under mount '${mountPrefix}' (read-only mount — we don't own it)`)
+      }
+      if (!this.signer || !this.signerName) {
+        throw new Error(`FolderRecord.write: '${path}' is under ours:true mount '${mountPrefix}' — pass {signer, signerName} to FolderRecord's constructor to enable cross-Record writes (we derive the child signer via signer.keysFor(parentName + '/' + mountPrefix))`)
+      }
+      if (!this.registry) {
+        throw new Error(`FolderRecord.write: '${path}' is under ours:true mount '${mountPrefix}' but FolderRecord has no registry to materialize the mounted Record`)
+      }
+      // Derive the child shard's keysFor name + verify it matches the mount target.
+      // Convention: parent's keysFor name + '/' + mount prefix. Same root signer
+      // applied to a different keysFor name = different deterministic keypair.
+      const childName = this.signerName + '/' + mountPrefix
+      const { publicKey } = await this.signer.keysFor(childName)
+      const { bytesToHex } = await import('./utils.js')
+      const derivedHex = bytesToHex(publicKey)
+      if (derivedHex !== mount.key) {
+        throw new Error(`FolderRecord.write: derived child pubkey ${derivedHex.slice(0, 16)}... doesn't match mount target ${mount.key.slice(0, 16)}... — mount '${mountPrefix}' was set up with a different naming convention than parent+slash+prefix; either fix mounts.json to match the derived pubkey or use a different child-name convention`)
+      }
+      // Materialize the mounted Record + attach the derived signer-name.
+      const mountedRepo = await this.registry._materialize(mount.key)
+      if (typeof mountedRepo.attachSigner !== 'function') {
+        throw new Error(`FolderRecord.write: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mount targets`)
+      }
+      mountedRepo.attachSigner(this.signer, childName)
+      // Recurse into a child FolderRecord scoped to the mounted Record.
+      const child = new FolderRecord(mountedRepo, this.registry, {
+        session: this.session,
+        materializeTimeoutMs: this.materializeTimeoutMs,
+        signer: this.signer,
+        signerName: childName
+      })
+      const innerPath = path.startsWith(mountPrefix) ? path.slice(mountPrefix.length) : ''
+      return child.write(innerPath, value, options)
     }
     if (typeof this.record.update !== 'function') {
       throw new Error('FolderRecord.write: this Record is not Writable (slim StreamoRecord has no author surface — use WritableStreamoRecord)')

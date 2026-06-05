@@ -5,9 +5,10 @@ for what's next.
 
 ---
 
-## 15.0.0 — auto-sharding: one-command deploy via keysFor namespace
+## 14.0.0 — the flatten arc + auto-sharding deploy
 
-The headline outcome of 2026-06-04. **The deploy is now one command:**
+The headline outcome of 2026-06-04: **the deploy is now one command,**
+and Records' values are flat folders that compose via mounts.
 
 ```bash
 node bin/streamo.js --env-file env/secrets/streamo-relay.env \
@@ -21,8 +22,19 @@ via `signer.keysFor(parentName + '/' + mountPrefix)`. **One root
 signer, every shard derivable.** No per-shard credential storage;
 the mount tree IS the sub-stream namespace.
 
+The flatten arc that made this tractable: the 9.0.0-era nested shape
+(`value.files['<path>']` + top-level meta mirrored through
+`value.files['streamo.json']` via `healMetaInvariant`) is gone.
+Records' values are now flat folders — filenames at the top level
+(`value['index.html']`, `value['mounts.json']`,
+`value['streamo.json']`). No nesting, no redundancy invariant.
+Auto-sharding is the natural consequence: when value IS a files map
+and mounts.json declares the routing table, fileSync routes per-path
+mechanically.
+
 See `memory/notes/2026-06-04-late-the-one-command-deploy-landed.md`
-for the substrate-deposit on what landed + how to extend it.
+and `memory/notes/2026-06-04-the-flatten-arc.md` for the
+substrate-deposits on the migration + the discipline lenses.
 
 ### New substrate APIs
 
@@ -38,6 +50,27 @@ for the substrate-deposit on what landed + how to extend it.
   materialize on pending mounts; watcher re-fires when bytes
   arrive. The "drop the awaits, let the Recaller fire" shape.
 
+### Reader-side
+
+- `FolderRecord` reads files at top-level keys; mounts at
+  `value['mounts.json'].mounts`. Records still in nested shape
+  need re-publishing in flat shape to be visible.
+- `repoFileServer`, `registrySync` followMounts, and FolderRecord all
+  expect the flat shape; no compatibility branches for the old shape.
+
+### Writer-side
+
+- `fileSync` mirrors disk → `value['<path>']` directly. No
+  `applyMetaToValue`, no `healMetaInvariant`, no
+  `meta: 'merge'|'replace'` option. `streamo.json` is just a file
+  like any other; edits to it on disk land at `value['streamo.json']`.
+- When `(signer, signerName, registry)` are all passed to fileSync
+  (and `StreamoServer.files()` now threads these from server self
+  by default), writes route through `FolderRecord.writeMany` instead
+  of a single `repo.update`. Backward-compatible: callers that don't
+  pass signer/signerName see the existing single-Record path.
+- `publish-*` scripts all write the flat shape.
+
 ### `mounts.json` — `ours: true` marker is load-bearing
 
 Mounts now distinguish `ours: true` (shards we author into via
@@ -46,97 +79,14 @@ other identity-families). `fileSync` routes writes only to
 ours-true mounts; non-ours paths are silently skipped on the
 write side (they remain readable through the mount cascade).
 
-### `fileSync` gains opt-in auto-sharding
-
-When `(signer, signerName, registry)` are all passed to
-fileSync (and `StreamoServer.files()` now threads these from
-server self by default), writes route through
-`FolderRecord.writeMany` instead of a single `repo.update`.
-Backward-compatible: callers that don't pass signer/signerName
-see the existing single-Record path.
-
-### Production migration
-
-The 7 streamo.dev Records were re-published as one identity-family:
-- Home: `keysFor('streamo-relay')` → 03820c0b…
-- Library: `keysFor('streamo-relay/streamo/')` → 0358f79a…
-- chat: `keysFor('streamo-relay/apps/chat/')` → 02bff71d…
-- flashcards: `keysFor('streamo-relay/apps/flashcards/')` → 034c0f2a…
-- explorer: `keysFor('streamo-relay/apps/explorer/')` → 03e20368…
-- todomvc: `keysFor('streamo-relay/apps/todomvc/')` → 03ad2768…
-- styles: `keysFor('streamo-relay/apps/styles/')` → 02088c8a…
-
-`public/homepage/` was flattened up to `public/` root so
-`--files public/` is the literal deploy. The 6 legacy
-random-password env files were deleted (no longer needed —
-derive from streamo-relay).
-
-### Reactivity-is-free-when-Recaller-shared
-
-The substrate was always reactive at the (Record, Recaller)
-layer; today's commits prove it. `record.get` inside a watched
-function auto-registers the dep; mutations elsewhere re-fire the
-watcher. **The reactive `resolvePath` isn't an architectural
-move; it's stopping fighting the substrate with imperative
-awaits.** 3 probe tests confirm; resolveReactive is the embodiment.
-
-### Queued for 15.x
-
-- Reader consolidation: `repoFileServer`, `registrySync followMounts`,
-  `fileSync` each still have their own mount-walkers (~120 LOC).
-  All can become thin calls into `FolderRecord.resolveReactive`.
-  Pure cleanup; no behavior change.
-- `streamo identity new <name>` verb — wraps the password-gen +
-  derive-pubkey + write-env-file dance.
-- `mounts.json` `version` field per entry — for re-sharding
-  scenarios; bump when shard structure or key changes.
-
----
-
-## 14.0.0 — the flatten arc: `value` IS the files map
-
-The 9.0.0-era nested shape (`value.files['<path>']` + top-level meta
-mirrored through `value.files['streamo.json']` via `healMetaInvariant`)
-is gone. **Records' values are now flat folders:** filenames at the
-top level (`value['index.html']`, `value['mounts.json']`,
-`value['streamo.json']`). No nesting, no redundancy invariant.
-
-This completes the 9.0.0 Phase A simplification arc — Phase A killed
-the "value IS files" mode on the *legacy* side; this kills the
-nested-with-meta-mirror side, leaving "value-IS-filesmap" as the
-single shape. See `memory/notes/2026-06-04-the-flatten-arc.md` for
-the substrate-deposit on the migration.
-
-### Reader-side
-
-- `FolderRecord` reads files at top-level keys; mounts at
-  `value['mounts.json'].mounts`. Records still in nested shape are
-  not visible to it — they need re-publishing in flat shape.
-- `repoFileServer`, `registrySync` followMounts, and FolderRecord all
-  expect the flat shape; no compatibility branches for the old shape.
-
-### Writer-side
-
-- `fileSync` mirrors disk → `value['<path>']` directly. No
-  `applyMetaToValue`, no `healMetaInvariant`, no `meta: 'merge'|'replace'`
-  option. `streamo.json` is just a file like any other; edits to it
-  on disk land at `value['streamo.json']`.
-- New: **`FolderRecord.write(path, value, options)`** — symmetric
-  counterpart to `resolvePath`. Bounded: commits to this Record only;
-  throws on cross-mount writes (queued primitive that needs
-  signer-routing across mount targets).
-- `publish-*` scripts (publish-memory, publish-events, publish-claude-home,
-  publish-library, publish-identity-seed) all write the flat shape.
-
 ### CLI
 
-- `bin/streamo.js` gains **positional dispatch** (Reading C). The shape
-  `streamo record update field value` reflects the JS API
-  `record.update('field', 'value')` directly — the CLI IS the eval line
-  for the substrate's methods.
-- `--eval` scope: `repo` was renamed to `record` (the canonical class
-  name has been `StreamoRecord` since 9.x; the `--eval` symbol catches
-  up). Help text and internal vars updated.
+- `bin/streamo.js` gains **positional dispatch** (Reading C). The
+  shape `streamo record update field value` reflects the JS API
+  `record.update('field', 'value')` directly — the CLI IS the eval
+  line for the substrate's methods.
+- `--eval` scope: `repo` was renamed to `record` (the canonical
+  class name has been `StreamoRecord` since 9.x).
 - `--chat` is now a soft-wait one-shot (matches `--eval` /
   `--cat` ergonomics).
 
@@ -147,34 +97,54 @@ the substrate-deposit on the migration.
   option, the `FILES_KEY` constant in fileSync — all artifacts of
   the redundancy invariant the flatten arc dissolves.
 - Three "unhelpful fallbacks" cut per the substrate-honest discipline:
-  dual-read in readers (single-shape only); the
-  `identity.self` deprecated alias (just bump the version);
+  dual-read in readers; the `identity.self` deprecated alias;
   `encodeFile`'s silent-skip on shape mismatch (throws now).
 - The OLD-RELAY 3-second deadlock-fallback in fileSync — its own
   comment said "the legacy race re-appears"; deleted.
 
-### `mounts.json` shape: `ours: true` marker
+### Production migration
 
-Mount entries now optionally carry `ours: true` to mark mounts whose
-Records are signed by the parent's credential-family (i.e., we have
-authority to write through them). The marker is read by
-`FolderRecord.write` to distinguish "this mount is queued for the
-cross-Record write primitive" from "this mount is read-only — someone
-else's content." Default is read-only; opt in to `ours: true` for
-authoring mounts.
+The 7 streamo.dev Records were re-published as one identity-family
+rooted at streamo-relay (sub-keys derived via keysFor):
 
-Migration: every existing Record needs re-publishing. The 7 bundled
-streamo.dev Records (homepage + library + chat/flashcards/explorer/
-todomvc/styles) were re-published as part of this release with fresh
-random-password identities. Their old pubkeys still exist on the
-relay's disk but are no longer referenced.
+- Home: `keysFor('streamo-relay')` → 03820c0b…
+- Library: `keysFor('streamo-relay/streamo/')` → 0358f79a…
+- chat: `keysFor('streamo-relay/apps/chat/')` → 02bff71d…
+- flashcards: `keysFor('streamo-relay/apps/flashcards/')` → 034c0f2a…
+- explorer: `keysFor('streamo-relay/apps/explorer/')` → 03e20368…
+- todomvc: `keysFor('streamo-relay/apps/todomvc/')` → 03ad2768…
+- styles: `keysFor('streamo-relay/apps/styles/')` → 02088c8a…
 
-### scripts/sync-all.mjs
+`public/homepage/` was flattened up to `public/` root so
+`--files public` is the literal deploy. Legacy random-password env
+files for individual shards were deleted — derive from streamo-relay.
+
+### Reactivity-is-free-when-Recaller-shared
+
+The substrate was always reactive at the (Record, Recaller) layer;
+this release's commits prove it. `record.get` inside a watched
+function auto-registers the dep; mutations elsewhere re-fire the
+watcher. **The reactive `resolvePath` isn't an architectural move;
+it's stopping fighting the substrate with imperative awaits.** 3
+probe tests confirm; `resolveReactive` is the embodiment.
+
+### `scripts/sync-all.mjs`
 
 New one-command "pull every Record reachable from this root" verb.
 Walks the mount cascade from a root pubkey, subscribes to each
 discovered Record, waits for the whole tree to settle, exits with a
 status line per Record.
+
+### Queued for 14.x
+
+- Reader consolidation: `repoFileServer`, `registrySync followMounts`,
+  `fileSync` each still have their own mount-walkers (~120 LOC).
+  All can become thin calls into `FolderRecord.resolveReactive`.
+- `streamo identity new <name>` verb — wraps password-gen +
+  derive-pubkey + write-env-file.
+- `mounts.json` `version` field per entry — for re-sharding.
+
+---
 
 ---
 
@@ -3418,3 +3388,4 @@ Below is the underlying capability surface (unchanged in 3.0.0):
 - `npm run dev` — runs `public/apps/chat/server.js` against `.env.dev`,
   the canonical "play with the repo" entry point. `npm run prod` runs the
   same server against `.env.prod` (lives only on the production host).
+

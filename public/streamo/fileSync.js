@@ -385,8 +385,19 @@ function resolveRecordFileName (opt) {
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
-  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false } = options
+  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, signer = null, signerName = null } = options
   const recordFile = resolveRecordFileName(recordFileOpt)
+  // Auto-sharding: when (signer, signerName, registry) are all present,
+  // route writes through FolderRecord.writeMany. Files under ours:true
+  // mounts go to derived child Records (signer.keysFor(signerName +'/'+
+  // mountPrefix)); home files stay on this Record. Without signer/
+  // signerName, fall back to the single-Record write path (legacy
+  // callers + tests).
+  let folderLens = null
+  if (signer && signerName && registry) {
+    const { FolderRecord } = await import('./FolderRecord.js')
+    folderLens = new FolderRecord(repo, registry, { signer, signerName })
+  }
   // Resolve symlinks in the folder path up front so the watcher's
   // event paths (which come back resolved on some OSes — notably
   // macOS, where `/tmp` → `/private/tmp`) line up with our own
@@ -462,7 +473,13 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       delete filesToCommit[recordFile]
     }
     if (Object.keys(filesToCommit).length > 0) {
-      await repo.update(c => applyFilesToValue(c, filesToCommit), { message: 'seed files' })
+      if (folderLens) {
+        // Auto-sharding path: files route to derived child Records based
+        // on mounts.json + the ours:true marker.
+        await folderLens.writeMany(filesToCommit, { replace: true, message: 'seed files' })
+      } else {
+        await repo.update(c => applyFilesToValue(c, filesToCommit), { message: 'seed files' })
+      }
     }
   }
 
@@ -598,7 +615,11 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         }
 
         if (filesEqual(current, newFiles)) return
-        await repo.update(c => applyFilesToValue(c, newFiles), { message: 'file change' })
+        if (folderLens) {
+          await folderLens.writeMany(newFiles, { replace: true, message: 'file change' })
+        } else {
+          await repo.update(c => applyFilesToValue(c, newFiles), { message: 'file change' })
+        }
       } finally {
         committingFromDisk = false
       }

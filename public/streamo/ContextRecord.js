@@ -104,8 +104,35 @@ export class ContextRecord {
    * this one with options.
    */
   apiMessages () {
+    const raw = this.rawMessages()
+    if (raw.length === 0) return []
+    // Shape detect: API-shape Records have {role, content} at top of each
+    // entry (no Claude-Code bookkeeping); JSONL-shape Records have {type,
+    // message: {role, content}, isSidechain, uuid, ...}. Detect on first
+    // entry, route accordingly. Both yield API-shape output.
+    const first = raw[0]
+    const isApiShape = first && typeof first === 'object' && first.role && !first.type && !('message' in first)
+    if (isApiShape) {
+      // Already API-shape — content may be string or block-array. Coerce
+      // each to plain text + drop empties + collapse consecutive.
+      const out = []
+      for (const m of raw) {
+        if (m.role !== 'user' && m.role !== 'assistant') continue
+        let text
+        if (typeof m.content === 'string') text = m.content
+        else if (Array.isArray(m.content)) {
+          text = m.content
+            .filter(b => b && b.type === 'text' && typeof b.text === 'string')
+            .map(b => b.text).join('\n')
+        } else continue
+        if (!text || !text.trim()) continue
+        out.push({ role: m.role, content: text })
+      }
+      return collapseConsecutive(out)
+    }
+    // JSONL-shape — full transform from Claude Code's session format.
     const out = []
-    for (const m of this.rawMessages()) {
+    for (const m of raw) {
       if (m.isSidechain) continue
       const t = m.type
       if (t !== 'user' && t !== 'assistant') continue

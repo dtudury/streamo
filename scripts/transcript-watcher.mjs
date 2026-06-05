@@ -66,7 +66,11 @@ const pending = new Map()       // sessionId -> Promise (in-flight publish)
 
 async function ensureSessionRecord (sessionId) {
   if (sessionState.has(sessionId)) return sessionState.get(sessionId)
-  const subStreamName = 'transcript/' + sessionId
+  // 'chat/<sessionId>' — fresh derivation; publishes the parsed API-shape
+  // (light, summon-ready). The earlier 'transcript/<sessionId>' name was
+  // for the heavy raw-JSONL-objects shape — abandoned in favor of this
+  // smaller-and-faster v0 substrate.
+  const subStreamName = 'chat/' + sessionId
   const { publicKey } = await signer.keysFor(subStreamName)
   const pubkeyHex = bytesToHex(publicKey)
   const recaller = new Recaller('tw-' + sessionId.slice(0, 8))
@@ -90,18 +94,42 @@ async function publishSession (sessionId) {
       const raw = await readFile(path, 'utf8')
       if (raw.length === entry.lastSize) return  // no real change
       const lines = raw.split('\n').filter(Boolean)
-      const messages = []
+      const jsonlObjects = []
       for (const line of lines) {
-        try { messages.push(JSON.parse(line)) } catch { /* skip malformed */ }
+        try { jsonlObjects.push(JSON.parse(line)) } catch { /* skip malformed */ }
+      }
+      // Transform JSONL → API shape (filter sidechains/thinking/tool blocks,
+      // collapse consecutive same-role). Tiny + summon-ready.
+      const filtered = []
+      for (const m of jsonlObjects) {
+        if (m.isSidechain) continue
+        if (m.type !== 'user' && m.type !== 'assistant') continue
+        const c = m.message?.content
+        const role = m.message?.role
+        if (role !== 'user' && role !== 'assistant') continue
+        let text
+        if (typeof c === 'string') text = c
+        else if (Array.isArray(c)) {
+          text = c.filter(b => b?.type === 'text' && typeof b.text === 'string')
+            .map(b => b.text).join('\n')
+        } else continue
+        if (!text || !text.trim()) continue
+        filtered.push({ role, content: text })
+      }
+      const apiMessages = []
+      for (const m of filtered) {
+        const last = apiMessages[apiMessages.length - 1]
+        if (last && last.role === m.role) last.content = last.content + '\n\n' + m.content
+        else apiMessages.push({ ...m })
       }
       const t0 = Date.now()
       await entry.record.update(
-        () => ({ transcript: messages }),
-        { message: `transcript ${messages.length} entries (${raw.length} bytes)` }
+        () => ({ transcript: apiMessages }),
+        { message: `chat ${apiMessages.length} turns (parsed from ${jsonlObjects.length} jsonl entries)` }
       )
       entry.lastSize = raw.length
       console.log(
-        `[watcher] ${sessionId.slice(0, 8)}... ${messages.length} entries, ` +
+        `[watcher] ${sessionId.slice(0, 8)}... ${apiMessages.length} turns (from ${jsonlObjects.length} raw), ` +
         `chain ${entry.record.byteLength.toLocaleString()}b, ${Date.now() - t0}ms`
       )
     } catch (e) {

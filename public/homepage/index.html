@@ -368,7 +368,7 @@
     import { Signer } from '@dtudury/streamo/Signer.js'
     import { bytesToHex } from '@dtudury/streamo/utils.js'
     import { Recaller } from '@dtudury/streamo/utils/Recaller.js'
-    import { RepoRegistry } from '@dtudury/streamo/RepoRegistry.js'
+    import { StreamoRecordRegistry } from '@dtudury/streamo/StreamoRecordRegistry.js'
     import { registrySync } from '@dtudury/streamo/registrySync.js'
     import { h } from '@dtudury/streamo/h.js'
     import { mount } from '@dtudury/streamo/mount.js'
@@ -400,7 +400,7 @@
     if (info) {
       try {
         const recaller = new Recaller('home')
-        const registry = new RepoRegistry(undefined, { recaller, name: 'home' })
+        const registry = new StreamoRecordRegistry({ recaller, name: 'home' })
         await registrySync(registry, location.hostname, +location.port || (location.protocol === 'https:' ? 443 : 80), {
           // The server's `hello` auto-subscribes us to its home repo.
           // When that repo's value updates, pull out its journalists

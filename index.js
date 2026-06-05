@@ -34,3 +34,4 @@ export { liveObject, liveValue, isLiveSource } from './public/streamo/LiveSource
 export { bytesToHex, hexToBytes } from './public/streamo/utils.js'
 export { identity } from './public/streamo/identity.js'
 export { dispatch } from './public/streamo/dispatch.js'
+export { ContextRecord } from './public/streamo/ContextRecord.js'

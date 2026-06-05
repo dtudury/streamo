@@ -2,29 +2,101 @@
   "title": "Greek Alphabet",
   "description": "The 24 letters of the Greek alphabet — capital, lowercase, and name. Learnable in an afternoon, useful for math, physics, fraternities, and reading old inscriptions.",
   "cards": [
-    { "front": "Α α", "back": "alpha" },
-    { "front": "Β β", "back": "beta" },
-    { "front": "Γ γ", "back": "gamma" },
-    { "front": "Δ δ", "back": "delta" },
-    { "front": "Ε ε", "back": "epsilon" },
-    { "front": "Ζ ζ", "back": "zeta" },
-    { "front": "Η η", "back": "eta" },
-    { "front": "Θ θ", "back": "theta" },
-    { "front": "Ι ι", "back": "iota" },
-    { "front": "Κ κ", "back": "kappa" },
-    { "front": "Λ λ", "back": "lambda" },
-    { "front": "Μ μ", "back": "mu" },
-    { "front": "Ν ν", "back": "nu" },
-    { "front": "Ξ ξ", "back": "xi" },
-    { "front": "Ο ο", "back": "omicron" },
-    { "front": "Π π", "back": "pi" },
-    { "front": "Ρ ρ", "back": "rho" },
-    { "front": "Σ σ", "back": "sigma" },
-    { "front": "Τ τ", "back": "tau" },
-    { "front": "Υ υ", "back": "upsilon" },
-    { "front": "Φ φ", "back": "phi" },
-    { "front": "Χ χ", "back": "chi" },
-    { "front": "Ψ ψ", "back": "psi" },
-    { "front": "Ω ω", "back": "omega" }
+    {
+      "front": "Α α",
+      "back": "alpha"
+    },
+    {
+      "front": "Β β",
+      "back": "beta"
+    },
+    {
+      "front": "Γ γ",
+      "back": "gamma"
+    },
+    {
+      "front": "Δ δ",
+      "back": "delta"
+    },
+    {
+      "front": "Ε ε",
+      "back": "epsilon"
+    },
+    {
+      "front": "Ζ ζ",
+      "back": "zeta"
+    },
+    {
+      "front": "Η η",
+      "back": "eta"
+    },
+    {
+      "front": "Θ θ",
+      "back": "theta"
+    },
+    {
+      "front": "Ι ι",
+      "back": "iota"
+    },
+    {
+      "front": "Κ κ",
+      "back": "kappa"
+    },
+    {
+      "front": "Λ λ",
+      "back": "lambda"
+    },
+    {
+      "front": "Μ μ",
+      "back": "mu"
+    },
+    {
+      "front": "Ν ν",
+      "back": "nu"
+    },
+    {
+      "front": "Ξ ξ",
+      "back": "xi"
+    },
+    {
+      "front": "Ο ο",
+      "back": "omicron"
+    },
+    {
+      "front": "Π π",
+      "back": "pi"
+    },
+    {
+      "front": "Ρ ρ",
+      "back": "rho"
+    },
+    {
+      "front": "Σ σ",
+      "back": "sigma"
+    },
+    {
+      "front": "Τ τ",
+      "back": "tau"
+    },
+    {
+      "front": "Υ υ",
+      "back": "upsilon"
+    },
+    {
+      "front": "Φ φ",
+      "back": "phi"
+    },
+    {
+      "front": "Χ χ",
+      "back": "chi"
+    },
+    {
+      "front": "Ψ ψ",
+      "back": "psi"
+    },
+    {
+      "front": "Ω ω",
+      "back": "omega"
+    }
   ]
 }

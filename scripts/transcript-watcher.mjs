@@ -123,51 +123,27 @@ async function publishSession (sessionId) {
       for (const line of lines) {
         try { jsonlObjects.push(JSON.parse(line)) } catch { /* skip malformed */ }
       }
-      // Path-update incremental publish — only encode the NEW tail of
-      // the transcript array. Existing entries on chain are referenced
-      // by address (already encoded, already in storage); we don't
-      // re-walk them. O(new entries) per commit instead of O(total).
-      // See the architectural arc in this morning's session: update(fn)
-      // forces whole-value re-encoding; set(...path, value) uses the
-      // path-update branch of Streamo.set.
-      // Length-cache fix: don't call record.get('transcript') just to read
-      // .length — that materializes the whole 4300+ entry array (~2.4s).
-      // Cache the count externally; only fall back to the slow path on first
-      // publish after restart (when we don't know the count yet).
+      // Pure write — save the entire parse result. No reads of prior
+      // state, no path-update incremental, no length tracking. David's
+      // catch (2026-06-05): the path-update strategy was a marginal
+      // optimization that didn't actually move the needle (commit's
+      // copyFrom dominates regardless) and required reading state from
+      // a pure write path. Incomplete copy; sunk cost.
+      //
+      // Value key is `entries-wip` (instead of the old `transcript`) as
+      // a visible signal: this artifact is unfinished. The real perf
+      // fix is at the codec layer (smart copyFrom that walks the chunk
+      // graph instead of decode+re-encode). When that lands, this
+      // simple watcher becomes fast on its own.
       const tStart = Date.now()
-      let knownLength = entry.lastKnownLength
-      if (knownLength === undefined) {
-        knownLength = (entry.record.get('transcript') ?? []).length
-      }
-      const tAfterGet = Date.now()
-      const newEntries = jsonlObjects.slice(knownLength)
-      if (newEntries.length === 0) {
-        entry.lastSize = raw.length
-        return
-      }
-      const tBeforeWrite = Date.now()
-      let tAfterCheckout, tAfterSets, tAfterCommit
-      if (knownLength === 0) {
-        entry.record.set({ transcript: jsonlObjects })
-        tAfterCheckout = tAfterSets = tAfterCommit = Date.now()
-      } else {
-        const working = entry.record.checkout()
-        tAfterCheckout = Date.now()
-        for (let i = 0; i < newEntries.length; i++) {
-          working.set('transcript', knownLength + i, newEntries[i])
-        }
-        tAfterSets = Date.now()
-        entry.record.commit(working, `engineer-oracle: +${newEntries.length}`)
-        tAfterCommit = Date.now()
-      }
+      entry.record.set({ 'entries-wip': jsonlObjects })
+      const tAfterSet = Date.now()
       entry.lastSize = raw.length
-      entry.lastKnownLength = jsonlObjects.length  // we just committed exactly this many
       const ratio = (entry.record.byteLength / raw.length * 100).toFixed(0)
       console.log(
-        `[watcher] ${sessionId.slice(0, 8)}... +${newEntries.length} (total ${jsonlObjects.length}), ` +
+        `[watcher] ${sessionId.slice(0, 8)}... ${jsonlObjects.length} entries (full parse), ` +
         `chain ${entry.record.byteLength.toLocaleString()}b (${ratio}% of ${raw.length.toLocaleString()} jsonl bytes), ` +
-        `total ${tAfterCommit - tStart}ms ` +
-        `[get=${tAfterGet - tStart} slice=${tBeforeWrite - tAfterGet} checkout=${tAfterCheckout - tBeforeWrite} sets(${newEntries.length})=${tAfterSets - tAfterCheckout} commit=${tAfterCommit - tAfterSets}]`
+        `set=${tAfterSet - tStart}ms`
       )
     } catch (e) {
       console.error(`[watcher] publish error ${sessionId.slice(0, 8)}: ${e.message}`)

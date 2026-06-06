@@ -36,8 +36,15 @@ import { Signer } from '../public/streamo/Signer.js'
 import { WritableStreamoRecord } from '../public/streamo/WritableStreamoRecord.js'
 import { Recaller } from '../public/streamo/utils/Recaller.js'
 import { originSync } from '../public/streamo/originSync.js'
+import { archiveSync } from '../public/streamo/archiveSync.js'
 import { bytesToHex } from '../public/streamo/utils.js'
 import { config } from 'dotenv'
+
+// Local archive — persists each session Record's bytes across watcher
+// restarts so we don't need to re-sync from relay or pay the full
+// encoding cost on restart. The disk archive IS our authority's
+// persisted view.
+const ARCHIVE_DIR = '.streamo'
 
 const { values: args } = parseArgs({
   options: {
@@ -81,12 +88,24 @@ async function ensureSessionRecord (sessionId) {
   const pubkeyHex = bytesToHex(publicKey)
   const recaller = new Recaller('tw-' + sessionId.slice(0, 8))
   const record = new WritableStreamoRecord({ recaller, name: 'tw-' + sessionId.slice(0, 8) })
-  const ws = await originSync(record, pubkeyHex, 'wss://streamo.dev')
-  await new Promise(r => setTimeout(r, 2500))
+  // Load prior state from disk archive BEFORE signing. The archive is our
+  // authority's persistent view across watcher restarts — if we
+  // published 3795 entries last run, those bytes are already in
+  // .streamo/<pubkey>.bin; archiveSync loads them into the Record so we
+  // pick up exactly where we left off. New bytes appended by subsequent
+  // commits get written through to the archive automatically.
+  await archiveSync(record, ARCHIVE_DIR, pubkeyHex)
   record.attachSigner(signer, subStreamName)
+  // originSync is background fill — if the relay has bytes we don't
+  // (e.g., another machine published to this pubkey), they flow in
+  // via the subscribe stream. No timer wait; apps display empty state
+  // reactively if bytes haven't arrived yet, but our authority view is
+  // already correct from disk.
+  const ws = await originSync(record, pubkeyHex, 'wss://streamo.dev')
   const entry = { record, ws, recaller, pubkeyHex, subStreamName, lastSize: 0 }
   sessionState.set(sessionId, entry)
-  console.log(`[watcher] new session: ${sessionId.slice(0, 8)}... → ${pubkeyHex}`)
+  const entriesOnLoad = (record.get('transcript') ?? []).length
+  console.log(`[watcher] new session: ${sessionId.slice(0, 8)}... → ${pubkeyHex} (loaded ${entriesOnLoad} entries from disk archive)`)
   return entry
 }
 
@@ -104,20 +123,39 @@ async function publishSession (sessionId) {
       for (const line of lines) {
         try { jsonlObjects.push(JSON.parse(line)) } catch { /* skip malformed */ }
       }
-      // No transform — store raw parsed objects. Full fidelity (tool calls,
-      // tool results, thinking blocks, sidechains, all bookkeeping
-      // preserved). ContextRecord.apiMessages does the read-time filter
-      // when feeding to the Anthropic API; other lenses can extract other
-      // views from the same source.
+      // Path-update incremental publish — only encode the NEW tail of
+      // the transcript array. Existing entries on chain are referenced
+      // by address (already encoded, already in storage); we don't
+      // re-walk them. O(new entries) per commit instead of O(total).
+      // See the architectural arc in this morning's session: update(fn)
+      // forces whole-value re-encoding; set(...path, value) uses the
+      // path-update branch of Streamo.set.
+      const current = entry.record.get('transcript') ?? []
+      const newEntries = jsonlObjects.slice(current.length)
+      if (newEntries.length === 0) {
+        entry.lastSize = raw.length
+        return  // file changed but no new entries (rare; usually log only)
+      }
       const t0 = Date.now()
-      await entry.record.update(
-        () => ({ transcript: jsonlObjects }),
-        { message: `engineer-oracle ${jsonlObjects.length} entries (full-fidelity raw)` }
-      )
+      if (current.length === 0) {
+        // First publish (or first after restart with no archive): whole-value
+        // set is unavoidable — nothing to incrementally build on.
+        entry.record.set({ transcript: jsonlObjects })
+      } else {
+        // Incremental: batch N path-updates into ONE commit via the
+        // checkout pattern. Each working.set('transcript', idx, entry)
+        // does the smart path-update — encodes only the new entry +
+        // rebuilds the spine; sibling addresses reused.
+        const working = entry.record.checkout()
+        for (let i = 0; i < newEntries.length; i++) {
+          working.set('transcript', current.length + i, newEntries[i])
+        }
+        entry.record.commit(working, `engineer-oracle: +${newEntries.length}`)
+      }
       entry.lastSize = raw.length
       const ratio = (entry.record.byteLength / raw.length * 100).toFixed(0)
       console.log(
-        `[watcher] ${sessionId.slice(0, 8)}... ${jsonlObjects.length} entries, ` +
+        `[watcher] ${sessionId.slice(0, 8)}... +${newEntries.length} (total ${jsonlObjects.length}), ` +
         `chain ${entry.record.byteLength.toLocaleString()}b (${ratio}% of ${raw.length.toLocaleString()} jsonl bytes), ${Date.now() - t0}ms`
       )
     } catch (e) {

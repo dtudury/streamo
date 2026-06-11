@@ -192,7 +192,9 @@ function encodeMultipart (r, values, codec, asRefs) {
   let base = 1
   let footer = codec.baseFooter
   for (let i = values.length - 1; i >= 0; i--) {
-    const [part, option] = inlineOrAddressPart(r, r.encode(values[i], asRefs))
+    const variable = r.encode(values[i], asRefs)
+    const childCode = variable.isInline ? variable.bytes : variable.resolve(r)
+    const [part, option] = inlineOrAddressPart(r, childCode)
     footer += base * option
     base *= codec.partReaders[i].length
     parts.unshift(part)
@@ -373,8 +375,7 @@ export function makeCodecs () {
   // No partReaders → single footer slot, fixed width. The fixed footer +
   // fixed length lets a verifier read the latest chainHash with a single
   // slice of the last 97 bytes of HEAD — no chunk-graph walk required.
-  // `directReferences` returns [] for SIGNATURE (no chunk references; the
-  // chainHash + sig bytes are data, not pointers).
+  // No chunk references; chainHash + sig bytes are data, not pointers.
   const SIGNATURE = {
     getWidth: () => 97,
     encode (r, v) {
@@ -481,14 +482,14 @@ export function makeCodecs () {
    * first-class address rather than inline. Used by Stream.set() to
    * store a changing top-level value.
    */
-  const VARIABLE = {
+  const BOXED = {
     partReaders: [inlineOrAddress],
     encode: () => undefined, // not directly encodable; use _encode
     _encode (r, encodedValue) {
       const [part, option] = inlineOrAddressPart(r, encodedValue)
       const out = new Uint8Array(part.length + 1)
       out.set(part)
-      out[part.length] = VARIABLE.baseFooter + option
+      out[part.length] = BOXED.baseFooter + option
       return out
     },
     decode (r, code, asRefs) {
@@ -504,5 +505,5 @@ export function makeCodecs () {
     decode: () => new Uint8Array(0)
   }
 
-  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, VARIABLE, EMPTY_UINT8ARRAY }
+  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, BOXED, EMPTY_UINT8ARRAY }
 }

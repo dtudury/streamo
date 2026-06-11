@@ -294,11 +294,16 @@ export class WritableStreamoRecord extends StreamoRecord {
     // contributed. The mark is monotonic-downward; later commits don't
     // move it back up.
     const authoredFrom = this.byteLength
-    const dataAddress = this.copyFrom(workingStreamo, workingStreamo.valueAddress)
+    // sharedThrough = lastCommit.dataAddress when we have one — the working
+    // clone shares chunks with us up through that address. The smart copyFrom
+    // uses this to skip recursion on the shared region and only walk the
+    // genuinely-new chunks that working appended via its set(...).
+    const sharedThrough = this.lastCommit?.dataAddress ?? -1
+    const copied = this.copyFrom(workingStreamo, workingStreamo.valueAddress, sharedThrough)
+    const dataAddress = copied.isAddressed ? copied.address : copied.materialize(this).address
     const record = { message, date, dataAddress, parent }
     if (remoteParent !== undefined) record.remoteParent = remoteParent
-    const code = this.encode(record)
-    const result = this.append(code)
+    const result = this.encode(record).materialize(this).address
     this._markAuthoredAtOffset(authoredFrom)
     this.#scheduleSign()
     return result
@@ -393,7 +398,7 @@ export class WritableStreamoRecord extends StreamoRecord {
     // first byte the SIG covers. If a commit just bumped the mark to
     // this same `before` offset, this call is a no-op (idempotent).
     this._markAuthoredAtOffset(before)
-    this.append(this.encode(sig))
+    this.encode(sig).materialize(this)
     return sig
   }
 

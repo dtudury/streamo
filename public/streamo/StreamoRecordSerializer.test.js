@@ -336,7 +336,7 @@ describe(import.meta.url, ({ test }) => {
     // Encode the Signature into a wire chunk using the relay's codec.
     const relay = new WritableStreamoRecord()
     const { Signature } = await import('./Signature.js')
-    const sigCode = relay.encode(new Signature(emptyChainHash, compactRawBytes))
+    const sigCode = relay.encode(new Signature(emptyChainHash, compactRawBytes)).resolve(relay)
 
     const serializer = new StreamoRecordSerializer(relay, publicKey)
     const result = await serializer.submit({ chunks: [], sig: sigCode })

@@ -5,6 +5,125 @@ for what's next.
 
 ---
 
+## 15.0.0 — Variable as the codec's value-carrier; smart copyFrom with sharedThrough
+
+The codec layer's value-carrier is now a `Variable` class — a uniform
+representation that's either **inline** (bytes embedded in a parent
+chunk) or **addressed** (chunk stored at a numeric address in some
+registry). Inline-vs-addressed is at the API now, not buried in chunk
+bytes — `encode`/`decompose`/`compose`/`copyFrom`/`asRefs` all speak
+Variables, and the previous asymmetry (where mutation paths returned
+`undefined` for inline children) is gone.
+
+### Variable as the carrier
+
+```js
+import { Variable } from '@dtudury/streamo'
+
+const v = registry.encode(value)                    // → Variable (inline by default)
+const addressed = v.materialize(registry)           // inline → addressed
+addressed.address                                    // numeric chunk address
+```
+
+`materialize(r)` is dedup-aware via `r.addressOf` — turning an inline
+Variable into an addressed one reuses an existing chunk if one already
+has those bytes.
+
+### `copyFrom` — one method, three branches
+
+```
+1. shared region  : addressed && address ≤ sharedThrough → return as-is (no work)
+2. inline         : decode + re-encode in this's state
+3. addressed/new  : dedup-or-recurse → decompose, copyFrom each child, compose, materialize
+```
+
+`copyFrom` is polymorphic on input (Variable or address) and always
+returns Variable. Negative-address primitives (one-byte codes like
+UNDEFINED/NULL/TRUE/FALSE/UINT7) are universal across registries —
+they wrap as already-addressed Variables, materialize is a no-op.
+
+### `asRefs` — one method instead of two
+
+```js
+registry.asRefs(address)           // inline children come back as `undefined`
+registry.asRefs(address, true)     // inline children materialized as real addresses
+```
+
+Replaces the previous `_asRefsForWrite` private method. The default is
+mutation-impossible by control flow (reads through #readOnlyR); the
+write contexts that need real addresses pass `true`.
+
+### Bit-identical-output invariant pinned
+
+`public/streamo/copyFrom.test.js` (107 new tests) pins the load-bearing
+invariant: `copyFrom` into a clean registry produces bytes byte-for-byte
+identical to a fresh `encode` in that registry. Without this guarantee,
+copied chunks don't dedup with standard encodes — content-addressing
+silently fragments.
+
+The sweep covers primitives, arrays from 1 to 100 plus every Duple-tree
+split-jump boundary (N = 2^k + 1 for k = 3..13, up through 8193), objects
+with various key counts, nested composites, and a JSONL-line-shaped value
+(the watcher use case).
+
+A reverse-iteration bug surfaced during this sweep — `copyFrom`'s recursion
+was walking children forward via `.map` while `encodeMultipart` walks them
+reverse. Mismatched iteration order meant children landed at different
+addresses, varint widths differed, parent chunks diverged. Fixed
+mechanically; the sweep verifies bit-identity across the surface.
+
+### Empirical perf: 100×–1000× on the watcher-shaped workload
+
+`scripts/bench-copyFrom.mjs` measures `sharedThrough`'s fast-path on
+appending K items to an N-item array:
+
+| N (base) | K (appended) | with sharedThrough | without | speedup |
+|----------|--------------|--------------------|---------| --------|
+| 100      | 5            | 1.09ms             | 21.14ms | 19×     |
+| 500      | 5            | 0.56ms             | 95.65ms | 170×    |
+| 1000     | 5            | 0.79ms             | 185.56ms | 233×   |
+| 2000     | 5            | 0.78ms             | 393.28ms | 506×   |
+| 5000     | 5            | 0.97ms             | 1056.63ms | 1088× |
+
+With `sharedThrough`, time is **O(K)** — work scales with the number of
+new items, not the size of the base array. Without it, time is **O(N)**.
+For a watcher backing up a session as it grows, this is the difference
+between sub-millisecond commits and seconds.
+
+### Cleanup
+
+- **`ContextRecord` + `scripts/summon.mjs` removed.** The Anthropic-API-call
+  summon path was a false-start; the substrate-shaped equivalent is
+  `claude --resume` on a copy of the original JSONL with a fresh UUID
+  (no API key cost). The save-point storage (streamo Records of session
+  JSONLs) is still right; the API-call layer was over-built.
+- **`scripts/fork-session.mjs` added.** Parse a Claude Code session JSONL,
+  re-emit it as a fresh-UUID file in the projects dir — the primitive
+  behind the substrate's fork-and-resume.
+- **`directReferences` removed.** Subsumed by `Variable.materialize` +
+  `addressOf` dedup.
+- **VARIABLE codec renamed to BOXED.** The "VARIABLE" name was a near-
+  collision with the new `Variable` carrier class; BOXED is more
+  accurate (a chunk that boxes another value's address).
+- **Design history preserved.** `public/streamo/codecs-state-invariant-sketch.md`
+  documents the kill-UINT7-and-inline arc that was tried and reverted
+  on 2026-06-07 (10–70× byte regression for the typical case); the
+  postscript points at the byte-copy approach to smart copyFrom that
+  could land later without those kills.
+  `codecs-duple-tree-optimization-sketch.md` queues the Duple-tree-aware
+  array-append optimization for a follow-up (further speedup on top of
+  the sharedThrough fast-path).
+
+### What didn't change
+
+- Wire format is unchanged. Records published by 14.x are readable by
+  15.0.0 and vice versa. No re-publish required.
+- Public APIs that were already Variable-shaped (encode, decode) keep
+  their signatures. Calls that took addresses (copyFrom, asRefs) accept
+  the same addresses with the new behavior.
+
+---
+
 ## 14.1.0 — `streamo identity new <name>` verb (substrate-ergonomics)
 
 The deploy ritual is now **two unix-shaped commands**:

@@ -176,37 +176,38 @@ export class Streamo extends CodecRegistry {
         for (let i = path.length - 1; i >= 0; i--) obj = { [path[i]]: obj }
         encodedValue = obj
       }
-      // Capture super.append's return: it's the outermost subcode's address
-      // whether newly appended OR content-deduplicated to an existing chunk.
-      // Falling back to byteLength-1 would be wrong when dedup happens — the
-      // new "top" is at the existing address, not at the unchanged tail.
-      newAddress = super.append(this.encode(encodedValue))
+      // encode returns a Variable; bypass Streamo.append so 'length' is
+      // not fired — changedPaths will emit the right path-level mutations.
+      const variable = this.encode(encodedValue)
+      const bytes = variable.isInline ? variable.bytes : variable.resolve(this)
+      newAddress = this.addressOf(bytes) ?? super.append(bytes)
     } else {
-      // Path update: navigate via _asRefsForWrite to avoid decoding untouched
-      // subtrees, then rebuild only the changed path bottom-up, reusing sibling
-      // addresses. (The public asRefs is mutation-impossible; the internal
-      // _asRefsForWrite allows materializing inline children, which is
-      // appropriate here because we're inside a write op.)
+      // Path update: navigate via asRefs(materialize=true) to avoid decoding
+      // untouched subtrees, then rebuild the changed path bottom-up, reusing
+      // sibling addresses.
       const levels = []
       let addr = baseAddress
       for (let i = 0; i < path.length - 1; i++) {
-        const refs = this._asRefsForWrite(addr)
+        const refs = this.asRefs(addr, true)
         levels.push({ refs, key: path[i] })
         addr = Array.isArray(refs) ? refs[+path[i]] : refs[path[i]]
       }
-      levels.push({ refs: this._asRefsForWrite(addr), key: path[path.length - 1] })
+      levels.push({ refs: this.asRefs(addr, true), key: path[path.length - 1] })
 
-      // Encode the new leaf value
-      const leafCode = this.encode(value)
-      let childAddr = this.addressOf(leafCode) ?? super.append(leafCode)
+      // Encode the new leaf value — bypass Streamo.append so 'length'
+      // is not fired (changedPaths handles path-level mutations).
+      const leafV = this.encode(value)
+      const leafBytes = leafV.isInline ? leafV.bytes : leafV.resolve(this)
+      let childAddr = this.addressOf(leafBytes) ?? super.append(leafBytes)
 
       // Rebuild from leaf to root, reusing unchanged siblings by address
       for (let i = levels.length - 1; i >= 0; i--) {
         const { refs, key } = levels[i]
         const newRefs = Array.isArray(refs) ? [...refs] : { ...refs }
         newRefs[Array.isArray(refs) ? +key : key] = childAddr
-        const code = this.encode(newRefs, true)
-        childAddr = this.addressOf(code) ?? super.append(code)
+        const rebuiltV = this.encode(newRefs, true)
+        const rebuiltBytes = rebuiltV.isInline ? rebuiltV.bytes : rebuiltV.resolve(this)
+        childAddr = this.addressOf(rebuiltBytes) ?? super.append(rebuiltBytes)
       }
       // After the walk-up, childAddr is the address of the new root —
       // possibly an existing address if everything deduplicated.
@@ -260,18 +261,19 @@ export class Streamo extends CodecRegistry {
     const levels = []
     let addr = baseAddress
     for (let i = 0; i < path.length - 1; i++) {
-      const refs = this._asRefsForWrite(addr)
+      const refs = this.asRefs(addr, true)
       levels.push({ refs, key: path[i] })
       addr = Array.isArray(refs) ? refs[+path[i]] : refs[path[i]]
     }
-    levels.push({ refs: this._asRefsForWrite(addr), key: path[path.length - 1] })
+    levels.push({ refs: this.asRefs(addr, true), key: path[path.length - 1] })
 
     for (let i = levels.length - 1; i >= 0; i--) {
       const { refs, key } = levels[i]
       const newRefs = Array.isArray(refs) ? [...refs] : { ...refs }
       newRefs[Array.isArray(refs) ? +key : key] = childAddr
-      const code = this.encode(newRefs, true)
-      childAddr = this.addressOf(code) ?? super.append(code)
+      const rebuiltV = this.encode(newRefs, true)
+      const rebuiltBytes = rebuiltV.isInline ? rebuiltV.bytes : rebuiltV.resolve(this)
+      childAddr = this.addressOf(rebuiltBytes) ?? super.append(rebuiltBytes)
     }
 
     // childAddr is the address of the new root — possibly an existing

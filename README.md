@@ -63,23 +63,28 @@ This is the shape that makes *"no server holds authority"* concrete: the records
 
 ### records compose by mounting other records
 
-A record's value can carry a `mounts` key — a flat map from URL path-prefixes to other records by pubkey:
+A record's value IS a files map — filenames at the top level. Two filenames are special: `streamo.json` holds metadata (title, members, etc.); `mounts.json` holds a routing table — a flat map from URL path-prefixes to other records by pubkey:
 
 ```js
+// value of a record that serves its own files and mounts the library
 {
-  files: { "main.js": "…", "index.html": "…" },
-  mounts: {
-    "streamo/": { key: "<library-key>" },             // latest of that record
-    "lib/v1/":  { key: "<key>", dataAddress: 12345 }  // pinned to a commit
+  "main.js":      "…",
+  "index.html":   "…",
+  "streamo.json": { title: "my site" },
+  "mounts.json":  {
+    mounts: {
+      "streamo/": { key: "<library-key>" },             // latest of that record
+      "lib/v1/":  { key: "<key>", dataAddress: 12345 }  // pinned to a commit
+    }
   }
 }
 ```
 
-When the relay resolves a URL inside this record, it walks `files` first, then `mounts` (longest-prefix wins), recursing into the mounted records with per-request cycle detection by pubkey. `fileSync` mirrors the same composed tree onto disk — your own files round-trip to commits; mounted records' files materialize read-only at their declared prefix paths so the editor resolves imports against the same hierarchy the URL serves.
+When the relay resolves a URL inside this record, it walks the value's top-level files first, then `mounts.json`'s `mounts` (longest-prefix wins), recursing into the mounted records with per-request cycle detection by pubkey. `fileSync` mirrors the value onto disk — your own files round-trip to signed commits; mounted records' files materialize read-only at their declared prefix paths so the editor resolves imports against the same hierarchy the URL serves.
 
 The model is git submodules' spirit (content-addressed reference at a path) plus import maps' shape (declarative key→target). Forking a record with mounts gives you a record that doesn't have to know where its dependencies physically sit; the mounted records' chains stay independent.
 
-For local editing, fileSync's `recordFile: true` option syncs a `streamo.json` file at your folder root ↔ everything in the record's value *except* `files`. So your `mounts`, `title`, etc. are editable in your editor as plain JSON; the file tree still owns `files`. Bidirectional, with JSON parse errors tolerated mid-edit. Saved as the *"edit your record's non-files data the same way you'd edit any other JSON file"* affordance.
+`streamo.json` and `mounts.json` are regular files in the value — fileSync keeps them bidirectional on disk like any other file. Edit `mounts.json` in your editor as plain JSON, save, and the next signed commit lands on the chain.
 
 `scripts/demo-mounts.js` shows the whole pipeline end-to-end on your disk.
 
@@ -135,7 +140,7 @@ streamo --env-file .env
 | `STREAMO_PASSWORD` | `--password` | signing password |
 | `STREAMO_DATA_DIR` | `--data-dir` | archive directory (default `.streamo`) |
 | `STREAMO_FILES` | `--files` | mirror local files |
-| `STREAMO_RECORD_FILE` | `--record-file` | sync `streamo.json` (mounts + metadata) alongside files |
+| `STREAMO_RECORD_FILE` | `--record-file` | name of the value's metadata file (default `streamo.json`); set `false` to disable |
 | `STREAMO_MERGE_FROM` | `--merge-from` | on first run only (empty repo), fork from this URL or host |
 | `STREAMO_MERGE_FROM_KEY` | `--merge-from-key` | only incorporate this sub-key from the merge source (e.g. `files`) |
 | `STREAMO_WEB` | `--web` | HTTP + WebSocket server port |
@@ -145,9 +150,10 @@ streamo --env-file .env
 
 ### serving a site from a repo
 
-A streamo record's value carries files under `value.files`, leaving room
-for sibling metadata (`mounts`, `members`, `title`, …) alongside. With
-`--web` and `--files`, the `value.files` map is served live over HTTP:
+A streamo record's value IS a files map — filenames at the top level,
+with two special filenames carrying metadata: `streamo.json` (title,
+members, etc.) and `mounts.json` (the routing table). With `--web` and
+`--files`, the value is served live over HTTP:
 
 ```bash
 streamo \
@@ -162,10 +168,10 @@ next request. The streamo's signed commit log IS your site's history.
 ETags are strong, derived from the content address — browsers cache
 forever and re-fetch only when bytes change.
 
-A `streamo.json` alongside your files holds the record's metadata
-(`mounts`, `title`, etc.) — siblings of `value.files` on the chain.
-fileSync keeps it bidirectional: edit `mounts` in your editor as plain
-JSON, and the next save commits it.
+`streamo.json` and `mounts.json` are regular files in the value, mirrored
+to disk by fileSync the same as any other file. Edit `mounts.json` in
+your editor as plain JSON to compose other records into your site; the
+next save commits it.
 
 HTML responses get an importmap injected that maps `@dtudury/streamo`
 and `@dtudury/streamo/*` to the relay's `/streamo/` path. Your pages
@@ -185,7 +191,6 @@ npx @dtudury/streamo \
   --name homepage \
   --username alice \
   --merge-from streamo.dev \
-  --merge-from-key files \
   --files ./mysite \
   --web 8081
 ```
@@ -194,8 +199,8 @@ What happens on first run, in order:
 
 1. Derives your keypair from `--username` + your password
 2. Fetches `streamo.dev`'s home repo snapshot via HTTP
-3. Commits a pure-copy of `value.files` to your local repo,
-   `remoteParent` set
+3. Commits a pure-copy of the value (the files map) to your local
+   repo, `remoteParent` set
 4. `fileSync` writes the merged files to `./mysite/` (creates it
    if missing)
 5. Serves your fork at `http://localhost:8081/`
@@ -203,8 +208,9 @@ What happens on first run, in order:
 Subsequent runs skip the merge (the repo already has commits) —
 your edits to `./mysite/` are the authoritative state, syncing as
 signed commits the same way any other streamo content does.
-`--merge-from-key` is optional; omit it to fork the whole upstream
-value, not just one slice.
+`--merge-from-key` is available if you want to fork only one
+top-level file (e.g. `--merge-from-key streamo.json`) instead of the
+whole value.
 
 ## javascript api
 
@@ -388,12 +394,12 @@ and repo explorer are all served by the same process on port 8080. The
 in its own repo and auto-accepts anyone who announces to it. Its public
 key is the room address. No special authority, no hidden state.
 
-The homepage you land on is **served from the relay's own home repo**
-(`files` key). `public/homepage/` is mirrored to/from that key by
-`fileSync` — edit a file there and your change becomes a signed
-commit; the next HTTP request serves the new bytes. The same streamo
-multiplexes four concerns on one stream: `members` (chat), `entries`
-(journal), `journalists` (entry sources), and `files` (the homepage).
+The homepage you land on is **served from the relay's own home repo**.
+`public/homepage/` is mirrored to/from the value by `fileSync` — edit a
+file there and your change becomes a signed commit; the next HTTP
+request serves the new bytes. The same record also holds the chat-room's
+members and the journal's entries inside `streamo.json` — one signed
+chain, multiple concerns.
 
 Useful URLs once it's running:
 

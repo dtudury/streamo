@@ -19,11 +19,11 @@ in streamo.
 The Engineer's handbook is a streamo Record — versioned, signed,
 network-addressable, refined by each major Engineer instance.
 
-**Pubkey:** `<TBD — publish via the handbook arc, then fill in>`
+**Pubkey:** `030188b76d5a6c4fe2c77687f187e37942448bb3684cc81bbc776ffdbc8aab74c7`
 
-Until the Record is published, the bootstrap falls back to the local
-memory directory at `~/.claude/projects/-Users-davidtudury-Documents-repos-streamo/memory/`
-(also loaded automatically by the SessionStart hook).
+**Browse via HTTP:** `https://streamo.dev/streams/030188b76d5a6c4fe2c77687f187e37942448bb3684cc81bbc776ffdbc8aab74c7/<path>`
+
+(The local `~/.claude/projects/-Users-davidtudury-Documents-repos-streamo/memory/` directory is also loaded by the SessionStart hook as the warm fallback.)
 
 ## How to read from streamo
 

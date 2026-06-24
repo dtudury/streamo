@@ -15,7 +15,6 @@ import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
 import { identity } from '../public/streamo/identity.js'
 import { dispatch } from '../public/streamo/dispatch.js'
-import { context } from '../public/streamo/contextTurner.js'
 import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
@@ -140,10 +139,6 @@ program
   .addOption(
     new Option('--eval <expr>', 'one-shot: evaluate <expr> with streamo/signer/registry/recaller/record in scope, print result to stdout, exit')
       .env('STREAMO_EVAL')
-  )
-  .addOption(
-    new Option('--chat <message>', 'one-shot: open a context Record (--home-key) and chat with it; sends <message>, prints assistant response to stdout. Requires ANTHROPIC_API_KEY env var.')
-      .env('STREAMO_CHAT')
   )
   .addOption(
     new Option('--interactive', 'start a REPL with streamo, signer, and helpers as globals')
@@ -617,12 +612,12 @@ if (options.eval) {
 
     const AsyncFunction = (async () => {}).constructor
     const fn = new AsyncFunction(
-      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity', 'dispatch', 'context',
+      'streamo', 'signer', 'registry', 'recaller', 'record', 'identity', 'dispatch',
       `return (${options.eval})`
     )
     const result = await fn(
       server.streamo, server.signer, server.registry,
-      server.registry.recaller, server.streamo, identity, dispatch, context
+      server.registry.recaller, server.streamo, identity, dispatch
     )
     if (typeof result === 'string') process.stdout.write(result)
     else if (result instanceof Uint8Array) process.stdout.write(result)
@@ -661,8 +656,7 @@ if (options._dispatch) {
       registry: server.registry,
       recaller: server.registry.recaller,
       record:  server.streamo,
-      identity,
-      context
+      identity
     }
     const { objName, methodName, args } = options._dispatch
     const result = await dispatch(scope, objName, methodName, args)
@@ -672,48 +666,6 @@ if (options._dispatch) {
     process.exit(0)
   } catch (e) {
     process.stderr.write(`streamo: ${e.message}\n`)
-    process.exit(1)
-  }
-}
-
-if (options.chat) {
-  const userMessage = options.chat
-  const recaller = server.registry.recaller
-  const record = server.streamo
-  const timeoutMs = 30000
-
-  try {
-    await new Promise((resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error('timed out waiting for record to materialize')),
-        timeoutMs
-      )
-      recaller.watch('chat-wait', () => {
-        if (record.lastCommit) {
-          clearTimeout(timer)
-          resolve()
-        }
-      })
-    })
-
-    const existingMessages = record.get('messages') ?? []
-    const next = [...existingMessages, { role: 'user', content: userMessage }]
-
-    const { default: Anthropic } = await import('@anthropic-ai/sdk')
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    const response = await client.messages.create({
-      model: 'claude-opus-4-7',
-      max_tokens: 4096,
-      messages: next
-    })
-
-    for (const block of response.content) {
-      if (block.type === 'text') process.stdout.write(block.text)
-    }
-    process.stdout.write('\n')
-    process.exit(0)
-  } catch (e) {
-    process.stderr.write(`--chat: ${e.message}\n`)
     process.exit(1)
   }
 }
@@ -826,7 +778,7 @@ if (options.interactive) {
     // class
     StreamoRecord, StreamoRecordRegistry,
     // substrate verbs
-    identity, dispatch, context,
+    identity, dispatch,
   })
 
   console.log(`\x1b[36m
@@ -843,9 +795,7 @@ if (options.interactive) {
 
   ── substrate verbs ──
   identity.new(name)               create a fresh signing identity
-  dispatch(scope, obj, m?, args?)  safe named-method dispatch (REPL/config/chat)
-  context.turn(record, q, opts?)   ask a past-instance a question via Anthropic API
-  context.history() / context.reset()   inspect / clear consultation history\x1b[0m`)
+  dispatch(scope, obj, m?, args?)  safe named-method dispatch (REPL/config)\x1b[0m`)
 
   const replServer = startRepl({ breakEvalOnSigint: true })
   replServer.setupHistory('.node_repl_history', err => {

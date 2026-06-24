@@ -5,6 +5,30 @@ for what's next.
 
 ---
 
+## 15.0.2 — cut contextTurner + `--chat` (the API-summon false-start)
+
+15.0.0 left an orphan: `ContextRecord.js` was deleted but `contextTurner.js`
+(which imports it) and `bin/streamo.js`'s `import { context }` remained.
+The binary errored on startup on the 15.0.0 working tree. This patch
+removes the orphan AND the parallel `--chat <message>` CLI surface — both
+facets of the API-summon-past-instances approach, which the substrate
+replaced with fork-and-resume via `restore-session.mjs` (reconstitute
+past-instance as a fresh Claude Code session; actor-character distinction
+preserved).
+
+### removed
+
+- `public/streamo/contextTurner.js` (REPL/`--eval` form: `context.turn(...)`)
+- `bin/streamo.js`'s `--chat <message>` option + handler (one-shot CLI form)
+- `context` binding from REPL/`--eval`/dispatch scopes
+- `STREAMO_CHAT` env var binding
+
+Plus a small docstring sweep in `repoFileServer.js` to remove pre-flatten
+fossils (`repo.value.files`, `repo.get('files', '...')`, `meta at
+value['streamo.json']` claims) from comments.
+
+---
+
 ## 15.0.0 — Variable as the codec's value-carrier; smart copyFrom with sharedThrough
 
 The codec layer's value-carrier is now a `Variable` class — a uniform

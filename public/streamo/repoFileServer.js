@@ -5,9 +5,10 @@
  * flat { relPath: value } map and commits it to a StreamoRecord, this middleware
  * reads that same shape back out and responds to HTTP requests.
  *
- * StreamoRecord shape is `{ files: { ...flatMap } }` — a `files` key inside the
- * value, leaving room for other metadata (`mounts`, `title`, `members`,
- * etc.) alongside it.
+ * StreamoRecord values use the flat-shape convention: filenames are
+ * top-level keys in the value (e.g. `value['index.html']`); the mount
+ * table lives in the sibling file `value['mounts.json']` under a
+ * `mounts` field. Other top-level keys are app-defined.
  *
  * HTML responses optionally get an importmap injected that resolves
  * `@dtudury/streamo` and `@dtudury/streamo/*` to URLs the host can serve
@@ -21,11 +22,11 @@
  */
 import { extname } from 'path'
 
-// Flat-shape convention (2026-06-04): value IS the files map. Filenames are
-// top-level keys; mounts at `value['mounts.json'].mounts`; meta at
-// `value['streamo.json']`. Records still in nested 9.0.0 shape
-// (value.files['<path>']) or 8.x legacy (value.mounts) are not read by this
-// reader — they need re-publishing to be visible. See
+// Flat-shape convention (2026-06-04): value IS the files map. Filenames
+// are top-level keys; the mount table lives at `value['mounts.json'].mounts`.
+// Other top-level keys are app-defined. Records still in nested 9.0.0
+// shape (value.files['<path>']) or 8.x legacy (value.mounts) are not read
+// by this reader — they need re-publishing to be visible. See
 // [[the-flatten-arc-2026-06-04]] in memory/notes/.
 
 const MIME = {
@@ -71,7 +72,8 @@ function normalize (urlPath) {
 }
 
 /**
- * Read the files-map out of a StreamoRecord — `repo.value.files`.
+ * Read the (flat) files-map out of a StreamoRecord — the whole value
+ * IS the map, with filenames as top-level keys.
  * @param {import('./StreamoRecord.js').StreamoRecord} repo
  */
 function readFilesMap (repo) {
@@ -365,17 +367,17 @@ export function serveFromRepo (repo, options = {}) {
  *
  *   app.use('/streams/:keyhex', serveFromRegistry(registry))
  *
- * Then `/streams/<66-hex>/index.html` serves `repo.get('files', 'index.html')`,
- * `/streams/<66-hex>/foo.css` serves `repo.get('files', 'foo.css')`, etc.
+ * Then `/streams/<66-hex>/index.html` serves `repo.get('index.html')`,
+ * `/streams/<66-hex>/foo.css` serves `repo.get('foo.css')`, etc.
  * Missing repos and missing files fall through to `next()` — so sibling
  * routes like `/streams/:key/raw` (raw bytes) and `/streams/:key` (JSON view)
  * remain reachable when the requested file isn't in the repo.
  *
  * Behavior at the bare path (`'/'` — i.e. `/streams/<keyhex>` and
- * `/streams/<keyhex>/`) is HOMEPAGE-style: serves `files/index.html` if the
+ * `/streams/<keyhex>/`) is HOMEPAGE-style: serves `index.html` if the
  * repo has it, else falls through to the legacy JSON view. So repos that
- * opt into having a homepage (by putting an `index.html` under their
- * `files` key) get one for free; repos that don't keep their JSON-view
+ * opt into having a homepage (by putting `index.html` at the value's
+ * top level) get one for free; repos that don't keep their JSON-view
  * default. The path `'/raw'` is skipped unconditionally so the raw-bytes
  * endpoint wins — a real-but-rare collision for repos that have a file
  * literally named `raw`.

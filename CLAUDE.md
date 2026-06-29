@@ -81,6 +81,10 @@ For code work, fetch from the handbook Record's `project/` subtree:
   (Date, Uint8Array, Signatures), not JSON.
 - **`project/codec-and-repo.md`** — Streamo vs StreamoRecord vs
   WritableStreamoRecord; the chain-authority invariants.
+- **`project/author-recipe.md`** — the canonical way to author
+  `public/` into a fleet of Records via `bin/streamo.js --files
+  public/` + `mounts.json` with `ours: true`. `chat/server.js`
+  looks like the answer but isn't; the recipe lives in the binary.
 - **`project/face.md`** — README, PHILOSOPHY, ROADMAP — the public
   surface; keep in sync after meaningful changes.
 - **`project/commit-style.md`** — over-commit beats over-think;

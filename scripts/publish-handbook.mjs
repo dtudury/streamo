@@ -109,9 +109,33 @@ const value = {
   }
 }
 
-await repo.update(c => value, {
-  message: `publish handbook @ ${streamoVersion.slice(0, 8)} (${Object.keys(files).length} files, ${totalBytes.toLocaleString()} bytes)`
-})
+// Optional remoteParent citation — when set, this commit becomes a merge
+// commit that formally cites the given (host, repo, dataAddress) as an
+// ancestor. Used to preserve lineage across identity-credential rotations
+// (the new handbook Record cites the old one it succeeds).
+const rpRepo    = process.env.STREAMO_HANDBOOK_REMOTE_PARENT_REPO
+const rpAddress = process.env.STREAMO_HANDBOOK_REMOTE_PARENT_DATA_ADDRESS
+const rpHost    = process.env.STREAMO_HANDBOOK_REMOTE_PARENT_HOST ?? 'streamo.dev'
+const remoteParent = (rpRepo && rpAddress)
+  ? { host: rpHost, repo: rpRepo, dataAddress: +rpAddress }
+  : undefined
+
+const message = `publish handbook @ ${streamoVersion.slice(0, 8)} (${Object.keys(files).length} files, ${totalBytes.toLocaleString()} bytes)${
+  remoteParent ? ` [successor to ${remoteParent.repo.slice(0, 12)}…@${remoteParent.dataAddress}]` : ''
+}`
+
+if (remoteParent) {
+  // Low-level commit path — repo.update() doesn't propagate remoteParent
+  // through to repo.commit(). Same waits as update, just with a formal
+  // ancestor citation on the resulting commit.
+  const working = repo.checkout()
+  working.set(value)
+  await repo.commit(working, message, { remoteParent })
+  await repo.recaller.when(() => repo.signedLength === repo.byteLength)
+  await repo._awaitChainHash(repo.committedChainHash)
+} else {
+  await repo.update(c => value, { message })
+}
 console.log(`[publish-handbook] set ${Object.keys(files).length} files / ${totalBytes.toLocaleString()} bytes`)
 
 if (repo.pushRejected) {

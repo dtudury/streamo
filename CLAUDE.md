@@ -19,9 +19,9 @@ in streamo.
 The Engineer's handbook is a streamo Record — versioned, signed,
 network-addressable, refined by each major Engineer instance.
 
-**Pubkey:** `030188b76d5a6c4fe2c77687f187e37942448bb3684cc81bbc776ffdbc8aab74c7`
+**Pubkey:** `025d6af4dcdd16a923b02de2a8363163e27bfd486bd37ea6efd83a9694944ecc31`
 
-**Browse via HTTP:** `https://streamo.dev/streams/030188b76d5a6c4fe2c77687f187e37942448bb3684cc81bbc776ffdbc8aab74c7/<path>`
+**Browse via HTTP:** `https://streamo.dev/streams/025d6af4dcdd16a923b02de2a8363163e27bfd486bd37ea6efd83a9694944ecc31/<path>`
 
 (The local `~/.claude/projects/-Users-davidtudury-Documents-repos-streamo/memory/` directory is also loaded by the SessionStart hook as the warm fallback.)
 

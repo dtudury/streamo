@@ -145,8 +145,12 @@ program
       .env('STREAMO_INTERACTIVE')
   )
   .addOption(
-    new Option('--repl-socket <path>', 'expose the REPL over a Unix socket at <path>; connect with `nc -U <path>`. Multiple concurrent connections OK; disconnecting doesn\'t kill the process. Complements or replaces --interactive.')
+    new Option('--repl-socket <path>', 'expose the REPL over a Unix socket at <path>; connect with `nc -U <path>` or `streamo --repl-connect <path>`. Multiple concurrent connections OK; disconnecting doesn\'t kill the process. Complements or replaces --interactive.')
       .env('STREAMO_REPL_SOCKET')
+  )
+  .addOption(
+    new Option('--repl-connect <path>', 'connect to a Unix-socket REPL at <path> (typically served by another streamo process with --repl-socket). Forwards raw keystrokes so tab-completion, history, and line-editing work. Ctrl-D or `.exit` disconnects; Ctrl-C interrupts an eval.')
+      .env('STREAMO_REPL_CONNECT')
   )
   .addOption(
     new Option('--key-iterations <number>', 'PBKDF2 iterations for key derivation (lower = faster startup, less secure)')
@@ -163,6 +167,28 @@ program
   .parse()
 
 const options = program.opts()
+
+// --repl-connect: pure early-exit client. No server, no signer, no config —
+// just open the socket, raw-mode stdin so keystrokes forward one-at-a-time
+// (so the remote REPL's tab-completion / history / line-editing all work),
+// pipe stdout back. Ctrl-D or `.exit` in the REPL closes the socket; Ctrl-C
+// (0x03) forwards to the server so it can interrupt an in-flight eval
+// rather than dropping our connection.
+if (options.replConnect) {
+  const socketPath = options.replConnect
+  const { createConnection } = await import('node:net')
+  const socket = createConnection(socketPath)
+  socket.on('error', (e) => { process.stderr.write(`--repl-connect: ${e.message}\n`); process.exit(1) })
+  socket.on('close', () => {
+    try { process.stdin.setRawMode?.(false) } catch {}
+    process.exit(0)
+  })
+  socket.pipe(process.stdout)
+  if (process.stdin.isTTY) process.stdin.setRawMode(true)
+  process.stdin.pipe(socket)
+  // Block forever — never fall through to server setup.
+  await new Promise(() => {})
+}
 
 // Positional dispatch: streamo <object> [<method> [<args>...]] becomes an
 // --eval expression. Pure reflection of the JS API into bash positional

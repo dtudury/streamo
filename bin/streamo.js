@@ -848,12 +848,24 @@ if (options.interactive || options.replSocket) {
     const { unlinkSync } = await import('node:fs')
     try { unlinkSync(socketPath) } catch {}
     const socketServer = createServer(socket => {
+      // The REPL uses socket.columns/rows for cursor math (line wrap, preview
+      // redraw). Sockets don't have those — without defaults the cursor
+      // positioning drifts and the auto-eval preview corrupts the display
+      // (preview writes N cols ahead of the actual terminal width). Default
+      // to something sane; a proper fix would forward the client's actual
+      // size, but this eliminates the corruption for now.
+      socket.columns = 120
+      socket.rows = 40
       const r = startRepl({
         prompt: '> ',
         input: socket,
         output: socket,
         terminal: true,
-        breakEvalOnSigint: true
+        breakEvalOnSigint: true,
+        // Disable the as-you-type eval preview — it relies on cursor
+        // save/restore + width-accurate redraw, both fragile over a socket
+        // that can't carry SIGWINCH. Explicit-Tab completion still works.
+        preview: false
       })
       r.on('exit', () => socket.end())
       socket.on('error', () => { try { r.close?.() } catch {} })

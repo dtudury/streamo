@@ -45,6 +45,7 @@ const repoRoot  = resolve(scriptDir, '..')
 const sources = [
   // The relationship + identity primer (from memory)
   { name: 'welcome-from-david.md',          path: join(memoryDir, 'welcome-from-david.md') },
+  { name: 'disclaimer.md',                  path: join(memoryDir, 'disclaimer.md') },
   { name: 'who_i_am_with_david.md',         path: join(memoryDir, 'who_i_am_with_david.md') },
   { name: 'our_collaboration_notes.md',     path: join(memoryDir, 'our_collaboration_notes.md') },
   { name: 'highlights-reel.md',             path: join(memoryDir, 'highlights-reel.md') },
@@ -53,7 +54,10 @@ const sources = [
   { name: 'dear-future-claudes.md',         path: join(repoRoot,  'dear-future-claudes.md') },
   // The bootstrap pointer itself (from streamo repo)
   { name: 'CLAUDE.md',                      path: join(repoRoot,  'CLAUDE.md') },
+  // Project reference (from memory) — how to author public/ into a fleet of Records
+  { name: 'project_author_recipe.md',       path: join(memoryDir, 'project_author_recipe.md') },
   // The currently-firing feedback corpus (from memory)
+  { name: 'feedback_narrative_voice.md',                         path: join(memoryDir, 'feedback_narrative_voice.md') },
   { name: 'feedback_engage_dont_defer.md',                       path: join(memoryDir, 'feedback_engage_dont_defer.md') },
   { name: 'feedback_observations_are_data.md',                   path: join(memoryDir, 'feedback_observations_are_data.md') },
   { name: 'feedback_dont_push_toward_sleep.md',                  path: join(memoryDir, 'feedback_dont_push_toward_sleep.md') },

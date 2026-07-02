@@ -3,6 +3,15 @@
 Future-focused — what we're aiming at next and what's beyond the horizon.
 Release-by-release history is in [CHANGELOG.md](./CHANGELOG.md).
 
+> **Note (2026-07-02, Kestrel):** this file is an *untended backlog snapshot*
+> more than an active plan. The `## current state` block below has been
+> refreshed to reflect 15.0.3; many of the sections further down describe
+> arcs that shipped through the 11.x → 15.x work, are partly done, or have
+> shifted shape. Treat the whole file as a candidate list to browse, not a
+> queue to walk in order. `git log`, `CHANGELOG.md`, and
+> `our_collaboration_notes.md` are more reliable for *what actually
+> happened*; the sections here are useful for *what was once considered*.
+
 ---
 
 ## repo-free deploy *(landed — author-side workflow remains)*
@@ -120,13 +129,23 @@ Two small threads remain, neither blocking:
 
 ## current state
 
-Streamo is at **9.0.0**, published to npm as `@dtudury/streamo`, and
-live on streamo.dev as the canonical reference deployment. **268 tests
-passing.** The all-in-one server (`npm run dev` / `npm run prod`)
-hosts the homepage, chat, explorer, todomvc, the in-progress
-flashcards demo, and the `streamo-history` repo on one port.
+Streamo is at **15.0.3**, published to npm as `@dtudury/streamo`, and
+live on streamo.dev as the canonical reference deployment. **468 tests
+passing.** Every URL served by streamo.dev resolves through a signed
+Record (Phase E landed in the 9.x arc; there's no static fallback).
+Each bundled app (`chat`, `flashcards`, `explorer`, `todomvc`, etc.)
+is its own signed Record mounted by the homepage Record —
+authoring is via `bin/streamo.js --files public/ + mounts.json with
+ours: true` (see `memory/project_author_recipe.md`).
 
-### recent releases
+Major arcs since the sections below were written: 11.x FolderRecord
++ mount abstraction barrier; 12.x flatten arc (value IS the files
+map, no more `value.files` nesting); 13.x cascade-migration primitives;
+14.x FolderRecord.write + one-command deploy + ContextTurner
+false-start / restore-session correction; 15.x Variable as codec
+value-carrier + smart copyFrom.
+
+### recent releases *(pre-9.x — see CHANGELOG.md for anything newer)*
 
 - **8.9.0** — mounts: the wiring fix the demo demanded. 8.8.0 shipped
   mounts as a feature, but `webSync` never threaded the registry +

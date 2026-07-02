@@ -145,6 +145,10 @@ program
       .env('STREAMO_INTERACTIVE')
   )
   .addOption(
+    new Option('--repl-socket <path>', 'expose the REPL over a Unix socket at <path>; connect with `nc -U <path>`. Multiple concurrent connections OK; disconnecting doesn\'t kill the process. Complements or replaces --interactive.')
+      .env('STREAMO_REPL_SOCKET')
+  )
+  .addOption(
     new Option('--key-iterations <number>', 'PBKDF2 iterations for key derivation (lower = faster startup, less secure)')
       .env('STREAMO_KEY_ITERATIONS')
       .default(100000)
@@ -757,7 +761,7 @@ if (options.outlet) {
 logInfo(`archive: ${options.dataDir === false ? 'ephemeral (memory only)' : `${options.dataDir}/${publicKeyHex}.bin`} (${streamo.byteLength} bytes loaded)`)
 logDebug(() => `options: ${JSON.stringify(options, null, 2)}`)
 
-if (options.interactive) {
+if (options.interactive || options.replSocket) {
   const get     = (...args) => streamo.get(...args)
   const set     = (...args) => streamo.set(...args)
   const merge   = (source, opts) => streamo.merge(source, opts)
@@ -797,9 +801,41 @@ if (options.interactive) {
   identity.new(name)               create a fresh signing identity
   dispatch(scope, obj, m?, args?)  safe named-method dispatch (REPL/config)\x1b[0m`)
 
-  const replServer = startRepl({ breakEvalOnSigint: true })
-  replServer.setupHistory('.node_repl_history', err => {
-    if (err) console.error(err)
-  })
-  replServer.on('exit', process.exit)
+  // --interactive: attach REPL to this process's stdin/stdout. Quitting
+  // the REPL kills the process (existing behavior).
+  if (options.interactive) {
+    const replServer = startRepl({ breakEvalOnSigint: true })
+    replServer.setupHistory('.node_repl_history', err => {
+      if (err) console.error(err)
+    })
+    replServer.on('exit', process.exit)
+  }
+
+  // --repl-socket: expose the REPL over a Unix socket. Multiple
+  // concurrent connections OK; each gets its own REPL instance sharing
+  // the same globalThis. Quitting a socket connection doesn't kill the
+  // process — you can connect, look around, disconnect, come back later.
+  // Connect: `nc -U <path>`. Exit: Ctrl-D or `.exit` in the REPL.
+  if (options.replSocket) {
+    const socketPath = options.replSocket
+    const { createServer } = await import('node:net')
+    const { unlinkSync } = await import('node:fs')
+    try { unlinkSync(socketPath) } catch {}
+    const socketServer = createServer(socket => {
+      const r = startRepl({
+        prompt: '> ',
+        input: socket,
+        output: socket,
+        terminal: true,
+        breakEvalOnSigint: true
+      })
+      r.on('exit', () => socket.end())
+      socket.on('error', () => { try { r.close?.() } catch {} })
+    })
+    socketServer.listen(socketPath, () => {
+      console.log(`\x1b[32mREPL socket listening at ${socketPath}\x1b[0m`)
+      console.log(`  connect: nc -U ${socketPath}`)
+    })
+    process.on('exit', () => { try { unlinkSync(socketPath) } catch {} })
+  }
 }

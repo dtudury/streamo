@@ -483,12 +483,9 @@ export class WritableStreamoRecord extends StreamoRecord {
       const current = this.get()
       const next = updateFn(current)
       if (message !== undefined || date !== undefined || remoteParent !== undefined) {
-        // Inline the whole-value set body so we can pass commit options
-        // (message / date / remoteParent) straight to commit() — set() reads
-        // this.defaultMessage at commit time and doesn't accept the others,
-        // which under concurrent updates would race and would drop the
-        // date/remoteParent silently. Same path-mutation bookkeeping as
-        // set's single-arg path.
+        // Inline checkout→set→commit because set() reads defaultMessage at
+        // commit time and doesn't accept date/remoteParent — under concurrent
+        // updates that would race and silently drop them.
         const prevDataAddress = this.lastCommit?.dataAddress
         const working = this.checkout()
         working.set(next)

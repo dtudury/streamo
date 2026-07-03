@@ -253,10 +253,7 @@ export class FolderRecord {
         }
       }
       if (!bestPrefix) {
-        // mountsOnly policy: only mounts.json is allowed in home; anything
-        // else with no mount to route into gets dropped. Enforces the
-        // lightweight-outermost shape (identity-as-namespace: the Record
-        // you log into holds only a mount table, no other content).
+        // mountsOnly: drop anything not routed and not the mount table itself.
         if (mountsOnly && path !== 'mounts.json') continue
         homeFiles[path] = value
         continue
@@ -309,9 +306,7 @@ export class FolderRecord {
         signer: this.signer,
         signerName: childName
       })
-      // mountsOnly is a per-layer policy (the OUTERMOST holds only its own
-      // mounts.json). It doesn't cascade — the shard's own writeMany treats
-      // its files normally (unless the caller sets mountsOnly for it too).
+      // mountsOnly is per-layer, not cascading — the child gets its files normally.
       await child.writeMany(files, { ...options, mountsOnly: false })
     }
   }

@@ -89,13 +89,10 @@ export class StreamoServer {
       if (typeof tier.init === 'function') await tier.init()
     }
 
-    // Writable for the primary + any key registered via `server.markWritable`.
-    // Subscribed peer keys stay slim (set() raises TypeError instead of
-    // silently no-op'ing on bytes the relay would reject). Callers author-
-    // ing to shard child Records (via FolderRecord.writeMany + ours:true
-    // mounts) must `server.markWritable(shardPubkey)` BEFORE the write —
-    // the writable-decision happens at first _materialize and is cached,
-    // so later marks don't retroactively promote a slim Record.
+    // Primary is Writable if we have a signer; anything else defaults to
+    // slim StreamoRecord. Extend the writable set via server.markWritable
+    // BEFORE first _materialize of the additional key — the decision is
+    // cached on the returned instance.
     const writableKeys = new Set([resolvedPublicKeyHex])
     const registry = new StreamoRecordRegistry({
       recaller,
@@ -120,16 +117,12 @@ export class StreamoServer {
   }
 
   /**
-   * Register a pubkey as writable, so the registry's factory returns a
-   * WritableStreamoRecord (with attachSigner) instead of a slim
-   * StreamoRecord the next time this key is materialized. Must be called
-   * BEFORE the key is first materialized — the class decision is cached
-   * at first factory call and later marks don't retroactively promote.
+   * Register a pubkey as writable — the next `registry._materialize(key)`
+   * returns a WritableStreamoRecord instead of a slim one. Must be called
+   * BEFORE first materialize; the class decision is cached per-instance.
    *
-   * Motivating use case: authoring into shard child Records via
-   * FolderRecord.writeMany + ours:true mounts. Precompute each shard's
-   * derived pubkey (via signer.keysFor(name + '/' + mountPrefix)) and
-   * markWritable each one before the first writeMany call.
+   * Typical use: pre-registering shard-child pubkeys derived via
+   * `signer.keysFor(name + '/' + mountPrefix)` before `FolderRecord.writeMany`.
    */
   markWritable (pubkeyHex) {
     if (!/^[0-9a-f]{66}$/.test(pubkeyHex)) {

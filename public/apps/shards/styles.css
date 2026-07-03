@@ -1,0 +1,71 @@
+/* shards — iteration 0
+   Deliberately spare. Each visual element earns its place by being read,
+   not by decorating. */
+
+* { box-sizing: border-box }
+
+body {
+  margin: 0;
+  font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: #1a1a1a;
+  background: #fafafa;
+  padding: 2rem;
+}
+
+main {
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin: 0 0 1.5rem;
+  letter-spacing: -0.01em;
+}
+
+.hint {
+  color: #666;
+  margin: 1rem 0;
+}
+
+.hint code {
+  background: #eee;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+
+.shape {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.4rem 1.25rem;
+  align-items: baseline;
+  padding: 1rem 1.25rem;
+  background: white;
+  border: 1px solid #e4e4e4;
+  border-radius: 6px;
+}
+
+.shape dt {
+  color: #666;
+  font-weight: normal;
+}
+
+.shape dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.shape dd code {
+  font-size: 0.9em;
+  color: #1a1a1a;
+}
+
+.status {
+  color: #666;
+  font-style: italic;
+}
+
+.pending {
+  color: #c97a00;
+}

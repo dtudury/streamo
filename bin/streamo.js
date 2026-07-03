@@ -63,7 +63,7 @@ program
       .preset('.')
   )
   .addOption(
-    new Option('--mounts-only', 'when authoring via --files, only sync `mounts.json` into this Record — nothing else. Realizes the lightweight-outermost identity-as-namespace shape: the Record you log into holds only a mount table pointing at shards; content lives in the shards (authored via separate --files invocations or seed scripts). Slow-write cadence for the outermost decouples identity-continuity from content velocity.')
+    new Option('--mounts-only', 'lightweight-outermost mode: only mounts.json lands in this Record. Shards populate separately (other --files runs, seed scripts, or FolderRecord.writeMany with mountsOnly).')
       .env('STREAMO_MOUNTS_ONLY')
   )
   .addOption(
@@ -172,12 +172,10 @@ program
 
 const options = program.opts()
 
-// --repl-connect: pure early-exit client. No server, no signer, no config —
-// just open the socket, raw-mode stdin so keystrokes forward one-at-a-time
-// (so the remote REPL's tab-completion / history / line-editing all work),
-// pipe stdout back. Ctrl-D or `.exit` in the REPL closes the socket; Ctrl-C
-// (0x03) forwards to the server so it can interrupt an in-flight eval
-// rather than dropping our connection.
+// Early-exit client: connect the socket, raw-mode stdin so single
+// keystrokes forward (tab-completion needs this), pipe stdout back.
+// Ctrl-C (0x03) is forwarded — that's how the server-side REPL sees
+// SIGINT to interrupt an eval.
 if (options.replConnect) {
   const socketPath = options.replConnect
   const { createConnection } = await import('node:net')
@@ -841,23 +839,15 @@ if (options.interactive || options.replSocket) {
     replServer.on('exit', process.exit)
   }
 
-  // --repl-socket: expose the REPL over a Unix socket. Multiple
-  // concurrent connections OK; each gets its own REPL instance sharing
-  // the same globalThis. Quitting a socket connection doesn't kill the
-  // process — you can connect, look around, disconnect, come back later.
-  // Connect: `nc -U <path>`. Exit: Ctrl-D or `.exit` in the REPL.
+  // Each connection gets its own REPL instance; they share globalThis.
   if (options.replSocket) {
     const socketPath = options.replSocket
     const { createServer } = await import('node:net')
     const { unlinkSync } = await import('node:fs')
     try { unlinkSync(socketPath) } catch {}
     const socketServer = createServer(socket => {
-      // The REPL uses socket.columns/rows for cursor math (line wrap, preview
-      // redraw). Sockets don't have those — without defaults the cursor
-      // positioning drifts and the auto-eval preview corrupts the display
-      // (preview writes N cols ahead of the actual terminal width). Default
-      // to something sane; a proper fix would forward the client's actual
-      // size, but this eliminates the corruption for now.
+      // Sockets have no columns/rows; set defaults so REPL cursor math
+      // has something to work with (a proper fix forwards client size).
       socket.columns = 120
       socket.rows = 40
       const r = startRepl({
@@ -866,9 +856,8 @@ if (options.interactive || options.replSocket) {
         output: socket,
         terminal: true,
         breakEvalOnSigint: true,
-        // Disable the as-you-type eval preview — it relies on cursor
-        // save/restore + width-accurate redraw, both fragile over a socket
-        // that can't carry SIGWINCH. Explicit-Tab completion still works.
+        // Auto-preview needs save/restore + accurate width; broken over
+        // sockets that can't carry SIGWINCH. Tab completion still works.
         preview: false
       })
       r.on('exit', () => socket.end())

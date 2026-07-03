@@ -326,11 +326,11 @@ function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes) {
   }
 }
 
-// `mountsOnly` variant: the outermost Record only holds a mounts.json —
-// nothing else lands in its value. Shards are authored separately (each
-// via its own fileSync / seed script), and this Record just points at
-// them. Realizes the lightweight-outermost identity-as-namespace shape
-// where password protects who-you-are without carrying content velocity.
+// mountsOnly at this layer: only mounts.json passes acceptsForCommit, so
+// filesToCommit is a single-entry map. writeMany still routes it to home;
+// shards aren't populated by this path (their files never enter
+// filesToCommit). To populate shards AND keep home minimal, drive from
+// FolderRecord.writeMany directly with mountsOnly:true (see seed-history).
 function buildMountsOnlyFilter (acceptsForDisk) {
   return rel => rel === 'mounts.json' && acceptsForDisk(rel)
 }

@@ -63,6 +63,10 @@ program
       .preset('.')
   )
   .addOption(
+    new Option('--mounts-only', 'when authoring via --files, only sync `mounts.json` into this Record — nothing else. Realizes the lightweight-outermost identity-as-namespace shape: the Record you log into holds only a mount table pointing at shards; content lives in the shards (authored via separate --files invocations or seed scripts). Slow-write cadence for the outermost decouples identity-continuity from content velocity.')
+      .env('STREAMO_MOUNTS_ONLY')
+  )
+  .addOption(
     new Option('--record-file [name]', 'sync a JSON file on disk (default: streamo.json) into the record\'s value MINUS the files key. Lets you author top-level metadata (title, etc.) as plain JSON. Mounts live in their own file (mounts.json in the files map). Auto-enabled when --files is set; use --no-record-file to disable.')
       .env('STREAMO_RECORD_FILE')
       .preset('streamo.json')
@@ -711,7 +715,7 @@ if (options.files) {
   const recordFile = options.recordFile !== undefined
     ? options.recordFile
     : 'streamo.json'
-  await server.files(folder, { recordFile, dataDir: options.dataDir })
+  await server.files(folder, { recordFile, dataDir: options.dataDir, mountsOnly: !!options.mountsOnly })
   const recordFileNote = recordFile
     ? ` (recordFile: ${recordFile === true ? 'streamo.json' : recordFile})`
     : ''

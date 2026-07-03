@@ -326,6 +326,15 @@ function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes) {
   }
 }
 
+// `mountsOnly` variant: the outermost Record only holds a mounts.json —
+// nothing else lands in its value. Shards are authored separately (each
+// via its own fileSync / seed script), and this Record just points at
+// them. Realizes the lightweight-outermost identity-as-namespace shape
+// where password protects who-you-are without carrying content velocity.
+function buildMountsOnlyFilter (acceptsForDisk) {
+  return rel => rel === 'mounts.json' && acceptsForDisk(rel)
+}
+
 const DEFAULT_RECORD_FILENAME = 'streamo.json'
 
 /**
@@ -385,7 +394,7 @@ function resolveRecordFileName (opt) {
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
-  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, signer = null, signerName = null } = options
+  const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, signer = null, signerName = null, mountsOnly = false } = options
   const recordFile = resolveRecordFileName(recordFileOpt)
   // Auto-sharding: when (signer, signerName, registry) are all present,
   // route writes through FolderRecord.writeMany. Files under ours:true
@@ -423,7 +432,9 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     if (!registry || !pubkeyHex) return []
     return Object.keys(readRepoMounts(repo))
   }
-  const acceptsForCommit = buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
+  const acceptsForCommit = mountsOnly
+    ? buildMountsOnlyFilter(acceptsForDisk)
+    : buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
 
   const getRepoFiles = () => readRepoFiles(repo)
   // Flat shape: the file map IS the value. A fresh Record gets the files

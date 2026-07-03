@@ -56,6 +56,15 @@ const limitIdx = args.indexOf('--limit')
 const limit = limitIdx !== -1 ? +args[limitIdx + 1] : Infinity
 if (limitIdx !== -1) args.splice(limitIdx, 2)
 
+// --mounts-only: passes through to FolderRecord.writeMany so the home
+// Record's value ends up holding ONLY the injected mounts.json —
+// non-shard-routed root files (LICENSE, README.md, package.json, etc.)
+// get DROPPED. Enforces the lightweight-outermost shape at the cost of
+// losing content that isn't under a --shard prefix. Use additional
+// --shard flags to route the content you want to preserve.
+const mountsOnly = args.includes('--mounts-only')
+if (mountsOnly) args.splice(args.indexOf('--mounts-only'), 1)
+
 // --shard <prefix> (repeatable): inject a synthetic top-level `mounts.json`
 // into each committed tree declaring the given prefix as an ours:true shard.
 // Files under the prefix route into a per-shard child Record (its own chain
@@ -230,7 +239,7 @@ for (let i = existing.length; i < gitCommits.length; i++) {
     }
     mountsSeen = true
   }
-  await folderLens.writeMany(tree, { replace: true, message: g.subject, date: g.date })
+  await folderLens.writeMany(tree, { replace: true, message: g.subject, date: g.date, mountsOnly })
   appended++
   if (appended % 25 === 0 || i === gitCommits.length - 1) {
     const elapsed = ((Date.now() - start) / 1000).toFixed(1)

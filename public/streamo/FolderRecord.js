@@ -233,7 +233,7 @@ export class FolderRecord {
    * @param {string} [options.message]  forwarded to repo.update
    */
   async writeMany (filesMap, options = {}) {
-    const { replace = false, message, date, remoteParent } = options
+    const { replace = false, message, date, remoteParent, mountsOnly = false } = options
     const updateOpts = {}
     if (message !== undefined) updateOpts.message = message
     if (date !== undefined) updateOpts.date = date
@@ -253,6 +253,11 @@ export class FolderRecord {
         }
       }
       if (!bestPrefix) {
+        // mountsOnly policy: only mounts.json is allowed in home; anything
+        // else with no mount to route into gets dropped. Enforces the
+        // lightweight-outermost shape (identity-as-namespace: the Record
+        // you log into holds only a mount table, no other content).
+        if (mountsOnly && path !== 'mounts.json') continue
         homeFiles[path] = value
         continue
       }
@@ -304,7 +309,10 @@ export class FolderRecord {
         signer: this.signer,
         signerName: childName
       })
-      await child.writeMany(files, options)
+      // mountsOnly is a per-layer policy (the OUTERMOST holds only its own
+      // mounts.json). It doesn't cascade — the shard's own writeMany treats
+      // its files normally (unless the caller sets mountsOnly for it too).
+      await child.writeMany(files, { ...options, mountsOnly: false })
     }
   }
 

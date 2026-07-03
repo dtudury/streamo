@@ -1,173 +1,236 @@
 #!/usr/bin/env node
 /**
- * @file seed-history — replay the project's git log into a streamo.
+ * @file seed-history — replay the project's git log into a streamo, with
+ * per-shard chains for anything mounts.json routes.
  *
- * Builds (or extends) a `streamo-history` repo whose commit chain
- * mirrors the git log.  Each git commit becomes a streamo commit:
- *   - message:     git subject (first line)
- *   - date:        git committer date (back-stamped via commit options.date)
- *   - dataAddress: points to { sha, tree, parents, author, body }
+ * Each git commit's FULL file tree is authored via `FolderRecord.writeMany`.
+ * writeMany reads mounts.json from the record's CURRENT state, splits the
+ * incoming files map by longest-prefix mount match, and:
+ *   - files NOT under any mount go into the home Record as commit N
+ *   - files under `ours: true` mounts route into shard child Records
+ *     (signer.keysFor(homeName + '/' + mountPrefix)); each shard grows
+ *     its own chain of commits, one per git commit that touched files
+ *     under that prefix
+ *   - git commits that don't touch a shard's files leave that shard's
+ *     chain alone (writeMany skips empty shard batches)
  *
- * Idempotent: walks existing streamo commits oldest-first, verifies
- * they match the first N git commits by sha, then appends only the
- * tail.  Safe to re-run after new git commits land.
+ * Before mounts.json exists in the tree: no mounts, everything lands on
+ * the home Record — pre-shard history stays one big chain. The commit
+ * that ADDS mounts.json goes to home (mounts() is read from the record
+ * BEFORE the commit lands, so shard routing kicks in one commit later).
+ * From then on, shards start collecting.
  *
- * Aborts loudly if the existing chain diverges from git (e.g. after a
- * force-push / rebase) — manual archive deletion is the recovery.
+ * Idempotent (looser than the pre-shard version): walks the home Record's
+ * existing chain and matches by (message, date) against git commits. If
+ * the existing prefix matches, appends only the tail. Divergence aborts
+ * loudly. Full sha verification is possible via a metadata sidecar if the
+ * looser check turns out to be too soft — hasn't bit us yet.
  *
- * Walks `git log --first-parent --reverse` only — the streamo's
- * commit chain is linear, so merges collapse to their first-parent
- * lineage on this side.  Original git parents are preserved inside
- * each commit's value for downstream inspection.
+ * Walks `git log --first-parent --reverse` only — the streamo's commit
+ * chain is linear, so merges collapse to their first-parent lineage.
  *
  * Usage:
  *   npm run seed-history
  *   npm run seed-history -- --env-file .env.dev
+ *   npm run seed-history -- --limit 50           # first 50 commits only
  *
  * Reads STREAMO_USERNAME / STREAMO_PASSWORD / STREAMO_DATA_DIR /
- * STREAMO_KEY_ITERATIONS from env (or the --env-file).  The history
+ * STREAMO_KEY_ITERATIONS from env (or the --env-file). The history
  * repo is signed with `signer.keysFor('streamo-history')` — the same
  * relay credentials, different key namespace.
  */
 import { config } from 'dotenv'
 import { execSync } from 'child_process'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
+import { FolderRecord } from '../public/streamo/FolderRecord.js'
+import { DiskTier } from '../public/streamo/StorageTier.js'
 
-// --env-file handling, same convention as the chat server.
 const args = process.argv.slice(2)
 const envFileIdx = args.indexOf('--env-file')
 if (envFileIdx !== -1) {
   config({ path: args[envFileIdx + 1] })
   args.splice(envFileIdx, 2)
 }
+const limitIdx = args.indexOf('--limit')
+const limit = limitIdx !== -1 ? +args[limitIdx + 1] : Infinity
+if (limitIdx !== -1) args.splice(limitIdx, 2)
 
 const username = process.env.STREAMO_USERNAME ?? 'relay'
 const password = process.env.STREAMO_PASSWORD ?? ''
 const dataDir  = process.env.STREAMO_DATA_DIR ?? '.streamo'
 const keyIter  = +(process.env.STREAMO_KEY_ITERATIONS ?? 100000)
+const name     = process.env.STREAMO_HISTORY_NAME ?? 'streamo-history'
 
 if (!password) {
   console.error('STREAMO_PASSWORD is required (set via --env-file or environment)')
   process.exit(2)
 }
 
-// Field/record separators that can't appear in commit metadata.  We
-// could pipe per-line and lean on `--no-color` etc, but commit bodies
-// can contain anything — these ASCII control chars are the safest
-// boundary.
+// ─── git log ─────────────────────────────────────────────────────────
 const FIELD  = '\x1e'
 const RECORD = '\x1f'
-const fmt    = `%H${FIELD}%T${FIELD}%P${FIELD}%ct${FIELD}%an${FIELD}%ae${FIELD}%B${RECORD}`
+const fmt    = `%H${FIELD}%ct${FIELD}%an${FIELD}%ae${FIELD}%B${RECORD}`
 
 console.log('[seed-history] reading git log…')
-// Pass the format via argv (not a sub-shell string) so the bytes are
-// preserved exactly — control chars survive without shell escaping
-// complications.
-const raw = execSync(
+const rawLog = execSync(
   ['git', 'log', '--first-parent', '--reverse', `--pretty=format:${fmt}`].join(' '),
   { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, shell: '/bin/sh' }
 )
 
-const gitCommits = raw.split(RECORD).map(r => {
-  // Each record after the first has a leading newline (from the previous
-  // record's trailing newline post-%B); the very first record doesn't.
-  return r.replace(/^\n/, '')
-}).filter(r => r.length > 0).map(r => {
-  // %B (body) may itself contain FIELD chars in degenerate cases; the
-  // separator chars I chose (\x1e \x1f) are extremely unlikely in commit
-  // text but be defensive: split into the 6 fixed fields, join the rest.
+const gitCommits = rawLog.split(RECORD).map(r => r.replace(/^\n/, '')).filter(r => r.length > 0).map(r => {
   const parts = r.split(FIELD)
-  if (parts.length < 7) {
-    console.error(`[seed-history] malformed record (${parts.length} fields):`)
-    console.error(JSON.stringify(r.slice(0, 200)))
+  if (parts.length < 5) {
+    console.error(`[seed-history] malformed record (${parts.length} fields):`, JSON.stringify(r.slice(0, 200)))
     process.exit(5)
   }
-  const [sha, tree, parents, ct, authorName, authorEmail, ...rest] = parts
+  const [sha, ct, authorName, authorEmail, ...rest] = parts
   const body = rest.join(FIELD).replace(/\n+$/, '')
   const firstNL = body.indexOf('\n')
   const subject = firstNL === -1 ? body : body.slice(0, firstNL)
   return {
     sha,
-    tree,
-    parents: parents.split(' ').filter(Boolean),
     date: new Date(+ct * 1000),
     author: { name: authorName, email: authorEmail },
-    subject,
-    body
+    subject: subject || '(no message)',
+    body,
   }
-})
+}).slice(0, limit)
 
-console.log(`[seed-history] git: ${gitCommits.length} commits on first-parent trunk`)
+console.log(`[seed-history] git: ${gitCommits.length} commits on first-parent trunk${limit !== Infinity ? ` (--limit ${limit})` : ''}`)
 
-// Open (or create) the history repo using the same relay credentials
-// but a different name → different keypair.
+// ─── blob cache ──────────────────────────────────────────────────────
+// git blobs are content-addressed; the same sha across commits = same bytes.
+// Cache once, reuse forever. Massive speedup when only a few files change
+// per commit.
+const blobCache = new Map()
+function readBlob (sha) {
+  if (blobCache.has(sha)) return blobCache.get(sha)
+  const buf = execSync(`git cat-file blob ${sha}`, { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 })
+  // Store as Uint8Array (Buffer is a Uint8Array subclass; slicing to a fresh
+  // Uint8Array detaches from Node's internal pool).
+  const u8 = new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength).slice()
+  blobCache.set(sha, u8)
+  return u8
+}
+
+// Fetch full file tree at a git commit as { path: Uint8Array }.
+function fileTreeAt (commitSha) {
+  const raw = execSync(`git ls-tree -r ${commitSha}`, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 })
+  const files = {}
+  for (const line of raw.split('\n')) {
+    if (!line) continue
+    // format: <mode> <type> <blob-sha>\t<path>
+    const tabIdx = line.indexOf('\t')
+    if (tabIdx === -1) continue
+    const meta = line.slice(0, tabIdx).split(' ')
+    if (meta.length < 3) continue
+    const [_mode, type, blobSha] = meta
+    if (type !== 'blob') continue  // skip submodules (commit), symlinks handled as blobs
+    const path = line.slice(tabIdx + 1)
+    files[path] = readBlob(blobSha)
+  }
+  return files
+}
+
+// ─── open the streamo, build the folder lens ─────────────────────────
+// StreamoServer.create's default tier is `new DiskTier({dir: '.streamo'})` —
+// it does not honor a `dataDir` argument (silently ignored). Pass tiers
+// explicitly so STREAMO_DATA_DIR actually routes to the right archive.
 const server = await StreamoServer.create({
-  name: 'streamo-history',
-  username,
-  password,
-  dataDir,
-  keyIterations: keyIter,
+  name, username, password, keyIterations: keyIter,
+  tiers: [new DiskTier({ dir: dataDir, capacity: Infinity })]
+})
+console.log(`[seed-history] history repo: ${server.publicKeyHex}  (name: ${name})`)
+
+const folderLens = new FolderRecord(server.streamo, server.registry, {
+  signer: server.signer,
+  signerName: name,
 })
 
-console.log(`[seed-history] history repo: ${server.publicKeyHex}`)
-
-// Walk existing streamo commits oldest-first to find where we are.
+// ─── idempotency: match existing home commits by (message, date) ─────
 const existing = [...server.streamo.history()].reverse()
-console.log(`[seed-history] streamo: ${existing.length} commits already present`)
+console.log(`[seed-history] streamo: ${existing.length} home commits already present`)
 
-// Verify the existing prefix matches git's first N commits by sha.
 for (let i = 0; i < existing.length; i++) {
-  const sValue = server.streamo.decode(existing[i].dataAddress)
+  const s = existing[i]
   const g = gitCommits[i]
-  if (!g || sValue.sha !== g.sha) {
+  if (!g) {
+    console.error(`[seed-history] streamo has ${existing.length} commits but git only has ${gitCommits.length} — chain is ahead of git (rebase? force-push? rewritten history?).`)
+    console.error('  manual recovery: delete the streamo-history archive and re-run.')
+    process.exit(3)
+  }
+  if (s.message !== g.subject || Math.abs(s.date.getTime() - g.date.getTime()) > 500) {
     console.error(`[seed-history] divergence at index ${i}:`)
-    console.error(`  streamo: ${sValue.sha?.slice(0, 8)}… "${existing[i].message?.slice(0, 60)}"`)
-    console.error(`  git:     ${g?.sha?.slice(0, 8)}… "${g?.subject?.slice(0, 60)}"`)
+    console.error(`  streamo: "${s.message?.slice(0, 60)}" @ ${s.date.toISOString()}`)
+    console.error(`  git:     "${g.subject?.slice(0, 60)}" @ ${g.date.toISOString()}`)
     console.error('  manual recovery: delete the streamo-history archive and re-run.')
     process.exit(3)
   }
 }
 
+// ─── append new commits ────────────────────────────────────────────────
 let appended = 0
+let mountsSeen = false
+const start = Date.now()
+
 for (let i = existing.length; i < gitCommits.length; i++) {
   const g = gitCommits[i]
-  const working = server.streamo.checkout()
-  working.set({
-    sha:     g.sha,
-    tree:    g.tree,
-    parents: g.parents,
-    author:  g.author,
-    body:    g.body,
-  })
-  server.streamo.commit(working, g.subject, { date: g.date })
-  appended++
-}
-
-console.log(`[seed-history] appended ${appended} new commits (total: ${gitCommits.length})`)
-
-// Wait for auto-sign to cover all new commits, then a brief moment for
-// archiveSync's writer to flush.  Auto-signing is batched: at most one
-// sign in flight, with the trailing-pending bit guaranteeing one more
-// after.  signedLength === byteLength when all commits are covered.
-process.stdout.write('[seed-history] waiting for signing… ')
-const start = Date.now()
-while (server.streamo.signedLength < server.streamo.byteLength) {
-  if (Date.now() - start > 30_000) {
-    console.error('\n[seed-history] timeout waiting for signing')
-    process.exit(4)
+  const tree = fileTreeAt(g.sha)
+  const hasMounts = 'mounts.json' in tree
+  if (hasMounts && !mountsSeen) {
+    console.log(`[seed-history] commit ${i} (${g.sha.slice(0, 8)}) introduces mounts.json — shard routing kicks in on the NEXT commit`)
+    mountsSeen = true
   }
-  await new Promise(r => setTimeout(r, 50))
+  await folderLens.writeMany(tree, { replace: true, message: g.subject, date: g.date })
+  appended++
+  if (appended % 25 === 0 || i === gitCommits.length - 1) {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+    process.stdout.write(`\r[seed-history] appended ${appended} / ${gitCommits.length - existing.length}  (${elapsed}s, blob-cache: ${blobCache.size})    `)
+  }
 }
-console.log(`done (${((Date.now() - start) / 1000).toFixed(1)}s)`)
+process.stdout.write('\n')
 
-// Close the streamo and let archiveSync drain. Signals end-of-stream
-// to the writer loop, which finishes whatever's in the pipe and closes
-// the file handle. Replaces a 500ms `setTimeout` that was guessing
-// instead of asking — without it, `process.exit(0)` would tear down
-// the process mid-write and drop in-flight chunks (typically the SIG
-// tail, which makes the loaded `.bin` look complete but actually be
-// staged-forever-no-SIG on the next reader).
+console.log(`[seed-history] appended ${appended} new commits (${gitCommits.length} total)`)
+
+// ─── wait for signing across home + all shards, then close ───────────
+process.stdout.write('[seed-history] waiting for signing… ')
+const signStart = Date.now()
+async function waitSigned (repo) {
+  while (repo.signedLength < repo.byteLength) {
+    if (Date.now() - signStart > 60_000) {
+      console.error(`\n[seed-history] timeout waiting for signing on ${repo.publicKeyHex?.slice(0, 16)}…`)
+      process.exit(4)
+    }
+    await new Promise(r => setTimeout(r, 50))
+  }
+}
+await waitSigned(server.streamo)
+// Sign each shard the registry has materialized (writeMany populated them
+// via _materialize + attachSigner).
+for (const [_key, repo] of server.registry) {
+  if (repo === server.streamo) continue
+  if (typeof repo.attachSigner === 'function' && repo.byteLength > 0) {
+    await waitSigned(repo)
+  }
+}
+console.log(`done (${((Date.now() - signStart) / 1000).toFixed(1)}s)`)
+
+// ─── report shard chain lengths ──────────────────────────────────────
+const shardMounts = folderLens.mounts()
+if (Object.keys(shardMounts).length > 0) {
+  console.log('[seed-history] shard chain lengths:')
+  for (const [prefix, mount] of Object.entries(shardMounts)) {
+    if (!mount?.ours) continue
+    const shard = server.registry.get(mount.key)
+    if (!shard) {
+      console.log(`  ${prefix}: (not materialized)`)
+      continue
+    }
+    const chainLen = [...shard.history()].length
+    console.log(`  ${prefix}: ${chainLen} commits  (${shard.publicKeyHex.slice(0, 16)}…)`)
+  }
+}
+
 await server.close()
-
 console.log('[seed-history] done.')
 process.exit(0)

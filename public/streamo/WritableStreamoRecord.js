@@ -477,20 +477,25 @@ export class WritableStreamoRecord extends StreamoRecord {
     // fresh state.
     if (this.#recoveryStuck !== null) this._setRecoveryStuck(null)
 
-    const { retries = 3, onConflict = null, message } = options
+    const { retries = 3, onConflict = null, message, date, remoteParent } = options
     let lastError = null
     for (let attempt = 0; attempt <= retries; attempt++) {
       const current = this.get()
       const next = updateFn(current)
-      if (message !== undefined) {
-        // Inline the whole-value set body so we can pass `message` straight
-        // to commit() — set() reads this.defaultMessage at commit time,
-        // which under concurrent updates would race. Same path-mutation
-        // bookkeeping as set's single-arg path.
+      if (message !== undefined || date !== undefined || remoteParent !== undefined) {
+        // Inline the whole-value set body so we can pass commit options
+        // (message / date / remoteParent) straight to commit() — set() reads
+        // this.defaultMessage at commit time and doesn't accept the others,
+        // which under concurrent updates would race and would drop the
+        // date/remoteParent silently. Same path-mutation bookkeeping as
+        // set's single-arg path.
         const prevDataAddress = this.lastCommit?.dataAddress
         const working = this.checkout()
         working.set(next)
-        this.commit(working, message)
+        const commitOpts = {}
+        if (date !== undefined) commitOpts.date = date
+        if (remoteParent !== undefined) commitOpts.remoteParent = remoteParent
+        this.commit(working, message, commitOpts)
         const newDataAddress = this.lastCommit?.dataAddress
         for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
           this.recaller.reportKeyMutation(this, JSON.stringify(changed))

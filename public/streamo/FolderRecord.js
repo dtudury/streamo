@@ -233,8 +233,11 @@ export class FolderRecord {
    * @param {string} [options.message]  forwarded to repo.update
    */
   async writeMany (filesMap, options = {}) {
-    const { replace = false, message } = options
-    const updateOpts = message !== undefined ? { message } : {}
+    const { replace = false, message, date, remoteParent } = options
+    const updateOpts = {}
+    if (message !== undefined) updateOpts.message = message
+    if (date !== undefined) updateOpts.date = date
+    if (remoteParent !== undefined) updateOpts.remoteParent = remoteParent
 
     const mounts = this.mounts()
     const homeFiles = {}

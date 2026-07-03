@@ -44,6 +44,7 @@ import { execSync } from 'child_process'
 import { StreamoServer } from '../public/streamo/StreamoServer.js'
 import { FolderRecord } from '../public/streamo/FolderRecord.js'
 import { DiskTier } from '../public/streamo/StorageTier.js'
+import { bytesToHex } from '../public/streamo/utils.js'
 
 const args = process.argv.slice(2)
 const envFileIdx = args.indexOf('--env-file')
@@ -54,6 +55,26 @@ if (envFileIdx !== -1) {
 const limitIdx = args.indexOf('--limit')
 const limit = limitIdx !== -1 ? +args[limitIdx + 1] : Infinity
 if (limitIdx !== -1) args.splice(limitIdx, 2)
+
+// --shard <prefix> (repeatable): inject a synthetic top-level `mounts.json`
+// into each committed tree declaring the given prefix as an ours:true shard.
+// Files under the prefix route into a per-shard child Record (its own chain
+// of commits); the mounts table lives in the home Record's value. Since
+// most repos DON'T have a top-level mounts.json in their git history but
+// we still want to shard their content, this is the "pretend it exists"
+// hatch — the archive we produce has the sharded shape.
+//
+// One-commit lag caveat: writeMany reads mounts() from the record's
+// pre-commit state, so the FIRST commit lands everything (including the
+// synthetic mounts.json) on home; from commit 2 onward, routing kicks in.
+// Fine in practice: commit 1 is usually trivially small ("Initial commit").
+const shardPrefixes = []
+while (true) {
+  const idx = args.indexOf('--shard')
+  if (idx === -1) break
+  shardPrefixes.push(args[idx + 1])
+  args.splice(idx, 2)
+}
 
 const username = process.env.STREAMO_USERNAME ?? 'relay'
 const password = process.env.STREAMO_PASSWORD ?? ''
@@ -147,6 +168,26 @@ const folderLens = new FolderRecord(server.streamo, server.registry, {
   signerName: name,
 })
 
+// Precompute the synthetic mounts.json for injection (once — same for
+// every commit). Key derivation matches FolderRecord.writeMany's:
+// signer.keysFor(signerName + '/' + mountPrefix). markWritable each
+// shard pubkey so the registry factory returns a WritableStreamoRecord
+// when writeMany materializes it — otherwise writeMany would throw
+// "mounted Record for '<prefix>' is not Writable".
+let syntheticMountsFile = null
+if (shardPrefixes.length > 0) {
+  const mounts = {}
+  for (const prefix of shardPrefixes) {
+    const childName = name + '/' + prefix
+    const { publicKey } = await server.signer.keysFor(childName)
+    const childHex = bytesToHex(publicKey)
+    mounts[prefix] = { ours: true, key: childHex }
+    server.markWritable(childHex)
+    console.log(`[seed-history] shard: ${prefix} → ${childHex.slice(0, 16)}… (child stream name: ${childName})`)
+  }
+  syntheticMountsFile = { mounts }
+}
+
 // ─── idempotency: match existing home commits by (message, date) ─────
 const existing = [...server.streamo.history()].reverse()
 console.log(`[seed-history] streamo: ${existing.length} home commits already present`)
@@ -176,9 +217,17 @@ const start = Date.now()
 for (let i = existing.length; i < gitCommits.length; i++) {
   const g = gitCommits[i]
   const tree = fileTreeAt(g.sha)
+  // Inject the synthetic mounts.json (as a JS object, not bytes — writeMany
+  // reads it via record.get() which returns the parsed value; a Uint8Array
+  // would be ignored by FolderRecord.mounts()).
+  if (syntheticMountsFile) tree['mounts.json'] = syntheticMountsFile
   const hasMounts = 'mounts.json' in tree
   if (hasMounts && !mountsSeen) {
-    console.log(`[seed-history] commit ${i} (${g.sha.slice(0, 8)}) introduces mounts.json — shard routing kicks in on the NEXT commit`)
+    if (syntheticMountsFile) {
+      console.log(`[seed-history] shard routing active starting from commit ${i} (one-lag from ${i + 1})`)
+    } else {
+      console.log(`[seed-history] commit ${i} (${g.sha.slice(0, 8)}) introduces mounts.json — shard routing kicks in on the NEXT commit`)
+    }
     mountsSeen = true
   }
   await folderLens.writeMany(tree, { replace: true, message: g.subject, date: g.date })

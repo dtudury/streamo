@@ -36,6 +36,7 @@ import { webSync } from './webSync.js'
 export class StreamoServer {
   #keyIterations
   #archiveClosers
+  #writableKeys
 
   name
   username
@@ -88,15 +89,19 @@ export class StreamoServer {
       if (typeof tier.init === 'function') await tier.init()
     }
 
-    // Writable for the primary only when we have a signer. Subscribed peer
-    // keys and the relay-only primary stay slim — set() on a slim Record
-    // raises TypeError instead of silently no-op'ing on bytes the relay
-    // would reject downstream anyway.
+    // Writable for the primary + any key registered via `server.markWritable`.
+    // Subscribed peer keys stay slim (set() raises TypeError instead of
+    // silently no-op'ing on bytes the relay would reject). Callers author-
+    // ing to shard child Records (via FolderRecord.writeMany + ours:true
+    // mounts) must `server.markWritable(shardPubkey)` BEFORE the write —
+    // the writable-decision happens at first _materialize and is cached,
+    // so later marks don't retroactively promote a slim Record.
+    const writableKeys = new Set([resolvedPublicKeyHex])
     const registry = new StreamoRecordRegistry({
       recaller,
       factory: async key => {
-        const isAuthorPrimary = key === resolvedPublicKeyHex && signer !== null
-        const RecordClass = isAuthorPrimary ? WritableStreamoRecord : StreamoRecord
+        const isAuthor = writableKeys.has(key) && signer !== null
+        const RecordClass = isAuthor ? WritableStreamoRecord : StreamoRecord
         const record = new RecordClass({ recaller })
         const { close } = await tieredArchiveSync(record, cascade, key)
         archiveClosers.set(key, close)
@@ -110,7 +115,30 @@ export class StreamoServer {
     const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
     server.#keyIterations = keyIterations
     server.#archiveClosers = archiveClosers
+    server.#writableKeys = writableKeys
     return server
+  }
+
+  /**
+   * Register a pubkey as writable, so the registry's factory returns a
+   * WritableStreamoRecord (with attachSigner) instead of a slim
+   * StreamoRecord the next time this key is materialized. Must be called
+   * BEFORE the key is first materialized — the class decision is cached
+   * at first factory call and later marks don't retroactively promote.
+   *
+   * Motivating use case: authoring into shard child Records via
+   * FolderRecord.writeMany + ours:true mounts. Precompute each shard's
+   * derived pubkey (via signer.keysFor(name + '/' + mountPrefix)) and
+   * markWritable each one before the first writeMany call.
+   */
+  markWritable (pubkeyHex) {
+    if (!/^[0-9a-f]{66}$/.test(pubkeyHex)) {
+      throw new Error(`StreamoServer.markWritable: expected 66 hex chars, got: ${pubkeyHex}`)
+    }
+    if (!this.signer) {
+      throw new Error('StreamoServer.markWritable: server has no signer; nothing signs on this side')
+    }
+    this.#writableKeys.add(pubkeyHex)
   }
 
   /**

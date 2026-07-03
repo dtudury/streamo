@@ -813,21 +813,23 @@ if (options.interactive || options.replSocket) {
     identity, dispatch,
   })
 
-  console.log(`\x1b[36m
-  get(...path)          streamo.get() — read a value by path
-  set(value)            streamo.set() — write a value
-  await merge(src, opts) streamo.merge() — fork or pull from another Record
-                        e.g. await merge('streamo.dev', { from: 'files' })
-  ls()                  list all open streamos in the registry
-  connect('host:port')  connect this streamo to a remote outlet
-  streamo / registry    the live streamo and registry instances
-  signer                sign / verify data
-  originSync(s,k,h,p)   attach any streamo as an origin
-  outletSync(reg,port)  start a new outlet server
+  const REPL_HEADER = `\x1b[36m
+  record / streamo      the primary Record + its underlying Streamo codec
+  registry              StreamoRecordRegistry — walk all open Records
+  signer                Signer for this identity (has publicKey, keysFor)
+  get(...path)          record.get() shorthand
+  set(value)            record.set() shorthand
+  await merge(src, o)   record.merge() shorthand (fork or pull from another)
+  ls()                  registry summary — { key, bytes } per Record
+  connect('host:port')  attach this streamo to a remote outlet
 
   ── substrate verbs ──
-  identity.new(name)               create a fresh signing identity
-  dispatch(scope, obj, m?, args?)  safe named-method dispatch (REPL/config)\x1b[0m`)
+  identity.new(name)               fresh signing identity
+  dispatch(scope, obj, m?, args?)  safe named-method dispatch
+  originSync / outletSync / archiveSync / fileSync / s3Sync   sync modules
+  StreamoRecord / StreamoRecordRegistry                       classes\x1b[0m`
+
+  console.log(REPL_HEADER)
 
   // --interactive: attach REPL to this process's stdin/stdout. Quitting
   // the REPL kills the process (existing behavior).
@@ -850,6 +852,7 @@ if (options.interactive || options.replSocket) {
       // has something to work with (a proper fix forwards client size).
       socket.columns = 120
       socket.rows = 40
+      socket.write(REPL_HEADER + '\n\n')
       const r = startRepl({
         prompt: '> ',
         input: socket,

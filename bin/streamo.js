@@ -795,12 +795,16 @@ if (options.interactive || options.replSocket) {
   const merge   = (source, opts) => streamo.merge(source, opts)
   const ls      = () => [...registry].map(([k, s]) => ({ key: k.slice(0, 8) + '…', bytes: s.byteLength }))
   const connect = (hostPort) => server.connect(hostPort)
+  // FolderRecord lens over the primary — gives resolvePath / files / mounts
+  // as direct methods; carries signer + signerName so future writeMany calls
+  // through this can route to shards.
+  const folder = new FolderRecord(streamo, registry, { signer, signerName: name })
 
   Object.assign(globalThis, {
     // identity
     name, username, publicKeyHex, signer,
     // data
-    streamo, registry, record: streamo,
+    streamo, registry, record: streamo, folder,
     // shorthands
     get, set, merge, ls,
     // networking
@@ -808,26 +812,32 @@ if (options.interactive || options.replSocket) {
     // sync modules
     archiveSync, fileSync, s3Sync,
     // class
-    StreamoRecord, StreamoRecordRegistry,
+    StreamoRecord, StreamoRecordRegistry, FolderRecord,
     // substrate verbs
     identity, dispatch,
   })
 
   const REPL_HEADER = `\x1b[36m
-  record / streamo      the primary Record + its underlying Streamo codec
-  registry              StreamoRecordRegistry — walk all open Records
-  signer                Signer for this identity (has publicKey, keysFor)
-  get(...path)          record.get() shorthand
-  set(value)            record.set() shorthand
-  await merge(src, o)   record.merge() shorthand (fork or pull from another)
-  ls()                  registry summary — { key, bytes } per Record
-  connect('host:port')  attach this streamo to a remote outlet
+  record / streamo               the primary Record + its underlying Streamo
+  registry                       StreamoRecordRegistry — walk all open Records
+  folder                         FolderRecord lens over record — path-shaped access:
+                                   await folder.resolvePath('public/apps/x.js')
+                                   folder.mounts() / folder.files()
+  signer                         Signer for this identity (publicKey, keysFor)
+  record.parent                  the commit before head (null if none)
+  record.ancestor(n)             n steps back from head (0 = head, 1 = parent)
+
+  get(...path)                   record.get() shorthand
+  set(value)                     record.set() shorthand
+  await merge(src, o)            record.merge() shorthand (fork or pull)
+  ls()                           registry summary — { key, bytes } per Record
+  connect('host:port')           attach this streamo to a remote outlet
 
   ── substrate verbs ──
   identity.new(name)               fresh signing identity
   dispatch(scope, obj, m?, args?)  safe named-method dispatch
   originSync / outletSync / archiveSync / fileSync / s3Sync   sync modules
-  StreamoRecord / StreamoRecordRegistry                       classes\x1b[0m`
+  StreamoRecord / StreamoRecordRegistry / FolderRecord        classes\x1b[0m`
 
   console.log(REPL_HEADER)
 

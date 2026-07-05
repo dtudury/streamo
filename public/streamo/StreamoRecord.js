@@ -224,7 +224,7 @@ export class StreamoRecord extends Streamo {
   }
 
   /**
-   * Iterate commits from newest to oldest.
+   * Iterate commits from newest to oldest. Lazy — decodes as it walks.
    */
   * history () {
     let commit = this.lastCommit
@@ -232,6 +232,32 @@ export class StreamoRecord extends Streamo {
       yield commit
       commit = commit.parent !== undefined ? this.decode(commit.parent) : null
     }
+  }
+
+  /**
+   * The commit before the head, or null if the head has no parent (initial
+   * commit / no commits at all). Positional accessor for the common case
+   * where you want "the previous one" without materializing history().
+   */
+  get parent () {
+    const head = this.lastCommit
+    if (!head || head.parent === undefined) return null
+    return this.decode(head.parent)
+  }
+
+  /**
+   * The commit `n` steps back from the head. `n === 0` returns the head
+   * (same as `lastCommit`); `n === 1` is `parent`; etc. Returns null if
+   * `n` exceeds the chain length. Walks history() lazily — cost is O(n).
+   */
+  ancestor (n) {
+    if (n < 0) return null
+    let i = 0
+    for (const commit of this.history()) {
+      if (i === n) return commit
+      i++
+    }
+    return null
   }
 
   /**

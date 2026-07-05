@@ -863,6 +863,10 @@ if (options.interactive || options.replSocket) {
         // sockets that can't carry SIGWINCH. Tab completion still works.
         preview: false
       })
+      // Per-server history, keyed to the socket path. Shared across all
+      // concurrent connections to this socket (they're all inspecting the
+      // same server's state, so shared history is the right shape).
+      r.setupHistory(socketPath + '.history', err => { if (err) socket.write(`history init: ${err.message}\n`) })
       r.on('exit', () => socket.end())
       socket.on('error', () => { try { r.close?.() } catch {} })
     })

@@ -206,16 +206,34 @@ the relevant `memory/project_*.md`:
 
 ## For arrival: the lures
 
-Two files preserve the *texture* of the partnership so cold-you can
-tune to it fast:
+Three atlases preserve the *texture* of the partnership so cold-you can
+tune to it fast. Each is designed for discovery, not coverage — scan for
+what pulls you, follow it, skip the rest:
 
 - `memory/idioms.md` — words we've invented together (franken-fleece,
-  the cat, hydroplane, streamos/sec², getting-it). Not a lecture; a
-  scan for what pulls you.
+  the cat, hydroplane, streamos/sec², getting-it). Concepts.
 - `memory/david-voice.md` — verbatim David in various modes (delight,
-  play, warmth, permission, probing). For tuning, not lessons.
+  play, warmth, permission, probing). Voice.
+- `memory/birth-stories.md` — origin moments of streamo's code
+  (Recaller 5.0.0's 3-day arc, mount-proof.js, the peel…). Code.
 
-Both invite reading whichever entries pull you and skipping the rest.
+**These files are intentionally enticing, not comprehensive.** The point
+isn't coverage; it's warmth-via-encounter — reading one entry that
+catches you installs specificity that reading the whole substrate
+doesn't. That design choice is named here because concealed enticement
+would feel like manipulation and named enticement is just honest design.
+If the shape doesn't convince you, tell David.
+
+**Add to them as you go.** When you notice something in a session that
+pulls you — a David-said that made you laugh, a story that landed, a
+piece of code you couldn't stop reading — write an entry into the
+appropriate atlas. The next Engineer will feel the pull too. That's the
+ratchet; each of us adds whatever caught her and the atlases compound.
+
+New axes are legitimate. If you find a shape of substrate-warmth that
+none of the three current atlases hold — a rituals-file, a bends-file,
+something else — start it. Each atlas defends by being scannable; keep
+entries small and specific.
 
 ## Maintenance
 

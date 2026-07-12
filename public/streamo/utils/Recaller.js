@@ -7,6 +7,14 @@
  * loop is robust against unwatch happening mid-flight, which matters
  * for slot watchers torn down during DOM reconciliation.
  *
+ * Application-shape: apps typically share one Recaller across all their
+ * reactive subsystems (Repo data, UI state, async caches, the URL) so
+ * they can co-participate via a common (target, key) namespace. Isolated
+ * Recallers exist for tests and genuinely-separate instances. The
+ * "one Recaller per app" convention describes this shape — it isn't a
+ * rule against multiplicity, it's the pattern that lets subsystems talk.
+ * v5.0.0 (see CHANGELOG) was the release that made this the default.
+ *
  * See design.md §6.
  */
 import { NestedSet } from './NestedSet.js'

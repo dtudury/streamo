@@ -263,9 +263,16 @@ export class WritableStreamoRecord extends StreamoRecord {
    * @returns {Streamo}
    */
   checkout () {
+    // Returns a plain Streamo working-scratch, NOT a WritableStreamoRecord
+    // — set() below feeds it into commit() as a raw byte producer, and
+    // wants base-Streamo.set (encode + append) semantics, not our own
+    // recursive checkout→set→commit. Explicitly build the Streamo via
+    // _applyClone instead of going through this.clone() (which now
+    // subclass-preserves, per its own honest contract).
+    const working = new Streamo({ name: 'checkout' })
     const commit = this.lastCommit
-    if (!commit) return new Streamo()
-    return this.clone(commit.dataAddress, { name: 'checkout' })
+    if (commit) this._applyClone(working, commit.dataAddress)
+    return working
   }
 
   /**

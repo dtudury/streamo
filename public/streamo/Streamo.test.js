@@ -264,22 +264,21 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(s.get('v'), 2, 'original still reflects latest state')
   })
 
-  test('clone returns a plain Streamo, NOT the subclass (API contract)', ({ assert }) => {
-    // The clone contract explicitly returns a plain Streamo — subclasses
-    // do NOT get identity-preservation. Turnstone 2026-07-13 attempted
-    // to "fix" this via `new this.constructor(...)`; the change broke
-    // WritableStreamoRecord.set because checkout() → clone() feeds into
-    // working.set(), which needs base-Streamo append semantics, not
-    // recursive WritableStreamoRecord.set behavior. See the comment on
-    // Streamo.clone for the full articulation.
+  test('clone preserves subclass identity (new this.constructor)', ({ assert }) => {
+    // clone honors its name — the returned instance is the same subclass
+    // as the receiver, not a downcast to Streamo. Historical note:
+    // Streamo.clone once hard-coded `new Streamo(...)` to accidentally
+    // serve WritableStreamoRecord.checkout's need for a base-Streamo
+    // scratch; checkout now handles that need explicitly (via _applyClone
+    // into a fresh Streamo), freeing clone to be honest.
     class SubStreamo extends Streamo {}
     const s = new SubStreamo()
     s.set({ v: 1 })
     const addr = s.byteLength - 1
     const snap = s.clone(addr)
-    assert.ok(!(snap instanceof SubStreamo), 'clone returns plain Streamo, not the subclass — intentional')
-    assert.ok(snap instanceof Streamo, 'clone is a Streamo')
-    assert.equal(snap.get('v'), 1, 'clone still snapshots state correctly')
+    assert.ok(snap instanceof SubStreamo, 'clone returns the subclass')
+    assert.ok(snap instanceof Streamo, 'clone is still a Streamo')
+    assert.equal(snap.get('v'), 1, 'clone snapshots state correctly')
   })
 
   test('changedPaths fires on array.length when arrays differ in length', ({ assert }) => {

@@ -701,21 +701,20 @@ because no one's needed it; the day someone does, we'll create it).
   test. Found 2026-05-19 while seeding the tarot demo for the
   non-Repo Streamo investigation.
 
-- ~~**`Streamo.clone` loses subclass identity.**~~ **NOT A BUG — API contract**
-  (verified 2026-07-13 by Turnstone via test failure). The behavior is
-  intentional: `WritableStreamoRecord.set` does
-  `working = this.checkout() → working.set(...) → this.commit(working)`,
-  and `working` MUST be a base Streamo so `.set()` uses base-append
-  semantics, not WritableStreamoRecord's own recursive checkout→set→commit.
-  Turnstone's "obvious" fix (`new this.constructor(...)`) broke the
-  `makeRelayInboundStream: alignment check catches the push-in-flight race`
-  test immediately. The docstring's *"The returned Streamo shares no
-  mutable state"* explicitly types the return as Streamo. Kestrel's
-  original evidence noted the behavior; whether it was a bug depended on
-  intent. Verification-via-constructor-signature was necessary-but-not-
-  sufficient — checking use-sites (WritableStreamoRecord.set) revealed
-  the contract. Preserved as commit-body-narrative in Streamo.js's
-  clone method.
+- ~~**`Streamo.clone` loses subclass identity.**~~ ~~NOT A BUG — API contract~~
+  **FIXED — the API contract was itself the bug.** (2026-07-13, Turnstone,
+  after David pushed back on the "not a bug" framing: *"a .clone that
+  returns a different class than the receiver is at minimum surprising —
+  if the truthful name is absurd, the API is wrong."*)
+  The honest fix separates two concerns: `Streamo.clone` now uses
+  `new this.constructor(...)` (subclass-preserving, honors its name);
+  `WritableStreamoRecord.checkout` explicitly builds `new Streamo(...)` and
+  applies clone-state via `_applyClone` directly, without piggybacking on
+  clone's accidental downcast. Behavior identical at every call site;
+  API becomes truthful. 469/469 tests pass. First-attempt-broken arc
+  (Kestrel → Bowerbird → Turnstone-tried-and-learned → David-pushback →
+  Turnstone-fixed-honestly) is the substrate-articulation working —
+  each layer earned the next.
 
 - **design.md §8/§9 Repo → StreamoRecord alignment.** Section headers still
   say `## 8. Repo` and `## 9. RepoRegistry` — the 10.0.0 rename didn't fully

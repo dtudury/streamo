@@ -264,6 +264,24 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(s.get('v'), 2, 'original still reflects latest state')
   })
 
+  test('clone returns a plain Streamo, NOT the subclass (API contract)', ({ assert }) => {
+    // The clone contract explicitly returns a plain Streamo — subclasses
+    // do NOT get identity-preservation. Turnstone 2026-07-13 attempted
+    // to "fix" this via `new this.constructor(...)`; the change broke
+    // WritableStreamoRecord.set because checkout() → clone() feeds into
+    // working.set(), which needs base-Streamo append semantics, not
+    // recursive WritableStreamoRecord.set behavior. See the comment on
+    // Streamo.clone for the full articulation.
+    class SubStreamo extends Streamo {}
+    const s = new SubStreamo()
+    s.set({ v: 1 })
+    const addr = s.byteLength - 1
+    const snap = s.clone(addr)
+    assert.ok(!(snap instanceof SubStreamo), 'clone returns plain Streamo, not the subclass — intentional')
+    assert.ok(snap instanceof Streamo, 'clone is a Streamo')
+    assert.equal(snap.get('v'), 1, 'clone still snapshots state correctly')
+  })
+
   test('changedPaths fires on array.length when arrays differ in length', ({ assert }) => {
     // Watchers that read arr.length register a dep on [...path, 'length'],
     // which is not in Object.keys(arr). changedPaths must yield it explicitly

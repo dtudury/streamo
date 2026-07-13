@@ -701,14 +701,21 @@ because no one's needed it; the day someone does, we'll create it).
   test. Found 2026-05-19 while seeding the tarot demo for the
   non-Repo Streamo investigation.
 
-- **`Streamo.clone` loses subclass identity.** `public/streamo/Streamo.js`
-  line 297 hard-codes `new Streamo({ recaller, name })`; a subclass calling
-  `.clone()` gets back a plain Streamo, losing the subclass shape.
-  `WritableStreamoRecord.checkout()` uses it. Fix confirmed safe: change to
-  `new this.constructor({ recaller, name })` — neither StreamoRecord nor
-  WritableStreamoRecord define custom constructors (`grep -c constructor`
-  returns 0), so class-field initializers preserve subclass state
-  automatically. Kestrel-noted originally; verified 2026-07-13.
+- ~~**`Streamo.clone` loses subclass identity.**~~ **NOT A BUG — API contract**
+  (verified 2026-07-13 by Turnstone via test failure). The behavior is
+  intentional: `WritableStreamoRecord.set` does
+  `working = this.checkout() → working.set(...) → this.commit(working)`,
+  and `working` MUST be a base Streamo so `.set()` uses base-append
+  semantics, not WritableStreamoRecord's own recursive checkout→set→commit.
+  Turnstone's "obvious" fix (`new this.constructor(...)`) broke the
+  `makeRelayInboundStream: alignment check catches the push-in-flight race`
+  test immediately. The docstring's *"The returned Streamo shares no
+  mutable state"* explicitly types the return as Streamo. Kestrel's
+  original evidence noted the behavior; whether it was a bug depended on
+  intent. Verification-via-constructor-signature was necessary-but-not-
+  sufficient — checking use-sites (WritableStreamoRecord.set) revealed
+  the contract. Preserved as commit-body-narrative in Streamo.js's
+  clone method.
 
 - **design.md §8/§9 Repo → StreamoRecord alignment.** Section headers still
   say `## 8. Repo` and `## 9. RepoRegistry` — the 10.0.0 rename didn't fully

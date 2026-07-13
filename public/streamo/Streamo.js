@@ -300,6 +300,15 @@ export class Streamo extends CodecRegistry {
    * @returns {Streamo}
    */
   clone (address, { recaller = this.#recaller, name } = {}) {
+    // Returns a plain Streamo, NOT the subclass — intentional. The primary
+    // caller (WritableStreamoRecord.checkout) uses the result as a working
+    // scratch with plain Streamo.set semantics; a subclass return would
+    // recurse into WritableStreamoRecord.set's own checkout→set→commit
+    // and break the write path. Turnstone 2026-07-13 attempted the
+    // "obvious" `new this.constructor(...)` fix; Streamo.test.js's
+    // makeRelayInboundStream test caught it immediately (WritableStreamoRecord.set
+    // recursion), articulating that the docstring's "returns Streamo"
+    // is an API contract not accidental.
     return this._applyClone(new Streamo({ recaller, name }), address)
   }
 

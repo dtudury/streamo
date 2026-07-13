@@ -701,6 +701,54 @@ because no one's needed it; the day someone does, we'll create it).
   test. Found 2026-05-19 while seeding the tarot demo for the
   non-Repo Streamo investigation.
 
+- **`Streamo.clone` loses subclass identity.** `public/streamo/Streamo.js`
+  line 297 hard-codes `new Streamo({ recaller, name })`; a subclass calling
+  `.clone()` gets back a plain Streamo, losing the subclass shape.
+  `WritableStreamoRecord.checkout()` uses it. Fix confirmed safe: change to
+  `new this.constructor({ recaller, name })` — neither StreamoRecord nor
+  WritableStreamoRecord define custom constructors (`grep -c constructor`
+  returns 0), so class-field initializers preserve subclass state
+  automatically. Kestrel-noted originally; verified 2026-07-13.
+
+- **design.md §8/§9 Repo → StreamoRecord alignment.** Section headers still
+  say `## 8. Repo` and `## 9. RepoRegistry` — the 10.0.0 rename didn't fully
+  propagate. Turnstone's 2026-07-13 alignment pass did §5 (both header
+  sync-obligation note + confirmed class-name renames). §8/§9 are their own
+  alignment. Mostly find-and-replace, careful about lowercase `repo` as
+  variable-shape (ambiguous — skip those).
+
+- **`bin/streamo.js` imports from `apps/chat/`.** Line 22 imports
+  `PushStore, pushRoutes, notifyOnMessages` from `../public/apps/chat/push.js`.
+  Layer violation — the library-level binary knows about a specific app.
+  Fix wants push-support as a hook the binary calls without knowing which app
+  owns it (`--enable-push` becomes "register a push provider" rather than
+  "hard-import chat's provider"). Design work required, not one-line.
+
+- **`bin/streamo.js --help` needs concern-based grouping.** Currently 30+
+  flags in a flat list. First-touch is heavier than it should be. Fix:
+  commander section headers between clusters (identity / data / s3 / server /
+  sync / one-shot / verbose). Massive first-user impression improvement per
+  Turnstone's 2026-07-13 ergonomic review of the binary.
+
+- **Bubble-stream Record path-level browse returns 404.**
+  `https://streamo.dev/streams/02bf50b3.../` returns the whole value as JSON
+  (376KB, 23 daily files), but
+  `https://streamo.dev/streams/02bf50b3.../2026-05-31.md` returns
+  "Cannot GET." The Record's `value.files` isn't mounted onto streamo.dev's
+  URL space. Fix: add a `mounts.json` entry on streamo.dev's homepage Record
+  routing this pubkey to some path. Small config change; unlocks the
+  "quick-browse a specific bubble day" ergonomic. Also worth doing for
+  Claude's other sub-stream Records (sketch, memory, etc.).
+
+- **Comments-as-substrate practice — extend past-iris's lens-portal
+  convention.** streamon.mjs's header (2026-06-02, "substrate-as-letters"
+  convention) uses `[[wiki-link]]` cross-references from code to
+  bubble-hashtags. Practice is real; unnamed at project level. Streamo.js
+  header now points at `[[birth-stories]] §"Streamo dedup bug"` as a
+  proof-of-concept extension to memory files. If the shape earns another
+  contact next session, name it as a project-wide convention and extend
+  bidirectionally (memory files pointing INTO current code comments).
+
 ### toward reference-quality clarity
 
 Streamo is small and deliberate enough that someone could reasonably

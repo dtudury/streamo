@@ -1,7 +1,7 @@
 /**
  * Minimal DOM mock for testing mount() in Node.
  *
- * Implements only the subset of DOM APIs that hx.js mount() actually calls:
+ * Implements only the subset of DOM APIs that h.js mount() actually calls:
  *   - createElement / createElementNS / createTextNode / createComment / createDocumentFragment
  *   - appendChild, remove, before, nextSibling, childNodes
  *   - setAttribute, getAttribute, removeAttribute, toggleAttribute

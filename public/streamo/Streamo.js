@@ -23,6 +23,10 @@
  *
  * See design.md §5 — that section and this file header are two views
  * of the same thing. Keep them in sync when either changes.
+ *
+ * See [[birth-stories]] §"Streamo dedup bug" — the extended story for
+ * the compressed rationale in the #valueAddress comment below. Reading
+ * both is the encounter the atlas is designed for.
  */
 import { Recaller } from './utils/Recaller.js'
 import { CodecRegistry } from './CodecRegistry.js'

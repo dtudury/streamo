@@ -131,7 +131,9 @@ decode / asRefs / directReferences API.
 
 ## 5. `Streamo` — the reactive layer
 
-> File: `public/streamo/Streamo.js`
+> File: `public/streamo/Streamo.js` — this section and that file's
+> header comment are two views of the same thing. Keep them in sync
+> when either changes.
 
 `Streamo` extends `CodecRegistry` with two more concerns:
 
@@ -148,12 +150,12 @@ write to fire the right path-level mutations. **Important**: it uses
 `asRefs` (not `decode(addr, true)`) so it cannot mutate the streamo
 during traversal. (Earlier code used the mutating decode path; for
 inline-only children it would append materializations *after* the new
-commit, moving `valueAddress` past it and breaking `Repo.lastCommit`.)
+commit, moving `valueAddress` past it and breaking `StreamoRecord.lastCommit`.)
 
 ### Signing (hash chain)
 
-Signing and verification live on Repo, not Streamo — Streamo is
-identity-blind. Each SIGNATURE chunk carries a 32-byte chainHash:
+Signing and verification live on StreamoRecord, not Streamo — Streamo
+is identity-blind. Each SIGNATURE chunk carries a 32-byte chainHash:
 
 ```
 chainHash_n = sha256(chainHash_{n-1} || sha256(newBytes))
@@ -170,20 +172,20 @@ chunk: `[chainHash(32) | signature(64) | footer(1)]`. The
 directly from the bytes — the most recent SIGNATURE's first 32 bytes
 are the chainHash, and its end position is the signedLength.
 
-`valueAddress` (overridden on Repo) skips trailing SIGNATURE chunks so
+`valueAddress` (overridden on StreamoRecord) skips trailing SIGNATURE chunks so
 `get`-style reads always operate on user data even when the repo just
 got auto-signed.
 
 In 8.0 the receive path split in two — by direction. *What goes up*
-(a client pushing to the relay) gates through `RepoSerializer`, the
-per-repo chain authority. *What comes down* (a client receiving the
+(a client pushing to the relay) gates through `StreamoRecordSerializer`, the
+per-record chain authority. *What comes down* (a client receiving the
 relay's authoritative stream) goes through `makeRelayInboundStream`
-on Repo, which trusts the bytes and just checks alignment.
+on StreamoRecord, which trusts the bytes and just checks alignment.
 
 At the relay, each WS connection has a `ConnectionAccumulator` per
 repo it's pushing to. It parses framing into chunks; when a SIG
-arrives, it submits `{ chunks, sig }` to that repo's serializer.
-`RepoSerializer.submit` awaits the previous submit (a single
+arrives, it submits `{ chunks, sig }` to that record's serializer.
+`StreamoRecordSerializer.submit` awaits the previous submit (a single
 Promise-chain lock) and then runs three checks on the batch:
 
 1. **shape** — the sig codec is actually `SIGNATURE`; the bytes

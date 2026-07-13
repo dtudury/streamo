@@ -21,7 +21,8 @@
  *
  * Exports: Streamo (the class), changedPaths.
  *
- * See design.md §5.
+ * See design.md §5 — that section and this file header are two views
+ * of the same thing. Keep them in sync when either changes.
  */
 import { Recaller } from './utils/Recaller.js'
 import { CodecRegistry } from './CodecRegistry.js'

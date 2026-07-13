@@ -30,6 +30,7 @@ program
   .version(version)
   .allowExcessArguments(true)
 
+  // ─── Config ───────────────────────────────────────────────────────
   .addOption(
     new Option('--config <path>', 'path to a streamo.json config file. Fields under `identity` (name/username/password/keyIterations/self) and `server` (web/outlet/feed/files/archive/verbose/recordFile) fill in any options not set on the CLI. Relative paths resolve against the config file\'s directory.')
       .env('STREAMO_CONFIG')
@@ -37,6 +38,8 @@ program
   .addOption(
     new Option('--env-file <path>', 'path to .env file')
   )
+
+  // ─── Identity ─────────────────────────────────────────────────────
   .addOption(
     new Option('--name <string>', 'name for this dataset')
       .env('STREAMO_NAME')
@@ -53,6 +56,8 @@ program
     new Option('--home-key <pubkeyhex>', 'open a Record by pubkey in relay-only mode (no signer derived; bytes arrive via sync from an author process). Mutually exclusive with --name/--username/--password and incompatible with --files/--merge-from.')
       .env('STREAMO_HOME_KEY')
   )
+
+  // ─── Data ─────────────────────────────────────────────────────────
   .addOption(
     new Option('--data-dir <path>', 'directory for archive files (defaults to .streamo). Pass `false` to skip archive writes entirely — the in-memory cache still works; just nothing hits disk.')
       .env('STREAMO_DATA_DIR')
@@ -74,6 +79,8 @@ program
   .addOption(
     new Option('--no-record-file', 'disable the streamo.json sync')
   )
+
+  // ─── Merge ────────────────────────────────────────────────────────
   .addOption(
     new Option('--merge-from <url>', 'on first run only (empty Record), fork from this URL or host. Accepts http(s)://host[:port]/streams/<keyHex> or just "host[:port]" (uses /api/info to find the primary key). Idempotent — skipped on subsequent runs.')
       .env('STREAMO_MERGE_FROM')
@@ -86,6 +93,8 @@ program
     new Option('--state-file <path>', 'write streamo state as JSON to this file on every change')
       .env('STREAMO_STATE_FILE')
   )
+
+  // ─── S3 storage ───────────────────────────────────────────────────
   .addOption(
     new Option('--s3-bucket <name>', 'S3 bucket name')
       .env('STREAMO_S3_BUCKET')
@@ -106,6 +115,8 @@ program
     new Option('--s3-secret-access-key <key>', 'S3 secret access key')
       .env('STREAMO_S3_SECRET_ACCESS_KEY')
   )
+
+  // ─── Server ───────────────────────────────────────────────────────
   .addOption(
     new Option('--web [port]', 'start HTTP + WebSocket server for browsers and peers')
       .env('STREAMO_WEB')
@@ -120,6 +131,8 @@ program
       .env('STREAMO_OUTLET')
       .preset('1024')
   )
+
+  // ─── Peer sync ────────────────────────────────────────────────────
   .addOption(
     new Option('--origin <url>', 'connect to a remote outlet over WebSocket. Accepts ws://host[:port] or wss://host[:port] (URL shape), or host[:port] shorthand (port 443 → wss, no port → wss, other port → ws). On open, the remote opens (and persists, if archiveSync-backed) your streamo on its side — for a publicly-served relay, this is how your bytes become reachable at <host>/streams/<your-key>.')
       .env('STREAMO_ORIGIN')
@@ -136,6 +149,8 @@ program
       .argParser((val, prev = []) => [...prev, val])
       .default([])
   )
+
+  // ─── One-shot / REPL ──────────────────────────────────────────────
   .addOption(
     new Option('--cat <file>', 'one-shot: print value.files[<file>] to stdout and exit (use with --home-key + --feed)')
       .env('STREAMO_CAT')
@@ -156,6 +171,8 @@ program
     new Option('--repl-connect <path>', 'connect to a Unix-socket REPL at <path> (typically served by another streamo process with --repl-socket). Forwards raw keystrokes so tab-completion, history, and line-editing work. Ctrl-D or `.exit` disconnects; Ctrl-C interrupts an eval.')
       .env('STREAMO_REPL_CONNECT')
   )
+
+  // ─── Misc ─────────────────────────────────────────────────────────
   .addOption(
     new Option('--key-iterations <number>', 'PBKDF2 iterations for key derivation (lower = faster startup, less secure)')
       .env('STREAMO_KEY_ITERATIONS')
@@ -168,7 +185,28 @@ program
       .preset('debug')
   )
 
-  .parse()
+program.addHelpText('afterAll', `
+Option groups (see the flags above for details):
+  Config      --config --env-file
+  Identity    --name --username --password --home-key
+  Data        --data-dir --files --mounts-only --record-file --no-record-file --state-file
+  Merge       --merge-from --merge-from-key
+  S3 storage  --s3-bucket --s3-endpoint --s3-region --s3-access-key-id --s3-secret-access-key
+  Server      --web --enable-push --outlet
+  Peer sync   --origin --feed --subscribe
+  One-shot    --cat --eval --interactive --repl-socket --repl-connect
+  Misc        --key-iterations --verbose
+
+Precedence: CLI flags > env vars > --config file. Config paths resolve relative
+to the config file's directory, not CWD.
+
+Positional syntax: \`streamo <object> [<method> [<args>...]]\` reflects the JS
+API into bash (e.g. \`streamo signer publicKeyHex\`, \`streamo record get index.html\`,
+\`streamo identity new alice > env/secrets/alice.env\`). Args are JSON.stringified
+so quoted strings keep their quotes. See --eval for the full-JS escape hatch.
+`)
+
+program.parse()
 
 const options = program.opts()
 

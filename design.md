@@ -321,11 +321,15 @@ independence, or if `keysFor`-derived keys turn out to compose
 badly with some future feature — that's worth surfacing. The
 convention is documented to be discoverable, not to be sacred.
 
-## 8. `Repo` — the signed commit log
+## 8. `StreamoRecord` — the signed commit log
 
-> File: `public/streamo/Repo.js`
+> Files: `public/streamo/StreamoRecord.js` (read-only chain interpretation
+> lens), `public/streamo/WritableStreamoRecord.js` (adds author-side set /
+> commit / sign). The 11.0 split isolates observer-shape from author-shape
+> at the type level — see EXPLORATION-streamorecord-slimming.md.
 
-A `Streamo` whose every `set` is a commit:
+A `Streamo` whose every `set` is a commit (the writable branch —
+`WritableStreamoRecord.set`):
 
 ```
 checkout()  →  working = clone at last commit's dataAddress
@@ -344,28 +348,28 @@ a generator that walks back through parents.
 so commits made via this repo's `set` get a non-empty message visible
 in the explorer.
 
-## 9. `RepoRegistry` — reactive collection of Repos
+## 9. `StreamoRecordRegistry` — reactive collection of StreamoRecords
 
-> Files: `public/streamo/RepoRegistry.js`
+> Files: `public/streamo/StreamoRecordRegistry.js`
 
-A keyed collection of `Repo`s, keyed by hex public key. The factory
-function passed to the constructor decides what each repo gets wired
-with — `archiveSync` for disk persistence, `s3Sync` for object storage,
-or just plain in-memory `new Repo()`.
+A keyed collection of `StreamoRecord`s, keyed by hex public key. The
+factory function passed to the constructor decides what each record gets
+wired with — `archiveSync` for disk persistence, `s3Sync` for object
+storage, or just plain in-memory `new StreamoRecord()`.
 
-`onOpen` callbacks fire when a new repo is opened — used by clients
+`onOpen` callbacks fire when a new record is opened — used by clients
 to watch new participants as they appear in a registry.
 
-**Cross-recaller bridging, built in.** Each `Repo` owns its own
+**Cross-recaller bridging, built in.** Each `StreamoRecord` owns its own
 `Recaller` — that gives it fine-grained dependency tracking on its
-own internal keys without one repo's mutations invalidating watchers
-on another. An app that displays many repos has its own app-level
-`Recaller` for its `mount()` slots. A slot reading `repo.byteLength`
-registers a dep on the *repo's* recaller, not the app's, so without
+own internal keys without one record's mutations invalidating watchers
+on another. An app that displays many records has its own app-level
+`Recaller` for its `mount()` slots. A slot reading `record.byteLength`
+registers a dep on the *record's* recaller, not the app's, so without
 an explicit bridge the slot would never re-run when chunks arrived.
 
-Pass your app's Recaller into the registry — `new RepoRegistry(factory,
-{ recaller, name })` — and every opened repo's chunk-arrival events
+Pass your app's Recaller into the registry — `new StreamoRecordRegistry(factory,
+{ recaller, name })` — and every opened record's chunk-arrival events
 bridge into that shared recaller automatically. The registry exposes
 `dep()` (arrow-bound, destructure-safe — call inside any slot that
 should re-run on chunk arrivals or new-repo opens) and `fire()` (force
@@ -419,7 +423,7 @@ Once a WebSocket is open, this is the protocol:
    `[33-byte compressed-secp256k1-public-key prefix][chunk bytes]`.
    The 33-byte prefix routes the chunk to the right repo. Frames are
    fed from `makeReadableStream` on the sender into either
-   `ConnectionAccumulator`+`RepoSerializer` (relay-side, gating
+   `ConnectionAccumulator`+`StreamoRecordSerializer` (relay-side, gating
    incoming pushes) or `makeRelayInboundStream` (client-side, trusting
    the relay's authoritative stream).
 
@@ -431,14 +435,14 @@ Once a WebSocket is open, this is the protocol:
      through the data, starting from the `hello` pointer.
    - `onAnnounce(key, topic)` — runs on the client when a peer
      announces against a topic the client expressed interest in.
-   - Repos off the cascade still sync on demand: a client that knows
-     a private key can call `session.subscribe(key)` and the relay
+   - StreamoRecords off the cascade still sync on demand: a client that
+     knows a private key can call `session.subscribe(key)` and the relay
      will serve it. The relay simply doesn't advertise that it has it.
 
 ## 11. Sync backends
 
-A Repo's bytes can be persisted/relayed via several plug-ins. They all
-hook in via the `RepoRegistry` factory.
+A StreamoRecord's bytes can be persisted/relayed via several plug-ins.
+They all hook in via the `StreamoRecordRegistry` factory.
 
 - **`archiveSync`** — chunks to numbered binary files under a
   `.streamo/archive/<keyHex>.bin` directory.
@@ -508,7 +512,7 @@ recaller for the affected key(s). Variadic path with value-last
 matches `Streamo`'s existing `get(...path)` and `set([address,]
 ...path, value)` signatures — no special argument-order wart.
 
-**Already implementing the contract:** `Streamo` and `Repo`. Their
+**Already implementing the contract:** `Streamo` and `StreamoRecord`. Their
 existing methods *are* the interface; nothing else is needed to pass
 one into a mount call.
 
@@ -761,7 +765,7 @@ The three layers:
   fine-grained dependency tracking — read a key, depend on it; mutate
   a key, fire watchers. Doesn't know about streams, repos, signers,
   HTTP, or DOM. Pure coordination.
-- **The data layer.** `Streamo`, `Repo`, `RepoRegistry`, the sync
+- **The data layer.** `Streamo`, `StreamoRecord`, `StreamoRecordRegistry`, the sync
   backends (`registrySync`, `archiveSync`, `fileSync`, `originSync`,
   `outletSync`, `webSync`, `s3Sync`, `stateFileSync`), the codec
   system (`Addressifier`, `ContentMap`, `codecs.js`, `CodecRegistry`),
@@ -777,7 +781,7 @@ The three layers:
 
 The actual cross-imports between layers are minimal: `mount.js` imports
 `Recaller`, `LiveSource.js` imports `Recaller`, and that's basically
-it. `h.js` is dependency-free; `Streamo.js`, `Repo.js`, and the sync
+it. `h.js` is dependency-free; `Streamo.js`, `StreamoRecord.js`, and the sync
 backends don't import anything from the UI layer; the UI layer doesn't
 import anything from the data layer. **`Recaller` is the only shared
 infrastructure.**

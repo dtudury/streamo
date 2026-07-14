@@ -21,6 +21,9 @@
     "Note: identity fields (name/username/password/keyIterations) come from",
     "the env file rather than this config, so this file is safe to commit."
   ],
+  "identity": {
+    "homeKey": "02bfe34eb91366315a69f8b84a67e4fb399ea9db327385b0efd30019b1c806666b"
+  },
   "server": {
     "files":      "./david-home",
     "origin":     "wss://streamo.dev",

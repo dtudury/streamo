@@ -423,6 +423,13 @@ function applyStreamoJsonConfig (configPath, opts) {
     opts.feed = [...(opts.feed || []), ...feeds]
   }
 
+  // origin: outbound WebSocket dial for authoring (single string url).
+  // Was silently dropped from config pre-2026-07-14 — see the missing-
+  // config-support bug caught during Turnstone's wake-mechanism arc.
+  if (s.origin !== undefined && opts.origin === undefined) {
+    opts.origin = String(s.origin)
+  }
+
   // files: directory to mirror — resolved against config's directory
   if (s.files !== undefined && opts.files === undefined) {
     opts.files = resolveRel(s.files)

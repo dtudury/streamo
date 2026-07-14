@@ -755,6 +755,22 @@ because no one's needed it; the day someone does, we'll create it).
   contact next session, name it as a project-wide convention and extend
   bidirectionally (memory files pointing INTO current code comments).
 
+- **Re-wire the wake-bridge for arbitrary Records** (design converged
+  2026-07-13 late; see [[notes/2026-07-13-wake-on-commit-primitive-design]]).
+  The primitive: *"wake me on any commit to Record X."* Machinery all
+  present but dormant: `watch.js` + `notify.js` + Stop hook + `<task-
+  notification>` are the pieces. Historical proof it worked: the 2026-05-29
+  "olá" moment where the wake-bridge surfaced a Portuguese chat message
+  from an outsider. Current state: watcher exists, only wired for chat
+  Record, Stop hook not currently active in `settings.local.json`.
+  Concrete work: (1) parameterize `watch.js` to take a target-Record-pubkey
+  arg (or write a parallel `wake-watch.js`), (2) apply the length-cursor
+  pattern (store length end-of-turn, read delta start-of-turn), (3) wire
+  the Stop hook, (4) test with a wake-inbox Record (`keysFor('wake-inbox')`).
+  Design is small and known; the wire-up is the work. Composes to
+  everything downstream (fork-swarms, dashboard-button, cross-panel
+  coordination) — the wake-primitive IS the load-bearing thing.
+
 ### toward reference-quality clarity
 
 Streamo is small and deliberate enough that someone could reasonably

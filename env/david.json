@@ -18,16 +18,21 @@
     "Writes under ./david-home/wake-inbox/ get sharded into David's wake-inbox",
     "sub-Record automatically. Foreign mounts subscribe read-only.",
     "",
+    "IMPORTANT: relative paths in this config resolve against THIS FILE's",
+    "directory (env/), not CWD — so 'files: ../david-home' points at the",
+    "repo-root david-home/. Same for the archive path. (Turnstone tripped",
+    "on this 2026-07-14 debugging session; documented for future-us.)",
+    "",
     "Note: identity fields (name/username/password/keyIterations) come from",
     "the env file rather than this config, so this file is safe to commit."
   ],
   "identity": {
-    "homeKey": "02bfe34eb91366315a69f8b84a67e4fb399ea9db327385b0efd30019b1c806666b"
+    "homeKey": "031d7ae3de730a3c8126d8c050757b9c303a8b20e9ebe6948ef96066cd3e53efd0"
   },
   "server": {
-    "files":      "./david-home",
+    "files":      "../david-home",
     "origin":     "wss://streamo.dev",
-    "archive":    "./.streamo-david",
+    "archive":    "../.streamo-david",
     "verbose":    "info",
     "recordFile": "streamo.json"
   }

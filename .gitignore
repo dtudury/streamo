@@ -34,3 +34,8 @@ temp.txt
 
 # --data-dir false runtime artifact (shell-interpolates "false" as a path)
 false/
+
+# david sandbox — runtime writes ignored, mounts.json template tracked
+david-home/*
+!david-home/mounts.json
+.streamo-david/

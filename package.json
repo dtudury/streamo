@@ -64,7 +64,7 @@
     "demo:homepage": "node bin/streamo.js --env-file env/demo.homepage.env",
     "demo:library": "node bin/streamo.js --env-file env/demo.library.env",
     "demo:explorer": "node bin/streamo.js --env-file env/demo.explorer.env",
-    "david": "node bin/streamo.js --config env/david-home.json",
+    "david": "node bin/streamo.js --config env/david.json --env-file env/secrets/david.env",
     "seed-history": "node scripts/seed-history.js",
     "history:seed": "STREAMO_USERNAME=dev STREAMO_PASSWORD=dev STREAMO_KEY_ITERATIONS=1 STREAMO_DATA_DIR=/tmp/streamo-history-archive node scripts/seed-history.js --shard public/ --mounts-only",
     "history:serve": "STREAMO_USERNAME=dev STREAMO_PASSWORD=dev STREAMO_KEY_ITERATIONS=1 node bin/streamo.js --data-dir /tmp/streamo-history-archive --name streamo-history --repl-socket /tmp/streamo-history.sock --web 8081",

@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "David's home Record config. Credentials in env/secrets/david.env",
+    "(gitignored). The shard tree is defined by ./david-home/mounts.json.",
+    "",
+    "Usage:",
+    "  npm run david",
+    "",
+    "Equivalent to:",
+    "  node bin/streamo.js --config env/david.json --env-file env/secrets/david.env",
+    "",
+    "Mount structure (see ./david-home/mounts.json):",
+    "  - wake-inbox/ (ours:true)  — David's own wake-request channel;",
+    "                              signed by keysFor('wake-inbox') from David's creds",
+    "  - turnstone/  (ours:false) — foreign mount to Claude's Turnstone Record",
+    "  - watcher/    (ours:false) — foreign mount to the wake-watcher Record",
+    "",
+    "Writes under ./david-home/wake-inbox/ get sharded into David's wake-inbox",
+    "sub-Record automatically. Foreign mounts subscribe read-only.",
+    "",
+    "Note: identity fields (name/username/password/keyIterations) come from",
+    "the env file rather than this config, so this file is safe to commit."
+  ],
+  "server": {
+    "files":      "./david-home",
+    "origin":     "wss://streamo.dev",
+    "archive":    "./.streamo-david",
+    "verbose":    "info",
+    "recordFile": "streamo.json"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "_comment": [
+    "David's home Record mount tree.",
+    "",
+    "Pubkeys marked TODO need to be derived and filled in before use.",
+    "For 'ours:true' entries: derive via `signer.keysFor(mountName)` from",
+    "David's credentials (username/password from env/secrets/david.env).",
+    "For 'ours:false' entries: fill in the foreign Record's pubkey once",
+    "the corresponding Record is authored (Turnstone Record, wake-watcher",
+    "Record).",
+    "",
+    "Small helper to derive an 'ours' pubkey (run once, paste result here):",
+    "  set -a; source env/secrets/david.env; set +a",
+    "  node -e \"const {Signer}=await import('./public/streamo/Signer.js'); \\",
+    "           const {bytesToHex}=await import('./public/streamo/utils.js'); \\",
+    "           const s=new Signer(process.env.STREAMO_USERNAME, \\",
+    "                              process.env.STREAMO_PASSWORD, \\",
+    "                              +process.env.STREAMO_KEY_ITERATIONS); \\",
+    "           const k=await s.keysFor('wake-inbox'); \\",
+    "           console.log(bytesToHex(k.publicKey))\""
+  ],
+  "mounts": {
+    "wake-inbox/": {
+      "key": "TODO-david-keysFor-wake-inbox",
+      "ours": true
+    },
+    "turnstone/": {
+      "key": "TODO-claude-turnstone-record-pubkey",
+      "ours": false
+    },
+    "watcher/": {
+      "key": "TODO-wake-watcher-record-pubkey",
+      "ours": false
+    }
+  }
+}

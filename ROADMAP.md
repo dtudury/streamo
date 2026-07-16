@@ -646,14 +646,25 @@ because no one's needed it; the day someone does, we'll create it).
      send it — always falls through to full replay. Would reduce
      reconnect bandwidth from O(all-bytes-ever) to O(bytes-since-last).
      ~10 LOC client-side + a small server-side test.
-  3. **Investigate chain-divergence with streamo.dev on wake-inbox arc.**
-     Publisher push to streamo.dev fails with alignment-check throw
-     even from a fresh local archive. Debug showed SIGs being
-     appended to the record outside `relayInboundStream`'s SIGNATURE
-     branch — some other path advances `committedChainHash` without
-     the alignment-tracker knowing. Blocks wake-mechanism e2e
-     validation. See EXPLORATION-sync-model.md's empirical finding
-     section.
+  3. ~~**Investigate chain-divergence with streamo.dev on wake-inbox arc.**~~
+     **DIAGNOSED + FIXED 2026-07-16 (Turnstone).** Root cause was
+     `isReadyToAuthor` failing to gate for originSync-only records
+     (originSync didn't call `_attachSession`, so `hasRelay` stayed
+     false and the gate skipped). Fix: originSync attaches session
+     with null; `caughtUpToRelay` falls through to `relayChainHash`
+     when no watermark. See EXPLORATION-sync-model.md's late finding.
+  4. **Wire sync for ours:true sub-Records.** originSync is
+     single-record; sub-Records author locally but don't push to any
+     relay. Needs either registrySync (followMounts) OR explicit
+     per-sub-Record originSync connections. Subsumed by item 1 above
+     when that lands.
+  5. **Dev-vs-prod flag on WritableStreamoRecord.update's reset-then-
+     resync behavior** (David 2026-07-16). Current behavior: on
+     conflict, `_reset()` local + `_resyncRepo()` from wire = drop
+     local state, adopt wire's. Only really appropriate in dev.
+     Production should probably throw and surface to caller instead
+     of silently discarding. Small: add an option on `update()` or a
+     server-level flag.
 
 - **Cross-slot element recycling.** Today's mount recycles within a slot
   (between its start/end comment anchors), and within an element's

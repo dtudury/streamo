@@ -66,6 +66,22 @@ export async function originSync (record, publicKeyHex, hostPort, { retryFirstCo
   function attachSync (ws) {
     ws.send(publicKeyHex)
 
+    // Mark that a relay is attached so `isReadyToAuthor` gates on
+    // `caughtUpToRelay` instead of returning true immediately. Passing
+    // null (no session object) is intentional — originSync's protocol
+    // has no session-level resync verb, so `WritableStreamoRecord.update`
+    // won't retry via `session._resyncRepo` for origin-only records.
+    // That's fine; conflicts will surface via `pushRejected` /
+    // `conflictDetected` and callers can decide. The important thing:
+    // fileSync's startup gate now waits for wire's first SIG (proxy
+    // for "we've seen wire's state") before allowing local commits —
+    // otherwise the disk-wins branch fires against an empty local,
+    // authors a SIG on a fresh chain, and wire's real SIGs land as
+    // false-positive alignment-check conflicts.
+    if (typeof record._attachSession === 'function' && !record.hasRelay) {
+      record._attachSession(null)
+    }
+
     const reader = record.makeReadableStream().getReader()
     ;(async () => {
       try {

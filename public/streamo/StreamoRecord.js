@@ -377,11 +377,23 @@ export class StreamoRecord extends Streamo {
    * Reactive: true once this StreamoRecord has caught up to the relay's
    * chain head as of the moment we subscribed. Monotonic — once true,
    * stays true.
+   *
+   * Two paths to "caught up":
+   *   1. The registrySync path: the `{type:'subscribed', atOffset}` ack
+   *      lands, `relaySubscribedAtOffset` is set, and we wait for our
+   *      byteLength to reach that watermark.
+   *   2. The originSync fallback: originSync's handshake doesn't include
+   *      `subscribed/atOffset`, so `relaySubscribedAtOffset` stays null
+   *      forever. Fall back to "have we received at least one SIG from
+   *      the wire?" — proxied by `relayChainHash !== null` (set by
+   *      relayInboundStream on each incoming SIG). Not as precise as
+   *      the watermark, but keeps `isReadyToAuthor` from returning true
+   *      before wire has told us anything.
    */
   get caughtUpToRelay () {
     const watermark = this.relaySubscribedAtOffset
-    if (watermark === null) return false
-    return this.byteLength >= watermark
+    if (watermark !== null) return this.byteLength >= watermark
+    return this.relayChainHash !== null
   }
 
   /**

@@ -156,7 +156,40 @@ Cleanup, in rough order of scope:
    our own tip on eviction-conflict and re-sync from wire as a fresh
    peer.
 
-## Empirical finding — the chain-divergence with streamo.dev
+## Empirical finding (2026-07-16 late) — the isReadyToAuthor gap for originSync
+
+The chain-divergence turned out to be **`isReadyToAuthor` failing to
+gate for originSync-only records.** Root cause:
+
+- `isReadyToAuthor` returns `true` immediately if `hasRelay` is false.
+- `hasRelay` is only flipped true by `_attachSession()`.
+- **`registrySync` calls `_attachSession()`; `originSync` did not.**
+- Result: originSync-attached records reported `isReadyToAuthor = true`
+  even though they hadn't caught up with anything. fileSync's startup
+  gate skipped, disk-wins branch fired against empty local state,
+  authored a SIG on a fresh chain, wire's actual SIGs then triggered
+  the alignment-check with pending=zero (init) vs committed=(local
+  sign) → false-positive conflict.
+
+**Fix (this arc):**
+1. `originSync.attachSync` calls `record._attachSession(null)` — sets
+   `hasRelay=true`; null session is intentional (originSync has no
+   session-level resync verb).
+2. `caughtUpToRelay` falls through to `relayChainHash !== null` when
+   `relaySubscribedAtOffset` is null. First SIG from wire → we're
+   caught up. Not as precise as the registrySync watermark, but keeps
+   `isReadyToAuthor` from returning true before wire tells us anything.
+
+**What this unlocks:** the auto-shard path fires correctly end-to-end
+for the local sub-Record. Home Record commits chain from the right
+parent (wire's, not empty).
+
+**Still open:** sub-Records don't have their own wire connection under
+originSync (single-record protocol). They need `registrySync` with
+`followMounts: true` to sync to a relay. That's the *"collapse
+originSync into registrySync"* roadmap item.
+
+## Empirical finding (earlier) — the chain-divergence with streamo.dev
 
 When testing the wake-inbox sharding fix, the publisher's push to
 streamo.dev fails with the alignment-check throw *even with a fresh

@@ -608,6 +608,18 @@ if (options.mergeFrom) {
 // populated relay reads "no relay → wait → caught up → author"
 // instead of "no relay yet (false negative) → commit on fresh chain →
 // push rejected with chain-mismatch." See StreamoRecord.isReadyToAuthor.
+// Pre-register ours:true mount targets from disk BEFORE any wire
+// connection materializes them. server.connect now uses registrySync
+// with followMounts, which walks the home Record's mounts.json and
+// subscribes to each mounted key — that subscription materializes the
+// child record, and the factory's Writable-vs-slim decision is cached
+// per-instance. So the pre-registration MUST land first. Idempotent;
+// server.files() will call it again as safety.
+if (options.files) {
+  const folderForPreregister = typeof options.files === 'string' ? options.files : '.'
+  server.preregisterOursMounts(folderForPreregister)
+}
+
 if (options.origin) {
   await server.connect(options.origin)
   console.log(`\x1b[32morigin: connected to ${options.origin}\x1b[0m`)

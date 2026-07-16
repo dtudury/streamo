@@ -159,7 +159,24 @@ export class StreamoServer {
   }
 
   async connect (hostPort) {
-    return originSync(this.streamo, this.publicKeyHex, hostPort)
+    // Uses registrySync (not originSync) so:
+    //   1. `_attachSession` is called → `hasRelay` flips true →
+    //      `isReadyToAuthor` gates on catch-up (see the isReadyToAuthor
+    //      fix arc 2026-07-16).
+    //   2. `followMounts: true` auto-subscribes to any ours:true
+    //      sub-Records via the mount cascade — so a home Record with
+    //      sharded content syncs both the home AND the shards through
+    //      one connection. Enables the wake-inbox e2e (sub-Records
+    //      push to the relay, not just materialize locally).
+    //   3. Automatic reconnect + intent-replay across drops.
+    //
+    // originSync is retained as a lower-level primitive (used by tests
+    // + fine-grained callers); server.connect is the one that grew up.
+    const session = await registrySync(this.registry, hostPort, {
+      followMounts: true
+    })
+    await session.subscribe(this.publicKeyHex)
+    return session
   }
 
   /**
@@ -177,18 +194,21 @@ export class StreamoServer {
     return registrySync(this.registry, hostPort, { followMounts: true, ...options })
   }
 
-  async files (folder = '.', options = {}) {
-    if (!this.signer) {
-      throw new Error('files() requires a signer — open this server with {name, username, password} instead of publicKeyHex')
-    }
-    // Pre-register ours:true mount targets as writable BEFORE fileSync
-    // materializes them — the factory's Writable-vs-slim decision is
-    // cached per-instance and can't be changed after _materialize (see
-    // markWritable's docstring). Read mounts.json from disk (source-of-
-    // truth for the author) rather than this.streamo.get('mounts.json')
-    // because the record's value may not have caught up from the relay
-    // yet at this point in startup. Absence of mounts.json is fine —
-    // just means no ours:true shards to pre-register.
+  /**
+   * Pre-register ours:true mount targets as writable BEFORE any code
+   * path materializes them. The factory's Writable-vs-slim decision is
+   * cached per-instance and can't be changed after `_materialize`.
+   * Reads mounts.json from disk (source-of-truth for the author) since
+   * the record's value may not have caught up from the relay yet.
+   *
+   * Callable from anywhere that knows the author's folder. Idempotent
+   * (markWritable is set-based). Must be called BEFORE:
+   *   - `.files()` — fileSync materializes shards via writeMany
+   *   - `.connect()` — registrySync with followMounts materializes shards
+   *     via the mount cascade when it sees the home's mounts.json
+   * Absence of mounts.json is fine — nothing to pre-register.
+   */
+  preregisterOursMounts (folder) {
     try {
       const raw = readFileSync(join(folder, 'mounts.json'), 'utf8')
       const parsed = JSON.parse(raw)
@@ -201,6 +221,15 @@ export class StreamoServer {
         }
       }
     } catch { /* no mounts.json on disk yet, or unreadable — fine */ }
+  }
+
+  async files (folder = '.', options = {}) {
+    if (!this.signer) {
+      throw new Error('files() requires a signer — open this server with {name, username, password} instead of publicKeyHex')
+    }
+    // Idempotent pre-register — safety for callers that reach files()
+    // without going through connect() first (tests, direct callers).
+    this.preregisterOursMounts(folder)
 
     // `dataDir` in options is the path-to-exclude hint for fileSync's
     // gitignore-style filter (so the on-disk archive directory doesn't

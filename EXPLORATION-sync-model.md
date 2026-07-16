@@ -189,6 +189,24 @@ originSync (single-record protocol). They need `registrySync` with
 `followMounts: true` to sync to a relay. That's the *"collapse
 originSync into registrySync"* roadmap item.
 
+**Update (2026-07-16 late):** LANDED. `server.connect(hostPort)` now
+uses `registrySync` + `session.subscribe(homeKey)` with
+`followMounts: true`. Sub-Records auto-sync via the mount cascade.
+Wake-mechanism verified e2e: content on disk → published to
+streamo.dev's sub-Record → served via HTTP. `originSync` retained as
+a lower-level primitive; full retirement deferred pending
+sync.test.js migration.
+
+One implementation subtlety: `followMounts` materializes sub-Records
+via the mount cascade AS SOON AS the home Record's mounts.json
+arrives. The factory's Writable-vs-slim decision is cached
+per-instance and can't be changed after `_materialize`. So the
+ours:true pre-registration (`markWritable`) MUST happen BEFORE
+`server.connect`. Extracted `preregisterOursMounts(folder)` as a
+public method on StreamoServer; bin/streamo.js calls it early
+(before `--origin` connect) reading from the same `folder` that will
+later be passed to `.files()`.
+
 ## Empirical finding (earlier) — the chain-divergence with streamo.dev
 
 When testing the wake-inbox sharding fix, the publisher's push to

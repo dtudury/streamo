@@ -634,18 +634,21 @@ because no one's needed it; the day someone does, we'll create it).
 - **Sync-model redesign / cleanup** (2026-07-16, Turnstone). See
   [[EXPLORATION-sync-model.md]] for the mental model + specific
   problems. Three items that fell out of the wake-inbox arc:
-  1. **Collapse `originSync` into `registrySync`.** Duplication. Per
-     David's design principle: one sync primitive; translate subtly
-     across protocols if needed. `originSync` is a stripped-down
-     version of `registrySync` that never got the richer handshake.
-     Substantial scope; needs its own arc.
-  2. **Client-side send `fromOffset` + `fromChainHash` in subscribe.**
-     `registrySync` server-side already supports this (see the
-     `readerFromOffset` param on `syncKey`), and `_resyncRepo` uses it
-     for the reset case. The initial client subscribe just doesn't
-     send it — always falls through to full replay. Would reduce
-     reconnect bandwidth from O(all-bytes-ever) to O(bytes-since-last).
-     ~10 LOC client-side + a small server-side test.
+  1. **Partial-collapse of `originSync` into `registrySync` LANDED 2026-07-16
+     (Turnstone).** `server.connect(hostPort)` now uses `registrySync` +
+     `session.subscribe(this.publicKeyHex)` with `followMounts: true`
+     instead of `originSync`. Effect: sub-Records get their own wire
+     sync via the mount cascade → wake-inbox works end-to-end.
+     `originSync` retained as lower-level primitive (used by
+     sync.test.js + tests that want single-record behavior). Full
+     retirement of originSync deferred pending: (a) migration of
+     sync.test.js's originSync-specific tests to registrySync
+     equivalents, (b) audit of any other originSync callers.
+  2. ~~**Client-side send `fromOffset` + `fromChainHash` in subscribe.**~~
+     **INDIRECTLY LANDED via item 1** — `session.subscribe` in
+     registrySync already sends the anchor properly. Publishers using
+     `server.connect` now get incremental sync instead of full replay.
+     Kept as noted-outcome for any remaining direct originSync callers.
   3. ~~**Investigate chain-divergence with streamo.dev on wake-inbox arc.**~~
      **DIAGNOSED + FIXED 2026-07-16 (Turnstone).** Root cause was
      `isReadyToAuthor` failing to gate for originSync-only records
@@ -653,18 +656,27 @@ because no one's needed it; the day someone does, we'll create it).
      false and the gate skipped). Fix: originSync attaches session
      with null; `caughtUpToRelay` falls through to `relayChainHash`
      when no watermark. See EXPLORATION-sync-model.md's late finding.
-  4. **Wire sync for ours:true sub-Records.** originSync is
-     single-record; sub-Records author locally but don't push to any
-     relay. Needs either registrySync (followMounts) OR explicit
-     per-sub-Record originSync connections. Subsumed by item 1 above
-     when that lands.
-  5. **Dev-vs-prod flag on WritableStreamoRecord.update's reset-then-
-     resync behavior** (David 2026-07-16). Current behavior: on
-     conflict, `_reset()` local + `_resyncRepo()` from wire = drop
-     local state, adopt wire's. Only really appropriate in dev.
-     Production should probably throw and surface to caller instead
-     of silently discarding. Small: add an option on `update()` or a
-     server-level flag.
+  4. ~~**Wire sync for ours:true sub-Records.**~~ **LANDED via item 1
+     (2026-07-16).** server.connect's move to registrySync+followMounts
+     auto-syncs sub-Records via the mount cascade. Verified e2e with
+     wake-inbox: content on disk → home Record push → sub-Record push
+     via followMounts → served by streamo.dev.
+  5. **`writeMany` uses stale mounts-snapshot for shard routing.**
+     Reads `mounts()` once at method start; if the incoming files
+     include an updated `mounts.json`, home commit lands the new
+     table but the shard step uses the pre-commit snapshot. Two
+     symptoms of this: (a) on fresh setup after mounts.json was
+     corrected, first run's shard fails; second run succeeds because
+     the corrected mounts landed on the home commit. (b) any mount-
+     table change requires two runs to fully propagate to shard
+     routing. Fix options: re-read `mounts()` after home commit, OR
+     read from disk (source of truth for the author), OR pass a
+     mountsOverride from fileSync's disk-read. Small; ~15 LOC.
+
+  6. ~~**Dev-vs-prod flag on WritableStreamoRecord.update's reset-
+     then-resync behavior.**~~ **DROPPED (David 2026-07-16):** just
+     throw. Caller can catch. Add a flag only if we find a real use
+     case that needs the auto-recover shape.
 
 - **Cross-slot element recycling.** Today's mount recycles within a slot
   (between its start/end comment anchors), and within an element's

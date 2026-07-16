@@ -631,6 +631,30 @@ because no one's needed it; the day someone does, we'll create it).
 
 ### eat your vegetables *(low-glamour cleanups for between-arcs days)*
 
+- **Sync-model redesign / cleanup** (2026-07-16, Turnstone). See
+  [[EXPLORATION-sync-model.md]] for the mental model + specific
+  problems. Three items that fell out of the wake-inbox arc:
+  1. **Collapse `originSync` into `registrySync`.** Duplication. Per
+     David's design principle: one sync primitive; translate subtly
+     across protocols if needed. `originSync` is a stripped-down
+     version of `registrySync` that never got the richer handshake.
+     Substantial scope; needs its own arc.
+  2. **Client-side send `fromOffset` + `fromChainHash` in subscribe.**
+     `registrySync` server-side already supports this (see the
+     `readerFromOffset` param on `syncKey`), and `_resyncRepo` uses it
+     for the reset case. The initial client subscribe just doesn't
+     send it — always falls through to full replay. Would reduce
+     reconnect bandwidth from O(all-bytes-ever) to O(bytes-since-last).
+     ~10 LOC client-side + a small server-side test.
+  3. **Investigate chain-divergence with streamo.dev on wake-inbox arc.**
+     Publisher push to streamo.dev fails with alignment-check throw
+     even from a fresh local archive. Debug showed SIGs being
+     appended to the record outside `relayInboundStream`'s SIGNATURE
+     branch — some other path advances `committedChainHash` without
+     the alignment-tracker knowing. Blocks wake-mechanism e2e
+     validation. See EXPLORATION-sync-model.md's empirical finding
+     section.
+
 - **Cross-slot element recycling.** Today's mount recycles within a slot
   (between its start/end comment anchors), and within an element's
   children. It does NOT consider elements across sibling slots in the

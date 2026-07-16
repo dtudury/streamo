@@ -22,6 +22,17 @@ import { join } from 'path'
 import { PushStore, pushRoutes, notifyOnMessages } from '../public/apps/chat/push.js'
 import { setLogLevel, logInfo, logDebug } from '../public/streamo/utils/logger.js'
 
+// Surface silent failures. Fire-and-forget promise chains inside
+// long-running work (fileSync's disk→repo IIFE, background syncs,
+// etc.) can throw without a caller awaiting them; without this handler
+// those rejections vanish. Log loudly and keep running — the operator
+// gets a chance to see the failure instead of debugging a silent no-op.
+process.on('unhandledRejection', (reason) => {
+  const msg = reason && reason.message ? reason.message : reason
+  console.error('⚠️  unhandledRejection:', msg)
+  if (reason && reason.stack) console.error(reason.stack)
+})
+
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url)))
 
 program

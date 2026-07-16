@@ -4,7 +4,10 @@
     "",
     "wake-inbox/ = David's wake-request channel. He writes files here",
     "  (e.g. wake-inbox/current.md). Publisher shards those into the",
-    "  wake-inbox sub-Record signed by keysFor('wake-inbox').",
+    "  wake-inbox sub-Record signed by keysFor('david/wake-inbox/').",
+    "  Convention: child-shard name = parent-signer-name + '/' + mount",
+    "  prefix. See FolderRecord.writeMany. The pubkey below MUST equal",
+    "  that derivation (a mismatch throws at write time).",
     "  Turnstone-side watcher subscribes to this sub-Record's pubkey",
     "  and wakes Claude when content advances.",
     "",
@@ -24,7 +27,7 @@
   ],
   "mounts": {
     "wake-inbox/": {
-      "key": "02d60373dc4899e2df8168a8f9c03dad39eb1091960df176b23c537efd25202b76",
+      "key": "02948903d99f1fc7ee3802a9b5b0b36cf9382b353acf6609af30a8afdebf2f0994",
       "ours": true
     }
   }

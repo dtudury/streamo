@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
@@ -179,6 +181,27 @@ export class StreamoServer {
     if (!this.signer) {
       throw new Error('files() requires a signer — open this server with {name, username, password} instead of publicKeyHex')
     }
+    // Pre-register ours:true mount targets as writable BEFORE fileSync
+    // materializes them — the factory's Writable-vs-slim decision is
+    // cached per-instance and can't be changed after _materialize (see
+    // markWritable's docstring). Read mounts.json from disk (source-of-
+    // truth for the author) rather than this.streamo.get('mounts.json')
+    // because the record's value may not have caught up from the relay
+    // yet at this point in startup. Absence of mounts.json is fine —
+    // just means no ours:true shards to pre-register.
+    try {
+      const raw = readFileSync(join(folder, 'mounts.json'), 'utf8')
+      const parsed = JSON.parse(raw)
+      const mounts = parsed && parsed.mounts
+      if (mounts && typeof mounts === 'object') {
+        for (const mount of Object.values(mounts)) {
+          if (mount && mount.ours === true && typeof mount.key === 'string' && /^[0-9a-f]{66}$/.test(mount.key)) {
+            this.markWritable(mount.key)
+          }
+        }
+      }
+    } catch { /* no mounts.json on disk yet, or unreadable — fine */ }
+
     // `dataDir` in options is the path-to-exclude hint for fileSync's
     // gitignore-style filter (so the on-disk archive directory doesn't
     // get sucked back into the Record's value.files). No longer a

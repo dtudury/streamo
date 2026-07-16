@@ -304,24 +304,37 @@ async function collectAllMounted (repo, ownKey, registry) {
 }
 
 /**
- * Wrap an accepts filter so it ALSO rejects paths under any current
- * mount prefix. Used for "what counts as own-files" decisions —
- * commits, watcher events, and the disk-reads-for-commit pass.
+ * Wrap an accepts filter so it also handles mount prefixes correctly:
+ *   - foreign mounts (no ours:true): paths REJECTED — those bytes belong
+ *     to another Record's chain; we don't author there.
+ *   - ours:true mounts: paths ADMITTED — those bytes belong to a shard
+ *     we own via the derived child signer, and writeMany routes them
+ *     to the mounted Record on commit.
  *
- * The `recordFile` (streamo.json) is a first-class file in
- * `value.files` — it's NOT excluded here. Its content mirrors the
- * top-level meta (the redundancy invariant fileSync maintains).
+ * The `recordFile` (streamo.json) is a first-class file in the value —
+ * it's NOT excluded here. Its content mirrors the top-level meta (the
+ * redundancy invariant fileSync maintains).
  *
- * Reads mount prefixes fresh on every call so the filter tracks the
- * repo's current mounts table without needing to be rebuilt.
+ * Reads mounts fresh on every call so the filter tracks the repo's
+ * current mounts table without needing to be rebuilt. Longest-prefix
+ * wins — mirrors resolvePath's matching rules.
  */
-function buildOwnFilesFilter (acceptsForDisk, getMountPrefixes) {
+function buildOwnFilesFilter (acceptsForDisk, getMounts) {
   return rel => {
     if (!acceptsForDisk(rel)) return false
-    for (const prefix of getMountPrefixes()) {
+    const mounts = getMounts()
+    let matchedMount = null
+    let matchedPrefix = null
+    for (const [prefix, mount] of Object.entries(mounts)) {
       const bare = prefix.endsWith('/') ? prefix.slice(0, -1) : prefix
-      if (rel === bare || rel.startsWith(prefix)) return false
+      if (rel === bare || rel.startsWith(prefix)) {
+        if (!matchedPrefix || prefix.length > matchedPrefix.length) {
+          matchedPrefix = prefix
+          matchedMount = mount
+        }
+      }
     }
+    if (matchedPrefix) return matchedMount && matchedMount.ours === true
     return true
   }
 }
@@ -428,13 +441,13 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   //                        belong to other records' chains, not ours.
   // The mount-prefix list is read fresh from the repo's value on every
   // call, so the filter tracks the current mounts table dynamically.
-  const getMountPrefixes = () => {
-    if (!registry || !pubkeyHex) return []
-    return Object.keys(readRepoMounts(repo))
+  const getMounts = () => {
+    if (!registry || !pubkeyHex) return {}
+    return readRepoMounts(repo)
   }
   const acceptsForCommit = mountsOnly
     ? buildMountsOnlyFilter(acceptsForDisk)
-    : buildOwnFilesFilter(acceptsForDisk, getMountPrefixes)
+    : buildOwnFilesFilter(acceptsForDisk, getMounts)
 
   const getRepoFiles = () => readRepoFiles(repo)
   // Flat shape: the file map IS the value. A fresh Record gets the files
@@ -631,6 +644,17 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         } else {
           await repo.update(c => applyFilesToValue(c, newFiles), { message: 'file change' })
         }
+      } catch (err) {
+        // Without this catch, the enclosing async IIFE turns any commit
+        // failure (e.g. writeMany's shard-key mismatch) into an
+        // unhandled promise rejection — invisible unless something at
+        // the process level is watching. Log loudly so the operator
+        // sees what happened. Ownership of retry/backoff is deferred:
+        // filesystem events will keep firing and re-invoking this
+        // handler, so a transient issue self-recovers; a persistent one
+        // will keep logging until the operator fixes it.
+        console.error('fileSync: commit-from-disk failed:', err && err.message ? err.message : err)
+        if (err && err.stack) console.error(err.stack)
       } finally {
         committingFromDisk = false
       }

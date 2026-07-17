@@ -229,14 +229,25 @@ async function acceptSuggestion (s) {
   }
   uset({ accepting: true, acceptError: null, status: 'accepting…' })
   try {
-    await hisRepo.update(
-      c => ({ ...(c ?? {}), [s.field]: s.value, updatedAt: new Date() }),
-      { message: `accept iris edit: ${s.field}${s.reason ? ` (${s.reason})` : ''}` }
-    )
+    // Migrated to Draft API 2026-07-16. Behavior change vs old
+    // repo.update(): Draft doesn't auto-retry on conflict — if
+    // someone else's write races and wins, .commit() throws with
+    // err.draftStatus === 'superseded' and the user sees an error
+    // instead of a silent retry. Appropriate here: an "accept
+    // suggestion" that races with another edit *should* surface so
+    // the user re-reads before accepting.
+    const draft = hisRepo.newDraft()
+    draft.set(c => ({ ...(c ?? {}), [s.field]: s.value, updatedAt: new Date() }))
+    await draft.commit({
+      message: `accept iris edit: ${s.field}${s.reason ? ` (${s.reason})` : ''}`
+    })
     ui.set('status', 'accepted')
     markAccepted(s)  // collapse this suggestion from the UI
   } catch (err) {
-    ui.set('acceptError', err.message ?? String(err))
+    const msg = err.draftStatus === 'superseded'
+      ? 'someone else updated this record — please refresh and try again'
+      : (err.message ?? String(err))
+    ui.set('acceptError', msg)
   } finally {
     ui.set('accepting', false)
   }

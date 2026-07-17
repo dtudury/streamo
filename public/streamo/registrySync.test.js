@@ -8,6 +8,7 @@ import { attachStreamSync } from './outletSync.js'
 import { registrySync } from './registrySync.js'
 import { Signer } from './Signer.js'
 import { bytesToHex } from './utils.js'
+import { commitWithRetry } from './Draft.js'
 
 // 11.0.0 splits StreamoRecord (read-only) from WritableStreamoRecord (author).
 // Tests declare which keys they intend to author on via `openWriter` — those
@@ -1062,7 +1063,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRepo.get('count') === 0)
     clientRepo.attachSigner(SIGNER, (await realKey(100)).name)
 
-    await clientRepo.update(c => ({ ...c, count: 1 }))
+    await commitWithRetry(clientRepo, c => ({ ...c, count: 1 }))
     assert.equal(clientRepo.get('count'), 1, 'updateFn applied locally')
 
     // **Regression marker (2026-05-26 browser-found):** update must ACTUALLY

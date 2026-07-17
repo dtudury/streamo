@@ -111,25 +111,8 @@ export class WritableStreamoRecord extends StreamoRecord {
   #signing     = false
   #signPending = false
 
-  // Reactive: the substrate-articulated "auto-resolution gave up"
-  // signal. `null` when healthy or when no `update` has exhausted its
-  // retries yet. After `update` exhausts: `{ attempts, pushRejected? }`
-  // — same shape as the `onConflict` callback receives.
-  //
-  // The *meta* layer above `pushRejected` and `conflictDetected`:
-  // those fire on individual failures; `recoveryStuck` fires when
-  // automated recovery (the `update` retry loop) has tried and
-  // couldn't converge. Apps gate the "intervention required" UI on
-  // this (resolve button visible, save grayed) and clear it by
-  // calling `repo.update(() => userChosenValue)` again — the retry
-  // verb IS the substrate primitive, no separate "retry" method
-  // needed. A successful update clears recoveryStuck automatically.
-  //
-  // David's framing (2026-05-26): the "edited locally and couldn't
-  // push" view and the "saved but the relay raced" view are the
-  // same case — both manifest as recoveryStuck fired with the
-  // rejected value addressable for the resolve UI.
-  #recoveryStuck = null
+  // (#recoveryStuck removed 2026-07-17 with update() — Draft's status
+  // transitions superseded/failed are the new signal.)
 
   // Low-water mark of bytes this process authored locally — "the smallest
   // offset at which I appended a byte I signed for." Apps can read
@@ -468,127 +451,17 @@ export class WritableStreamoRecord extends StreamoRecord {
     })
   }
 
-  /**
-   * Apply `updateFn` to the Record's current value, set the result,
-   * await the relay's ack. On conflict (`pushRejected`), reset local
-   * state via the attached session's resync, await re-anchor from the
-   * relay's authoritative stream, re-apply against the new current,
-   * retry. Up to `retries` times.
-   *
-   * The conflict-safe write primitive. Replaces the
-   * `const c = repo.get(); repo.set({...c, x})` pattern that races
-   * against concurrent writers.
-   *
-   * Requires a session attached via `_attachSession` (set by
-   * `session.subscribe`). Without one, throws on the first conflict
-   * since there's no path to retry.
-   */
-  async update (updateFn, options = {}) {
-    // Clear recoveryStuck on entry: a fresh `update` call is the user
-    // saying "try again with this." If the new attempt succeeds, the
-    // cell stays clear and the resolve-UI in the app naturally
-    // hides. If this call also exhausts, the cell sets again with
-    // fresh state.
-    if (this.#recoveryStuck !== null) this._setRecoveryStuck(null)
+  // update() was removed 2026-07-17 (item 3b). Callers use Draft
+  // (via Mirror.newDraft) or the commitWithRetry helper for the old
+  // retry-loop semantics. See EXPLORATION-sync-model.md for the
+  // Mirror-and-Draft design + migration path.
 
-    const { retries = 3, onConflict = null, message, date, remoteParent } = options
-    let lastError = null
-    for (let attempt = 0; attempt <= retries; attempt++) {
-      const current = this.get()
-      const next = updateFn(current)
-      if (message !== undefined || date !== undefined || remoteParent !== undefined) {
-        // Inline checkout→set→commit because set() reads defaultMessage at
-        // commit time and doesn't accept date/remoteParent — under concurrent
-        // updates that would race and silently drop them.
-        const prevDataAddress = this.lastCommit?.dataAddress
-        const working = this.checkout()
-        working.set(next)
-        const commitOpts = {}
-        if (date !== undefined) commitOpts.date = date
-        if (remoteParent !== undefined) commitOpts.remoteParent = remoteParent
-        this.commit(working, message, commitOpts)
-        const newDataAddress = this.lastCommit?.dataAddress
-        for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
-          this.recaller.reportKeyMutation(this, JSON.stringify(changed))
-        }
-      } else {
-        this.set(next)
-      }
-      // Wait for scheduleSign to actually append the SIG before reading
-      // committedChainHash. Without this, `target` is the PREVIOUS
-      // chain hash (the SIG before our new commit), so _awaitChainHash
-      // waits for a hash the relay already broadcast — and hangs
-      // forever even though our bytes successfully made the round-trip.
-      // Symptom: save button never comes back after first save.
-      // `signedLength === byteLength` becomes true once sign() appends.
-      //
-      // No signer attached → nothing will ever advance signedLength, so
-      // the await would hang forever. The primitive collapses to
-      // "commit and return" — matches set()'s old fire-and-forget shape.
-      // Tests creating records without signers (fileSync's archive-only
-      // paths) hit this case.
-      if (this.#signer === null) return
-      await this.recaller.when(() => this.signedLength === this.byteLength)
-      const target = this.committedChainHash
-      try {
-        await this._awaitChainHash(target)
-        return  // ack received; we're in sync with the relay
-      } catch (err) {
-        lastError = err
-        if (attempt === retries) break
-        const session = this._session
-        if (!session) break  // no path to retry without a session
-        this._reset()
-        // _resyncRepo can throw "no live peer (mid-reconnect?)" when the
-        // WS just closed (typical after conflictDetected tears down the
-        // connection). Catch it and let the loop end normally so
-        // recoveryStuck fires below — instead of an uncaught throw that
-        // skips the substrate-articulated "auto-resolve gave up" signal.
-        try {
-          await session._resyncRepo(this.publicKeyHex)
-        } catch (resyncErr) {
-          lastError = resyncErr
-          break
-        }
-      }
-    }
-    const finalState = { pushRejected: this.pushRejected, attempts: retries + 1 }
-    // Substrate-articulated "auto-resolution gave up" — apps watch
-    // `repo.recoveryStuck` to surface the resolve-UI.
-    this._setRecoveryStuck(finalState)
-    if (onConflict) return onConflict(finalState)
-    const err = /** @type {Error & { pushRejected?: any }} */ (new Error(
-      `repo.update: exhausted ${retries + 1} attempts; ${lastError?.message ?? 'unknown'}` +
-      (this._session ? '' : ' (no session attached — update requires session.subscribe for retry path)')
-    ))
-    err.pushRejected = this.pushRejected
-    throw err
-  }
 
-  /**
-   * Reactive: the meta-layer "we tried to auto-resolve and couldn't"
-   * signal. `null` when healthy. After `update` exhausts retries:
-   * `{ attempts, pushRejected? }`. Apps gate the "resolve" UI on
-   * this; calling `repo.update(() => userChosenValue)` again clears
-   * it (the substrate's retry verb).
-   */
-  get recoveryStuck () {
-    this.recaller.reportKeyAccess(this, 'recoveryStuck')
-    return this.#recoveryStuck
-  }
 
-  /** Internal setter — called by `update` on exhaust + entry-clear. */
-  _setRecoveryStuck (value) {
-    this.#recoveryStuck = value
-    this.recaller.reportKeyMutation(this, 'recoveryStuck')
-  }
-
-  /** @override Also resets locallyAuthoredOffset + recoveryStuck. */
+  /** @override Also resets locallyAuthoredOffset. */
   _reset () {
     super._reset()
     this.#locallyAuthoredOffset = Infinity
-    this.#recoveryStuck = null
     this.recaller.reportKeyMutation(this, 'locallyAuthoredOffset')
-    this.recaller.reportKeyMutation(this, 'recoveryStuck')
   }
 }

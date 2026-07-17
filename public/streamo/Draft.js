@@ -67,9 +67,8 @@ export class Draft {
   constructor (mirror, signer = null, signerName = null) {
     if (!mirror) throw new Error('Draft requires a mirror')
     if (typeof mirror.commit !== 'function' ||
-        typeof mirror.checkout !== 'function' ||
-        typeof mirror.update !== 'function') {
-      throw new Error('Draft: mirror must be a WritableStreamoRecord for the first-mile facade (real Mirror class comes later)')
+        typeof mirror.checkout !== 'function') {
+      throw new Error('Draft: mirror must be a WritableStreamoRecord (has commit + checkout for signing)')
     }
     this.#mirror = mirror
     this.#signer = signer

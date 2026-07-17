@@ -3,6 +3,7 @@ import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { FolderRecord } from './FolderRecord.js'
+import { commitWithRetry } from './Draft.js'
 
 const PK_A = '02' + 'a'.repeat(64)
 const PK_B = '02' + 'b'.repeat(64)
@@ -324,7 +325,7 @@ describe(import.meta.url, ({ test }) => {
     })
     assert.equal(calls, 1, 'watcher fires once on register')
     assert.equal(lastValue, undefined, 'no data yet → undefined')
-    await repo.update(v => ({ ...(v ?? {}), x: 'hello' }))
+    await commitWithRetry(repo, v => ({ ...(v ?? {}), x: 'hello' }))
     // Recaller flushes asynchronously via nextTick — give it a beat.
     await new Promise(r => setTimeout(r, 0))
     assert.equal(calls, 2, 'watcher re-fired after value arrived')

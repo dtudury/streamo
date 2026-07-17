@@ -68,7 +68,7 @@ describe('Draft (first-mile facade)', ({ test }) => {
     let threw = false
     try { new Draft(fakeMirror) } catch (e) {
       threw = true
-      assert.ok(/first-mile facade/.test(e.message), 'error names the first-mile constraint')
+      assert.ok(/Writable/.test(e.message), 'error names the Writable requirement')
     }
     assert.ok(threw, 'construction throws when mirror isn\'t Writable')
   })

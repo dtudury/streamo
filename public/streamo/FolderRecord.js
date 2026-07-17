@@ -205,7 +205,7 @@ export class FolderRecord {
       const innerPath = path.startsWith(mountPrefix) ? path.slice(mountPrefix.length) : ''
       return child.write(innerPath, value, options)
     }
-    if (typeof this.record.update !== 'function') {
+    if (typeof this.record.commit !== 'function') {
       throw new Error('FolderRecord.write: this Record is not Writable (slim StreamoRecord has no author surface — use WritableStreamoRecord)')
     }
     // Migrated 2026-07-17 to Draft API via commitWithRetry —
@@ -276,7 +276,7 @@ export class FolderRecord {
 
     // Commit home Record's files.
     if (Object.keys(homeFiles).length > 0) {
-      if (typeof this.record.update !== 'function') {
+      if (typeof this.record.commit !== 'function') {
         throw new Error('FolderRecord.writeMany: home Record is not Writable')
       }
       // Migrated 2026-07-17 to Draft API via commitWithRetry.

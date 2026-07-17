@@ -382,9 +382,16 @@ mirror advance (the same round-trip we already have).
 
 ### Migration path (roughly)
 
-1. Add `Mirror.newDraft(signer)` as a NEW API alongside existing
-   `WritableStreamoRecord.update`.
+1. **LANDED 2026-07-16** (Turnstone): `Mirror.newDraft(signer)` as a
+   NEW API alongside existing `WritableStreamoRecord.update`. First-
+   mile facade — internally delegates to update() with retries:0 +
+   onConflict. Ships the vocabulary (`Draft` class with `.set`,
+   `.commit`, `.status` transitioning through draft/pending/landed/
+   superseded/cancelled/failed) without changing existing behavior. See
+   `public/streamo/Draft.js` and `Draft.test.js`. 475/475 tests pass.
 2. Migrate authoring callers one by one: fileSync, publishers, apps.
+   Callers can move from `update()` to `newDraft() + commit()` at
+   their own pace.
 3. Once no callers use `.update()`, deprecate `WritableStreamoRecord`
    as a distinct class; StreamoRecord (mirror) is the only Record.
 4. Rip out alignment-check, `writableKeys`, `pendingChainHash` — all

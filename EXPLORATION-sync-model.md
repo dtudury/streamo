@@ -247,6 +247,152 @@ before any local writes) or a per-SIG cryptographic chain-linkage check
 (more expensive, requires re-deriving chainHash from previous +
 staged-content and comparing to the SIG's declared chainHash).
 
+## The Mirror-and-Draft design (David + Turnstone 2026-07-16)
+
+Distinct client-side objects for the read-only and author-side roles.
+Not one Record with modes; two objects with different lifetimes.
+
+### Object model
+
+**Mirror** — long-lived, one per pubkey the client knows about.
+- Represents wire's authoritative state for that pubkey.
+- Byte storage: the chain as received from wire.
+- Read API: `.get(...)`, `.committedChainHash`, `.byteLength`, etc.
+- Recaller-reactive: watchers fire when wire advances the mirror.
+- Registry stores mirrors. `registry._materialize(key)` returns a mirror.
+- No `.set()`, no `.commit()`. Reading only.
+
+**Draft** — ephemeral, created per author-attempt.
+- Constructed from `(mirror, signer)`. Snapshots mirror's current
+  chainHash as its `parent`.
+- Holds a mutable value the author is composing.
+- No byte storage of its own — it's a "proposed change ahead of
+  mirror." Rendered as `merge(mirror.value, draft.pendingValue)` when
+  the author wants to see their in-progress state.
+- `.set(newValue)` mutates the draft's pendingValue.
+- `.commit({message, date})` seals the pending value: signs a
+  commit-triple against draft's parent, sends it to wire.
+- Reactive status:
+  - `pending` — commit signed, waiting for wire confirmation
+  - `landed` — mirror has advanced past the commit's terminating
+    footer AND its chainHash matches → the commit is authoritative
+  - `superseded` — mirror has advanced past that point to a DIFFERENT
+    chainHash → someone else's commit won at that position; this
+    draft's commit is invalid
+  - `cancelled` — explicitly discarded before commit
+- Author code watches status, handles UX. No auto-retry inside the
+  draft; if the author wants to retry they construct a new draft from
+  the updated mirror and re-apply their intent.
+
+### Author flow
+
+```
+const mirror = await session.subscribe(myKey)   // long-lived
+const draft = mirror.newDraft(signer)           // ephemeral
+draft.set({ ...currentValueDerivation, x: 'new' })
+await draft.commit({ message: 'set x' })
+// draft.status is now 'landed' — mirror shows the new value
+```
+
+Superseded case:
+```
+if (draft.status === 'superseded') {
+  // Someone else's commit won at this parent. Their content is in
+  // mirror now. Author decides: discard, merge-and-retry, notify UI, etc.
+  const fresh = mirror.newDraft(signer)
+  fresh.set(reapplyIntentOn(mirror.get()))
+  await fresh.commit({ message: 'set x (retry)' })
+}
+```
+
+### Rendering author state
+
+Mirror always shows wire's truth. If author wants to see their
+in-progress state (before commit):
+
+```
+const displayed = draft.status === 'landed' || draft.status === null
+  ? mirror.get()
+  : merge(mirror.get(), draft.pendingValue)  // author's proposed shape
+```
+
+Author-rendering is inherently special anyway (a UI often shows the
+user's uncommitted edits distinctly from the saved state). Making that
+distinction explicit in the model matches how UIs actually work.
+
+### Sync-layer wire-up
+
+Wire has two flows against a given pubkey:
+
+- **Down** (wire → us): bytes land in mirror only. Mirror's byte-array
+  and chainHash advance as chunks arrive. Never touches drafts.
+- **Up** (us → wire): draft.commit() sends its signed commit-triple to
+  wire. Wire routes it as usual (may accept or reject at the relay).
+
+Drafts don't have byte storage or a wire connection. They piggyback on
+the mirror's connection for the up-flow: `mirror.pushCommit(sig)` or
+similar. The draft's confirmation signal comes from watching the
+mirror advance (the same round-trip we already have).
+
+### What this dissolves
+
+- **Class-freezing.** No promotion. Mirror is always read-only; drafts
+  are always writable-ephemeral. Both classes are stable at
+  construction. No cached factory decisions get in the way.
+- **`markWritable` / `writableKeys` pre-registration.** The factory
+  always returns a mirror. Whether we can author for a key is
+  determined at draft-creation time (do we have a signer?), not at
+  materialize time.
+- **`pendingChainHash` alignment-check compensation.** Mirror
+  advances via wire only. No local writes race with wire bytes on the
+  same object. The alignment-check-as-hack goes away.
+- **`isReadyToAuthor` gating gap for originSync.** Mirror is
+  populated by wire; draft is populated by author. Neither requires a
+  "wait for the other" gate — they operate on separate states.
+- **Dev-vs-prod flag on reset-then-resync.** Draft's `superseded`
+  status IS the conflict signal. Author code decides UX. No implicit
+  "drop local and adopt wire" behavior — it's always explicit.
+- **The `writeMany` shard-routing stale-snapshot quirk.** Author's
+  draft against a mirror routes based on the mirror's current
+  mounts.json (or an explicit override). Post-commit state is
+  observable via mirror updates.
+
+### What it costs
+
+- **Author-side rendering merges** mirror + draft. Small cost, every
+  place a UI wants to show in-progress state. Manageable.
+- **Draft-creation friction** — authors have to construct a draft
+  before writing. Not just `record.set()`. A little more ceremony,
+  but the ceremony matches the semantic reality (writes are proposals
+  until confirmed).
+- **Retry logic moves to caller.** `WritableStreamoRecord.update()`'s
+  auto-retry via `_resyncRepo` disappears. Callers who want retry
+  wrap `commit` + `newDraft` themselves. A helper like
+  `mirror.autoUpdate(updateFn)` could preserve today's ergonomics as
+  a convenience.
+
+### What it doesn't solve
+
+- The alignment-check would still exist for backward-compatible
+  callers using the old shape (if we keep the old shape around during
+  migration). Full retirement of the alignment-check requires all
+  callers to migrate to Mirror+Draft.
+- The wire protocol doesn't change. Same chunks + commit-records +
+  SIGs on the wire. The reorganization is client-side.
+
+### Migration path (roughly)
+
+1. Add `Mirror.newDraft(signer)` as a NEW API alongside existing
+   `WritableStreamoRecord.update`.
+2. Migrate authoring callers one by one: fileSync, publishers, apps.
+3. Once no callers use `.update()`, deprecate `WritableStreamoRecord`
+   as a distinct class; StreamoRecord (mirror) is the only Record.
+4. Rip out alignment-check, `writableKeys`, `pendingChainHash` — all
+   the compensation-shapes.
+
+Estimated as a major bump (probably an 11.x-shaped arc). Not
+implementable in one session — needs a dedicated arc.
+
 ## Open questions
 
 - **Two authors publishing simultaneously.** How does the substrate

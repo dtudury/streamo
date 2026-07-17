@@ -633,7 +633,19 @@ because no one's needed it; the day someone does, we'll create it).
 
 - **Sync-model redesign / cleanup** (2026-07-16, Turnstone). See
   [[EXPLORATION-sync-model.md]] for the mental model + specific
-  problems. Three items that fell out of the wake-inbox arc:
+  problems.
+
+  **North-star design (David 2026-07-16 late):** Mirror + Draft.
+  Mirror is the long-lived read-only view of wire's authoritative
+  state; Draft is ephemeral author-work created per commit-attempt
+  from `(mirror, signer)`. Dissolves class-freezing,
+  markWritable-preregistration, alignment-check compensation,
+  isReadyToAuthor gap, dev-vs-prod flag, and the writeMany stale-
+  mounts quirk. See EXPLORATION-sync-model.md's "Mirror-and-Draft
+  design" section for the concrete sketch (object model, author flow,
+  wire-up, migration path). Estimated as an 11.x-shaped arc.
+
+  Interim items that live along the migration:
   1. **Partial-collapse of `originSync` into `registrySync` LANDED 2026-07-16
      (Turnstone).** `server.connect(hostPort)` now uses `registrySync` +
      `session.subscribe(this.publicKeyHex)` with `followMounts: true`

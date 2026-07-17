@@ -196,6 +196,13 @@ export class WritableStreamoRecord extends StreamoRecord {
     this.#signerName = name
   }
 
+  /**
+   * Whether a signer has been attached. Used by callers (like Draft) that
+   * need to know before awaiting a sign — without a signer, waits for
+   * `signedLength === byteLength` never complete.
+   */
+  get hasSigner () { return this.#signer !== null }
+
   #scheduleSign () {
     if (!this.#signer) return
     // Once the underlying Addressifier is closed, any append (including

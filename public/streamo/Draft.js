@@ -28,9 +28,9 @@
  * lower-opinion primitive.
  *
  * **First-mile status:** internally delegates to
- * `WritableStreamoRecord.update({retries: 0, onConflict})` for the
- * actual signing + push. Not yet a real class-separation. See
- * EXPLORATION-sync-model.md for the full design.
+ * WritableStreamoRecord primitives directly (checkout + set + commit +
+ * auto-sign + `_awaitChainHash`). Not yet a real class-separation.
+ * See EXPLORATION-sync-model.md for the full design.
  */
 import { Recaller } from './utils/Recaller.js'
 
@@ -177,47 +177,68 @@ export class Draft {
 
     this.#setStatus('pending')
 
-    // Delegate to WritableStreamoRecord.update with retries:0 and an
-    // onConflict callback that flips us to 'superseded'. update() signs +
-    // pushes + awaits round-trip.
+    // Use WritableStreamoRecord primitives directly (checkout + set +
+    // commit + auto-sign + _awaitChainHash) instead of update()'s
+    // retry loop. Retries live at the caller layer (commitWithRetry
+    // helper); Draft is the no-retry primitive.
+    //
+    // The inline checkout→set→commit path mirrors update()'s handling
+    // of message/date/remoteParent: those options need the checkout
+    // path because set() reads defaultMessage at commit time.
     let succeeded = false
     try {
-      const result = await this.#mirror.update(
-        () => this.#pendingValue,
-        {
-          retries: 0,
-          message,
-          date,
-          onConflict: (finalState) => {
-            // update()'s retry loop reached exhaustion. In our case with
-            // retries:0, this fires after the FIRST failure. Interpret as
-            // supersession — someone else committed at our parent.
-            this.#setStatus('superseded')
-            return { superseded: true, finalState }
-          }
-        }
-      )
-      if (result && result.superseded) {
-        // Already set to 'superseded' inside onConflict.
-        throw Object.assign(
-          new Error('Draft superseded — mirror accepted a different commit at parent'),
-          { draftStatus: 'superseded' }
-        )
+      if (message !== undefined || date !== undefined) {
+        const working = this.#mirror.checkout()
+        working.set(this.#pendingValue)
+        const commitOpts = {}
+        if (date !== undefined) commitOpts.date = date
+        this.#mirror.commit(working, message, commitOpts)
+      } else {
+        this.#mirror.set(this.#pendingValue)
       }
-      // update() resolved without conflict; the commit's chainHash is now
-      // mirror.committedChainHash.
-      this.#targetChainHash = this.#mirror.committedChainHash
+
+      // No signer → mirror never advances signedLength; the primitive
+      // collapses to "commit and return" (matches update()'s bail at
+      // its own signer-null check). Callers who wanted a signed round-
+      // trip should have attached one; this is the "no-signer" author
+      // path used by fileSync's archive-only paths + tests.
+      if (this.#mirror.hasSigner === false) {
+        this.#targetChainHash = this.#mirror.committedChainHash
+        succeeded = true
+        this.#setStatus('landed')
+        return { chainHash: this.#targetChainHash }
+      }
+
+      // Wait for auto-sign to append the SIG (advances signedLength to
+      // byteLength). With a signer attached, the recaller-based sign
+      // scheduler fires and moves signedLength.
+      await this.#mirror.recaller.when(() => this.#mirror.signedLength === this.#mirror.byteLength, {
+        name: 'draft:await-sign'
+      })
+      const target = this.#mirror.committedChainHash
+
+      // Await round-trip: mirror's relayChainHash matches our target
+      // → the commit landed upstream. If _awaitChainHash rejects with
+      // pushRejected or conflictDetected, we were superseded.
+      await this.#mirror._awaitChainHash(target)
+
+      this.#targetChainHash = target
       succeeded = true
       this.#setStatus('landed')
+      return { chainHash: target }
     } catch (err) {
-      if (this.#status === 'superseded') throw err  // already set; propagate
-      // Other error path (network, signing, etc.). Preserve the error.
-      this.#error = err
-      this.#setStatus('failed')
-      throw err
+      // Only "clean" way to reach here is a supersession signal from
+      // _awaitChainHash. Any other error (invariant violation, etc.)
+      // still needs to surface — preserve the original error via cause.
+      if (this.#status === 'pending') {
+        this.#error = err
+        this.#setStatus('superseded')
+      }
+      throw Object.assign(
+        new Error(`Draft superseded: ${err.message ?? err}`),
+        { draftStatus: 'superseded', cause: err }
+      )
     }
-
-    return { chainHash: this.#targetChainHash }
   }
 
   #setStatus (s) {

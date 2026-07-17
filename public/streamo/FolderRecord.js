@@ -38,6 +38,8 @@
  * files in front of them.
  */
 
+import { commitWithRetry } from './Draft.js'
+
 const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 
 // Flat-shape convention (2026-06-04): value IS the files map. Filenames
@@ -206,7 +208,11 @@ export class FolderRecord {
     if (typeof this.record.update !== 'function') {
       throw new Error('FolderRecord.write: this Record is not Writable (slim StreamoRecord has no author surface — use WritableStreamoRecord)')
     }
-    return this.record.update(
+    // Migrated 2026-07-17 to Draft API via commitWithRetry —
+    // preserves the auto-retry-on-conflict semantics FolderRecord's
+    // callers expect while moving off .update() directly.
+    return commitWithRetry(
+      this.record,
       v => ({ ...(v ?? {}), [path]: value }),
       options
     )
@@ -273,7 +279,9 @@ export class FolderRecord {
       if (typeof this.record.update !== 'function') {
         throw new Error('FolderRecord.writeMany: home Record is not Writable')
       }
-      await this.record.update(
+      // Migrated 2026-07-17 to Draft API via commitWithRetry.
+      await commitWithRetry(
+        this.record,
         v => replace ? homeFiles : { ...(v ?? {}), ...homeFiles },
         updateOpts
       )

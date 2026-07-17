@@ -225,3 +225,46 @@ export class Draft {
     this.#recaller.reportKeyMutation(this, 'status')
   }
 }
+
+/**
+ * Retry-wrapping helper for callers who want the old auto-retry-on-conflict
+ * shape of `WritableStreamoRecord.update()` while using the Draft API.
+ * On each attempt, constructs a fresh Draft (against mirror's current tip),
+ * applies the updater, commits. On 'superseded', retries. On other errors,
+ * throws.
+ *
+ * Use this for contexts where a conflict "should" auto-retry — server
+ * startup seeds, background reconciliation, etc. For contexts where a
+ * conflict is user-facing signal, use Draft directly.
+ *
+ * @template T
+ * @param {import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
+ * @param {(current: any) => T} updater  called with mirror's current value on each attempt
+ * @param {object} [options]
+ * @param {number} [options.retries=3]  max total attempts is retries + 1
+ * @param {string} [options.message]
+ * @param {Date} [options.date]
+ * @param {import('./Signer.js').Signer} [options.signer]
+ * @param {string} [options.signerName]
+ * @returns {Promise<{chainHash: Uint8Array, attempts: number}>}
+ */
+export async function commitWithRetry (mirror, updater, options = {}) {
+  const { retries = 3, message, date, signer = null, signerName = null } = options
+  let lastError = null
+  for (let attempt = 1; attempt <= retries + 1; attempt++) {
+    const draft = mirror.newDraft(signer, signerName)
+    draft.set(updater(mirror.get()))
+    try {
+      const result = await draft.commit({ message, date })
+      return { chainHash: result.chainHash, attempts: attempt }
+    } catch (err) {
+      lastError = err
+      if (err.draftStatus !== 'superseded') throw err
+      // Superseded — loop retries with a fresh draft against updated mirror.
+    }
+  }
+  throw Object.assign(
+    new Error(`commitWithRetry: exhausted ${retries + 1} attempts; last error: ${lastError?.message}`),
+    { draftStatus: 'superseded', lastError, attempts: retries + 1 }
+  )
+}

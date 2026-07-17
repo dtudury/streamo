@@ -7,6 +7,7 @@ import { readFile, readdir } from 'fs/promises'
 import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
+import { commitWithRetry } from '../../streamo/Draft.js'
 import { buildTarotData } from '../../../scripts/tarot-data.js'
 import { PushStore, pushRoutes, notifyOnMessages } from './push.js'
 
@@ -162,7 +163,10 @@ if (server.signer) {
   const decksChanged = JSON.stringify(currentDecks) !== JSON.stringify(nextDecks)
 
   if (journalistsChanged || entriesChanged || decksChanged) {
-    await server.streamo.update(c => ({
+    // Migrated 2026-07-16 to Draft API via commitWithRetry — server
+    // startup seed keeps auto-retry-on-conflict shape (defensive; no
+    // concurrent user).
+    await commitWithRetry(server.streamo, c => ({
       ...(c ?? {}),
       'journalists.json': nextJournalists,
       'entries.json': nextEntries,

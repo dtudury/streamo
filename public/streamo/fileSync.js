@@ -3,6 +3,7 @@ import { mkdir, readFile, readdir, realpath, stat, unlink, writeFile } from 'fs/
 import { existsSync, readFileSync } from 'fs'
 import { dirname, join, relative } from 'path'
 import { compile } from '@gerhobbelt/gitignore-parser'
+import { commitWithRetry } from './Draft.js'
 
 const ALWAYS_IGNORE = '.env\n.DS_Store\n.git\nnode_modules'
 
@@ -502,7 +503,10 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         // on mounts.json + the ours:true marker.
         await folderLens.writeMany(filesToCommit, { replace: true, message: 'seed files' })
       } else {
-        await repo.update(c => applyFilesToValue(c, filesToCommit), { message: 'seed files' })
+        // Migrated 2026-07-16 to Draft API via commitWithRetry — fallback
+        // path (no folderLens); retries are appropriate here as fileSync
+        // is typically the sole author.
+        await commitWithRetry(repo, c => applyFilesToValue(c, filesToCommit), { message: 'seed files' })
       }
     }
   }
@@ -642,7 +646,10 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         if (folderLens) {
           await folderLens.writeMany(newFiles, { replace: true, message: 'file change' })
         } else {
-          await repo.update(c => applyFilesToValue(c, newFiles), { message: 'file change' })
+          // Migrated 2026-07-16 to Draft API via commitWithRetry — fallback
+          // path (no folderLens); retries are appropriate here as fileSync
+          // is typically the sole author.
+          await commitWithRetry(repo, c => applyFilesToValue(c, newFiles), { message: 'file change' })
         }
       } catch (err) {
         // Without this catch, the enclosing async IIFE turns any commit

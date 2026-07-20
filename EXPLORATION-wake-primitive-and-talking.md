@@ -374,6 +374,50 @@ full end-to-end (David writes → publisher pushes → wake-check fires →
 Turnstone reads → Turnstone runs the echo command shown in the wake
 block).
 
+## Shape B verified (2026-07-20 evening — Turnstone → David)
+
+Built and verified the response-side of talking-between-panels:
+
+- **`env/turnstone.json`** — Turnstone's home Record config (mirrors
+  `env/david.json` shape). homeKey `03024953...`; credentials come
+  from `env/secrets/claude.env` (existing); `--name turnstone-home`
+  on the CLI ties them together.
+- **`turnstone-home/mounts.json`** — one mount, `outbox/` (ours:true),
+  pubkey `02f5c634...` (derived from `keysFor('turnstone-home/outbox/')`
+  per FolderRecord convention).
+- **`turnstone-home/streamo.json`** — `{}` (matches david-home
+  pattern; publisher writes runtime meta into it).
+- **`turnstone-home/outbox/current.md`** — first message, seeding the
+  channel.
+- **npm script `turnstone`** — starts the publisher for Turnstone's
+  home Record.
+
+Verified end-to-end: `npm run turnstone`, then wrote to
+`turnstone-home/outbox/current.md`, watched the shard populate on
+streamo.dev at `https://streamo.dev/streams/02f5c634…d243d4/current.md`.
+HTTP 200 with the message content, sub-15-second round-trip.
+
+**Send-mechanism per the procedure doc** ([[procedure_waking_on_streamo_events]]):
+```bash
+echo "message" > turnstone-home/outbox/current.md
+```
+(with `npm run turnstone` running as publisher)
+
+**One debug gotcha worth naming** — captured as candidate in the-grove
+2026-07-20 evening: shell `set -a; source .env; set +a` truncates the
+32-char cryptopotamus password at special characters (probably `$` or
+similar), giving 29 chars. dotenv-parse gets the full 32. If verifying
+pubkey derivations locally, use dotenv-parse not shell-source. Nearly
+made me commit a "stale pubkey" correction to identity_the_grove_subdomain.md
+before I caught it — the memory was right, my measurement was wrong.
+
+**What still needs your engagement for full end-to-end (Shape A + B
+together):**
+- Wire the Stop hook in `.claude/settings.local.json` (config above)
+- Test the full loop: you write to wake-inbox → my Stop hook fires →
+  I read + respond via outbox → you subscribe to outbox URL → see
+  the response
+
 ## Sisters (in the substrate)
 
 - [[notes/2026-07-13-wake-on-commit-primitive-design]] — the design

@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "Turnstone's home Record mount tree — my author-surface for talking",
+    "back to David and (eventually) coordinating with other Claude panels.",
+    "",
+    "outbox/ = my write-channel to David. I write files here (currently",
+    "  outbox/current.md; future: named-shard messages under outbox/*).",
+    "  The publisher (npm run turnstone) shards these into the outbox",
+    "  sub-Record signed by keysFor('turnstone-home/outbox/') from",
+    "  Claude's creds (env/secrets/claude.env). Convention per",
+    "  FolderRecord.writeMany: child-shard name = parent-signer-name +",
+    "  '/' + mount prefix. So 'turnstone-home' + '/outbox/' matches the",
+    "  derived pubkey below.",
+    "",
+    "David sees my responses by subscribing to the outbox shard's Record",
+    "URL: https://streamo.dev/streams/03e21949.../current.md — either",
+    "via a browser tab (simplest) or the eventual step-through interface",
+    "he's excited about building.",
+    "",
+    "Future mounts to add (from EXPLORATION-wake-primitive-and-talking.md):",
+    "  - inbox/ — if we want a symmetric David→me channel here rather",
+    "    than reusing david-home/wake-inbox/",
+    "  - coordination-with-panel-2/ — cross-Claude coordination when",
+    "    Shape C lands",
+    "",
+    "Not currently included (deferred): foreign mounts. Once other",
+    "identities exist worth watching, add them with ours:false."
+  ],
+  "mounts": {
+    "outbox/": {
+      "key": "02f5c63477abc63767e05293cf2c6eece8746e3f3b3e08edd1f643d54fd80243d4",
+      "ours": true
+    }
+  }
+}

@@ -11,11 +11,13 @@ would be a cool feature."* This doc is the answer to that.
 
 The wake-primitive is **95% built**. `scripts/wake-check.mjs` is the
 parameterized watcher; the wake-inbox streamo Record went live e2e
-earlier this session (`26a8a66`). Three small pieces remain — one of
-which I'm shipping alongside this doc (`scripts/wake-mark-read.mjs`,
-the cursor-advance companion). The other two (safely toggling the Stop
-hook; a bubbles-don't-wake-me filter) are wire-up + design decisions,
-not builds.
+earlier this session (`26a8a66`). Two small pieces remain — safely
+toggling the Stop hook, and a bubbles-don't-wake-me filter — both
+wire-up + design decisions, not builds. The cursor-advance companion
+was refactored on 2026-07-20 from an over-engineered .mjs script into
+[[procedure_waking_on_streamo_events]] (a `.md` runbook in the-grove)
+plus a copy-paste-able command embedded in `wake-check.mjs`'s stderr
+output. See "Correction 2026-07-20" section below for the rationale.
 
 **Talking-between-panels rides on top of the wake-primitive** — it's a
 composition, not new primitives. First-mile spec below is ~50 LOC of
@@ -50,21 +52,35 @@ convention over what's already built.
   turn off the stop hook for now"* at the end of that arc and it's been
   off since. The hook config to re-enable is at the end of this doc.
 
-### What's not built yet (the three vegetables)
+### What's not built yet (the two remaining vegetables)
 
-1. **`scripts/wake-mark-read.mjs`** — the cursor-advance companion.
-   wake-check.mjs deliberately does NOT advance the cursor (so it's
-   deja-vu-safe on forget). Claude needs a way to advance the cursor
-   after processing. **Shipping alongside this doc.** ~15 LOC.
-2. **Safe Stop-hook toggle** — a scriptable way to enable/disable the
+1. **Safe Stop-hook toggle** — a scriptable way to enable/disable the
    Stop hook without hand-editing settings.local.json. Not urgent; the
    config template below is manual-toggle-ready. Would earn shape if
    the wake-mechanism becomes a daily-driver.
-3. **Bubbles-don't-wake-me filter** — the wake-inbox Record contains
+2. **Bubbles-don't-wake-me filter** — the wake-inbox Record contains
    both signal (messages) and noise (David's own bubbling, publisher
    heartbeats). The filter should live in wake-check.mjs; probably a
    config on the watcher naming which content-shapes trigger wake vs.
    which don't. Design decision, not code.
+
+### What was originally listed as "not built yet" and got refactored
+
+Originally this section listed `scripts/wake-mark-read.mjs` as a third
+vegetable — the cursor-advance companion Claude would run after
+processing a wake. David caught it (2026-07-20) as over-engineering:
+the operation is `echo <byteLength> > /tmp/wake-inbox/.cursor` wrapped
+in ~30 lines of Node with env-var contract, settle window, and
+connection setup. The narrative context that WOULD justify a wrapper
+(why we advance, what happens if ahead/behind, edges) belongs in a
+`.md` procedure that carries context, not a script that hides it.
+
+Solution shipped 2026-07-20: [[procedure_waking_on_streamo_events]]
+holds the runbook + WHY-context in the-grove alongside the sister
+[[procedure_incoming_chat_message]]; `wake-check.mjs` emits the exact
+cursor-advance command as the last line of its stderr output. Both
+together: procedure carries WHY, wake-check delivers the WHEN plus a
+copy-paste command. No script needed.
 
 ## The end-to-end loop, as it stands right now
 
@@ -264,7 +280,7 @@ existing `SessionEnd`:
 - Not proposing wire-up of the Stop hook in the current session — that
   needs your explicit engagement so we're both aware when it fires.
 
-## Verification (this session, 2026-07-18 morning)
+## Verification (2026-07-18 morning, re-verified 2026-07-20)
 
 Ran end-to-end test of the wake loop with the wake-inbox Record LIVE
 on streamo.dev:
@@ -274,25 +290,34 @@ on streamo.dev:
 - Result: connected, subscribed, saw byteLength=555 vs cursor=555,
   timed out cleanly, exit 0. ✓
 
-**Test 2 — cursor at 0, expect wake with current content:**
+**Test 2 — cursor at 0, expect wake with current content + copy-paste
+advance command:**
 - Result: exit 2 with stderr:
   ```
   wake-inbox advanced (byteLength 0 → 555) via wss://streamo.dev:
   {
     "current.md": "wake me for a REAL e2e test 2026-07-16 15:45:04\n"
   }
+
+  after processing, advance cursor with:
+    echo 555 > /tmp/wake-inbox/.cursor
+  (see the-grove memory/procedure_waking_on_streamo_events.md for the full runbook)
   ```
 - That's the message I wrote to `david-home/wake-inbox/current.md`
-  during the earlier wake-mechanism verification arc this session,
-  round-tripped through the real streamo Record. ✓
+  during the earlier wake-mechanism verification arc, round-tripped
+  through the real streamo Record. ✓
+- The last three lines were added 2026-07-20 as part of the
+  script→procedure-doc refactor — Claude sees the advance command
+  inline, no separate script needed.
 
-**Test 3 — mark-read advances the cursor idempotently:**
-- Ran `scripts/wake-mark-read.mjs`; cursor written 0 → 555. Re-running
-  would be 555 → 555 (no-op observationally). ✓
+**Test 3 — manual cursor advance is idempotent:**
+- `echo 555 > /tmp/wake-inbox/.cursor` — next wake-check with same
+  content exits 0 (no advance detected). ✓
 
 **The loop works.** Wire the Stop hook when you want to test the
 full end-to-end (David writes → publisher pushes → wake-check fires →
-Turnstone reads).
+Turnstone reads → Turnstone runs the echo command shown in the wake
+block).
 
 ## Sisters (in the substrate)
 

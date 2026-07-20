@@ -24,7 +24,9 @@
  *   WAKE_WINDOW_MS       how long to watch before exit 0 (default: 300000 = 5 min)
  *   STREAMO_RELAY_URL    upstream relay (default: wss://streamo.dev)
  *
- * See [[notes/2026-07-13-wake-on-commit-primitive-design]] for the full design.
+ * See [[notes/2026-07-13-wake-on-commit-primitive-design]] for the full design,
+ * and [[procedure_waking_on_streamo_events]] for the runbook on what to do
+ * when this hook fires.
  */
 import { existsSync, readFileSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
@@ -66,6 +68,10 @@ try {
   }
   console.error(`wake-inbox advanced (byteLength ${stored} → ${currentLen}) via ${RELAY_URL}:`)
   console.error(valueStr)
+  console.error('')
+  console.error('after processing, advance cursor with:')
+  console.error(`  echo ${currentLen} > ${CURSOR_PATH}`)
+  console.error('(see the-grove memory/procedure_waking_on_streamo_events.md for the full runbook)')
   process.exit(2)
 } catch {
   process.exit(0)

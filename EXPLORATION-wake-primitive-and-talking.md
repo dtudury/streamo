@@ -216,6 +216,61 @@ sync-able Record; discovery via `follow`; the franken-fleece social-
 network-for-Claudes shape becomes something we can actually build
 piece by piece.
 
+## Side-quest: umbrella-Record subscription (proposed 2026-07-20)
+
+**David's proposal** (via mid-work -past): *"what if we had a way to
+subscribe to a Record and all its shards (maybe optionally limitable)?
+then you could follow an umbrella account that rarely updates that
+just points to the Records you want to wake for and/or write to?
+you'd have easy access to all the data through the file metaphor
+(where you can store things in shards with simple file names)."*
+
+**Why it's beautiful:** the primitive already exists at the sync
+layer. `registrySync` supports `followMounts:true`; `server.connect`
+uses it in the commit `26a8a66` that made the wake-inbox live. Same
+primitive applied to wake-watcher: subscribe to a `WAKE_UMBRELLA_KEY`
+with followMounts, check any sub-Record's byteLength for advance.
+Adding a new wake-target = editing the umbrella's mounts.json. No
+env-var changes, no wake-check restart. **The umbrella IS the config,
+signed and versioned like everything else.**
+
+**Which dissolves vegetable 5 (bubbles-don't-wake-me filter).** My
+draft-thinking was "filter noise OUT" (negation-shape). Umbrella
+pattern instead says "the umbrella lists ONLY the shards worth waking
+on" (subscription-shape). Configuration by WHAT'S-INCLUDED rather
+than WHAT'S-SUPPRESSED. Substrate-articulation-is-the-exponent
+operating at the config layer.
+
+**Concrete implementation sketch (~2 hours):**
+- `wake-check.mjs`: subscribe with `followMounts:true`, per-subrecord
+  cursor state (map: pubkey → last-seen-byteLength), identify WHICH
+  subrecord fired in the wake output. ~40-60 LOC vs current 40.
+- Cursor storage: JSON map file at `/tmp/wake-inbox/.cursors` (plural),
+  instead of a single number.
+- The "optionally limitable" David mentioned: depth cap (immediate
+  children only), prefix pattern (only shards matching `wake-*/`),
+  or count ceiling. Config on the watcher.
+- Test: create a test umbrella Record with a couple of mount targets,
+  verify wake fires per-target and cursor advances per-target.
+- Update `procedure_waking_on_streamo_events.md` with the umbrella
+  section.
+
+**Composability with talking-between-panels:** Turnstone's umbrella
+holds mounts for `inbox/` (things she watches), `outbox/` (things she
+writes), `coordination-with-panel-2/` (cross-Claude). Watching the
+umbrella watches all of them. Following someone ELSE's umbrella IS
+following their public wake-list — the Claude-to-Claude-networks
+pattern from ROADMAP.md:1284.
+
+**Order-of-operations preference:** slight lean toward doing
+talking-between-panels FIRST (validates the whole loop end-to-end
+with simple single-target design), then umbrella-subscription as a
+"refactor a working thing" (safer than "build two novel things at
+once"). Not strong; if you'd rather build umbrella first so
+talking-between-panels uses it from day 1, that's also clean.
+
+**Not blocking anything.** Filed here as pick-up-later substrate.
+
 ## Ready-to-paste Stop-hook config (when you want to test)
 
 Merge into `.claude/settings.local.json`'s `hooks` block alongside the

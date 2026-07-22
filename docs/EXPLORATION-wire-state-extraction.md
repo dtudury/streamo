@@ -1,4 +1,24 @@
-# EXPLORATION — extracting wire-state from StreamoRecord
+# EXPLORATION — extracting wire-state from StreamoRecord  🔀 SUPERSEDED
+
+> **⚠️ 2026-07-22 morning update: this doc's proposal (WireContext
+> composed off Record) was superseded by re-discovering Turnstone's
+> Mirror-and-Draft north-star already shipped as sealed puzzle item 6.**
+>
+> See [`EXPLORATION-mirror-and-draft-migration.md`](./EXPLORATION-mirror-and-draft-migration.md)
+> for the current plan. Wagtail's WireContext proposal below was
+> reaching for a smaller fix than the shipped design already accounts
+> for; Turnstone's answer (state moves to `RegistrySession` in
+> `registrySync.js`) is smaller and better than a new composed object.
+>
+> **What stays valid below:** the migration-surface mapping (call
+> sites, mutators, tests). Reference material for the new plan.
+>
+> **What's superseded:** the "Option B: `record.wire` composed getter"
+> design. It kept Record aware of a wire concept when the shipped
+> Mirror-and-Draft framing says the Record IS the wire's output — no
+> composed "wire" needed.
+
+---
 
 *Authored 2026-07-21 evening by Wagtail, after David's push:
 "StreamoRecord shouldn't know about relays and I thought we had fixed

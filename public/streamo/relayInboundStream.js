@@ -114,7 +114,13 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // would land on top of them at wrong addresses.
           if (staged.length > 0) {
             if (!arraysEqual(pendingChainHash, record.committedChainHash)) {
-              record._setConflictDetected({ dataAddress: record.lastCommit?.dataAddress })
+              // Dual-write during migration (Mirror-and-Draft item 6 task 3):
+              // Record's field still exists; session's map is the target.
+              // Both surfaces stay in sync; callers can migrate one at a time.
+              // Step 3g removes the Record-side field + setter.
+              const conflictInfo = { dataAddress: record.lastCommit?.dataAddress }
+              record._setConflictDetected(conflictInfo)
+              record._session?.setConflictDetected?.(record.publicKeyHex, conflictInfo)
               turtleLocal('conflict', record.publicKeyHex, { dataAddress: record.lastCommit?.dataAddress })
               throw new Error(
                 'local store diverged from incoming chain: ' +

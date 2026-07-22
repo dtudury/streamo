@@ -473,9 +473,8 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // only the first ack lands (resync-after-conflict re-arms the
           // wire but the watermark from the original subscribe still
           // governs the initial-replay boundary).
-          const repo = registry.get(msg.key)
-          if (repo?._setRelaySubscribedAtOffset && typeof msg.atOffset === 'number') {
-            repo._setRelaySubscribedAtOffset(msg.atOffset)
+          if (typeof msg.atOffset === 'number') {
+            session.setRelaySubscribedAtOffset(msg.key, msg.atOffset)
           }
         } else if (msg.type === 'interest') {
           if (routing) {
@@ -797,6 +796,13 @@ export function registrySync (registry, hostPort, options = {}) {
   // getter that delegates back to session via `_session.getRelayChainHash`).
   const relayChainHashByKey = new Map()
 
+  // Per-key relay-subscribed-at-offset watermark (moved from StreamoRecord
+  // per Mirror-and-Draft migration item 6, extended cell). The watermark is
+  // the byte offset the relay reported when it acknowledged our subscribe;
+  // first-ack-only semantics (a second subscribe ack from the same session
+  // is ignored, keeping the watermark anchored at the initial-replay boundary).
+  const relaySubscribedAtOffsetByKey = new Map()
+
   const session = {
     /** The current underlying WebSocket — replaced on each reconnect. */
     get ws () { return ws },
@@ -829,6 +835,30 @@ export function registrySync (registry, hostPort, options = {}) {
     setRelayChainHash (pubkeyHex, hash) {
       relayChainHashByKey.set(pubkeyHex, hash)
       registry.recaller.reportKeyMutation(relayChainHashByKey, pubkeyHex)
+    },
+    /**
+     * The byte offset the relay reported when acknowledging our subscribe
+     * for `pubkeyHex`. Null until the `{type:'subscribed', atOffset}` ack
+     * lands. Reactive.
+     * @param {string} pubkeyHex
+     * @returns {number | null}
+     */
+    getRelaySubscribedAtOffset (pubkeyHex) {
+      registry.recaller.reportKeyAccess(relaySubscribedAtOffsetByKey, pubkeyHex)
+      return relaySubscribedAtOffsetByKey.get(pubkeyHex) ?? null
+    },
+    /**
+     * Set the per-connection subscribe-ack watermark for `pubkeyHex`.
+     * First-ack-only: a second call for the same pubkey is a no-op, so the
+     * original initial-replay boundary stays anchored (prevents re-subscribes
+     * via `_resyncRepo` from re-arming the isReadyToAuthor gate).
+     * @param {string} pubkeyHex
+     * @param {number} offset
+     */
+    setRelaySubscribedAtOffset (pubkeyHex, offset) {
+      if (relaySubscribedAtOffsetByKey.has(pubkeyHex)) return
+      relaySubscribedAtOffsetByKey.set(pubkeyHex, offset)
+      registry.recaller.reportKeyMutation(relaySubscribedAtOffsetByKey, pubkeyHex)
     },
     /** Declare interest in a topic — receive future `announce` messages for it. */
     interest (key) {

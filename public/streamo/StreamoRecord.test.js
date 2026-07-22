@@ -379,7 +379,25 @@ describe(import.meta.url, ({ test }) => {
     // NOT ready. This is the state during the brief window between
     // session.subscribe firing and the relay's {type: subscribed} ack
     // landing.
-    const fakeSession = { _resyncRepo: () => {} }
+    //
+    // Mirror-and-Draft item 6: session owns wire-state (relaySubscribedAtOffset).
+    // The mock session below implements the setter/getter interface with
+    // record-local reactivity (using the record's recaller since there's no
+    // separate registry in this test). First-ack semantics implemented per
+    // the production shape.
+    const offsetStore = new Map()
+    const fakeSession = {
+      _resyncRepo: () => {},
+      getRelaySubscribedAtOffset: (key) => {
+        local.recaller.reportKeyAccess(offsetStore, key)
+        return offsetStore.get(key) ?? null
+      },
+      setRelaySubscribedAtOffset: (key, offset) => {
+        if (offsetStore.has(key)) return
+        offsetStore.set(key, offset)
+        local.recaller.reportKeyMutation(offsetStore, key)
+      }
+    }
     local._attachSession(fakeSession)
     assert.equal(local.hasRelay, true, 'session attached → hasRelay true')
     assert.equal(local.relaySubscribedAtOffset, null, 'no watermark until relay acks')
@@ -403,7 +421,21 @@ describe(import.meta.url, ({ test }) => {
 
   test('isReadyToAuthor: flips reactively when byteLength reaches watermark', async ({ assert }) => {
     const repo = new WritableStreamoRecord()
-    repo._attachSession({ _resyncRepo: () => {} })
+    // Same mock-session shape as above test — session owns wire-state
+    // per Mirror-and-Draft item 6.
+    const offsetStore = new Map()
+    repo._attachSession({
+      _resyncRepo: () => {},
+      getRelaySubscribedAtOffset: (key) => {
+        repo.recaller.reportKeyAccess(offsetStore, key)
+        return offsetStore.get(key) ?? null
+      },
+      setRelaySubscribedAtOffset: (key, offset) => {
+        if (offsetStore.has(key)) return
+        offsetStore.set(key, offset)
+        repo.recaller.reportKeyMutation(offsetStore, key)
+      }
+    })
     // Force-set watermark to a small value that we can reach by writing.
     // (In production this offset comes from the wire's `subscribed`
     // message — here we set it directly to exercise the predicate.)

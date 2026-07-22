@@ -93,9 +93,6 @@ export class StreamoRecord extends Streamo {
   // Flipped true the first time `_attachSession` is called.
   #hasRelay = false
 
-  // The byte offset the relay had reached when it accepted our subscribe.
-  // Null until the relay sends back `{type: 'subscribed', atOffset}`.
-  #relaySubscribedAtOffset = null
 
   /**
    * Walk back from the tail to the most recent SIGNATURE chunk. Returns
@@ -350,21 +347,26 @@ export class StreamoRecord extends Streamo {
   /**
    * The byte offset the relay had reached when it accepted our subscribe.
    * Null until the `{type: 'subscribed', atOffset}` ack lands.
+   *
+   * **Shim setter for backwards compat.** State lives on the attached
+   * session; this delegates. Session's setter implements the first-ack-
+   * only semantics. Direct callers (chiefly tests that manufacture a
+   * subscribe-ack scenario) can keep the old API during migration; a
+   * follow-up task migrates callers to `session.setRelaySubscribedAtOffset`
+   * directly and removes the shim.
    */
   _setRelaySubscribedAtOffset (offset) {
-    // Only the FIRST subscribe ack matters for the initial-replay
-    // watermark. Subsequent subscribes (e.g. after `_resyncRepo` between
-    // update retries) re-send the message, but the original watermark
-    // has already been crossed — overwriting it would re-arm the gate
-    // and cause spurious waits.
-    if (this.#relaySubscribedAtOffset !== null) return
-    this.#relaySubscribedAtOffset = offset
-    this.recaller.reportKeyMutation(this, 'relaySubscribedAtOffset')
+    this.#session?.setRelaySubscribedAtOffset?.(this.publicKeyHex, offset)
   }
 
+  /**
+   * Reactive: the byte offset the relay confirmed at subscribe time.
+   * **Shim getter** — state lives on session (Mirror-and-Draft item 6).
+   * Delegates to `_session.getRelaySubscribedAtOffset(this.publicKeyHex)`.
+   * Returns null when no session is attached.
+   */
   get relaySubscribedAtOffset () {
-    this.recaller.reportKeyAccess(this, 'relaySubscribedAtOffset')
-    return this.#relaySubscribedAtOffset
+    return this.#session?.getRelaySubscribedAtOffset?.(this.publicKeyHex) ?? null
   }
 
   /**

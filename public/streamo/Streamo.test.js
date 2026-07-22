@@ -411,6 +411,16 @@ describe(import.meta.url, ({ test }) => {
     // Client: has shared + local-pending (banana, signed locally, not yet
     // accepted by any relay)
     const client = new WritableStreamoRecord()
+    // Attach a mock session so the wire-inbound path can write conflictDetected
+    // through session (Mirror-and-Draft item 6 step 3e). The mock stores
+    // the flag; assertions below read via the session.
+    const conflictStore = new Map()
+    const fakeSession = {
+      _resyncRepo: () => {},
+      getConflictDetected: (key) => conflictStore.get(key) ?? null,
+      setConflictDetected: (key, info) => { conflictStore.set(key, info) }
+    }
+    client._attachSession(fakeSession)
     const inA = client.makeRelayInboundStream().getWriter()
     for (const c of sharedChunks) await inA.write(frame(c))
     client.set({ v: 'banana' })
@@ -436,10 +446,11 @@ describe(import.meta.url, ({ test }) => {
     } catch (e) { caught = e }
 
     assert.ok(caught, 'alignment failure must throw')
-    assert.ok(client.conflictDetected, 'conflictDetected flag fires')
-    assert.ok(client.conflictDetected.dataAddress != null,
+    const conflict = fakeSession.getConflictDetected(client.publicKeyHex)
+    assert.ok(conflict, 'conflictDetected flag fires')
+    assert.ok(conflict.dataAddress != null,
       'conflictDetected carries the local rejected commit\'s dataAddress for recovery UX')
-    assert.deepEqual(client.decode(client.conflictDetected.dataAddress), { v: 'banana' },
+    assert.deepEqual(client.decode(conflict.dataAddress), { v: 'banana' },
       'the dataAddress decodes to the value the user tried to write')
     assert.equal(client.byteLength, clientByteLengthBeforeMerge,
       'no remote chunks land — local store stays decode-safe')

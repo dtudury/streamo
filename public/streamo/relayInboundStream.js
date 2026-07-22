@@ -143,7 +143,7 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // archive-only paths and tests that construct a record without
           // attaching a session simply skip the wire-state update.
           // See docs/EXPLORATION-mirror-and-draft-migration.md.
-          record._session?.setRelayChainHash(record.publicKeyHex, pendingChainHash)
+          record._session?.setRelayChainHash?.(record.publicKeyHex, pendingChainHash)
           turtleLocal('sig', record.publicKeyHex, { chainHash: pendingChainHash })
         } else if (!alreadyHave) {
           staged.push(code)

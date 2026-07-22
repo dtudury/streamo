@@ -132,10 +132,11 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // confirmation of pushed bytes (the broadcast-back lands a
           // SIG here whose chainHash matches our just-signed local SIG).
           pendingChainHash = code.slice(0, 32)
-          // Session owns relayChainHash state per Mirror-and-Draft migration
-          // item 6 (2026-07-22). Optional-chain handles the no-session case
-          // (server-side archive-only, tests without a session, etc.) —
-          // matches the old `_setRelayChainHash`'s tolerance.
+          // Session owns relayChainHash state (per-connection, per-pubkey).
+          // Optional-chain handles the no-session case — server-side
+          // archive-only paths and tests that construct a record without
+          // attaching a session simply skip the wire-state update.
+          // See docs/EXPLORATION-mirror-and-draft-migration.md.
           record._session?.setRelayChainHash(record.publicKeyHex, pendingChainHash)
           turtleLocal('sig', record.publicKeyHex, { chainHash: pendingChainHash })
         } else if (!alreadyHave) {

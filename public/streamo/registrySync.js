@@ -809,6 +809,15 @@ export function registrySync (registry, hostPort, options = {}) {
   // is ignored, keeping the watermark anchored at the initial-replay boundary).
   const relaySubscribedAtOffsetByKey = new Map()
 
+  // Per-key conflictDetected state (Mirror-and-Draft item 6 cell, migration
+  // in-progress via steps 3a-3h). Set when relayInboundStream's alignment
+  // check catches local content past the last shared sig. Value is
+  // `{ dataAddress: number }` — points at the rejected commit's data so
+  // apps can decode and offer recovery UX. Currently dual-written with
+  // Record's own #conflictDetected field during migration; Record-side
+  // removal is step 3g.
+  const conflictDetectedByKey = new Map()
+
   const session = {
     /** The current underlying WebSocket — replaced on each reconnect. */
     get ws () { return ws },
@@ -865,6 +874,28 @@ export function registrySync (registry, hostPort, options = {}) {
       if (relaySubscribedAtOffsetByKey.has(pubkeyHex)) return
       relaySubscribedAtOffsetByKey.set(pubkeyHex, offset)
       registry.recaller.reportKeyMutation(relaySubscribedAtOffsetByKey, pubkeyHex)
+    },
+    /**
+     * The conflictDetected info for `pubkeyHex`, or null. Set when the
+     * alignment check in `relayInboundStream` catches local content
+     * diverged from incoming chain. Reactive.
+     * @param {string} pubkeyHex
+     * @returns {{ dataAddress: number } | null}
+     */
+    getConflictDetected (pubkeyHex) {
+      registry.recaller.reportKeyAccess(conflictDetectedByKey, pubkeyHex)
+      return conflictDetectedByKey.get(pubkeyHex) ?? null
+    },
+    /**
+     * Set the per-connection conflictDetected flag for `pubkeyHex`. Called
+     * by `makeRelayInboundStream` on alignment-check failure. Not auto-
+     * cleared — apps inspect `dataAddress` to decode the rejected commit.
+     * @param {string} pubkeyHex
+     * @param {{ dataAddress: number }} info
+     */
+    setConflictDetected (pubkeyHex, info) {
+      conflictDetectedByKey.set(pubkeyHex, info)
+      registry.recaller.reportKeyMutation(conflictDetectedByKey, pubkeyHex)
     },
     /** Declare interest in a topic — receive future `announce` messages for it. */
     interest (key) {

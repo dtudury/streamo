@@ -473,8 +473,14 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // only the first ack lands (resync-after-conflict re-arms the
           // wire but the watermark from the original subscribe still
           // governs the initial-replay boundary).
-          if (typeof msg.atOffset === 'number') {
-            session.setRelaySubscribedAtOffset(msg.key, msg.atOffset)
+          // Session owns the watermark per Mirror-and-Draft item 6.
+          // We're inside handleRegistryPeer (used by both server and
+          // client paths), which doesn't have the client-side `session`
+          // in scope directly — reach it via the record's back-reference
+          // (`repo._session`, set by `session.subscribe(key)`).
+          const repo = registry.get(msg.key)
+          if (repo?._session && typeof msg.atOffset === 'number') {
+            repo._session.setRelaySubscribedAtOffset(msg.key, msg.atOffset)
           }
         } else if (msg.type === 'interest') {
           if (routing) {
@@ -602,7 +608,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     const repo = await registry._materialize(keyHex)
     await new Promise(resolve => {
       const fn = () => {
-        if (repo.relayChainHash) {
+        if (repo._session?.getRelayChainHash?.(repo.publicKeyHex)) {
           repo.recaller.unwatch(fn)
           resolve(undefined)
         }

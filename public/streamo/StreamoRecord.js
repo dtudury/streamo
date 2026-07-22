@@ -297,20 +297,11 @@ export class StreamoRecord extends Streamo {
     this.recaller.reportKeyMutation(this, 'pushRejected')
   }
 
-  /**
-   * Reactive: the 32-byte chainHash the upstream relay has confirmed up
-   * to. Null until the first SIG from the relay's inbound stream lands.
-   *
-   * **Shim.** State lives on the attached session (per Mirror-and-Draft
-   * migration item 6 — see `docs/EXPLORATION-mirror-and-draft-migration.md`).
-   * Delegates to `_session.getRelayChainHash(this.publicKeyHex)`; returns
-   * null when no session is attached. The session's getter registers the
-   * reactive dependency, so watchers on this record still fire when the
-   * wire advances (via the shared `registry.recaller`).
-   */
-  get relayChainHash () {
-    return this.#session?.getRelayChainHash?.(this.publicKeyHex) ?? null
-  }
+  // relayChainHash getter removed 2026-07-22 — state has always been on
+  // the session (per Mirror-and-Draft migration item 6, commit e1e9bff);
+  // callers now go through `record._session?.getRelayChainHash?.(record.publicKeyHex)`
+  // directly. No shim; the primitive is genuinely wire-agnostic for this
+  // cell. See docs/EXPLORATION-mirror-and-draft-migration.md.
 
   /**
    * Back-reference to the session that subscribed this StreamoRecord. Set
@@ -389,7 +380,7 @@ export class StreamoRecord extends Streamo {
   get caughtUpToRelay () {
     const watermark = this.relaySubscribedAtOffset
     if (watermark !== null) return this.byteLength >= watermark
-    return this.relayChainHash !== null
+    return (this.#session?.getRelayChainHash?.(this.publicKeyHex) ?? null) !== null
   }
 
   /**

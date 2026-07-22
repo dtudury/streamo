@@ -415,7 +415,7 @@ export class WritableStreamoRecord extends StreamoRecord {
       const fn = () => {
         const rejected = this.pushRejected
         const conflict = this.conflictDetected
-        const relayHash = this.relayChainHash
+        const relayHash = this._session?.getRelayChainHash?.(this.publicKeyHex) ?? null
         if (rejected) {
           this.recaller.unwatch(fn)
           const err = /** @type {Error & { pushRejected?: any }} */ (new Error(`push rejected: ${rejected.reason ?? 'unknown reason'}`))

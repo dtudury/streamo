@@ -1085,7 +1085,7 @@ describe(import.meta.url, ({ test }) => {
       'server has the bytes BEFORE update returns (no waitFor) — update properly awaited broadcast-back')
     // And relayChainHash should equal committedChainHash by this point —
     // the round-trip is complete.
-    const a = clientRepo.relayChainHash, b = clientRepo.committedChainHash
+    const a = session.getRelayChainHash(clientRepo.publicKeyHex), b = clientRepo.committedChainHash
     assert.ok(a && b && a.length === b.length && a.every((v, i) => v === b[i]),
       'after update, relayChainHash equals committedChainHash')
 

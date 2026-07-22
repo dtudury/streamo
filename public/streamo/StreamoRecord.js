@@ -83,13 +83,6 @@ export class StreamoRecord extends Streamo {
    */
   publicKeyHex
 
-  // The chainHash the upstream relay has confirmed up to — surfaced from
-  // makeRelayInboundStream's `pendingChainHash`. Null until the first SIG
-  // from the wire lands. When this matches `committedChainHash` of a SIG
-  // a Writable just signed locally, the relay has received-and-accepted
-  // its push; that's the ack signal `update()` awaits.
-  #relayChainHash = null
-
   // Optional back-reference to the session that subscribed this
   // StreamoRecord over the wire. Set by `session.subscribe`; used by
   // `WritableStreamoRecord.update()` to request a session-level resync
@@ -310,16 +303,16 @@ export class StreamoRecord extends Streamo {
   /**
    * Reactive: the 32-byte chainHash the upstream relay has confirmed up
    * to. Null until the first SIG from the relay's inbound stream lands.
+   *
+   * **Shim.** State lives on the attached session (per Mirror-and-Draft
+   * migration item 6 — see `docs/EXPLORATION-mirror-and-draft-migration.md`).
+   * Delegates to `_session.getRelayChainHash(this.publicKeyHex)`; returns
+   * null when no session is attached. The session's getter registers the
+   * reactive dependency, so watchers on this record still fire when the
+   * wire advances (via the shared `registry.recaller`).
    */
   get relayChainHash () {
-    this.recaller.reportKeyAccess(this, 'relayChainHash')
-    return this.#relayChainHash
-  }
-
-  /** Internal setter for makeRelayInboundStream as it processes SIGs. */
-  _setRelayChainHash (value) {
-    this.#relayChainHash = value
-    this.recaller.reportKeyMutation(this, 'relayChainHash')
+    return this.#session?.getRelayChainHash?.(this.publicKeyHex) ?? null
   }
 
   /**
@@ -434,10 +427,15 @@ export class StreamoRecord extends Streamo {
     super._reset()
     this.#conflictDetected = null
     this.#pushRejected = null
-    this.#relayChainHash = null
     this.recaller.reportKeyMutation(this, 'conflictDetected')
     this.recaller.reportKeyMutation(this, 'pushRejected')
-    this.recaller.reportKeyMutation(this, 'relayChainHash')
+    // relayChainHash state now lives on the session per Mirror-and-Draft
+    // migration item 6. Clearing it here would need to reach into the
+    // session — but _reset() is typically called on a Record when we
+    // want to discard local bytes (recovery UX, update() retry). The
+    // session's relayChainHash for this pubkey is a wire fact, not a
+    // local fact, so it stays. If we later need to explicitly reset it
+    // (e.g., during full-resync), that becomes an explicit session call.
   }
 
   /**

@@ -788,6 +788,15 @@ export function registrySync (registry, hostPort, options = {}) {
     })
   }
 
+  // Per-key relay chain hash state (moved from StreamoRecord per Mirror-and-Draft
+  // migration item 6 — see docs/EXPLORATION-mirror-and-draft-migration.md).
+  // Reactive via registry.recaller, keyed by pubkey. Session owns the state
+  // because it's per-connection: different sessions could observe different
+  // relay tips for the same pubkey, and the value only has meaning while
+  // a wire is attached. Record no longer holds this state (only a shim
+  // getter that delegates back to session via `_session.getRelayChainHash`).
+  const relayChainHashByKey = new Map()
+
   const session = {
     /** The current underlying WebSocket — replaced on each reconnect. */
     get ws () { return ws },
@@ -796,6 +805,30 @@ export function registrySync (registry, hostPort, options = {}) {
       closed = true
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
       ws?.close()
+    },
+    /**
+     * The 32-byte chainHash of the most recent SIG this session has seen from
+     * the relay for the given pubkey. Null if no SIG has arrived yet.
+     * Reactive: watchers see the value change when a fresh SIG lands.
+     * Called by `WritableStreamoRecord._awaitChainHash` (via the shim getter
+     * on StreamoRecord) and by `registrySync._resyncRepo`.
+     * @param {string} pubkeyHex
+     * @returns {Uint8Array | null}
+     */
+    getRelayChainHash (pubkeyHex) {
+      registry.recaller.reportKeyAccess(relayChainHashByKey, pubkeyHex)
+      return relayChainHashByKey.get(pubkeyHex) ?? null
+    },
+    /**
+     * Set the per-connection relay chain hash for `pubkeyHex`. Called by
+     * `makeRelayInboundStream` when a fresh SIG arrives (via the shim on
+     * StreamoRecord's back-reference to this session).
+     * @param {string} pubkeyHex
+     * @param {Uint8Array} hash
+     */
+    setRelayChainHash (pubkeyHex, hash) {
+      relayChainHashByKey.set(pubkeyHex, hash)
+      registry.recaller.reportKeyMutation(relayChainHashByKey, pubkeyHex)
     },
     /** Declare interest in a topic — receive future `announce` messages for it. */
     interest (key) {

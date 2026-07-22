@@ -30,11 +30,13 @@
  *   `conflictDetected` and throw to close the connection cleanly.
  *
  * **Reactive surfacing:**
- * - On each SIG arrival, calls `record._setRelayChainHash(hash)` so
- *   `repo.update()` and `fileSync`'s gate can await round-trip
- *   confirmation.
+ * - On each SIG arrival, calls
+ *   `record._session.setRelayChainHash(record.publicKeyHex, hash)` so
+ *   Draft's `_awaitChainHash` and `fileSync`'s gate can await round-trip
+ *   confirmation. (Item 6 of Mirror-and-Draft migration; state lives on
+ *   the session per-connection, no longer on the record.)
  * - On alignment failure, calls `record._setConflictDetected(...)` so
- *   apps can react and offer recovery UX.
+ *   apps can react and offer recovery UX. (Not yet migrated to session.)
  */
 import { turtleLocal } from './utils/turtleLog.js'
 
@@ -130,7 +132,11 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // confirmation of pushed bytes (the broadcast-back lands a
           // SIG here whose chainHash matches our just-signed local SIG).
           pendingChainHash = code.slice(0, 32)
-          record._setRelayChainHash(pendingChainHash)
+          // Session owns relayChainHash state per Mirror-and-Draft migration
+          // item 6 (2026-07-22). Optional-chain handles the no-session case
+          // (server-side archive-only, tests without a session, etc.) —
+          // matches the old `_setRelayChainHash`'s tolerance.
+          record._session?.setRelayChainHash(record.publicKeyHex, pendingChainHash)
           turtleLocal('sig', record.publicKeyHex, { chainHash: pendingChainHash })
         } else if (!alreadyHave) {
           staged.push(code)

@@ -20,7 +20,11 @@
  *
  * Env:
  *   WAKE_INBOX_KEY       hex pubkey of the wake-inbox Record (required)
- *   WAKE_CURSOR_PATH     local file for cursor state (default: /tmp/wake-inbox/.cursor)
+ *   WAKE_CURSOR_PATH     local file for cursor state — if unset, derived from
+ *                        the Claude session UUID (read from Claude Code's hook
+ *                        stdin JSON: transcript_path). Fallback:
+ *                        /tmp/wake-inbox/.cursor (shared; only correct when
+ *                        one Claude Code session runs this at a time).
  *   WAKE_WINDOW_MS       how long to watch before exit 0 (default: 300000 = 5 min)
  *   STREAMO_RELAY_URL    upstream relay (default: wss://streamo.dev)
  *
@@ -29,13 +33,29 @@
  * when this hook fires.
  */
 import { existsSync, readFileSync, mkdirSync } from 'fs'
-import { dirname } from 'path'
+import { dirname, basename } from 'path'
 import { Recaller } from '../public/streamo/utils/Recaller.js'
 import { StreamoRecordRegistry } from '../public/streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../public/streamo/registrySync.js'
 
+// Claude Code passes hook data as JSON on stdin (including transcript_path,
+// which encodes the Claude session UUID). We use it to derive a per-session
+// cursor file — critical when multiple Claude Code sessions are open on the
+// same project, so one session's cursor advance doesn't block another
+// session's wake. Caught 2026-07-21 when Turnstone + Wagtail shared a
+// cursor and messages were invisible to whichever session's Stop hook
+// fired second.
+let hookInput = {}
+try {
+  const stdinData = readFileSync(0, 'utf8')
+  if (stdinData.trim()) hookInput = JSON.parse(stdinData)
+} catch {}
+const transcriptPath = hookInput.transcript_path
+const sessionId = transcriptPath ? basename(transcriptPath, '.jsonl') : null
+
 const WAKE_INBOX_KEY = process.env.WAKE_INBOX_KEY
-const CURSOR_PATH = process.env.WAKE_CURSOR_PATH || '/tmp/wake-inbox/.cursor'
+const CURSOR_PATH = process.env.WAKE_CURSOR_PATH
+  || (sessionId ? `/tmp/wake-inbox/.cursor-${sessionId}` : '/tmp/wake-inbox/.cursor')
 const WINDOW_MS = Number(process.env.WAKE_WINDOW_MS || 300000)
 const RELAY_URL = process.env.STREAMO_RELAY_URL || 'wss://streamo.dev'
 

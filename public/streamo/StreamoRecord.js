@@ -335,30 +335,13 @@ export class StreamoRecord extends Streamo {
     return this.#hasRelay
   }
 
-  /**
-   * The byte offset the relay had reached when it accepted our subscribe.
-   * Null until the `{type: 'subscribed', atOffset}` ack lands.
-   *
-   * **Shim setter for backwards compat.** State lives on the attached
-   * session; this delegates. Session's setter implements the first-ack-
-   * only semantics. Direct callers (chiefly tests that manufacture a
-   * subscribe-ack scenario) can keep the old API during migration; a
-   * follow-up task migrates callers to `session.setRelaySubscribedAtOffset`
-   * directly and removes the shim.
-   */
-  _setRelaySubscribedAtOffset (offset) {
-    this.#session?.setRelaySubscribedAtOffset?.(this.publicKeyHex, offset)
-  }
-
-  /**
-   * Reactive: the byte offset the relay confirmed at subscribe time.
-   * **Shim getter** — state lives on session (Mirror-and-Draft item 6).
-   * Delegates to `_session.getRelaySubscribedAtOffset(this.publicKeyHex)`.
-   * Returns null when no session is attached.
-   */
-  get relaySubscribedAtOffset () {
-    return this.#session?.getRelaySubscribedAtOffset?.(this.publicKeyHex) ?? null
-  }
+  // _setRelaySubscribedAtOffset and relaySubscribedAtOffset getter removed
+  // 2026-07-22 — state has always been on session (per Mirror-and-Draft
+  // migration item 6, commit 8627940); callers now go through
+  // `record._session?.getRelaySubscribedAtOffset?.(record.publicKeyHex)`
+  // and `_session.setRelaySubscribedAtOffset(pubkey, offset)` directly.
+  // First-ack-only semantics live on session's setter. See
+  // docs/EXPLORATION-mirror-and-draft-migration.md.
 
   /**
    * Reactive: true once this StreamoRecord has caught up to the relay's
@@ -378,7 +361,7 @@ export class StreamoRecord extends Streamo {
    *      before wire has told us anything.
    */
   get caughtUpToRelay () {
-    const watermark = this.relaySubscribedAtOffset
+    const watermark = this.#session?.getRelaySubscribedAtOffset?.(this.publicKeyHex) ?? null
     if (watermark !== null) return this.byteLength >= watermark
     return (this.#session?.getRelayChainHash?.(this.publicKeyHex) ?? null) !== null
   }

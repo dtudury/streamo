@@ -400,14 +400,14 @@ describe(import.meta.url, ({ test }) => {
     }
     local._attachSession(fakeSession)
     assert.equal(local.hasRelay, true, 'session attached → hasRelay true')
-    assert.equal(local.relaySubscribedAtOffset, null, 'no watermark until relay acks')
+    assert.equal(fakeSession.getRelaySubscribedAtOffset(local.publicKeyHex), null, 'no watermark until relay acks')
     assert.equal(local.caughtUpToRelay, false, 'no watermark → not caught up')
     assert.equal(local.isReadyToAuthor, false, 'relay attached + no watermark → wait')
 
     // Relay acks with atOffset = 100. Local byteLength still 0, so
     // we have NOT caught up — still waiting.
-    local._setRelaySubscribedAtOffset(100)
-    assert.equal(local.relaySubscribedAtOffset, 100, 'watermark recorded')
+    fakeSession.setRelaySubscribedAtOffset(local.publicKeyHex, 100)
+    assert.equal(fakeSession.getRelaySubscribedAtOffset(local.publicKeyHex), 100, 'watermark recorded')
     assert.equal(local.caughtUpToRelay, false, 'byteLength 0 < watermark 100 → not caught up')
     assert.equal(local.isReadyToAuthor, false, 'still waiting for chain to reach watermark')
 
@@ -415,8 +415,8 @@ describe(import.meta.url, ({ test }) => {
     // _resyncRepo's re-subscribe between update retries) is ignored
     // so the watermark stays anchored at the original initial-replay
     // boundary.
-    local._setRelaySubscribedAtOffset(500)
-    assert.equal(local.relaySubscribedAtOffset, 100, 'second ack ignored; original watermark preserved')
+    fakeSession.setRelaySubscribedAtOffset(local.publicKeyHex, 500)
+    assert.equal(fakeSession.getRelaySubscribedAtOffset(local.publicKeyHex), 100, 'second ack ignored; original watermark preserved')
   })
 
   test('isReadyToAuthor: flips reactively when byteLength reaches watermark', async ({ assert }) => {
@@ -424,7 +424,7 @@ describe(import.meta.url, ({ test }) => {
     // Same mock-session shape as above test — session owns wire-state
     // per Mirror-and-Draft item 6.
     const offsetStore = new Map()
-    repo._attachSession({
+    const fakeSession = {
       _resyncRepo: () => {},
       getRelaySubscribedAtOffset: (key) => {
         repo.recaller.reportKeyAccess(offsetStore, key)
@@ -435,7 +435,8 @@ describe(import.meta.url, ({ test }) => {
         offsetStore.set(key, offset)
         repo.recaller.reportKeyMutation(offsetStore, key)
       }
-    })
+    }
+    repo._attachSession(fakeSession)
     // Force-set watermark to a small value that we can reach by writing.
     // (In production this offset comes from the wire's `subscribed`
     // message — here we set it directly to exercise the predicate.)
@@ -447,7 +448,7 @@ describe(import.meta.url, ({ test }) => {
     // once (the initial sync run) and sees not-ready.
     assert.equal(readyEvents, 0, 'watcher saw not-ready initially')
     // Set a small watermark.
-    repo._setRelaySubscribedAtOffset(5)
+    fakeSession.setRelaySubscribedAtOffset(repo.publicKeyHex, 5)
     await new Promise(r => setTimeout(r, 5))
     assert.equal(readyEvents, 0, 'byteLength still 0 — still not ready')
     // Write enough bytes to reach the watermark. set() commits, which

@@ -10,12 +10,12 @@
  *     `valueAddress` (walks past trailing SIGs to land on the commit),
  *     `get` / `getRefs` (lazy descent off the last commit's dataAddress),
  *     `files`, `history`, `verify`.
- *   - **Wire-state cells** (`hasRelay`, `caughtUpToRelay`, `isReadyToAuthor`,
- *     `pushRejected`, …): reactive properties surfaced for any consumer
- *     that subscribes to this Record over a wire — apps, the explorer,
- *     the relay's own bookkeeping. Per-connection state (`relayChainHash`,
- *     `conflictDetected`, `relaySubscribedAtOffset`) lives on the
- *     RegistrySession — see registrySync.js. Mirror-and-Draft item 6.
+ *   - **Wire-state cells** (`hasRelay`, `caughtUpToRelay`, `isReadyToAuthor`):
+ *     reactive properties surfaced for any consumer that subscribes to
+ *     this Record over a wire — apps, the explorer, the relay's own
+ *     bookkeeping. Per-connection state (`relayChainHash`,
+ *     `relaySubscribedAtOffset`, `conflictDetected`, `pushRejected`) lives
+ *     on the RegistrySession — see registrySync.js. Mirror-and-Draft item 6.
  *   - **Relay-inbound writer** via `makeRelayInboundStream`: trust+append
  *     for bytes streamed from an authoritative relay, with chain-hash
  *     alignment to catch the push-in-flight race.
@@ -62,20 +62,16 @@ import { Draft } from './Draft.js'
  * To author, use the `WritableStreamoRecord` subclass.
  */
 export class StreamoRecord extends Streamo {
-  // Reactive divergence flags. Both are `null` when healthy; otherwise an
-  // object carrying `dataAddress` (where the rejected commit's value lives
-  // in the local store) so apps can decode and offer recovery UX:
-  //
-  //   pushRejected — set by the registry-sync layer when the relay
-  //                  rejects a push via {type:'reject', ...}.
-  //                  Shape: { reason, dataAddress }. Not auto-cleared.
-  //
-  // conflictDetected (local alignment check catching a push-in-flight
-  // race) is per-connection state on the RegistrySession —
-  // `session.getConflictDetected(pubkeyHex)` — not on Record. Same
-  // shape ({ dataAddress }), same source (relayInboundStream), different
-  // home (Mirror-and-Draft item 6).
-  #pushRejected     = null
+  // pushRejected and conflictDetected — per-connection wire-state,
+  // both live on the RegistrySession per Mirror-and-Draft item 6:
+  //   - `session.getPushRejected(pubkeyHex)` → { reason, dataAddress } | null
+  //     (set when the peer sent {type:'reject', ...} for our push)
+  //   - `session.getConflictDetected(pubkeyHex)` → { dataAddress } | null
+  //     (set when relayInboundStream's alignment check catches local
+  //      content past the last shared sig)
+  // Neither is auto-cleared. Both are session-scoped (a different
+  // session for the same key gets a fresh empty map). Record used to
+  // hold these as fields; they moved 2026-07-22..2026-07-23.
 
   /**
    * Hex-encoded pubkey this Record was materialized under. Populated by
@@ -275,21 +271,11 @@ export class StreamoRecord extends Streamo {
   // conflictDetected getter/setter lived here until Mirror-and-Draft
   // item 6 step 3g. Now on session — `session.getConflictDetected(pubkeyHex)`.
 
-  /**
-   * Reactive: `null` until a push from this client to the relay is rejected;
-   * then `{ reason, dataAddress }` describing why. Set by the registry-sync
-   * layer when a `{type: 'reject', key, reason}` control message arrives.
-   */
-  get pushRejected () {
-    this.recaller.reportKeyAccess(this, 'pushRejected')
-    return this.#pushRejected
-  }
-
-  /** Internal setter for the registry-sync layer / recovery orchestration. */
-  _setPushRejected (value) {
-    this.#pushRejected = value
-    this.recaller.reportKeyMutation(this, 'pushRejected')
-  }
+  // pushRejected getter/setter lived here until Mirror-and-Draft item 6
+  // task 4 (2026-07-23). Now on session — `session.getPushRejected(pubkeyHex)`.
+  // Setter moved to `session.setPushRejected(pubkeyHex, info)`; the
+  // registry-sync layer's `handleRegistryPeer` writes there directly on
+  // `{type:'reject'}` receipt.
 
   // relayChainHash getter removed 2026-07-22 — state has always been on
   // the session (per Mirror-and-Draft migration item 6, commit e1e9bff);
@@ -395,18 +381,12 @@ export class StreamoRecord extends Streamo {
    */
   _reset () {
     super._reset()
-    this.#pushRejected = null
-    this.recaller.reportKeyMutation(this, 'pushRejected')
-    // conflictDetected is session-state per Mirror-and-Draft item 6;
-    // clearing it is an explicit session concern (analogous to
-    // relayChainHash below).
-    // relayChainHash state now lives on the session per Mirror-and-Draft
-    // migration item 6. Clearing it here would need to reach into the
-    // session — but _reset() is typically called on a Record when we
-    // want to discard local bytes (recovery UX, update() retry). The
-    // session's relayChainHash for this pubkey is a wire fact, not a
-    // local fact, so it stays. If we later need to explicitly reset it
-    // (e.g., during full-resync), that becomes an explicit session call.
+    // pushRejected + conflictDetected + relayChainHash + relaySubscribedAtOffset
+    // all live on the RegistrySession per Mirror-and-Draft item 6.
+    // Clearing them is an explicit session concern — _reset() operates
+    // on Record's LOCAL bytes; session cells are wire-facts owned by
+    // the connection, not local state to clear. If we later need
+    // explicit reset (full resync UX), the caller does it via session.
   }
 
   /**

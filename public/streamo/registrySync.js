@@ -516,11 +516,10 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
               reason: msg.reason,
               dataAddress: repo.lastCommit?.dataAddress
             }
-            // Dual-write during migration (Mirror-and-Draft item 6 task 4):
-            // Record's field still exists; session's map is the target.
-            // Both surfaces stay in sync; callers can migrate one at a time.
-            // Final step removes the Record-side field + setter.
-            repo._setPushRejected(info)
+            // pushRejected state lives on the session per Mirror-and-Draft
+            // item 6. Setter is a no-op if the record has no session
+            // attached — appropriate: the flag is a session-lifecycle
+            // concern (same shape as conflictDetected in relayInboundStream).
             repo._session?.setPushRejected?.(msg.key, info)
           }
         } else if (msg.type === 'announce') {
@@ -821,12 +820,11 @@ export function registrySync (registry, hostPort, options = {}) {
   // last shared sig. Value is `{ dataAddress: number }`.
   const conflictDetectedByKey = new Map()
 
-  // Per-key pushRejected state (Mirror-and-Draft item 6 cell, migration
-  // in-progress via task 4). Set when the peer sends {type:'reject', ...}
-  // for a push we authored. Value is `{ reason, dataAddress }` — the
-  // dataAddress points at the rejected commit's data for recovery UX.
-  // Currently dual-written with Record's own #pushRejected field during
-  // migration; Record-side removal is task 4's final step.
+  // Per-key pushRejected state — session is the sole home
+  // (Mirror-and-Draft item 6 task 4 shipped 2026-07-23). Set when the
+  // peer sends {type:'reject', ...} for a push we authored. Value is
+  // `{ reason, dataAddress }` — dataAddress points at the rejected
+  // commit's data for recovery UX.
   //
   // Super-arc: Mirror-and-Draft north-star (EXPLORATION-sync-model.md
   // §"What this dissolves") — wire-state on session, not on Record.

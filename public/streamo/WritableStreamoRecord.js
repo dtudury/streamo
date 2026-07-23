@@ -414,9 +414,7 @@ export class WritableStreamoRecord extends StreamoRecord {
     return new Promise((resolve, reject) => {
       const fn = () => {
         const rejected = this.pushRejected
-        // Migrated to session-side read (Mirror-and-Draft item 6 step 3c).
-        // Record's `.conflictDetected` still exists as dual-write during
-        // migration; reading from session is the target shape.
+        // conflictDetected lives on the session (Mirror-and-Draft item 6).
         const conflict = this._session?.getConflictDetected?.(this.publicKeyHex) ?? null
         const relayHash = this._session?.getRelayChainHash?.(this.publicKeyHex) ?? null
         if (rejected) {

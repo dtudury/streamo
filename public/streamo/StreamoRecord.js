@@ -11,9 +11,11 @@
  *     `get` / `getRefs` (lazy descent off the last commit's dataAddress),
  *     `files`, `history`, `verify`.
  *   - **Wire-state cells** (`hasRelay`, `caughtUpToRelay`, `isReadyToAuthor`,
- *     `pushRejected`, `conflictDetected`, `relayChainHash`, …): reactive
- *     properties surfaced for any consumer that subscribes to this Record
- *     over a wire — apps, the explorer, the relay's own bookkeeping.
+ *     `pushRejected`, …): reactive properties surfaced for any consumer
+ *     that subscribes to this Record over a wire — apps, the explorer,
+ *     the relay's own bookkeeping. Per-connection state (`relayChainHash`,
+ *     `conflictDetected`, `relaySubscribedAtOffset`) lives on the
+ *     RegistrySession — see registrySync.js. Mirror-and-Draft item 6.
  *   - **Relay-inbound writer** via `makeRelayInboundStream`: trust+append
  *     for bytes streamed from an authoritative relay, with chain-hash
  *     alignment to catch the push-in-flight race.
@@ -37,8 +39,8 @@
  *
  * **Conflicts** are not states the StreamoRecord carries by design — they
  * are runtime "these bytes can't be appended" failures detected at the
- * relay-inbound writer. The `conflictDetected` flag is the reactive
- * surfacing of that failure for UI; the chain itself stays clean
+ * relay-inbound writer. `session.getConflictDetected(pubkeyHex)` is the
+ * reactive surfacing of that failure for UI; the chain itself stays clean
  * (rejected batches never land).
  *
  * See design.md §8.
@@ -64,15 +66,15 @@ export class StreamoRecord extends Streamo {
   // object carrying `dataAddress` (where the rejected commit's value lives
   // in the local store) so apps can decode and offer recovery UX:
   //
-  //   conflictDetected — set by makeRelayInboundStream when the local
-  //                      alignment check catches a push-in-flight race.
-  //                      Shape: { dataAddress }.
-  //   pushRejected     — set by the registry-sync layer when the relay
-  //                      rejects a push via {type:'reject', ...}.
-  //                      Shape: { reason, dataAddress }.
+  //   pushRejected — set by the registry-sync layer when the relay
+  //                  rejects a push via {type:'reject', ...}.
+  //                  Shape: { reason, dataAddress }. Not auto-cleared.
   //
-  // Neither is auto-cleared.
-  #conflictDetected = null
+  // conflictDetected (local alignment check catching a push-in-flight
+  // race) is per-connection state on the RegistrySession —
+  // `session.getConflictDetected(pubkeyHex)` — not on Record. Same
+  // shape ({ dataAddress }), same source (relayInboundStream), different
+  // home (Mirror-and-Draft item 6).
   #pushRejected     = null
 
   /**
@@ -270,16 +272,8 @@ export class StreamoRecord extends Streamo {
    * bytes before knowing about our push, our push will likely be
    * rejected). This is a *conflict*, not a fork.
    */
-  get conflictDetected () {
-    this.recaller.reportKeyAccess(this, 'conflictDetected')
-    return this.#conflictDetected
-  }
-
-  /** Internal setter for relayInboundStream / recovery orchestration. */
-  _setConflictDetected (value) {
-    this.#conflictDetected = value
-    this.recaller.reportKeyMutation(this, 'conflictDetected')
-  }
+  // conflictDetected getter/setter lived here until Mirror-and-Draft
+  // item 6 step 3g. Now on session — `session.getConflictDetected(pubkeyHex)`.
 
   /**
    * Reactive: `null` until a push from this client to the relay is rejected;
@@ -401,10 +395,11 @@ export class StreamoRecord extends Streamo {
    */
   _reset () {
     super._reset()
-    this.#conflictDetected = null
     this.#pushRejected = null
-    this.recaller.reportKeyMutation(this, 'conflictDetected')
     this.recaller.reportKeyMutation(this, 'pushRejected')
+    // conflictDetected is session-state per Mirror-and-Draft item 6;
+    // clearing it is an explicit session concern (analogous to
+    // relayChainHash below).
     // relayChainHash state now lives on the session per Mirror-and-Draft
     // migration item 6. Clearing it here would need to reach into the
     // session — but _reset() is typically called on a Record when we

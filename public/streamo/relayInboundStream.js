@@ -35,7 +35,7 @@
  *   Draft's `_awaitChainHash` and `fileSync`'s gate can await round-trip
  *   confirmation. (Item 6 of Mirror-and-Draft migration; state lives on
  *   the session per-connection, no longer on the record.)
- * - On alignment failure, calls `record._setConflictDetected(...)` so
+ * - On alignment failure, calls `record._session?.setConflictDetected(...)` so
  *   apps can react and offer recovery UX. (Not yet migrated to session.)
  */
 import { turtleLocal } from './utils/turtleLog.js'
@@ -114,12 +114,11 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // would land on top of them at wrong addresses.
           if (staged.length > 0) {
             if (!arraysEqual(pendingChainHash, record.committedChainHash)) {
-              // Dual-write during migration (Mirror-and-Draft item 6 task 3):
-              // Record's field still exists; session's map is the target.
-              // Both surfaces stay in sync; callers can migrate one at a time.
-              // Step 3g removes the Record-side field + setter.
+              // conflictDetected state lives on the session per
+              // Mirror-and-Draft item 6. Setter is a no-op if the record
+              // has no session attached — appropriate: the flag is a
+              // session-lifecycle concern.
               const conflictInfo = { dataAddress: record.lastCommit?.dataAddress }
-              record._setConflictDetected(conflictInfo)
               record._session?.setConflictDetected?.(record.publicKeyHex, conflictInfo)
               turtleLocal('conflict', record.publicKeyHex, { dataAddress: record.lastCommit?.dataAddress })
               throw new Error(

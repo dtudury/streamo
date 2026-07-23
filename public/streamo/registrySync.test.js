@@ -815,14 +815,20 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const session = await registrySync(badRegistry, `localhost:${port}`)
+    // Explicit subscribe attaches session to badRepo so the session-side
+    // conflictDetected map gets written if the local verifier fires (per
+    // Mirror-and-Draft item 6 — session-side reads require session-attach).
+    // Either flag (pushRejected from relay, conflictDetected from local
+    // verifier) is acceptable per the OR below; subscribe makes both live.
+    await session.subscribe(badRepo.publicKeyHex)
 
     await waitFor(
-      () => badRepo.pushRejected != null || badRepo.conflictDetected,
+      () => badRepo.pushRejected != null || session.getConflictDetected(badRepo.publicKeyHex),
       2000
     )
 
     // The bad client knows something is wrong with its chain.
-    assert.ok(badRepo.pushRejected || badRepo.conflictDetected,
+    assert.ok(badRepo.pushRejected || session.getConflictDetected(badRepo.publicKeyHex),
       'bad client must surface either pushRejected (relay said no) or conflictDetected (local verifier caught it)')
 
     // The relay's top is unchanged — banana never landed.
@@ -1180,15 +1186,20 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const session = await registrySync(clientRegistry, `localhost:${port}`)
+    // Explicit subscribe attaches session to clientRepo so the session-side
+    // conflictDetected map gets written when the alignment check fires
+    // (Mirror-and-Draft item 6: session-side reads require session-attach).
+    await session.subscribe(clientRepo.publicKeyHex)
 
     // Hello+auto-subscribe fires; the client's chain doesn't anchor on the
     // server's chain, so when the server's SIG arrives the relay-inbound
     // alignment check rejects.
-    await waitFor(() => clientRepo.conflictDetected != null, 2000)
+    await waitFor(() => session.getConflictDetected(clientRepo.publicKeyHex) != null, 2000)
 
-    assert.ok(clientRepo.conflictDetected,
+    const conflict = session.getConflictDetected(clientRepo.publicKeyHex)
+    assert.ok(conflict,
       'conflictDetected fires when subscribed bytes diverge from local')
-    assert.ok(clientRepo.conflictDetected.dataAddress != null,
+    assert.ok(conflict.dataAddress != null,
       'conflict carries the local-commit dataAddress for recovery UX')
     assert.equal(clientRepo.get('branch'), 'client-side',
       'local state preserved — divergent incoming bytes did NOT silently overwrite')

@@ -290,7 +290,7 @@ async function login (e) {
     // closure captures `session` (let — replaceable) and the connection
     // params + signer so we can stand up a fresh session from scratch.
     onRecover = async (mode) => {
-      const flag = myRepo.pushRejected ?? (myRepo._session?.getConflictDetected?.(myRepo.publicKeyHex) ?? null)
+      const flag = (myRepo._session?.getPushRejected?.(myRepo.publicKeyHex) ?? null) ?? (myRepo._session?.getConflictDetected?.(myRepo.publicKeyHex) ?? null)
       let rejectedValue = null
       if (flag?.dataAddress != null) {
         try { rejectedValue = myRepo.decode(flag.dataAddress) } catch {}
@@ -681,7 +681,7 @@ mount(h`
         let conflictMine = false
         let conflictOther = 0
         for (const [keyHex, repo] of registry) {
-          if (repo.pushRejected && keyHex === myKey) pushRejectedMine = true
+          if (repo._session?.getPushRejected?.(repo.publicKeyHex) && keyHex === myKey) pushRejectedMine = true
           if (repo._session?.getConflictDetected?.(repo.publicKeyHex)) {
             if (keyHex === myKey) conflictMine = true
             else conflictOther++

@@ -138,8 +138,9 @@ await repo.update(c => value, {
   message: `publish identity seed @ ${streamoVersion.slice(0, 8)}`
 })
 console.log(`[publish-identity-seed] set ${seedContent.length} bytes of content`)
-if (repo.pushRejected) {
-  console.error(`[publish-identity-seed] relay rejected: ${repo.pushRejected.reason ?? 'unknown'}`)
+const _rej = repo._session?.getPushRejected?.(repo.publicKeyHex)
+if (_rej) {
+  console.error(`[publish-identity-seed] relay rejected: ${_rej.reason ?? 'unknown'}`)
   ws.close()
   process.exit(1)
 }

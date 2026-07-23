@@ -119,7 +119,7 @@ function editorView () {
     // keep. The "yours" value is whatever the user's last attempt
     // tried to push, decoded from pushRejected.dataAddress.
     let yourRejected = null
-    const dataAddr = stuck.pushRejected?.dataAddress
+    const dataAddr = stuck._session?.getPushRejected?.(stuck.publicKeyHex)?.dataAddress
     if (dataAddr != null) {
       try { yourRejected = myRepo.decode(dataAddr) } catch {}
     }

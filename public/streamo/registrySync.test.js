@@ -269,7 +269,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => serverRegistry.get(key)?.get('value') === 'i was here before the wipe')
     assert.equal(serverRegistry.get(key).get('value'), 'i was here before the wipe',
       'server self-heals from the client\'s push')
-    assert.ok(!clientRepo.pushRejected,
+    assert.ok(!session.getPushRejected(key),
       'no rejection: server accepted the unvalidated anchor and let the upward push proceed')
 
     session.close()
@@ -308,7 +308,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRepo.get('stage') === 2)
     assert.equal(clientRepo.get('stage'), 2,
       'client picked up the server\'s post-anchor extension')
-    assert.ok(!clientRepo.pushRejected,
+    assert.ok(!session2.getPushRejected(key),
       'no rejection: the anchor validated against the server\'s chain')
 
     session2.close()
@@ -823,12 +823,12 @@ describe(import.meta.url, ({ test }) => {
     await session.subscribe(badRepo.publicKeyHex)
 
     await waitFor(
-      () => badRepo.pushRejected != null || session.getConflictDetected(badRepo.publicKeyHex),
+      () => session.getPushRejected(badRepo.publicKeyHex) != null || session.getConflictDetected(badRepo.publicKeyHex),
       2000
     )
 
     // The bad client knows something is wrong with its chain.
-    assert.ok(badRepo.pushRejected || session.getConflictDetected(badRepo.publicKeyHex),
+    assert.ok(session.getPushRejected(badRepo.publicKeyHex) || session.getConflictDetected(badRepo.publicKeyHex),
       'bad client must surface either pushRejected (relay said no) or conflictDetected (local verifier caught it)')
 
     // The relay's top is unchanged — banana never landed.
@@ -864,7 +864,7 @@ describe(import.meta.url, ({ test }) => {
     // And the relay should accept it
     await waitFor(() => serverRepo.get('v') === 'banana', 2000)
     assert.equal(serverRepo.get('v'), 'banana', 'relay accepted the chained push')
-    assert.equal(clientRepo.pushRejected, null, 'no rejection on a clean push')
+    assert.equal(session.getPushRejected(clientRepo.publicKeyHex), null, 'no rejection on a clean push')
 
     session.close()
     await new Promise(r => wss.close(r))

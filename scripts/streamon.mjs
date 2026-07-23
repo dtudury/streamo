@@ -200,7 +200,7 @@ async function handleWrite ({ name, body, message }) {
   // Held as its own thread; this placeholder is good enough until we
   // build the real signal.
   await new Promise(r => setTimeout(r, 1500))
-  const rejected = server.streamo.pushRejected
+  const rejected = server.streamo._session?.getPushRejected?.(server.streamo.publicKeyHex)
   const url = `https://${RELAY_HOST}/streams/${pubkey}/${name}`
   return rejected
     ? { ok: false, error: `relay rejected: ${rejected.reason ?? 'unknown'}`, url, pubkey }

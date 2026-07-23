@@ -106,7 +106,7 @@ myRepo.set({ name: myRepo.get('name') ?? username, messages: [...messages, { tex
 // Give the push ~2s to travel up the WebSocket before we exit — there's
 // no relay ack to wait on; pushRejected is the one failure signal.
 await new Promise(r => setTimeout(r, 2000))
-if (myRepo.pushRejected) {
+if (myRepo._session?.getPushRejected?.(myRepo.publicKeyHex)) {
   console.error('notify.js: relay rejected the push — chain diverged')
   process.exit(1)
 }

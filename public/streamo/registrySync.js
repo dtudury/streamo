@@ -512,10 +512,16 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // registry — that's an invariant of the push protocol.
           const repo = registry.get(msg.key)
           if (repo) {
-            repo._setPushRejected({
+            const info = {
               reason: msg.reason,
               dataAddress: repo.lastCommit?.dataAddress
-            })
+            }
+            // Dual-write during migration (Mirror-and-Draft item 6 task 4):
+            // Record's field still exists; session's map is the target.
+            // Both surfaces stay in sync; callers can migrate one at a time.
+            // Final step removes the Record-side field + setter.
+            repo._setPushRejected(info)
+            repo._session?.setPushRejected?.(msg.key, info)
           }
         } else if (msg.type === 'announce') {
           // Fan out to all subscribers of this topic (server-side routing)
@@ -809,14 +815,22 @@ export function registrySync (registry, hostPort, options = {}) {
   // is ignored, keeping the watermark anchored at the initial-replay boundary).
   const relaySubscribedAtOffsetByKey = new Map()
 
-  // Per-key conflictDetected state (Mirror-and-Draft item 6 cell, migration
-  // in-progress via steps 3a-3h). Set when relayInboundStream's alignment
-  // check catches local content past the last shared sig. Value is
-  // `{ dataAddress: number }` — points at the rejected commit's data so
-  // apps can decode and offer recovery UX. Currently dual-written with
-  // Record's own #conflictDetected field during migration; Record-side
-  // removal is step 3g.
+  // Per-key conflictDetected state — session is the sole home
+  // (Mirror-and-Draft item 6, task 3 shipped 2f1082f). Set when
+  // relayInboundStream's alignment check catches local content past the
+  // last shared sig. Value is `{ dataAddress: number }`.
   const conflictDetectedByKey = new Map()
+
+  // Per-key pushRejected state (Mirror-and-Draft item 6 cell, migration
+  // in-progress via task 4). Set when the peer sends {type:'reject', ...}
+  // for a push we authored. Value is `{ reason, dataAddress }` — the
+  // dataAddress points at the rejected commit's data for recovery UX.
+  // Currently dual-written with Record's own #pushRejected field during
+  // migration; Record-side removal is task 4's final step.
+  //
+  // Super-arc: Mirror-and-Draft north-star (EXPLORATION-sync-model.md
+  // §"What this dissolves") — wire-state on session, not on Record.
+  const pushRejectedByKey = new Map()
 
   const session = {
     /** The current underlying WebSocket — replaced on each reconnect. */
@@ -896,6 +910,27 @@ export function registrySync (registry, hostPort, options = {}) {
     setConflictDetected (pubkeyHex, info) {
       conflictDetectedByKey.set(pubkeyHex, info)
       registry.recaller.reportKeyMutation(conflictDetectedByKey, pubkeyHex)
+    },
+    /**
+     * The pushRejected info for `pubkeyHex`, or null. Set when the peer
+     * sent `{type:'reject', ...}` for a push we authored. Reactive.
+     * @param {string} pubkeyHex
+     * @returns {{ reason: string, dataAddress: number } | null}
+     */
+    getPushRejected (pubkeyHex) {
+      registry.recaller.reportKeyAccess(pushRejectedByKey, pubkeyHex)
+      return pushRejectedByKey.get(pubkeyHex) ?? null
+    },
+    /**
+     * Set the per-connection pushRejected flag for `pubkeyHex`. Called
+     * by the peer-level receive path on `{type:'reject'}`. Not auto-
+     * cleared — apps inspect `dataAddress` to decode the rejected commit.
+     * @param {string} pubkeyHex
+     * @param {{ reason: string, dataAddress: number }} info
+     */
+    setPushRejected (pubkeyHex, info) {
+      pushRejectedByKey.set(pubkeyHex, info)
+      registry.recaller.reportKeyMutation(pushRejectedByKey, pubkeyHex)
     },
     /** Declare interest in a topic — receive future `announce` messages for it. */
     interest (key) {

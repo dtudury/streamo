@@ -138,8 +138,9 @@ if (remoteParent) {
 }
 console.log(`[publish-handbook] set ${Object.keys(files).length} files / ${totalBytes.toLocaleString()} bytes`)
 
-if (repo.pushRejected) {
-  console.error(`[publish-handbook] relay rejected: ${repo.pushRejected.reason ?? 'unknown'}`)
+const _rej = repo._session?.getPushRejected?.(repo.publicKeyHex)
+if (_rej) {
+  console.error(`[publish-handbook] relay rejected: ${_rej.reason ?? 'unknown'}`)
   ws.close()
   process.exit(1)
 }

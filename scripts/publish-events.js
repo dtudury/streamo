@@ -132,8 +132,9 @@ await repo.update(c => value, {
   message: `publish bubble events @ ${streamoVersion.slice(0, 8)} (${mdFiles.length} files, ${totalBytes.toLocaleString()} bytes)`
 })
 console.log(`[publish-events] set ${mdFiles.length} files / ${totalBytes.toLocaleString()} bytes`)
-if (repo.pushRejected) {
-  console.error(`[publish-events] relay rejected: ${repo.pushRejected.reason ?? 'unknown'}`)
+const _rej = repo._session?.getPushRejected?.(repo.publicKeyHex)
+if (_rej) {
+  console.error(`[publish-events] relay rejected: ${_rej.reason ?? 'unknown'}`)
   ws.close()
   process.exit(1)
 }

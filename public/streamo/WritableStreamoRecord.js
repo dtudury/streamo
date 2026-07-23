@@ -413,8 +413,10 @@ export class WritableStreamoRecord extends StreamoRecord {
   _awaitChainHash (target) {
     return new Promise((resolve, reject) => {
       const fn = () => {
-        const rejected = this.pushRejected
-        // conflictDetected lives on the session (Mirror-and-Draft item 6).
+        // pushRejected + conflictDetected + relayChainHash all live on the
+        // session (Mirror-and-Draft item 6). Session-null bypass below
+        // handles the archive-only / sessionless caller case.
+        const rejected = this._session?.getPushRejected?.(this.publicKeyHex) ?? null
         const conflict = this._session?.getConflictDetected?.(this.publicKeyHex) ?? null
         const relayHash = this._session?.getRelayChainHash?.(this.publicKeyHex) ?? null
         if (rejected) {

@@ -111,8 +111,9 @@ await record.update(c => ({
 })
 
 console.log(`[publish-claude-home] set ${Object.keys(files).length} files / ${totalBytes.toLocaleString()} bytes`)
-if (record.pushRejected) {
-  console.error(`[publish-claude-home] relay rejected: ${record.pushRejected.reason ?? 'unknown'}`)
+const _rej = record._session?.getPushRejected?.(record.publicKeyHex)
+if (_rej) {
+  console.error(`[publish-claude-home] relay rejected: ${_rej.reason ?? 'unknown'}`)
   ws.close()
   process.exit(1)
 }

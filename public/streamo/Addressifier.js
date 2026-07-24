@@ -264,9 +264,9 @@ export class Addressifier {
     return new WritableStream({
       write (incoming) {
         // Compact leftover + incoming into a fresh buf, reset offset.
-        // The hot inner loop uses subarray (a view, not a copy) so each
-        // chunk extraction is O(1) — the previous `buf = buf.slice(rest)`
-        // pattern was O(N) per chunk, O(N²) per frame.
+        // The bufOffset pattern (rather than shifting `buf = buf.slice(rest)`
+        // per chunk) avoids O(N²) parsing — inner loop advances bufOffset in
+        // O(1) instead of copying the tail per chunk.
         const leftover = buf.length - bufOffset
         if (leftover === 0) buf = incoming
         else {
@@ -282,7 +282,13 @@ export class Addressifier {
           if (len === 0) throw new Error('malformed frame: zero-length chunk')
           if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
           if (buf.length - bufOffset < 4 + len) break
-          const code = buf.subarray(bufOffset + 4, bufOffset + 4 + len)
+          // slice() (a copy) rather than subarray() (a view) — each
+          // extracted chunk gets its own independent memory. Otherwise
+          // a small long-lived chunk would pin the whole incoming buffer
+          // long after the frame's other chunks were discarded. Cost:
+          // O(chunk_length) memcopy per chunk. See
+          // docs/EXPLORATION-wire-mirror-split.md §"Garbage collection".
+          const code = buf.slice(bufOffset + 4, bufOffset + 4 + len)
           if (self.addressOf(code) === undefined) self.append(code)
           bufOffset += 4 + len
         }

@@ -930,6 +930,56 @@ export function registrySync (registry, hostPort, options = {}) {
       pushRejectedByKey.set(pubkeyHex, info)
       registry.recaller.reportKeyMutation(pushRejectedByKey, pubkeyHex)
     },
+    /**
+     * Push a batch of pre-encoded chunks to the wire for `pubkeyHex`.
+     * Frames each chunk as `[4-byte LE length][chunk]`, concatenates,
+     * prepends the 33-byte pubkey, sends as one binary WS frame.
+     *
+     * **Precondition:** the receiving peer must have a writer set up for
+     * `pubkeyHex` (typically via a prior `subscribe(pubkeyHex)` on the
+     * other side), else chunks buffer in the peer's `pendingChunks`
+     * map until a writer is created. No error signaled if that never
+     * happens — dead bytes.
+     *
+     * **Semantics under current wire:** if `chunks` ends in a SIGNATURE
+     * chunk, the peer's `StreamoRecordSerializer` will validate (shape
+     * + chain + crypto) and either append atomically or send back
+     * `{type:'reject', key, reason}` — same path as the per-repo
+     * outbound drain uses today.
+     *
+     * **Non-breaking safe addition** for the wire-mirror-split arc —
+     * gives Draft.commit() (when Mirror-and-Draft items 4-5 land) a
+     * clean API to push a signed commit-triple without going through
+     * Mirror's byte-store. See docs/EXPLORATION-wire-mirror-split.md
+     * step 2.
+     *
+     * @param {string} pubkeyHex  the 33-byte pubkey (hex) routing prefix
+     * @param {Uint8Array[]} chunks  chunks to frame + send
+     * @returns {boolean}  true if the frame was sent; false if the WS
+     *   was not open (transient — caller may retry after reconnect)
+     */
+    pushCommit (pubkeyHex, chunks) {
+      if (!ws || ws.readyState !== ws.OPEN) return false
+      const pubkeyBytes = hexToBytes(pubkeyHex)
+      if (pubkeyBytes.length !== KEY_BYTES) {
+        throw new Error(`session.pushCommit: pubkeyHex must be ${KEY_BYTES * 2} hex chars, got ${pubkeyHex.length}`)
+      }
+      let total = KEY_BYTES
+      for (const chunk of chunks) total += 4 + chunk.length
+      const frame = new Uint8Array(total)
+      frame.set(pubkeyBytes, 0)
+      const view = new DataView(frame.buffer)
+      let pos = KEY_BYTES
+      for (const chunk of chunks) {
+        view.setUint32(pos, chunk.length, true)
+        pos += 4
+        frame.set(chunk, pos)
+        pos += chunk.length
+      }
+      ws.send(frame)
+      turtleOut('chunk', pubkeyHex, { bytes: total - KEY_BYTES })
+      return true
+    },
     /** Declare interest in a topic — receive future `announce` messages for it. */
     interest (key) {
       interests.add(key)

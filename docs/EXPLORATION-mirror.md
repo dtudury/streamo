@@ -41,9 +41,12 @@ Draft class.
   `local` cleanly, notify + clone-from-remoteLength + wire-wins (see
   below).
 
-**local** — a `StreamoRecord` you can write to (has `set`, `commit`,
-`sign`, `attachSigner`). Not a separate class; just a StreamoRecord
-attached to Mirror.
+**local** — EITHER a slim `StreamoRecord` (observer case) OR a
+`WritableStreamoRecord` (author case). Factory chooses at Mirror
+construction based on whether the caller has authoring capability
+for this pubkey (via `attachSigner` later, or an author-key
+declaration). The 11.0 class-split is preserved; Mirror is purely
+additive on top of it.
 
 **remoteLength** — a number-cell (reactive). The one cursor everyone
 reads to ask *"has my commit landed?"* — watch `remoteLength >= X`
@@ -96,11 +99,21 @@ state, etc.) map cleanly to fresh registries.
 - **Draft class dissolves entirely.** Author work happens on
   `mirror.local` directly. No status enum needed — the cursor is the
   status.
-- **WritableStreamoRecord dissolves.** `mirror.local` IS a StreamoRecord
-  that supports authoring (has `set`, `commit`, `sign`, etc.). The
-  11.0 type-level "observer can't push" guard becomes "if you don't
-  have Mirror, you don't have `local`, you can't push" — dissolved at
-  the container level rather than the class level.
+- **WritableStreamoRecord DOES NOT dissolve** (revised 2026-07-24
+  evening, after reading the 11.0 archaeology). The class-split from
+  11.0 (slim StreamoRecord vs. WritableStreamoRecord) had a real
+  reason — type-level observer-can't-push — that's still useful.
+  Mirror is *purely additive*: `mirror.local` is EITHER a slim
+  StreamoRecord OR a WritableStreamoRecord depending on whether
+  you're authoring for that pubkey. Push machinery lives on Mirror
+  and only exists when `mirror.local instanceof WritableStreamoRecord`.
+  Type-level safety preserved at the Mirror level — a slim-local
+  Mirror can't push at construction. The 11.0 architectural-
+  invisibility property carries forward.
+  *(An earlier draft of this doc proposed dissolving WritableStreamoRecord
+  by merging its methods into StreamoRecord. On reflection with the
+  11.0 story in view, that would trade real safety for uncertain
+  gain. Preserving the split is the smaller, safer change.)*
 - **`_awaitChainHash`** dissolves — replaced by watching `remoteLength >= X`
   for the target byte-position.
 - **`caughtUpToRelay`** dissolves — replaced by watching
@@ -197,7 +210,7 @@ next microtask), `mirror.local` becomes the clone-with-wire-bytes.
 | Concept | Current (2026-07-24) | New (this doc) |
 |---|---|---|
 | author byte-store | `WritableStreamoRecord` (inherits StreamoRecord) | `mirror.local` (a StreamoRecord) |
-| author capability check | class type (`instanceof WritableStreamoRecord`) | `mirror.local.hasSigner` |
+| author capability check | class type (`instanceof WritableStreamoRecord`) | `mirror.local instanceof WritableStreamoRecord` (preserved) |
 | chain-hash validation | server-side `StreamoRecordSerializer` | client-side Mirror validation |
 | relay-inbound stream | `makeRelayInboundStream` on Record | Mirror's divergence handler + `Streamo.makeWritableStream` |
 | landing signal | `_awaitChainHash(target)` | watch `mirror.remoteLength >= X` |
@@ -206,10 +219,18 @@ next microtask), `mirror.local` becomes the clone-with-wire-bytes.
 | Draft class | (facade around Writable) | (dissolves) |
 
 Net LOC direction: substantial reduction. Draft rewrite estimate was
-~1000-1500 LOC across 2-3 sessions; Mirror-with-local estimate is
-~300-500 LOC across 2 sessions. WritableStreamoRecord, Draft.js,
-relayInboundStream.js, and eventually StreamoRecordSerializer.js all
-delete.
+~1000-1500 LOC across 2-3 sessions; Mirror-with-local estimate
+(revised 2026-07-24 evening) is **~350 LOC across 1-2 sessions** —
+even smaller now that WritableStreamoRecord stays. Draft.js and
+relayInboundStream.js delete; WritableStreamoRecord and StreamoRecord
+both stay unchanged; the wire-mirror-split (separate arc) would later
+delete StreamoRecordSerializer.js.
+
+**Naming flag for a later refactor** (David 2026-07-24 evening):
+"WritableStreamoRecord" is a mouthful. **Commitable** might be a
+better name — that's what the class does, and it's shorter. Not this
+refactor. Naming decision to schedule when there's runway; the
+current name works.
 
 ---
 

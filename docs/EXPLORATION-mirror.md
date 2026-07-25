@@ -225,35 +225,48 @@ this doc, correcting three items from the first draft:
    accessor" was itself an instance of the fluency-list pattern
    ([[candidates.md]] 2026-07-24 late): sketched without checking
    whether it was needed.
-2. **Merge WritableStreamoRecord's methods into StreamoRecord;
-   delete WritableStreamoRecord.** Author methods (set/commit/sign/
-   attachSigner/hasSigner/locallyAuthoredOffset/merge) move to
-   StreamoRecord. WritableStreamoRecord as a distinct class deletes.
-   The 11.0 type-level "observer can't push" guard moves from
-   "you need WritableStreamoRecord to push" to "you need Mirror to
-   push" — Mirror is the gatekeeper (if you don't have Mirror, you
-   don't have `mirror.local`, you can't call `.set()`). Turnstone's
-   sealed item-4 shape restored — Sanderling's earlier reading that
-   David's 2026-07-23 morning frame rejected it was too narrow.
-   ~200 LOC merged from Writable into StreamoRecord; ~468 LOC of
-   Writable file deleted; ~15 import sites updated.
+2. **Delete WritableStreamoRecord.** StreamoRecord needs nothing from
+   it. The ergonomic author-wrappers (set/commit/checkout/sign/
+   attachSigner/hasSigner/locallyAuthoredOffset/merge) don't belong on
+   StreamoRecord — they belong on **Mirror**. Mirror wraps `local`'s
+   low-level Streamo APIs (`append`, `encode`, `slice`) with the
+   checkout+set+commit+sign dance. StreamoRecord stays as chain-reader
+   (as today). The 11.0 type-level "observer can't push" guard is
+   naturally at the Mirror level: if you don't have Mirror, you don't
+   have `mirror.set(...)` — you only have StreamoRecord's raw append
+   which doesn't produce valid commits. Same safety, cleaner shape.
+   ~468 LOC of Writable file deleted; ~15 import sites updated;
+   ~200 LOC of author-wrappers move to Mirror (see step 3 — folded
+   into Mirror's implementation, not step 2's scope).
 3. **Add `Mirror` class** — wraps a StreamoRecord as `.local`, adds
-   `remoteLength` cell, adds reactive push + divergence handler. ~150
-   LOC.
+   `remoteLength` cell, adds reactive push + divergence handler, AND
+   holds the author-wrappers moved from Writable (set/commit/checkout/
+   sign/attachSigner/hasSigner/locallyAuthoredOffset/merge). ~350 LOC
+   (150 for the container + reactive push + divergence, ~200 for the
+   author-wrappers ported from Writable).
 4. **Update `registry.get(pubkey)`** to return Mirror instead of
    StreamoRecord. Compat shim: Mirror can expose the StreamoRecord's
    read methods (via delegation to `.local`) so existing callers keep
    working. Callers that specifically read `.set()`/`.commit()` migrate
    to `.local.set()`/`.local.commit()`. Bulk touch across callers.
    ~200 LOC.
-5. **Delete relayInboundStream.js** — behavior is Mirror's receive
-   handler: frame-parse via `Streamo.makeWritableStream` (inherited);
-   compare bytes at incoming position (does the batch extend `local`
-   from `remoteLength` cleanly?); validate (shape/chain/crypto via
-   Mirror-side validate module per wire-mirror-split); accept-and-
-   advance OR divergence-handle. Simple byte comparison; the current
-   staging + alignment-check complexity dissolves. ~200 LOC deleted;
-   ~100 LOC added to Mirror.
+5. **Delete relayInboundStream.js** — behavior becomes Mirror's
+   receive handler, which is much smaller than the current file:
+   - Byte-compare + accept-or-diverge: ~30 LOC (does incoming batch's
+     bytes at position X match local's? If clean extension: append +
+     advance remoteLength. If overlap-and-differ: divergence.)
+   - Validate (shape/chain/crypto): ~50 LOC — `chainHashOf` already
+     consolidated in utils.js; verify-signature + shape-check are
+     small. Same three checks StreamoRecordSerializer runs today;
+     different location (Mirror-side per wire-mirror-split).
+   - Divergence handler (notify + clone-from-remoteLength): ~30 LOC.
+
+   ~150 LOC deleted (relayInboundStream.js); ~80-100 LOC added to
+   Mirror's receive path. The current staging + alignment-check
+   complexity dissolves entirely. **Sanderling's earlier estimates
+   ("200 LOC deleted; 100 LOC added") were inflated — the actual
+   work is smaller, and I was reaching for numbers that sounded
+   substantive.**
 6. **Migrate `_awaitChainHash` callers** to watch `mirror.remoteLength`.
    ~50 LOC touched.
 7. **Test rewrites** — many tests need updates. ~300+ LOC touched.

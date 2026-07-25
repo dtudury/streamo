@@ -246,21 +246,18 @@ this doc, correcting three items from the first draft:
    accessor" was itself an instance of the fluency-list pattern
    ([[candidates.md]] 2026-07-24 late): sketched without checking
    whether it was needed.
-2. **Merge WritableStreamoRecord's methods into StreamoRecord;
-   delete WritableStreamoRecord.** Author methods (set/commit/sign/
-   attachSigner/hasSigner/locallyAuthoredOffset/merge) move to
-   StreamoRecord. WritableStreamoRecord as a distinct class deletes.
-   The 11.0 type-level "observer can't push" guard moves from
-   "you need WritableStreamoRecord to push" to "you need Mirror to
-   push" — Mirror is the gatekeeper (if you don't have Mirror, you
-   don't have `mirror.local`, you can't call `.set()`). Turnstone's
-   sealed item-4 shape restored — Sanderling's earlier reading that
-   David's 2026-07-23 morning frame rejected it was too narrow.
-   ~200 LOC merged from Writable into StreamoRecord; ~468 LOC of
-   Writable file deleted; ~15 import sites updated.
-3. **Add `Mirror` class** — wraps a StreamoRecord as `.local`, adds
-   `remoteLength` cell, adds reactive push + divergence handler. ~150
-   LOC.
+2. **Keep WritableStreamoRecord as-is.** REVISED 2026-07-24 evening:
+   after reading the 11.0 archaeology (session 97ad2ca0), the class-
+   split's real reason (type-level observer-can't-push) is worth
+   preserving. Mirror-as-container can preserve that safety without
+   eating the split. WritableStreamoRecord stays; Mirror is purely
+   additive on top. No LOC touched in this step.
+3. **Add `Mirror` class** — wraps a StreamoRecord OR
+   WritableStreamoRecord as `.local` (factory chooses per pubkey
+   based on author capability), adds `remoteLength` cell, adds
+   reactive push (only fires when
+   `local instanceof WritableStreamoRecord`) + divergence handler.
+   ~150 LOC. All net-new; no methods migrated in from other classes.
 4. **Update `registry.get(pubkey)`** to return Mirror instead of
    StreamoRecord. Compat shim: Mirror can expose the StreamoRecord's
    read methods (via delegation to `.local`) so existing callers keep

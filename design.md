@@ -26,16 +26,18 @@ appended chunk gets an **address**: the byte index of its **last byte**
 (not its first). Addresses are sequential — chunk N+1 starts at chunk N's
 end + 1.
 
-> **Vocabulary note:** in this codebase **"chunk"** specifically means the
-> codec-atomic-unit — a few bytes ending in a footer byte that identifies its
-> type (see §3). It's small. When talking about the collection of chunks that
-> represent one committed state change together (the value's data chunks +
-> the COMMIT chunk + the SIGNATURE chunk), the right word is **"batch"** —
-> "batch" is what the relay's `StreamoRecordSerializer` validates atomically
-> and what one WS binary frame carries per commit. The word-collision
-> (informal "chunk" meaning "the bytes of one commit") has bit two different
-> Engineers so far — reserve "chunk" for the codec-scope meaning to prevent a
-> third recurrence.
+> **Vocabulary note:** "chunk" is a general English word — "a meaningful group
+> of bytes." Streamo's code uses it *by convention* in one specific technical
+> sense (the codec-atomic-unit described in §3 — a few bytes ending in a
+> footer byte). That convention isn't a claim on the word; it's just how
+> this codebase happens to use it most often. When scope is ambiguous — for
+> instance, when talking about the collection of bytes representing one
+> commit together (data + COMMIT + SIGNATURE) — prefer qualifying:
+> **"codec-chunk"** for the atomic-unit meaning, **"batch"** (or
+> "commit-batch") for the commit-scoped grouping. The word-collision
+> (informal "chunk" meaning "the bytes of one commit," codebase-convention
+> "chunk" meaning "codec-atomic-unit") has bit two different Engineers so
+> far — qualifying prevents the third recurrence.
 
 Two operations exist that aren't append:
 

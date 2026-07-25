@@ -189,6 +189,21 @@ property. Session-toss preserves reconnect-resume up to the threshold.
 - **Relay-as-authority.** Becomes relay-as-hub (see tradeoffs below).
 - **The wire-layer knowing about SIGs.** Chunks flow; Mirror
   interprets.
+- **`relayInboundStream.js`** as a file. Its distinctive job (the
+  alignment-check on incoming SIGs) dissolves — validation moves to
+  Mirror. What remains (byte-accumulator + parse chunks + append) is
+  already what `Streamo.makeWritableStream` does natively. Mirror
+  just uses its inherited stream.
+- **`StreamoRecordSerializer.js`** as a class-file. Its three checks
+  (shape, chain, crypto) persist as Mirror-side validation logic —
+  same checks, moved to Mirror. Extract as a `validate.js` module
+  Mirror imports. `ConnectionAccumulator` (its per-repo chunk-batcher
+  on the relay side) dies with it — the relay doesn't accumulate for
+  validation anymore, just relays.
+
+Net additional LOC reduction from these two dissolutions: ~200 LOC
+across the deleted files, offset by ~50 LOC in the extracted
+`validate.js`. Substantive cleanup on top of the wire refactor.
 
 ## What emerges — new concerns
 

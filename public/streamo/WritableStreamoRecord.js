@@ -27,27 +27,11 @@
 import { Streamo, changedPaths } from './Streamo.js'
 import { StreamoRecord } from './StreamoRecord.js'
 import { Signature } from './Signature.js'
-
-// Chain-hash helpers (sign-side mirrors StreamoRecord's verify-side
-// helpers; both fold sha256 over `prev || sha256(newBytes)` so the
-// chain identity costs two sha256 calls per signature regardless of
-// how many chunks newBytes contains).
-const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
-async function sha256 (bytes) {
-  return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
-}
-function arraysEqual (a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
-async function chainHashOf (prev, newBytes) {
-  const newBytesHash = await sha256(newBytes)
-  const combined = new Uint8Array(64)
-  combined.set(prev, 0)
-  combined.set(newBytesHash, 32)
-  return await sha256(combined)
-}
+import { arraysEqual, chainHashOf } from './utils.js'
+// chain-hash helpers (sha256 + chainHashOf + arraysEqual) moved to
+// utils.js on 2026-07-24 — previously duplicated with
+// StreamoRecordSerializer.js (validator side) and arraysEqual
+// duplicated across 5 files total.
 
 /**
  * Fetch a StreamoRecord snapshot from an HTTP source URL or host shorthand.

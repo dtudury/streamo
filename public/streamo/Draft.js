@@ -33,12 +33,16 @@
  * See EXPLORATION-sync-model.md for the full design.
  */
 import { Recaller } from './utils/Recaller.js'
+import { arraysEqual as _arraysEqual } from './utils.js'
 
+// Draft's arraysEqual accepts null/undefined (returns `a === b` for
+// that case) — a specialization the base utils.arraysEqual doesn't
+// provide. Kept as a local wrapper so future callers of the base
+// helper don't inherit the null-tolerance. See utils.js's arraysEqual
+// for the consolidation history.
 function arraysEqual (a, b) {
   if (!a || !b) return a === b
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
+  return _arraysEqual(a, b)
 }
 
 export class Draft {

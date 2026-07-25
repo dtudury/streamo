@@ -39,12 +39,7 @@
  *   apps can react and offer recovery UX. (Not yet migrated to session.)
  */
 import { turtleLocal } from './utils/turtleLog.js'
-
-const arraysEqual = (a, b) => {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
+import { arraysEqual } from './utils.js'
 
 /**
  * Build the writable stream that consumes relay-inbound bytes on behalf of

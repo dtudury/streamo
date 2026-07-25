@@ -23,23 +23,11 @@
 import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
 
-// ── chain-hash helpers (mirror StreamoRecord's private helpers) ─────────────────
-const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
-async function sha256 (bytes) {
-  return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
-}
-function arraysEqual (a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
-async function chainHashOf (prev, newBytes) {
-  const newBytesHash = await sha256(newBytes)
-  const combined = new Uint8Array(64)
-  combined.set(prev, 0)
-  combined.set(newBytesHash, 32)
-  return await sha256(combined)
-}
+// chain-hash helpers moved to utils.js on 2026-07-24 (previously
+// duplicated with WritableStreamoRecord.js — the validator and signer
+// need to compute the same chain-hash or they silently disagree; a
+// single source of truth eliminates that failure mode).
+import { arraysEqual, chainHashOf } from './utils.js'
 
 export class StreamoRecordSerializer {
   /** @param {import('./StreamoRecord.js').StreamoRecord} repo

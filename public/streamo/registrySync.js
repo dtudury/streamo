@@ -16,18 +16,12 @@
 // Use native WebSocket in the browser; fall back to the `ws` package in Node.
 const WS = globalThis.WebSocket ?? (await import('ws')).default
 
-import { hexToBytes, bytesToHex, parseOrigin } from './utils.js'
+import { hexToBytes, bytesToHex, parseOrigin, arraysEqual } from './utils.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { turtleIn, turtleOut, turtleLocal } from './utils/turtleLog.js'
 
 const UNKNOWN_KEY = '0'.repeat(66)
-
-function arraysEqual (a, b) {
-  if (a.length !== b.length) return false
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
-  return true
-}
 
 /**
  * Adapted WebSocket — either a Node `ws` package socket (already has

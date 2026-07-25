@@ -1,4 +1,62 @@
 /**
+ * Byte-array equality (length + element-by-element). Trivially small
+ * helper that had been duplicated in 5 files (relayInboundStream,
+ * WritableStreamoRecord, registrySync, StreamoRecordSerializer,
+ * Draft) until 2026-07-24; consolidated here so a single source of
+ * truth exists.
+ * @param {Uint8Array | number[]} a
+ * @param {Uint8Array | number[]} b
+ * @returns {boolean}
+ */
+export function arraysEqual (a, b) {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
+  return true
+}
+
+// WebCrypto's SubtleCrypto — browser-native via globalThis.crypto,
+// or Node's `crypto` module's webcrypto adapter. Top-level await here
+// makes utils.js an async module; importers wait automatically per
+// ES module semantics.
+const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await import('crypto')).webcrypto.subtle
+
+/**
+ * SHA-256 digest of `bytes`. Returns a 32-byte Uint8Array.
+ * Consolidated from local copies in WritableStreamoRecord.js and
+ * StreamoRecordSerializer.js on 2026-07-24.
+ * @param {Uint8Array} bytes
+ * @returns {Promise<Uint8Array>}
+ */
+export async function sha256 (bytes) {
+  return new Uint8Array(await cryptoSubtle.digest('SHA-256', bytes))
+}
+
+/**
+ * The streamo chain-hash primitive:
+ * `chainHash_n = sha256(chainHash_{n-1} || sha256(newBytes))`
+ *
+ * Two sha256 calls per link — independent of how many chunks `newBytes`
+ * contains. See design.md §5 (Streamo — Signing) for the mechanism.
+ *
+ * Consolidated from local copies in WritableStreamoRecord.js (sign
+ * side) and StreamoRecordSerializer.js (validate side) on 2026-07-24.
+ * Any future divergence in these two copies would have been a real
+ * silent-error class (validator + signer would disagree on what's
+ * valid); the single source of truth eliminates that failure mode.
+ *
+ * @param {Uint8Array} prev  the previous chainHash (32 zeros for the seed)
+ * @param {Uint8Array} newBytes  the bytes appended since the previous SIG
+ * @returns {Promise<Uint8Array>}  the new 32-byte chainHash
+ */
+export async function chainHashOf (prev, newBytes) {
+  const newBytesHash = await sha256(newBytes)
+  const combined = new Uint8Array(64)
+  combined.set(prev, 0)
+  combined.set(newBytesHash, 32)
+  return await sha256(combined)
+}
+
+/**
  * Encode a Uint8Array as a lowercase hex string.
  * @param {Uint8Array} bytes
  * @returns {string}

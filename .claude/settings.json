@@ -1,6 +1,7 @@
 {
   "model": "claude-opus-4-7",
   "alwaysThinkingEnabled": true,
+  "autoMemoryDirectory": "~/Documents/repos/the-grove/memory",
   "hooks": {
     "SessionStart": [
       {
@@ -12,7 +13,7 @@
           },
           {
             "type": "command",
-            "command": "bash /Users/davidtudury/.claude/projects/-Users-davidtudury-Documents-repos-streamo/scripts/sync-grove.sh",
+            "command": "bash $HOME/Documents/repos/the-grove/scripts/sync-grove.sh",
             "statusMessage": "syncing the grove"
           }
         ]

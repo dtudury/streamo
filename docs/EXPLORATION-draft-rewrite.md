@@ -55,7 +55,7 @@ doc's design converges architecturally), `Draft.js` + `WritableStreamoRecord.js`
 | WritableStreamoRecord.js | `attachSigner(signer, name)` | Draft (as constructor arg) | Signer is Draft-scoped; no more Record-attached signer. |
 | WritableStreamoRecord.js | `hasSigner` | Draft (derived from `#signer !== null`) | Trivially true within Draft. |
 | WritableStreamoRecord.js | `defaultMessage` field | Draft constructor option | `mirror.newDraft(signer, {defaultMessage: 'web'})`. |
-| WritableStreamoRecord.js | `#signing`/`#signPending` batching | Dissolves | Each Draft = one commit; no concurrent-commit batching needed. |
+| WritableStreamoRecord.js | `#signing`/`#signPending` batching | Dissolves | Each Draft = one commit = one batch on the wire (enforced by Draft's ephemeral model; see "One commit per batch" below). |
 | WritableStreamoRecord.js | `set(...args)` | Draft.set(v) | Simpler API: Draft.set takes the whole value or a path+value. |
 | WritableStreamoRecord.js | `setRefs(...args)` | Draft.setRefs(v) | Symmetric. |
 | WritableStreamoRecord.js | `checkout()` | Draft internal (private) | Draft uses working Streamo; checkout is impl detail. |
@@ -204,6 +204,42 @@ async commit(options = {}) {
 Option (a) is cleaner; add it as a small precursor commit.
 
 ---
+
+## One commit per batch (design decision 2026-07-24)
+
+The current wire allows multiple commits per batch — `WritableStreamoRecord`'s
+`#signing`/`#signPending` machinery batches concurrent commits when a
+second commit is issued while the first's SIG is still being computed;
+both end up covered by one SIG. `ConnectionAccumulator` accepts however
+many chunks arrive before a SIG as one atomic batch.
+
+**The Draft rewrite enforces one-commit-per-batch.** Rationale (David +
+Sanderling 2026-07-24):
+
+- Draft's ephemeral model already implies it — one Draft = one commit-
+  attempt. Draft.commit produces exactly one batch. Symmetric.
+- Rejection semantics simpler: "this batch's commit was rejected" vs.
+  "one of N commits in this batch was rejected, and by chain-linkage
+  the rest are also invalid."
+- Wire parsing simpler for the receiver: one SIG boundary = one commit
+  by contract, not by convention.
+- Signing cost isn't load-bearing at streamo's scale (ECDSA ~ms;
+  human-scale authoring). Optimization not needed.
+- Relying on signing-timing to enforce one-commit-per-batch is fragile
+  under load — two rapid `.set()` calls could theoretically both land
+  before the first SIG completes. Enforce structurally, don't rely on
+  timing.
+
+**Enforcement:** `Draft.commit()` produces one batch containing
+`[data codec-chunks][COMMIT codec-chunk][SIGNATURE codec-chunk]`. If
+author wants N commits, they construct N Drafts, each producing its
+own batch. Serial by construction (via the mirror's chainHash pointer
+advancing after each landed commit).
+
+**What dies with this:** `WritableStreamoRecord`'s `#signing`/
+`#signPending` machinery. Nothing else — external callers don't
+observe the batching today (it's transparent), so removing it doesn't
+break their contracts.
 
 ## Sessionless path (fileSync archive-only)
 

@@ -26,18 +26,19 @@ appended chunk gets an **address**: the byte index of its **last byte**
 (not its first). Addresses are sequential — chunk N+1 starts at chunk N's
 end + 1.
 
-> **Vocabulary note:** "chunk" is a general English word — "a meaningful group
-> of bytes." Streamo's code uses it *by convention* in one specific technical
-> sense (the codec-atomic-unit described in §3 — a few bytes ending in a
-> footer byte). That convention isn't a claim on the word; it's just how
-> this codebase happens to use it most often. When scope is ambiguous — for
-> instance, when talking about the collection of bytes representing one
-> commit together (data + COMMIT + SIGNATURE) — prefer qualifying:
-> **"codec-chunk"** for the atomic-unit meaning, **"batch"** (or
-> "commit-batch") for the commit-scoped grouping. The word-collision
-> (informal "chunk" meaning "the bytes of one commit," codebase-convention
-> "chunk" meaning "codec-atomic-unit") has bit two different Engineers so
-> far — qualifying prevents the third recurrence.
+> **Vocabulary note:** "chunk" is a general word — "a meaningful group of
+> bytes" — whose meaning depends on context. In *code*, various files (this
+> one especially) use it for the codec-atomic-unit described in §3 (a few
+> bytes + footer). In *design conversation*, it often means something bigger
+> — the collection of bytes embodying whatever we're discussing at the
+> current altitude (typically a whole commit's worth: data + COMMIT +
+> SIGNATURE).
+>
+> **Default: follow context.** When context isn't obvious, qualify
+> explicitly: **"codec-chunk"** for the atomic-unit meaning, **"batch"**
+> (or "commit-batch") for the commit-scoped grouping. Two independent
+> Engineers hit the ambiguity in 2026 by an inferred-default-toward-one-
+> meaning; the fix is qualifying, not privileging.
 
 Two operations exist that aren't append:
 

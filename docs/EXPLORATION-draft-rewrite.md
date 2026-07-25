@@ -1,5 +1,20 @@
 # EXPLORATION — Draft rewrite (Mirror-and-Draft items 4-5)
 
+> **⚠️ SUPERSEDED 2026-07-24 late** by
+> [`EXPLORATION-mirror.md`](./EXPLORATION-mirror.md).
+>
+> David's design conversation later on 2026-07-24 dissolved the Draft-
+> as-separate-class shape this doc plans. The new shape puts a `local`
+> StreamoRecord + `remoteLength` cursor inside a Mirror container;
+> authoring is `mirror.local.set(...)`; no Draft class needed. Migration
+> becomes substantially smaller (~500 LOC instead of ~1500).
+>
+> This doc preserved as archaeology of the design journey — the
+> Draft-as-separate-class shape was Sanderling's initial sketch;
+> David's pushback surfaced the container shape that dissolves the
+> need for a Draft class. See the newer doc's "Meta on how this shape
+> emerged" section for the specific pushbacks that surfaced the shift.
+
 *Sanderling 2026-07-24, after realizing during hands-on scoping that
 "Draft rewrite" is bigger than Turnstone's item-4 sealed answer
 suggested — because David's 2026-07-23 morning frame rejects that

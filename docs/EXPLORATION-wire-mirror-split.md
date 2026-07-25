@@ -1,5 +1,17 @@
 # EXPLORATION — Wire/Mirror split: transport doesn't validate
 
+> **Terminology note added 2026-07-24 late:** this doc uses "Mirror" in
+> the Turnstone-original sense — passive observer of wire-authoritative
+> bytes. A newer design (see
+> [`EXPLORATION-mirror.md`](./EXPLORATION-mirror.md)) proposes making
+> Mirror the *container* that holds `local` (an editable StreamoRecord)
+> + `remoteLength` (wire-confirmed cursor). Both usages of "Mirror" are
+> consistent with each other — the newer container SUBSUMES the older
+> observer — but readers should note the scope change. The core
+> "wire=pipe, validation=Mirror-side" insight this doc names still
+> holds under the newer shape; it just moves to being validation on
+> `mirror.local` bytes as they arrive.
+
 *Design conversation captured 2026-07-23/24 (David + Sanderling), extending
 the Mirror-and-Draft north-star from `EXPLORATION-sync-model.md` with a
 sharper layering: **wire is pipe, Mirror interprets, session-object carries

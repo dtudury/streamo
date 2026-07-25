@@ -215,28 +215,45 @@ delete.
 
 ## Migration path (rough)
 
-Smaller than the Draft-rewrite plan:
+Smaller than the Draft-rewrite plan. Per David's 2026-07-24 review of
+this doc, correcting three items from the first draft:
 
-1. **Precursor: add `Streamo.chunks()` accessor** — same as before, ~10
-   LOC. Actually may not be needed at all if `slice(0, byteLength)` +
-   `makeReadableStream` cover it. Re-evaluate.
-2. **Add `Mirror` class** — wraps a StreamoRecord as `.local`, adds
+1. **~~Precursor: add `Streamo.chunks()` accessor~~ NOT NEEDED.** Mirror
+   pushes via `mirror.local.makeReadableStream({fromOffset: remoteLength})`
+   drained into one Uint8Array — that produces the framed batch bytes
+   ready to send. No new accessor needed. The first-draft "chunks()
+   accessor" was itself an instance of the fluency-list pattern
+   ([[candidates.md]] 2026-07-24 late): sketched without checking
+   whether it was needed.
+2. **Merge WritableStreamoRecord's methods into StreamoRecord;
+   delete WritableStreamoRecord.** Author methods (set/commit/sign/
+   attachSigner/hasSigner/locallyAuthoredOffset/merge) move to
+   StreamoRecord. WritableStreamoRecord as a distinct class deletes.
+   The 11.0 type-level "observer can't push" guard moves from
+   "you need WritableStreamoRecord to push" to "you need Mirror to
+   push" — Mirror is the gatekeeper (if you don't have Mirror, you
+   don't have `mirror.local`, you can't call `.set()`). Turnstone's
+   sealed item-4 shape restored — Sanderling's earlier reading that
+   David's 2026-07-23 morning frame rejected it was too narrow.
+   ~200 LOC merged from Writable into StreamoRecord; ~468 LOC of
+   Writable file deleted; ~15 import sites updated.
+3. **Add `Mirror` class** — wraps a StreamoRecord as `.local`, adds
    `remoteLength` cell, adds reactive push + divergence handler. ~150
    LOC.
-3. **Update `registry.get(pubkey)`** to return Mirror instead of
+4. **Update `registry.get(pubkey)`** to return Mirror instead of
    StreamoRecord. Compat shim: Mirror can expose the StreamoRecord's
    read methods (via delegation to `.local`) so existing callers keep
    working. Callers that specifically read `.set()`/`.commit()` migrate
    to `.local.set()`/`.local.commit()`. Bulk touch across callers.
    ~200 LOC.
-4. **Delete WritableStreamoRecord.** Author capabilities are on
-   `mirror.local` which is a StreamoRecord — so StreamoRecord needs
-   the author methods merged in (or `local` is specifically a
-   WritableStreamoRecord that stays around internally as a subclass).
-   Design choice: probably merge into StreamoRecord and delete Writable
-   — matches the Draft dissolution.
-5. **Delete relayInboundStream.js** — logic moves into Mirror's
-   divergence handler. ~200 LOC deleted, ~100 LOC added to Mirror.
+5. **Delete relayInboundStream.js** — behavior is Mirror's receive
+   handler: frame-parse via `Streamo.makeWritableStream` (inherited);
+   compare bytes at incoming position (does the batch extend `local`
+   from `remoteLength` cleanly?); validate (shape/chain/crypto via
+   Mirror-side validate module per wire-mirror-split); accept-and-
+   advance OR divergence-handle. Simple byte comparison; the current
+   staging + alignment-check complexity dissolves. ~200 LOC deleted;
+   ~100 LOC added to Mirror.
 6. **Migrate `_awaitChainHash` callers** to watch `mirror.remoteLength`.
    ~50 LOC touched.
 7. **Test rewrites** — many tests need updates. ~300+ LOC touched.

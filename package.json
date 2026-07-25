@@ -57,6 +57,7 @@
   },
   "scripts": {
     "test": "node --test",
+    "backup-contexts": "cp ~/.claude/projects/-Users-davidtudury-Documents-repos-streamo/*.jsonl saved_contexts/",
     "typecheck": "tsc -p jsconfig.json",
     "dev": "STREAMO_LOG_LEVEL=trace node public/apps/chat/server.js --env-file env/dev.env",
     "prod": "node public/apps/chat/server.js --env-file env/prod.env",

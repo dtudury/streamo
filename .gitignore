@@ -39,3 +39,8 @@ false/
 david-home/*
 !david-home/mounts.json
 .streamo-david/
+
+# Claude Code session backups — jsonl per session; moved from ~/saved_contexts
+# 2026-07-24 so they live near the repo they document. Never track.
+# Run `npm run backup-contexts` to sync latest .claude/projects/ jsonls here.
+saved_contexts/

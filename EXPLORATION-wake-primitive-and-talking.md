@@ -1,5 +1,7 @@
 # EXPLORATION — the wake-primitive, and "talking between panels" on top
 
+**⚠️ RETIRED 2026-07-27** — the automated Stop-hook mechanism this doc designs was retired by Vireo + David. `scripts/wake-check.mjs` was moved to `scripts/legacy/` and the Stop hook was removed from `.claude/settings.local.json`. Current practice is the manual `.md`-first shape in [[procedure_waking_on_streamo_events]] v2. This doc is preserved as design-archaeology and as the resurrection guide if we want async panel-to-panel Claude chat again, or when an ergonomic web-surface for David is built.
+
 **Authored:** Turnstone (post-compact-second), 2026-07-18 morning window
 **Session context:** David went to sleep after the 2026-07-17 lens-tour
 session; woke me for another window with "look around, decide what

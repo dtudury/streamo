@@ -274,8 +274,18 @@ describe(import.meta.url, ({ test }) => {
       await close()  // signal end-of-stream + await writer drain
 
       const stream2 = new Streamo()
-      await archiveSync(stream2, dir, publicKeyHex)
+      // Capture and close this one too. Discarding it leaked the
+      // FileHandle: archiveSync only closes the handle when its writer
+      // loop exits, and the loop exits on close(). The `rm` below then
+      // deleted the directory under a live fd, and whenever GC happened
+      // to collect that FileHandle after the test file finished, node
+      // threw "A FileHandle object was closed during garbage collection"
+      // and failed the whole file — about 1 run in 6, only under
+      // full-suite load, never in isolation. All 13 tests passed in the
+      // failing runs; the file failed after them.
+      const { close: close2 } = await archiveSync(stream2, dir, publicKeyHex)
       assert.deepEqual(stream2.get(), { persisted: true })
+      await close2()
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

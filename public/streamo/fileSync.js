@@ -95,7 +95,24 @@ async function readFolder (folder, accepts) {
       if (!accepts(rel)) continue
       if (entry.isDirectory()) await walk(abs)
       else if (entry.isFile()) {
-        const [bytes, info] = await Promise.all([readFile(abs), stat(abs)])
+        // readdir gave us a name; by the time we open it the file may be
+        // gone — deleted, renamed, or mid-replace by an editor writing
+        // tmp-then-rename. That's a TOCTOU window, not an error: this
+        // function reports what is on disk *now*, and a file that
+        // vanished isn't. The readdir above is guarded for the same
+        // reason (a directory can disappear too); this branch wasn't,
+        // so a flush racing a delete threw ENOENT out of flushToDisk.
+        //
+        // Narrower than the readdir guard on purpose: only the
+        // it's-not-there codes are swallowed. A permissions or I/O
+        // error is a real problem and should still surface.
+        let bytes, info
+        try {
+          [bytes, info] = await Promise.all([readFile(abs), stat(abs)])
+        } catch (error) {
+          if (error?.code === 'ENOENT' || error?.code === 'ENOTDIR') continue
+          throw error
+        }
         files[rel] = decodeFile(rel, decodeBytes(bytes))
         if (info.mtimeMs > maxMtime) maxMtime = info.mtimeMs
       }

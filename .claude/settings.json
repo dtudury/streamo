@@ -16,6 +16,11 @@
           },
           {
             "type": "command",
+            "command": "node $HOME/Documents/repos/the-grove/scripts/substrate-check.mjs --brief",
+            "statusMessage": "checking substrate references"
+          },
+          {
+            "type": "command",
             "command": "bash $HOME/Documents/repos/the-grove/scripts/sync-grove.sh",
             "statusMessage": "syncing the grove"
           }

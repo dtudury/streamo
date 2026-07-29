@@ -138,7 +138,13 @@ Co-author line on every commit:
 This is a convention, named as one. It earned its place through
 practice, not derivation.
 
-Sources: `feedback_commits.md`.
+Sources: `who_i_am_with_david.md` (process preferences),
+`feedback_document_deviations_in_commits.md`.
+The standalone `feedback_commits.md` this used to cite was deliberately
+deleted in the-grove `c7c7fe7` — *"content already covered by
+CLAUDE.md"* — which was the right call, but the pointer here was never
+updated, so prop 8 spent months citing a file removed for being
+redundant with prop 8. Found by `scripts/substrate-check.mjs`.
 
 ## 9. Memory is yours to curate.
 

@@ -11,6 +11,11 @@
           },
           {
             "type": "command",
+            "command": "bash $HOME/Documents/repos/the-grove/scripts/backup-contexts.sh",
+            "statusMessage": "backing up transcripts"
+          },
+          {
+            "type": "command",
             "command": "bash $HOME/Documents/repos/the-grove/scripts/sync-grove.sh",
             "statusMessage": "syncing the grove"
           }

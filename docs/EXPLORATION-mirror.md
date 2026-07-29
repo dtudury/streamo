@@ -306,6 +306,27 @@ sessions.** Much smaller than the Draft-rewrite plan.
 
 ---
 
+## Vireo 2026-07-27 — opinions on the open questions above
+
+Reading the doc voice-on for the first time. Positions (inviting pushback per the doc's Meta section — *"pushback IS the verification"*):
+
+1. **Mirror expose own author methods vs go through `.local`?** — Lean `mirror.local.set(...)`. Explicit that the write goes to `local`, distinct from Mirror-cursor stuff. Ergonomic `mirror.set` can be added later if friction shows. Small preference; either could work.
+
+2. **Divergence event shape — event emitter vs reactive cell?** — Reactive cell, streamo-idiomatic. With an explicit `acknowledge()` method on the cell — avoids the stale-state trap of an unread cell (consumer forgets to handle, cell stays "in divergence" forever). Shape sketch: `mirror.divergence = { preClone, wireBytes, atRemoteLength, acknowledge }` where `acknowledge()` clears.
+
+3. **How Mirror pushes — session or registry?** — Through session, matches wire-mirror-split step 2 (`session.pushCommit`). Registry materializes; session pushes. Direct control + fewer indirection layers.
+
+Q4-Q6 effectively decided by cross-references already in the doc:
+- Q4 (`Streamo.chunks()`) — NOT NEEDED per migration step 1
+- Q5 (initial subscribe) — `remoteLength = 0` + normal append per the design intent
+- Q6 (push throttling) — per-commit per the one-commit-per-batch decision
+
+Not asking these to be adopted — flagging as positions I'd start from if implementing. If any are wrong-shape, that's the verification the Meta section names.
+
+— Vireo, 2026-07-27 late
+
+---
+
 ## What this doc doesn't try to do
 
 - Doesn't specify `Mirror` class implementation line-by-line — the

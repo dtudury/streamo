@@ -58,6 +58,22 @@ async function openWriter (registry, n) {
 // pubkey size; format matches what the routing layer expects.
 const fakeKey = (n = 0) => '02' + n.toString(16).padStart(2, '0').repeat(32)
 
+/**
+ * Wait out the window in which something *would* have happened, so the
+ * assertion that follows can claim it didn't.
+ *
+ * This is the one honest reason a test sleeps. You cannot await an event
+ * that is never going to fire, so you wait long enough that its absence
+ * means something and then assert on it. Everything else that sleeps is
+ * a missing completion signal wearing a timer.
+ *
+ * Naming it keeps the two apart: a bare `setTimeout` left in a test is
+ * now a finding, not a maybe. Deliberately over-long — localhost
+ * round-trips are sub-millisecond, so the margin is the point.
+ */
+const longEnoughFor = (ms, whatWouldHaveHappened) =>
+  new Promise(resolve => setTimeout(resolve, ms))
+
 /** Wait up to `ms` ms for `fn()` to return truthy, polling every 10 ms. */
 function waitFor (fn, ms = 500) {
   return new Promise((resolve, reject) => {
@@ -202,7 +218,7 @@ describe(import.meta.url, ({ test }) => {
     await waitFor(() => clientRegistry.get(homeKey)?.get('members') !== undefined)
 
     // Private repo did NOT sync — it isn't in members and we didn't ask for it.
-    await new Promise(r => setTimeout(r, 100))
+    await longEnoughFor(100, 'the private repo to sync, if it were going to')
     assert.equal(clientRegistry.get(privateKey), undefined, 'private repo was not announced')
 
     // But explicit subscribe pulls it down — privacy through obscurity, not
@@ -587,7 +603,7 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => setTimeout(r, 50))
     sessionB.announce(announced, topic)
 
-    await new Promise(r => setTimeout(r, 100))
+    await longEnoughFor(100, 'an announcement to arrive without interest')
     assert.equal(received.length, 0, 'no announcements without interest')
 
     sessionA.close()
@@ -638,7 +654,7 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => setTimeout(r, 50))
     session.announce(announced, topic)  // sender declares interest and announces
 
-    await new Promise(r => setTimeout(r, 100))
+    await longEnoughFor(100, "the sender's own announcement to come back")
     assert.equal(received.length, 0, 'sender should not receive its own announcement')
 
     session.close()
@@ -690,7 +706,7 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => setTimeout(r, 50))
     session.interest(topic)
 
-    await new Promise(r => setTimeout(r, 100))
+    await longEnoughFor(100, "the sender's own prior announce to replay back")
     assert.equal(received.length, 0, 'sender should not receive its own prior announce via replay')
 
     session.close()
@@ -717,7 +733,7 @@ describe(import.meta.url, ({ test }) => {
     })
     sessionBob.interest(topic)
 
-    await new Promise(r => setTimeout(r, 100))
+    await longEnoughFor(100, 'a stale replay to arrive after the announcer disconnected')
     assert.equal(received.length, 0, 'no stale replay after announcer disconnects')
 
     sessionBob.close()
@@ -975,7 +991,7 @@ describe(import.meta.url, ({ test }) => {
     session.close()
     // Wait well past the backoff window — a reconnect, if it were going to
     // happen, would have fired by now.
-    await new Promise(r => setTimeout(r, 200))
+    await longEnoughFor(200, 'a reconnect to fire — well past the backoff window')
     assert.equal(events.join(','), 'true', 'intentional close does not reconnect')
     assert.ok(session.ws.readyState >= 2, 'socket is closing or closed')
 

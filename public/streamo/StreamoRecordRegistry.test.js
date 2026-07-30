@@ -5,15 +5,25 @@ import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
 import { archiveSync } from './archiveSync.js'
+import { mkdtemp, rm } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const newRegistry = (factory) => new StreamoRecordRegistry({ recaller: new Recaller('test'), factory })
 
+// archiveSync returns a close() that resolves once its writer loop has
+// drained to disk. Keep them so a test can await "everything is written"
+// instead of sleeping and hoping.
 function archiveRegistry (dir) {
-  return newRegistry(async key => {
+  const closes = []
+  const registry = newRegistry(async key => {
     const repo = new WritableStreamoRecord()
-    await archiveSync(repo, dir, key)
+    const { close } = await archiveSync(repo, dir, key)
+    closes.push(close)
     return repo
   })
+  registry.drain = async () => { for (const close of closes.splice(0)) await close() }
+  return registry
 }
 
 describe(import.meta.url, ({ test }) => {
@@ -84,14 +94,19 @@ describe(import.meta.url, ({ test }) => {
   })
 
   test('archive factory persists and reloads repository data', async ({ assert }) => {
-    const dir = '/tmp/repository-registry-persist-test-' + Date.now()
-    const r1 = archiveRegistry(dir)
-    const s1 = await r1._materialize('testkey')
-    s1.set({ saved: true })
-    await new Promise(r => setTimeout(r, 50))
+    const dir = await mkdtemp(join(tmpdir(), 'registry-persist-'))
+    try {
+      const r1 = archiveRegistry(dir)
+      const s1 = await r1._materialize('testkey')
+      s1.set({ saved: true })
+      await r1.drain()
 
-    const r2 = archiveRegistry(dir)
-    const s2 = await r2._materialize('testkey')
-    assert.equal(s2.get('saved'), true, 'data survived registry reload')
+      const r2 = archiveRegistry(dir)
+      const s2 = await r2._materialize('testkey')
+      assert.equal(s2.get('saved'), true, 'data survived registry reload')
+      await r2.drain()   // else its FileHandle outlives the test and GC fails the file
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

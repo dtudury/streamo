@@ -22,14 +22,20 @@ export const nextTick = f => {
 }
 
 /**
- * Awaitable form of nextTick: resolves after the currently-queued
- * callbacks have run.
+ * Run everything that's queued, right now, instead of on the next tick.
  *
- * Ordering is what makes this precise rather than hopeful. A mutation
- * queues its flush here first; `await tick()` queues behind it in the
- * same batch, and `flush` runs the batch in order — so by the time this
- * resolves, the work that was already scheduled has happened. Waiting a
- * fixed number of milliseconds for the same thing is a guess that gets
- * slower and less reliable at the same time.
+ * The debounce exists so a burst of mutations coalesces into one flush.
+ * A caller who has finished its burst and wants the consequences doesn't
+ * need the debounce — it needs the work. This is that: same `flush` the
+ * scheduler would have run, called directly.
+ *
+ * Safe to call with a flush already scheduled: that one still fires and
+ * finds an empty queue.
+ */
+export const flushNow = () => flush()
+
+/**
+ * Awaitable form, for callers that would rather wait for the real
+ * boundary than reach past it.
  */
 export const tick = () => new Promise(resolve => nextTick(resolve))

@@ -1,4 +1,5 @@
 import { describe } from './utils/testing.js'
+import { tick } from './utils/nextTick.js'
 import { h, handle } from './h.js'
 import { mount } from './mount.js'
 import { Streamo } from './Streamo.js'
@@ -31,7 +32,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(span.textContent, 'hello', 'initial render')
 
     stream.set('greeting', 'world')
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(span.textContent, 'world', 'updated after set')
   })
 
@@ -59,7 +60,7 @@ describe(import.meta.url, ({ test }) => {
     inputA.userTypedValue = 'leaked-state'
 
     stream.set('which', 'b')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     const inputB = container.childNodes[0]
     assert.equal(inputB.getAttribute('data-key'), 'b', 'now data-key=b')
@@ -90,7 +91,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(container.childNodes.length, 0, 'not shown yet')
 
     stream.set('show', true)
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     const input = container.childNodes[0]
     assert.ok(input, 'input mounted')
@@ -117,7 +118,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(originalTextNode.nodeValue, 'hello', 'initial text')
 
     stream.set('msg', 'world')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     assert.equal(p.childNodes[0], originalTextNode, 'same text node instance — recycled, not replaced')
     assert.equal(p.childNodes[0].nodeValue, 'world', 'nodeValue updated in place')
@@ -148,7 +149,7 @@ describe(import.meta.url, ({ test }) => {
     // re-render (single root watcher), so this catches the case: setAttribute
     // fires for the one that changed, NOT for the one whose value is the same.
     stream.set('a', 'three')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     assert.equal(div.getAttribute('data-a'), 'three', 'data-a updated')
     assert.equal(div.getAttribute('data-b'), 'two', 'data-b unchanged')
@@ -165,7 +166,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(div.getAttribute('class'), 'active', 'initial attribute')
 
     stream.set('cls', 'inactive')
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(div.getAttribute('class'), 'inactive', 'updated attribute')
   })
 
@@ -179,11 +180,11 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(renderCount, 1, 'initial render')
 
     stream.set('a', 'changed')
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(renderCount, 1, 'no re-render when unrelated key changes')
 
     stream.set('b', 'also changed')
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(renderCount, 2, 're-renders when watched key changes')
   })
 
@@ -216,12 +217,12 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(lis()[1].textContent, 'view')
 
     stream.set('editing', 1)
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(lis()[0].textContent, 'EDIT', 'editing=1 → item 1 shows EDIT')
     assert.equal(lis()[1].textContent, 'view', 'item 2 unchanged')
 
     stream.set('editing', 2)
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(lis()[0].textContent, 'view', 'item 1 returns to view')
     assert.equal(lis()[1].textContent, 'EDIT', 'item 2 now shows EDIT')
   })
@@ -258,7 +259,7 @@ describe(import.meta.url, ({ test }) => {
 
     // Flip editing on
     editingId.set(1)
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(lis().length, 1, 'still one li after editing flip')
     assert.equal(lis()[0].getAttribute('class'), 'editing', 'li has editing class')
     const liChildren = lis()[0].childNodes.filter(n => n.nodeType === 1)
@@ -303,7 +304,7 @@ describe(import.meta.url, ({ test }) => {
     // recycled <li> was disposed AND the fresh mount happened AND the
     // outer end.before() re-attached the original, producing 2.
     stream.set({ items: [{ id: 1, text: 'b' }] })
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(lis().length, 1, 'still one item after re-render')
     assert.equal(lis()[0].textContent, 'b', 'text updated')
   })
@@ -340,12 +341,12 @@ describe(import.meta.url, ({ test }) => {
     // The critical assertion: setting editingId via the LIVE-VALUE
     // (not the streamo) should fire the slot's watcher.
     editingId.set(1)
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(lis()[0].textContent, 'EDIT', 'after editingId.set(1): item 1 shows EDIT')
     assert.equal(lis()[1].textContent, 'b', 'item 2 unchanged')
 
     editingId.set(null)
-    await new Promise(resolve => setTimeout(resolve, 20))
+    await tick()
     assert.equal(lis()[0].textContent, 'a', 'after editingId.set(null): item 1 returns to text')
   })
 
@@ -387,7 +388,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(renderB, 1, 'B body ran once initially')
 
     cellA.set('A2')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     assert.equal(lis()[0].textContent, 'A2', 'A text updated after its cell changed')
     assert.equal(lis()[1].textContent, 'B', 'B text unchanged')
@@ -395,7 +396,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(renderB, 1, 'B body did NOT re-run — its dep did not change')
 
     cellB.set('B2')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     assert.equal(lis()[0].textContent, 'A2', 'A text unchanged on cellB mutation')
     assert.equal(lis()[1].textContent, 'B2', 'B text updated after its cell changed')
@@ -442,7 +443,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(innerRuns, 1)
 
     cell.set('inner-2')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
 
     assert.equal(span.textContent, 'inner-2', 'inner text updated')
     assert.equal(outerRuns, 1, 'outer did NOT re-run')
@@ -474,12 +475,12 @@ describe(import.meta.url, ({ test }) => {
 
     // Confirm inner watcher is live before dropping
     innerCell.set('inner-2')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(innerRuns, 2, 'inner re-ran on cell mutation (watcher is active)')
 
     // Drop the whole three-deep subtree
     show.set(false)
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(container.childNodes.length, 0, 'subtree removed')
     const runsAfterDrop = innerRuns
 
@@ -487,7 +488,7 @@ describe(import.meta.url, ({ test }) => {
     // is still registered and would fire (terraform on a detached
     // element — silent failure or surprising side effect).
     innerCell.set('inner-3')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(innerRuns, runsAfterDrop, 'inner watcher did NOT fire after subtree drop (nested cleanup walked deep enough)')
   })
 
@@ -521,13 +522,13 @@ describe(import.meta.url, ({ test }) => {
 
     // Sanity: A's watcher is live on cellA
     cellA.set('a-2')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(runsA, 2, 'A re-ran on its own cell mutation')
     assert.equal(runsB, 0)
 
     // Swap: same data-key, different fn
     which.set('B')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(ul.childNodes[0].textContent, 'b-1', 'B rendered after swap')
     assert.equal(runsB, 1, 'B ran once on initial mount')
     const runsAAfterSwap = runsA
@@ -535,13 +536,13 @@ describe(import.meta.url, ({ test }) => {
     // The old A watcher must be unregistered — mutating cellA must NOT
     // re-run A (ghost render against the swapped-away component).
     cellA.set('a-3')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(runsA, runsAAfterSwap, 'old A watcher torn down — no ghost fire on cellA')
     assert.equal(runsB, 1, 'B not re-fired by cellA mutation either')
 
     // And B's watcher must be live on cellB
     cellB.set('b-2')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(runsB, 2, 'B re-ran on its own cell mutation')
     assert.equal(ul.childNodes[0].textContent, 'b-2', 'DOM reflects B\'s new value')
   })
@@ -605,7 +606,7 @@ describe(import.meta.url, ({ test }) => {
 
     // Drop the item — show=false means the slot resolves to null
     show.set(false)
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(ul.childNodes.length, 0, 'item removed')
     const runsAfterDrop = innerRuns
 
@@ -613,12 +614,12 @@ describe(import.meta.url, ({ test }) => {
     // innerRuns must NOT increment. If it leaks, the watcher fires and
     // tries to terraform a detached element.
     inner.set('b')
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(innerRuns, runsAfterDrop, 'dropped Item watcher did NOT fire on inner.set')
 
     // Bring it back: a fresh instance should appear and render the current value
     show.set(true)
-    await new Promise(r => setTimeout(r, 20))
+    await tick()
     assert.equal(ul.childNodes.length, 1, 'item re-rendered')
     assert.equal(ul.childNodes[0].textContent, 'b', 'shows current inner value')
   })

@@ -104,6 +104,9 @@ export async function originSync (record, publicKeyHex, hostPort, { retryFirstCo
       writer.write(new Uint8Array(data)).catch(e => {
         console.error(`[origin] rejected chunk: ${e.message}`)
         ws.close()
+        // See registrySync's handleWriteError: our own type errors are bugs,
+        // and swallowing them here converts a crash into a silent hang.
+        if (e instanceof TypeError || e instanceof ReferenceError) throw e
       })
     })
 

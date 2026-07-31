@@ -219,6 +219,13 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
   function handleWriteError (keyHex, e) {
     console.error(`[${label}] rejected chunk for ${keyHex.slice(0, 8)}...: ${e.message}`)
     ws.close()
+    // A TypeError or ReferenceError here is our bug, not a peer sending
+    // garbage — and closing the socket over it turns a crash into a wait
+    // that never ends. Rethrow so it surfaces as a failure. Costs five
+    // rounds of "run, hang 60s, learn one thing" otherwise; that's how
+    // long it took to find `undefined[5]` when a Mirror reached code
+    // expecting a StreamoRecord.
+    if (e instanceof TypeError || e instanceof ReferenceError) throw e
   }
 
   /**

@@ -136,6 +136,25 @@ describe('Mirror (scaffold)', ({ test }) => {
     assert.equal(writableMirror.isAuthorable, true, 'WritableStreamoRecord: authorable')
   })
 
+  test('reads delegate to local; writes do not', ({ assert }) => {
+    const recaller = new Recaller('mirror-delegation')
+    const local = new WritableStreamoRecord({ recaller })
+    const mirror = new Mirror({ publicKeyHex: PUB, local })
+
+    local.append(new Uint8Array([7, 8, 9]))
+
+    assert.equal(mirror.byteLength, local.byteLength, 'byteLength delegates')
+    assert.equal(mirror.signedLength, local.signedLength, 'signedLength delegates')
+    assert.deepEqual([...mirror.slice(0, 3)], [7, 8, 9], 'slice delegates')
+    assert.equal(typeof mirror.makeReadableStream, 'function', 'makeReadableStream delegates')
+
+    // The asymmetry is the point: authoring goes through `.local` so the
+    // migration can't quietly stall with callers writing to the wrapper.
+    for (const method of ['set', 'commit', 'append', 'merge', 'checkout']) {
+      assert.equal(mirror[method], undefined, `${method} is NOT on Mirror`)
+    }
+  })
+
   // The receive stream is deliberately codec-blind — it compares bytes and
   // appends them. So these drive it with arbitrary payloads rather than
   // signed commits: anything else would be testing the codec too, and

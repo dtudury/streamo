@@ -119,6 +119,34 @@ export class Mirror {
     this.recaller.reportKeyMutation(this, 'divergence')
   }
 
+  // ---- transitional read delegation ------------------------------------
+  //
+  // Per migration step 4: reads delegate to `local` so existing callers keep
+  // working when `registry.get()` starts returning a Mirror; writes do not,
+  // so `set`/`commit`/`append`/`merge`/`checkout` have to move to
+  // `mirror.local.*` and the compiler-of-last-resort (a TypeError) says so.
+  //
+  // This is deliberately asymmetric and that asymmetry is a cost, not a
+  // feature: an object where `get()` works and `set()` throws invites
+  // exactly the confusion CLAUDE.md prop 7 says to design out. It's here
+  // because the alternative is migrating ~59 call sites in the same change
+  // that flips the registry, and a half-flipped registry is worse. Delete
+  // this block once callers read through `.local`; nothing should grow.
+
+  /** @returns {number} */
+  get byteLength () { return this.local.byteLength }
+  /** @returns {number} */
+  get signedLength () { return this.local.signedLength }
+  get lastCommit () { return this.local.lastCommit }
+  get committedChainHash () { return this.local.committedChainHash }
+
+  /** Decode a value at a path. See `Streamo.get`. */
+  get (...args) { return this.local.get(...args) }
+  /** Raw bytes in `[start, end)`. Unframed positions. */
+  slice (start, end) { return this.local.slice(start, end) }
+  /** Framed bytes from an unframed offset. See `Addressifier.makeReadableStream`. */
+  makeReadableStream (options) { return this.local.makeReadableStream(options) }
+
   /**
    * True if `local` is a WritableStreamoRecord (authorable). Non-reactive —
    * a Mirror's authorability is fixed at construction (per the 11.0

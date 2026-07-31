@@ -148,8 +148,6 @@ describe('Mirror (scaffold)', ({ test }) => {
     assert.deepEqual([...mirror.slice(0, 3)], [7, 8, 9], 'slice delegates')
     assert.equal(typeof mirror.makeReadableStream, 'function', 'makeReadableStream delegates')
 
-    // The asymmetry is the point: authoring goes through `.local` so the
-    // migration can't quietly stall with callers writing to the wrapper.
     for (const method of ['set', 'commit', 'append', 'merge', 'checkout']) {
       assert.equal(mirror[method], undefined, `${method} is NOT on Mirror`)
     }

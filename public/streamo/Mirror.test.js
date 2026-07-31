@@ -135,4 +135,102 @@ describe('Mirror (scaffold)', ({ test }) => {
     assert.equal(slimMirror.isAuthorable, false, 'slim StreamoRecord: not authorable')
     assert.equal(writableMirror.isAuthorable, true, 'WritableStreamoRecord: authorable')
   })
+
+  // The receive stream is deliberately codec-blind — it compares bytes and
+  // appends them. So these drive it with arbitrary payloads rather than
+  // signed commits: anything else would be testing the codec too, and
+  // hiding which layer a failure came from.
+  const frame = (...payloads) => {
+    const total = payloads.reduce((n, p) => n + 4 + p.length, 0)
+    const out = new Uint8Array(total)
+    const view = new DataView(out.buffer)
+    let pos = 0
+    for (const p of payloads) {
+      view.setUint32(pos, p.length, true)
+      pos += 4
+      out.set(p, pos)
+      pos += p.length
+    }
+    return out
+  }
+  const bytes = (...ns) => new Uint8Array(ns)
+
+  const feed = async (mirror, framed) => {
+    const writer = mirror.makeReceiveStream().getWriter()
+    try {
+      await writer.write(framed)
+      await writer.close()
+      return null
+    } catch (error) {
+      return error
+    }
+  }
+
+  test('receive: wire bytes past local append and advance remoteLength', async ({ assert }) => {
+    const recaller = new Recaller('mirror-receive-append')
+    const local = new StreamoRecord({ recaller })
+    const mirror = new Mirror({ publicKeyHex: PUB, local })
+
+    const error = await feed(mirror, frame(bytes(1, 2, 3), bytes(4, 5)))
+
+    assert.equal(error, null, 'clean append does not reject')
+    assert.equal(local.byteLength, 5, 'both payloads landed, unframed')
+    assert.equal(mirror.remoteLength, 5,
+      'remoteLength counts payload bytes only — 5, not 13 with the two 4-byte prefixes')
+    assert.equal(mirror.divergence, null, 'no divergence reported')
+  })
+
+  test('receive: our own commit echoing back advances the cursor without re-appending', async ({ assert }) => {
+    const recaller = new Recaller('mirror-receive-echo')
+    const local = new StreamoRecord({ recaller })
+    const mirror = new Mirror({ publicKeyHex: PUB, local })
+
+    // Stand in for an unpushed local commit: bytes exist in local, and
+    // remoteLength still says the wire hasn't confirmed them.
+    local.append(bytes(1, 2, 3))
+    assert.equal(local.byteLength, 3, 'local has unpushed bytes')
+    assert.equal(mirror.remoteLength, 0, 'wire has confirmed nothing yet')
+
+    const error = await feed(mirror, frame(bytes(1, 2, 3)))
+
+    assert.equal(error, null, 'byte-identical echo is accepted')
+    assert.equal(local.byteLength, 3, 'not appended twice')
+    assert.equal(mirror.remoteLength, 3, 'cursor caught up to local')
+    assert.equal(mirror.divergence, null, 'an echo is not divergence')
+  })
+
+  test('receive: different bytes at an occupied position report divergence', async ({ assert }) => {
+    const recaller = new Recaller('mirror-receive-diverge')
+    const local = new StreamoRecord({ recaller })
+    const mirror = new Mirror({ publicKeyHex: PUB, local })
+
+    local.append(bytes(1, 2, 3))   // unpushed local commit
+    const error = await feed(mirror, frame(bytes(9, 9, 9)))   // wire disagrees
+
+    assert.ok(error, 'the write rejects so the connection tears down')
+    assert.ok(/diverged/.test(error.message), 'error says diverged')
+    assert.ok(mirror.divergence, 'divergence cell is set')
+    assert.equal(mirror.divergence.atRemoteLength, 0, 'reports where the wire had confirmed to')
+    assert.equal(mirror.divergence.preClone, local, 'hands back the pre-replacement local')
+    assert.deepEqual([...mirror.divergence.wireBytes], [9, 9, 9], 'carries the divergent bytes')
+
+    mirror.divergence.acknowledge()
+    assert.equal(mirror.divergence, null, 'acknowledge clears it')
+  })
+
+  test('receive: a frame split across two writes is reassembled', async ({ assert }) => {
+    const recaller = new Recaller('mirror-receive-split')
+    const local = new StreamoRecord({ recaller })
+    const mirror = new Mirror({ publicKeyHex: PUB, local })
+
+    const framed = frame(bytes(1, 2, 3, 4, 5))
+    const writer = mirror.makeReceiveStream().getWriter()
+    await writer.write(framed.subarray(0, 3))    // mid-length-prefix
+    assert.equal(mirror.remoteLength, 0, 'nothing published from a partial prefix')
+    await writer.write(framed.subarray(3))
+    await writer.close()
+
+    assert.equal(local.byteLength, 5, 'payload landed once')
+    assert.equal(mirror.remoteLength, 5, 'cursor advanced after the frame completed')
+  })
 })

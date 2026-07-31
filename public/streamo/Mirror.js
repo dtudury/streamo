@@ -18,6 +18,7 @@
  */
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
+import { arraysEqual } from './utils.js'
 
 export class Mirror {
   /** @type {string} hex-encoded public key of the mirrored Record. */
@@ -127,12 +128,99 @@ export class Mirror {
     return this.local instanceof WritableStreamoRecord
   }
 
-  // TODO: makeReceiveStream() — the wire-inbound handler, replacing
-  // `relayInboundStream.js`. Parses length-prefixed frames via
-  // `Streamo.makeWritableStream` inherited machinery; compares incoming
-  // bytes against `local` from `remoteLength`; accepts + advances
-  // remoteLength OR calls reportDivergence. Follow-up work per migration
-  // step 5 in EXPLORATION-mirror.md.
+  /**
+   * The wire-inbound handler — replaces `relayInboundStream.js`.
+   *
+   * Consumes framed bytes from the wire and either accepts them (appending
+   * to `local`, advancing `remoteLength`) or reports divergence.
+   *
+   * **`remoteLength` advances by the payload length, never payload + 4.**
+   * Wire bytes carry a 4-byte length prefix; `byteLength`, `fromOffset` and
+   * `remoteLength` don't count it (`wireByteLength` is the one that does).
+   * Advance by the framed count and `remoteLength` runs permanently ahead,
+   * so every `remoteLength >= X` watch fires early and silently.
+   *
+   * **What replaces the chain-hash alignment check.** The old path compared
+   * `pendingChainHash` against `committedChainHash` at each SIG arrival,
+   * staging chunks until a covering SIG let it decide. This compares bytes
+   * instead: wire bytes land at `remoteLength`, so if `local` already has
+   * bytes at those positions they must match. Same race caught, no chain
+   * interpretation, no staging buffer.
+   *
+   * Three cases per incoming chunk, by where the cursor sits:
+   * - past `local.byteLength` → new bytes; append and advance.
+   * - inside `local`, bytes equal → our own commit echoing back off the
+   *   relay. Already present; just advance the cursor.
+   * - inside `local`, bytes differ → divergence. Local holds unpushed
+   *   commits the wire doesn't have, and the wire won.
+   *
+   * @param {{maxFrameSize?: number}} [options] `maxFrameSize` is a
+   *   defensive cap so a malformed length prefix can't allocate unbounded
+   *   memory.
+   * @returns {WritableStream}
+   */
+  makeReceiveStream ({ maxFrameSize = 64 * 1024 * 1024 } = {}) {
+    let buf = new Uint8Array(0)
+    let bufOffset = 0
+    // Where the next incoming chunk lands. Starts at the confirmed cursor
+    // and walks forward across writes; `remoteLength` is only published
+    // once a write's frames are fully processed.
+    let cursor = this.#remoteLength
+    const mirror = this
+
+    return new WritableStream({
+      write (incoming) {
+        // Compact leftover + incoming, then walk frames with subarray views
+        // so extraction stays O(1) per chunk rather than O(N) per slice.
+        const leftover = buf.length - bufOffset
+        if (leftover === 0) buf = incoming
+        else {
+          const next = new Uint8Array(leftover + incoming.length)
+          next.set(buf.subarray(bufOffset), 0)
+          next.set(incoming, leftover)
+          buf = next
+        }
+        bufOffset = 0
+
+        while (buf.length - bufOffset >= 4) {
+          const view = new DataView(buf.buffer, buf.byteOffset + bufOffset, 4)
+          const len = view.getUint32(0, true)
+          if (len === 0) throw new Error('malformed frame: zero-length chunk')
+          if (len > maxFrameSize) {
+            throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
+          }
+          if (buf.length - bufOffset < 4 + len) break
+          const code = buf.subarray(bufOffset + 4, bufOffset + 4 + len)
+          bufOffset += 4 + len
+
+          if (cursor < mirror.local.byteLength) {
+            // Occupied territory: these positions already hold bytes.
+            const mine = mirror.local.slice(cursor, cursor + len)
+            if (!arraysEqual(mine, code)) {
+              mirror.reportDivergence({
+                preClone: mirror.local,
+                wireBytes: code.slice(),
+                atRemoteLength: mirror.#remoteLength
+              })
+              throw new Error(
+                `local diverged from the wire at byte ${cursor}: ` +
+                'local holds unpushed commits the wire did not accept ' +
+                '(push in flight, or another author won the position)'
+              )
+            }
+            // Byte-identical — our own commit coming back down. Nothing to
+            // append; the cursor advance is the whole update.
+          } else {
+            mirror.local.append(code.slice())
+          }
+          cursor += len
+        }
+
+        mirror.remoteLength = cursor
+      }
+    })
+  }
+
   //
   // TODO: reactive push machinery — a `recaller.watch` that fires when
   // `local.byteLength > remoteLength` AND `isAuthorable` AND connection

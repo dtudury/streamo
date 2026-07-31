@@ -174,10 +174,10 @@ describe('Mirror (scaffold)', ({ test }) => {
     const error = await feed(mirror, frame(bytes(1, 2, 3), bytes(4, 5)))
 
     assert.equal(error, null, 'clean append does not reject')
-    assert.equal(local.byteLength, 5, 'both payloads landed, unframed')
+    assert.equal(local.byteLength, 5, 'both payloads landed')
     assert.equal(mirror.remoteLength, 5,
       'remoteLength counts payload bytes only — 5, not 13 with the two 4-byte prefixes')
-    assert.equal(mirror.divergence, null, 'no divergence reported')
+    assert.equal(mirror.divergence, null)
   })
 
   test('receive: our own commit echoing back advances the cursor without re-appending', async ({ assert }) => {
@@ -193,10 +193,10 @@ describe('Mirror (scaffold)', ({ test }) => {
 
     const error = await feed(mirror, frame(bytes(1, 2, 3)))
 
-    assert.equal(error, null, 'byte-identical echo is accepted')
+    assert.equal(error, null)
     assert.equal(local.byteLength, 3, 'not appended twice')
     assert.equal(mirror.remoteLength, 3, 'cursor caught up to local')
-    assert.equal(mirror.divergence, null, 'an echo is not divergence')
+    assert.equal(mirror.divergence, null)
   })
 
   test('receive: different bytes at an occupied position report divergence', async ({ assert }) => {
@@ -207,15 +207,15 @@ describe('Mirror (scaffold)', ({ test }) => {
     local.append(bytes(1, 2, 3))   // unpushed local commit
     const error = await feed(mirror, frame(bytes(9, 9, 9)))   // wire disagrees
 
-    assert.ok(error, 'the write rejects so the connection tears down')
-    assert.ok(/diverged/.test(error.message), 'error says diverged')
-    assert.ok(mirror.divergence, 'divergence cell is set')
+    assert.ok(error, 'write rejects')
+    assert.ok(/diverged/.test(error.message))
+    assert.ok(mirror.divergence)
     assert.equal(mirror.divergence.atRemoteLength, 0, 'reports where the wire had confirmed to')
     assert.equal(mirror.divergence.preClone, local, 'hands back the pre-replacement local')
-    assert.deepEqual([...mirror.divergence.wireBytes], [9, 9, 9], 'carries the divergent bytes')
+    assert.deepEqual([...mirror.divergence.wireBytes], [9, 9, 9])
 
     mirror.divergence.acknowledge()
-    assert.equal(mirror.divergence, null, 'acknowledge clears it')
+    assert.equal(mirror.divergence, null)
   })
 
   test('receive: a frame split across two writes is reassembled', async ({ assert }) => {

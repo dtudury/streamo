@@ -129,30 +129,15 @@ export class Mirror {
   }
 
   /**
-   * The wire-inbound handler — replaces `relayInboundStream.js`.
-   *
-   * Consumes framed bytes from the wire and either accepts them (appending
-   * to `local`, advancing `remoteLength`) or reports divergence.
+   * The wire-inbound handler — replaces `relayInboundStream.js`, which
+   * decided the same question by comparing chain hashes at each SIG and
+   * staging chunks until one arrived.
    *
    * **`remoteLength` advances by the payload length, never payload + 4.**
    * Wire bytes carry a 4-byte length prefix; `byteLength`, `fromOffset` and
    * `remoteLength` don't count it (`wireByteLength` is the one that does).
    * Advance by the framed count and `remoteLength` runs permanently ahead,
    * so every `remoteLength >= X` watch fires early and silently.
-   *
-   * **What replaces the chain-hash alignment check.** The old path compared
-   * `pendingChainHash` against `committedChainHash` at each SIG arrival,
-   * staging chunks until a covering SIG let it decide. This compares bytes
-   * instead: wire bytes land at `remoteLength`, so if `local` already has
-   * bytes at those positions they must match. Same race caught, no chain
-   * interpretation, no staging buffer.
-   *
-   * Three cases per incoming chunk, by where the cursor sits:
-   * - past `local.byteLength` → new bytes; append and advance.
-   * - inside `local`, bytes equal → our own commit echoing back off the
-   *   relay. Already present; just advance the cursor.
-   * - inside `local`, bytes differ → divergence. Local holds unpushed
-   *   commits the wire doesn't have, and the wire won.
    *
    * @param {{maxFrameSize?: number}} [options] `maxFrameSize` is a
    *   defensive cap so a malformed length prefix can't allocate unbounded

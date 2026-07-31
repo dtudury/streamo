@@ -79,7 +79,7 @@ export function attachStreamSync (wss, registry, label = 'ws', peerOptions = {})
       const publicKey = hexToBytes(publicKeyHex)
       let serializer = routing.serializers.get(publicKeyHex)
       if (!serializer) {
-        serializer = new StreamoRecordSerializer(record, publicKey)
+        serializer = new StreamoRecordSerializer(record.local ?? record, publicKey)
         routing.serializers.set(publicKeyHex, serializer)
       }
       const accumulator = new ConnectionAccumulator(serializer, (result) => {

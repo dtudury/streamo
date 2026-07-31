@@ -49,9 +49,10 @@ async function realKey (n) {
 async function openWriter (registry, n) {
   const { name, hex } = await realKey(n)
   writableKeysFor.get(registry).add(hex)
-  const repo = await registry._materialize(hex)
-  repo.attachSigner(SIGNER, name)
-  return { repo, hex }
+  // _materialize returns a Mirror now; authoring goes through `.local`.
+  const mirror = await registry._materialize(hex)
+  mirror.local.attachSigner(SIGNER, name)
+  return { repo: mirror.local, mirror, hex }
 }
 // Topics for interest/announce don't need to be valid keys (no data flows
 // over them) — short hex strings keep the tests fast.  33 bytes = compressed

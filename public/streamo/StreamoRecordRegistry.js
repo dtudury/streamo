@@ -1,4 +1,5 @@
 import { StreamoRecord } from './StreamoRecord.js'
+import { Mirror } from './Mirror.js'
 import { Recaller } from './utils/Recaller.js'
 
 /**
@@ -125,8 +126,11 @@ export class StreamoRecordRegistry {
     // Exposing it lets clients ask the StreamoRecord "what address are you?" without
     // a reverse-lookup or a side-channel stash on the instance.
     stream.publicKeyHex = publicKeyHex
-    this.#streams.set(publicKeyHex, stream)
-    resolve(stream)
+    // The registry hands out Mirrors; the factory still makes the byte-store
+    // that becomes `mirror.local`.
+    const mirror = new Mirror({ publicKeyHex, local: stream, recaller: this.recaller })
+    this.#streams.set(publicKeyHex, mirror)
+    resolve(mirror)
     // Fire (this, 'keys') so iteration-based slots — those that called
     // `[...registry]` or `registry.get(keyHex)` — re-run now that a
     // new repo is available.
@@ -142,8 +146,8 @@ export class StreamoRecordRegistry {
         this.recaller.reportKeyMutation(this, 'keys')
       })
     }
-    for (const cb of this.#openCallbacks) cb(publicKeyHex, stream)
-    return stream
+    for (const cb of this.#openCallbacks) cb(publicKeyHex, mirror)
+    return mirror
   }
 
   /** Register a callback invoked whenever a new repo is fully opened. */
@@ -164,7 +168,7 @@ export class StreamoRecordRegistry {
     const entry = this.#streams.get(publicKeyHex)
     // Filters out the pending-Promise placeholder; what remains is the
     // resolved StreamoRecord (or undefined for not-yet-opened keys).
-    return entry instanceof StreamoRecord ? entry : undefined
+    return entry instanceof Mirror ? entry : undefined
   }
 
   /** Number of currently open (or opening) repos. Reports access. */
@@ -182,7 +186,7 @@ export class StreamoRecordRegistry {
     this.recaller.reportKeyAccess(this, 'keys')
     return (function * (map) {
       for (const [k, v] of map) {
-        if (v instanceof StreamoRecord) yield [k, v]
+        if (v instanceof Mirror) yield [k, v]
       }
     })(this.#streams)
   }

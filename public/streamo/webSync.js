@@ -145,7 +145,8 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
       // The primary repo is Writable in author-mode servers (see
       // StreamoServer.create's factory). Relay-only servers don't expose
       // this endpoint via a route guard upstream, so the cast is safe.
-      const repo = /** @type {import('./WritableStreamoRecord.js').WritableStreamoRecord} */ (await registry._materialize(primaryKeyHex))
+      const mirror = await registry._materialize(primaryKeyHex)
+      const repo = /** @type {import('./WritableStreamoRecord.js').WritableStreamoRecord} */ (mirror.local)
       const working = repo.checkout()
       // Store JSON files as parsed objects so they round-trip cleanly with fileSync
       let value = content

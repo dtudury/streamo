@@ -250,7 +250,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     // processes that go through registrySync.subscribe declare
     // themselves Writable via the registry's factory (the chat
     // client's custom factory, StreamoServer.create's primary, etc).
-    const isObserver = !isAuthority && !(repo instanceof WritableStreamoRecord)
+    const isObserver = !isAuthority && !repo.isAuthorable
     if (!isObserver && !readers.has(keyHex)) {
       const keyBytes = hexToBytes(keyHex)
       const reader = repo.makeReadableStream({ fromOffset: readerFromOffset }).getReader()
@@ -292,7 +292,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
         const publicKey = hexToBytes(keyHex)
         let serializer = routing?.serializers?.get(keyHex)
         if (!serializer) {
-          serializer = new StreamoRecordSerializer(repo, publicKey)
+          serializer = new StreamoRecordSerializer(repo.local, publicKey)
           routing?.serializers?.set(keyHex, serializer)
         }
         writer = new ConnectionAccumulator(serializer, (result) => {
@@ -301,7 +301,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           }
         })
       } else {
-        writer = repo.makeRelayInboundStream().getWriter()
+        writer = repo.local.makeRelayInboundStream().getWriter()
       }
       writers.set(keyHex, writer)
       const pending = pendingChunks.get(keyHex) ?? []
@@ -473,8 +473,8 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           // in scope directly — reach it via the record's back-reference
           // (`repo._session`, set by `session.subscribe(key)`).
           const repo = registry.get(msg.key)
-          if (repo?._session && typeof msg.atOffset === 'number') {
-            repo._session.setRelaySubscribedAtOffset(msg.key, msg.atOffset)
+          if (repo?.local?._session && typeof msg.atOffset === 'number') {
+            repo.local._session.setRelaySubscribedAtOffset(msg.key, msg.atOffset)
           }
         } else if (msg.type === 'interest') {
           if (routing) {
@@ -514,7 +514,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
             // item 6. Setter is a no-op if the record has no session
             // attached — appropriate: the flag is a session-lifecycle
             // concern (same shape as conflictDetected in relayInboundStream).
-            repo._session?.setPushRejected?.(msg.key, info)
+            repo.local?._session?.setPushRejected?.(msg.key, info)
           }
         } else if (msg.type === 'announce') {
           // Fan out to all subscribers of this topic (server-side routing)
@@ -607,7 +607,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     const repo = await registry._materialize(keyHex)
     await new Promise(resolve => {
       const fn = () => {
-        if (repo._session?.getRelayChainHash?.(repo.publicKeyHex)) {
+        if (repo.local._session?.getRelayChainHash?.(repo.publicKeyHex)) {
           repo.recaller.unwatch(fn)
           resolve(undefined)
         }
@@ -999,7 +999,7 @@ export function registrySync (registry, hostPort, options = {}) {
       // resync after a rejected push. Streamos that aren't StreamoRecords (e.g.,
       // the tarot demo) don't implement `_attachSession`; the optional
       // chain skips them gracefully.
-      repo._attachSession?.(session)
+      repo.local._attachSession?.(session)
       return repo
     },
     /**

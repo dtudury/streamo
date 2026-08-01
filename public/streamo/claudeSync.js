@@ -75,7 +75,7 @@ export async function claudeSync ({
   // A flat pause is sufficient on localhost where the entire repo is < 100KB.
   await new Promise(resolve => setTimeout(resolve, settleMs))
 
-  repo.attachSigner(signer, name)
+  repo.local.attachSigner(signer, name)
 
   return {
     publicKeyHex,
@@ -86,11 +86,11 @@ export async function claudeSync ({
      * public/homepage/index.html renders: { at, headline, body }.
      */
     async appendJournalEntry (headline, body = '') {
-      const current = repo.get() ?? {}
+      const current = repo.local.get() ?? {}
       const entries = Array.isArray(current.entries) ? current.entries : []
       const entry = { at: new Date().toISOString(), headline, body }
-      repo.defaultMessage = `journal: ${headline.slice(0, 60)}`
-      repo.set({ ...current, entries: [...entries, entry] })
+      repo.local.defaultMessage = `journal: ${headline.slice(0, 60)}`
+      repo.local.set({ ...current, entries: [...entries, entry] })
       return entry
     },
 

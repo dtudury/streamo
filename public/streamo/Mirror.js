@@ -219,23 +219,77 @@ export class Mirror {
   }
 
   /**
+   * Await a commit's round-trip. This is what `_awaitChainHash` dissolves
+   * into — same three outcomes, but "landed" is a byte-position rather than
+   * a chain-hash equality, so nothing here interprets the chain.
+   *
+   * **Three outcomes, and watching only the good one produces a hang.**
+   * `_awaitChainHash` bundled landing with two rejection paths under a name
+   * that advertises only the first; that's why it looked like a one-line
+   * replacement and wasn't. Keeping them together here on purpose:
+   *
+   * - **landed** — `remoteLength >= targetLength`
+   * - **rejected** — `session.getPushRejected`, armed by the relay's
+   *   `rejected` message (`registrySync.js`), independent of the receive path
+   * - **diverged** — `this.divergence` (set by `makeReceiveStream`) *or*
+   *   `session.getConflictDetected` (set by the old `relayInboundStream`).
+   *   Both are watched so this works either side of the receive-path swap;
+   *   the `conflictDetected` arm goes when `relayInboundStream.js` does.
+   *
+   * **Sessionless bypass**, inherited from `_awaitChainHash` and load-bearing:
+   * with no session, no wire will ever advance `remoteLength`, so waiting is
+   * waiting forever. Resolve instead — that's what lets fileSync's
+   * archive-only paths and sessionless tests use the same code path.
+   * Failure checks run *first* so a test that pre-arms a rejection still
+   * takes the reject branch.
+   *
+   * @param {number} targetLength byte-position the commit occupies once
+   *   signed — capture `local.byteLength` *after* auto-sign has appended
+   *   the SIG, not before.
+   * @returns {Promise<void>}
+   */
+  awaitLanded (targetLength) {
+    return new Promise((resolve, reject) => {
+      const fn = () => {
+        const session = this.local._session
+        const done = (fail) => {
+          this.recaller.unwatch(fn)
+          fail ? reject(fail) : resolve()
+        }
+
+        const rejected = session?.getPushRejected?.(this.publicKeyHex) ?? null
+        if (rejected) {
+          return done(Object.assign(
+            new Error(`push rejected: ${rejected.reason ?? 'unknown reason'}`),
+            { pushRejected: rejected }
+          ))
+        }
+
+        const conflict = session?.getConflictDetected?.(this.publicKeyHex) ?? null
+        const diverged = this.divergence
+        if (conflict || diverged) {
+          return done(Object.assign(
+            new Error('local store diverged from incoming chain'),
+            { conflictDetected: conflict, divergence: diverged }
+          ))
+        }
+
+        if (this.remoteLength >= targetLength) return done()
+        if (!session) return done()
+      }
+      this.recaller.watch('mirror:awaitLanded', fn)
+    })
+  }
+
+  /**
    * The author entrypoint the design names: `mirror.newDraft(signer)`
    * instead of callers reaching into `.local` themselves.
    *
-   * **Transitional in one specific way, and it's worth knowing which.**
-   * Draft is handed `this.local`, not `this`, because Draft calls
-   * `checkout()` and `commit()` — the two verbs Mirror deliberately does
-   * *not* delegate (see the transitional block above; writes are absent on
-   * purpose so callers have to move). So this method is currently sugar
-   * over the reach-in rather than a replacement for it.
-   *
-   * It stops being sugar at the await migration: `Draft.commit` ends with
-   * `_awaitChainHash`, which has to become
-   * `when(() => remoteLength >= target)` — and *that* needs Draft to hold
-   * the Mirror, at which point Draft reaches `.local` internally and this
-   * method passes `this`. Draft's private field is already **named**
-   * `#mirror` while typed `WritableStreamoRecord`; whoever wrote it was
-   * aiming here.
+   * Hands Draft `this`, not `this.local` — Draft splits the two internally
+   * (authoring verbs on the record, round-trip await on the Mirror). Passing
+   * a bare record still works and takes the legacy `_awaitChainHash` path;
+   * that fallback is what makes this migration incremental, and it goes when
+   * `relayInboundStream.js` does.
    *
    * @param {import('./Signer.js').Signer | null} [signer] defaults to the
    *   signer already attached to `local`, so the common case is `newDraft()`.
@@ -249,7 +303,7 @@ export class Mirror {
         'Only a Mirror whose local is a WritableStreamoRecord can author.'
       )
     }
-    return new Draft(/** @type {WritableStreamoRecord} */ (this.local), signer, signerName)
+    return new Draft(this, signer, signerName)
   }
 
   //

@@ -45,9 +45,45 @@ function arraysEqual (a, b) {
   return _arraysEqual(a, b)
 }
 
+/**
+ * Is this a Mirror (carries its byte-store on `.local`) rather than a bare
+ * WritableStreamoRecord?
+ *
+ * Structural rather than `instanceof Mirror` because Mirror imports Draft;
+ * importing back would close the cycle. Written as a **type predicate** so
+ * the narrowing is real to the typechecker — the alternative was a cast
+ * plus a comment asserting the cast is fine, which is precisely the shape
+ * that put an invented route-guard in `webSync.js` for three months.
+ *
+ * @param {any} x
+ * @returns {x is import('./Mirror.js').Mirror}
+ */
+function isMirror (x) {
+  return x != null && typeof x === 'object' && 'local' in x
+}
+
+/**
+ * Can this byte-store be authored to? `checkout` + `commit` are the two
+ * verbs signing needs, and a Mirror's `.local` is only *typed* as
+ * `StreamoRecord | WritableStreamoRecord` — a read-only Mirror is a real
+ * possibility, not a typechecker artifact.
+ *
+ * The runtime guard and the narrowing are deliberately the same statement:
+ * the check that throws is the check that convinces the typechecker, so
+ * neither can drift from the other.
+ *
+ * @param {any} x
+ * @returns {x is import('./WritableStreamoRecord.js').WritableStreamoRecord}
+ */
+function isAuthorable (x) {
+  return x != null && typeof x.commit === 'function' && typeof x.checkout === 'function'
+}
+
 export class Draft {
-  /** @type {import('./WritableStreamoRecord.js').WritableStreamoRecord} */
+  /** @type {import('./WritableStreamoRecord.js').WritableStreamoRecord} the byte-store: checkout/set/commit/sign */
   #mirror
+  /** @type {import('./Mirror.js').Mirror | null} the wire cursor, when we were given one */
+  #wire
   #signer
   #signerName
   #parentChainHash
@@ -59,32 +95,42 @@ export class Draft {
   #targetChainHash = null
 
   /**
-   * @param {import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
-   *   The Mirror (currently a WritableStreamoRecord since the classes aren't
-   *   yet separated; in the full design this becomes a read-only Mirror).
-   *   Must be attached to a session so commit can push to wire.
-   * @param {import('./Signer.js').Signer} [signer]  Signer for the mirror's key.
-   *   If mirror already has a signer attached, this is optional.
-   * @param {string} [signerName]  keysFor input for the signer. If mirror
-   *   already has a signer attached, this is optional.
+   * @param {import('./Mirror.js').Mirror | import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
+   *   A **Mirror** (preferred) or a bare WritableStreamoRecord (legacy).
+   *   Given a Mirror, the round-trip await watches `remoteLength`; given a
+   *   record, it falls back to `_awaitChainHash`. Both need a session
+   *   attached for `commit()` to reach the wire.
+   * @param {import('./Signer.js').Signer} [signer]  Signer for the key.
+   *   Optional if one is already attached.
+   * @param {string} [signerName]  keysFor input for the signer. Optional if
+   *   one is already attached.
    */
   constructor (mirror, signer = null, signerName = null) {
     if (!mirror) throw new Error('Draft requires a mirror')
-    if (typeof mirror.commit !== 'function' ||
-        typeof mirror.checkout !== 'function') {
-      throw new Error('Draft: mirror must be a WritableStreamoRecord (has commit + checkout for signing)')
+    // A Mirror carries its byte-store on `.local` and deliberately does NOT
+    // delegate commit/checkout (writes are absent so callers move). A bare
+    // record has them directly. Duck-typed rather than `instanceof Mirror`
+    // because Mirror imports Draft — importing back would close the cycle.
+    const wire = isMirror(mirror) ? mirror : null
+    const record = wire ? wire.local : mirror
+    if (!isAuthorable(record)) {
+      throw new Error(
+        'Draft: needs a WritableStreamoRecord, or a Mirror over one — ' +
+        'commit + checkout are required for signing'
+      )
     }
-    this.#mirror = mirror
+    this.#wire = wire
+    this.#mirror = record
     this.#signer = signer
     this.#signerName = signerName
-    this.#recaller = mirror.recaller ?? new Recaller('draft-fallback')
+    this.#recaller = record.recaller ?? new Recaller('draft-fallback')
 
-    // Snapshot mirror's parent chainHash at construction. Author's
-    // commit will chain from this point.
-    this.#parentChainHash = mirror.committedChainHash
+    // Snapshot the parent chainHash at construction. Author's commit will
+    // chain from this point.
+    this.#parentChainHash = record.committedChainHash
 
-    // Initial pending value is a shallow copy of mirror's current value.
-    const current = mirror.get()
+    // Initial pending value is a shallow copy of the current value.
+    const current = record.get()
     this.#pendingValue = current == null ? {} : (typeof current === 'object' && !ArrayBuffer.isView(current) ? { ...current } : current)
   }
 
@@ -220,10 +266,17 @@ export class Draft {
       })
       const target = this.#mirror.committedChainHash
 
-      // Await round-trip: mirror's relayChainHash matches our target
-      // → the commit landed upstream. If _awaitChainHash rejects with
-      // pushRejected or conflictDetected, we were superseded.
-      await this.#mirror._awaitChainHash(target)
+      // Await round-trip. Given a Mirror, "landed" is a byte-position:
+      // byteLength AFTER auto-sign is exactly where our commit ends, so
+      // remoteLength reaching it means the wire confirmed our bytes. The
+      // record path is the legacy chain-hash equality and goes when
+      // relayInboundStream.js does.
+      //
+      // Either way this rejects on pushRejected or divergence — a
+      // landing-only await would hang rather than fail, which is the
+      // trap _awaitChainHash's name hides (see Mirror.awaitLanded).
+      if (this.#wire) await this.#wire.awaitLanded(this.#mirror.byteLength)
+      else await this.#mirror._awaitChainHash(target)
 
       this.#targetChainHash = target
       succeeded = true

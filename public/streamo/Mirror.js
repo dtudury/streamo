@@ -19,6 +19,7 @@
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { arraysEqual } from './utils.js'
+import { Draft } from './Draft.js'
 
 export class Mirror {
   /** @type {string} hex-encoded public key of the mirrored Record. */
@@ -215,6 +216,40 @@ export class Mirror {
         mirror.remoteLength = cursor
       }
     })
+  }
+
+  /**
+   * The author entrypoint the design names: `mirror.newDraft(signer)`
+   * instead of callers reaching into `.local` themselves.
+   *
+   * **Transitional in one specific way, and it's worth knowing which.**
+   * Draft is handed `this.local`, not `this`, because Draft calls
+   * `checkout()` and `commit()` — the two verbs Mirror deliberately does
+   * *not* delegate (see the transitional block above; writes are absent on
+   * purpose so callers have to move). So this method is currently sugar
+   * over the reach-in rather than a replacement for it.
+   *
+   * It stops being sugar at the await migration: `Draft.commit` ends with
+   * `_awaitChainHash`, which has to become
+   * `when(() => remoteLength >= target)` — and *that* needs Draft to hold
+   * the Mirror, at which point Draft reaches `.local` internally and this
+   * method passes `this`. Draft's private field is already **named**
+   * `#mirror` while typed `WritableStreamoRecord`; whoever wrote it was
+   * aiming here.
+   *
+   * @param {import('./Signer.js').Signer | null} [signer] defaults to the
+   *   signer already attached to `local`, so the common case is `newDraft()`.
+   * @param {string | null} [signerName]
+   * @returns {import('./Draft.js').Draft}
+   */
+  newDraft (signer = null, signerName = null) {
+    if (!this.isAuthorable) {
+      throw new TypeError(
+        `Mirror.newDraft: local is not authorable (${this.publicKeyHex.slice(0, 8)}…). ` +
+        'Only a Mirror whose local is a WritableStreamoRecord can author.'
+      )
+    }
+    return new Draft(/** @type {WritableStreamoRecord} */ (this.local), signer, signerName)
   }
 
   //

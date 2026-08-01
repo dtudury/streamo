@@ -369,7 +369,60 @@ I'd take (2) and think (1) is the one that looks cheap and isn't — but
 this is David's call, not a plumbing detail to decide alone at the end of
 a long session.
 
-### The order is receive-path first, and the doc's numbering hides that
+### Correction (Bittern, 2026-08-01): the order is NOT forced. The await's *signal set* is.
+
+The section below concludes "receive-path first." Having traced where each
+signal is actually armed, that's stronger than the evidence supports, and
+acting on it would do the harder step first for no reason.
+
+**The two failure signals have different sources, and only one of them
+lives in the receive path:**
+
+| signal | armed at | dies with the receive-path swap? |
+|---|---|---|
+| `pushRejected` | `registrySync.js:524`, in the relay's `rejected` message handler | **no** — nothing to do with receiving bytes |
+| `conflictDetected` | `relayInboundStream.js:117`, the alignment check | **yes** — it's the only writer |
+
+So the claim below — *"a `remoteLength`-only await has no rejection path"* —
+is true of a **`remoteLength`-only** await, and that's the real finding. It
+is not an argument about ordering. A `commitWithRetry(mirror, …)` that
+watches **`remoteLength >= target` OR `pushRejected` OR `conflictDetected`**
+has a complete rejection path *today*, with `relayInboundStream` still
+wired, because both failure cells are still armed by the current code.
+
+**Which makes option 2 startable now, in the order the doc originally
+numbered:**
+
+1. **await migration** — `commitWithRetry`/`Draft.commit` take the Mirror
+   and watch `remoteLength` + both failure cells. Old receive path
+   untouched, suite stays green, `_awaitChainHash` still exists but has no
+   callers.
+2. **receive swap** — point `registrySync.js:311` at
+   `mirror.makeReceiveStream()`. `conflictDetected` stops being written, so
+   the await swaps that one arm to `mirror.divergence`. One-line change to a
+   predicate that already exists.
+3. **delete** — `relayInboundStream.js` and `_awaitChainHash` go together.
+
+The invariant to actually hold on to, which is what the section below was
+reaching for:
+
+> **The await must never watch only `remoteLength`.** Landing is one
+> outcome of three. Whatever feeds "landed," the two ways to lose have to
+> be watched alongside it, and *which cell* carries "diverged" changes at
+> step 2 while "rejected" never moves.
+
+**What this costs if you get it wrong** is what makes it worth writing down:
+watching only `remoteLength` produces a hang, not a failure — the caller
+waits forever for bytes the relay already refused to send. That's the same
+class as the leaked-handle "hang" that cost a session on 2026-07-31, and it
+looks identical from the outside.
+
+*Method note:* the original claim came from reading `_awaitChainHash` and
+noting its three exit conditions. The correction came from asking **who
+writes each cell** — `grep -rn 'setPushRejected\|setConflictDetected'`. One
+layer down, two minutes, and it changes the plan.
+
+### The original claim, kept as archaeology: "receive-path first"
 
 Tried to start with the await migration (option 2) and hit a wall worth
 recording, because it costs a session to rediscover.

@@ -35,7 +35,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('plain registry creates in-memory repositories with no factory', async ({ assert }) => {
     const registry = newRegistry()
-    const s = await registry._materialize('anykey')
+    const s = (await registry._materialize('anykey')).local
     assert.ok(s instanceof StreamoRecord)
     s.set({ x: 1 })
     assert.equal(s.get('x'), 1)
@@ -51,8 +51,8 @@ describe(import.meta.url, ({ test }) => {
 
   test('_materialize creates independent repositories for different keys', async ({ assert }) => {
     const registry = newRegistry()
-    const s1 = await registry._materialize('key1')
-    const s2 = await registry._materialize('key2')
+    const s1 = (await registry._materialize('key1')).local
+    const s2 = (await registry._materialize('key2')).local
     assert.ok(s1 !== s2)
     assert.equal(registry.size, 2)
     s1.set({ from: 'key1' })
@@ -81,7 +81,7 @@ describe(import.meta.url, ({ test }) => {
     const registry = newRegistry()
     assert.equal(registry.get('nope'), undefined)
     await registry._materialize('exists')
-    assert.ok(registry.get('exists') instanceof Streamo)
+    assert.ok(registry.get('exists').local instanceof Streamo)
   })
 
   test('iterates over fully-opened repositories only', async ({ assert }) => {
@@ -97,12 +97,12 @@ describe(import.meta.url, ({ test }) => {
     const dir = await mkdtemp(join(tmpdir(), 'registry-persist-'))
     try {
       const r1 = archiveRegistry(dir)
-      const s1 = await r1._materialize('testkey')
+      const s1 = (await r1._materialize('testkey')).local
       s1.set({ saved: true })
       await r1.drain()
 
       const r2 = archiveRegistry(dir)
-      const s2 = await r2._materialize('testkey')
+      const s2 = (await r2._materialize('testkey')).local
       assert.equal(s2.get('saved'), true, 'data survived registry reload')
       await r2.drain()   // else its FileHandle outlives the test and GC fails the file
     } finally {

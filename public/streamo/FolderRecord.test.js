@@ -262,7 +262,7 @@ describe(import.meta.url, ({ test }) => {
     await registry._materialize(childKey)
 
     // Build parent with mounts.json pointing at the derived child key.
-    const parent = await registry._materialize(PK_A)
+    const parent = (await registry._materialize(PK_A)).local
     const w = parent.checkout()
     w.set({ 'mounts.json': { mounts: { 'sub/': { key: childKey, ours: true } } } })
     parent.commit(w, 'seed parent mounts')
@@ -285,7 +285,7 @@ describe(import.meta.url, ({ test }) => {
       recaller,
       factory: async () => new WritableStreamoRecord({ recaller })
     })
-    const parent = await registry._materialize(PK_A)
+    const parent = (await registry._materialize(PK_A)).local
     const w = parent.checkout()
     // mounts.json points at PK_B but the derived child would be different
     w.set({ 'mounts.json': { mounts: { 'apps/x/': { key: PK_B, ours: true } } } })
@@ -444,7 +444,7 @@ describe(import.meta.url, ({ test }) => {
     })
     await registry._materialize(cAKey)
     await registry._materialize(cBKey)
-    const parent = await registry._materialize(PK_A)
+    const parent = (await registry._materialize(PK_A)).local
     const w = parent.checkout()
     w.set({
       'mounts.json': {

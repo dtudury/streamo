@@ -107,7 +107,7 @@ export class StreamoServer {
         return record
       }
     })
-    const streamo = await registry._materialize(resolvedPublicKeyHex)
+    const streamo = (await registry._materialize(resolvedPublicKeyHex)).local
     // Type cast: factory above produced Writable iff signer !== null.
     if (signer) /** @type {WritableStreamoRecord} */ (streamo).attachSigner(signer, name)
 

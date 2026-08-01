@@ -55,7 +55,7 @@ async function chatRepo (registry, name) {
   const { publicKey } = await SIGNER.keysFor(name)
   const hex = bytesToHex(publicKey)
   registry._writableKeys.add(hex)
-  const repo = await registry._materialize(hex)
+  const repo = (await registry._materialize(hex)).local
   repo.attachSigner(SIGNER, name)
   return { repo, hex }
 }

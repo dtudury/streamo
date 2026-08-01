@@ -140,7 +140,7 @@ export class FolderRecord {
     }
 
     const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-    const child = new FolderRecord(mountedRepo, this.registry, {
+    const child = new FolderRecord(mountedRepo.local, this.registry, {
       session: this.session,
       materializeTimeoutMs: this.materializeTimeoutMs
     })
@@ -191,12 +191,12 @@ export class FolderRecord {
       }
       // Materialize the mounted Record + attach the derived signer-name.
       const mountedRepo = await this.registry._materialize(mount.key)
-      if (typeof mountedRepo.attachSigner !== 'function') {
+      if (typeof mountedRepo.local?.attachSigner !== 'function') {
         throw new Error(`FolderRecord.write: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mount targets`)
       }
-      mountedRepo.attachSigner(this.signer, childName)
+      mountedRepo.local.attachSigner(this.signer, childName)
       // Recurse into a child FolderRecord scoped to the mounted Record.
-      const child = new FolderRecord(mountedRepo, this.registry, {
+      const child = new FolderRecord(mountedRepo.local, this.registry, {
         session: this.session,
         materializeTimeoutMs: this.materializeTimeoutMs,
         signer: this.signer,
@@ -304,11 +304,11 @@ export class FolderRecord {
         throw new Error(`FolderRecord.writeMany: derived child pubkey ${derivedHex.slice(0, 16)}... doesn't match mount target ${mount.key.slice(0, 16)}... for '${mountPrefix}' — fix mounts.json to use the derived pubkey`)
       }
       const mountedRepo = await this.registry._materialize(mount.key)
-      if (typeof mountedRepo.attachSigner !== 'function') {
+      if (typeof mountedRepo.local?.attachSigner !== 'function') {
         throw new Error(`FolderRecord.writeMany: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mounts`)
       }
-      mountedRepo.attachSigner(this.signer, childName)
-      const child = new FolderRecord(mountedRepo, this.registry, {
+      mountedRepo.local.attachSigner(this.signer, childName)
+      const child = new FolderRecord(mountedRepo.local, this.registry, {
         session: this.session,
         materializeTimeoutMs: this.materializeTimeoutMs,
         signer: this.signer,
@@ -405,7 +405,7 @@ export class FolderRecord {
 
     // Recurse into a child FolderRecord (signer/session propagate).
     const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-    const child = new FolderRecord(mountedRepo, this.registry, {
+    const child = new FolderRecord(mountedRepo.local, this.registry, {
       session: this.session,
       materializeTimeoutMs: this.materializeTimeoutMs,
       signer: this.signer,

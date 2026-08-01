@@ -144,15 +144,20 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // There is deliberately no write route here. `POST /api/file` lived at
   // this spot from the turtb migration (603eba5) until 2026-08-01: it took
   // a path and content from any HTTP body and committed them *signed with
-  // this server's key*, with no auth, token, or signature check. Nothing in
-  // the repo ever called it. Its own comment claimed relay-only servers
-  // were protected "via a route guard upstream" — there was no such guard;
-  // they failed closed only because commit() threw on a non-writable local.
+  // this server's key*, with no auth check. Nothing ever called it.
   //
-  // Writes go through the CLI, the REPL, or the library. If an HTTP write
-  // path is ever wanted, it needs a signed payload from a registered
-  // author, not a bare POST — see ROADMAP's note, which called this
-  // correctly three months before anyone acted on it.
+  // The part worth remembering is not the route, it's the comment that
+  // guarded it. David wrote the bare endpoint in his own single-user
+  // project, which was fine there. The safety claim — *"relay-only servers
+  // don't expose this endpoint via a route guard upstream, so the cast is
+  // safe"* — was added later, in `f64ba00` ("typecheck: 64 errors → 0"),
+  // to justify a `@type` cast to the typechecker. **There was no route
+  // guard.** A sentence written to satisfy a tool became, to every later
+  // reader, an assertion that the endpoint was protected. Relay-only
+  // servers failed closed only because `commit()` threw.
+  //
+  // Writes go through the CLI, the REPL, or the library. An HTTP write
+  // path would need a signed payload from a registered author.
 
   // Current value of the home streamo for this host as JSON.
   app.get('/', async (req, res) => {

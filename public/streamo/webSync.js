@@ -21,10 +21,10 @@ import { serveFromRepo, serveFromRegistry } from './repoFileServer.js'
  * HTTP read routes resolve their "home" Record per-request by checking the
  * Host header against the map. So one server can serve foo.example.com from
  * Record A and bar.example.com from Record B. Unmapped hosts fall through to
- * `primaryKeyHex`. Writable routes (`POST /api/file`) stay primary-keyed —
- * those are *"write to MY repo,"* not *"write to whoever's domain is in
- * Host."* WS handshake is also primary-keyed for now (per-connection
- * host-awareness needs an upgrade-event hook — follow-up).
+ * `primaryKeyHex`. There are no writable HTTP routes — the one that existed
+ * was removed 2026-08-01, see the note where it used to live. WS handshake
+ * is also primary-keyed for now (per-connection host-awareness needs an
+ * upgrade-event hook — follow-up).
  *
  * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {string} primaryKeyHex   public key of the "main" streamo — the
@@ -121,6 +121,12 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
   // at the request path itself — there is no fallback for bytes the Record
   // doesn't declare.
 
+  // Body parser stays for the `routes?.(app)` hook below, not for anything
+  // in this file — webSync reads no bodies now that the write route is gone.
+  // Its one consumer is `public/apps/chat/push.js:76` (Web Push subscribe).
+  // Better shape would be for that module to install its own parser so the
+  // dependency is visible where it's used; left as a ticket rather than
+  // changed inside a security removal.
   app.use(express.json())
 
   // Embedding-server hook: register extra routes (the chat relay uses this
@@ -135,31 +141,18 @@ export async function webSync (registry, primaryKeyHex, port, name, keyIteration
     res.json({ primaryKeyHex: resolveHomeKey(req), name, keyIterations })
   })
 
-  // Write a single file to the primary streamo's latest commit
-  app.post('/api/file', async (req, res) => {
-    try {
-      const { path, content, message } = req.body
-      if (typeof path !== 'string' || typeof content !== 'string') {
-        return res.status(400).json({ error: 'path and content must be strings' })
-      }
-      // The primary repo is Writable in author-mode servers (see
-      // StreamoServer.create's factory). Relay-only servers don't expose
-      // this endpoint via a route guard upstream, so the cast is safe.
-      const mirror = await registry._materialize(primaryKeyHex)
-      const repo = /** @type {import('./WritableStreamoRecord.js').WritableStreamoRecord} */ (mirror.local)
-      const working = repo.checkout()
-      // Store JSON files as parsed objects so they round-trip cleanly with fileSync
-      let value = content
-      if (path.endsWith('.json')) {
-        try { value = JSON.parse(content) } catch {}
-      }
-      working.set(path, value)
-      repo.commit(working, message || `edit ${path}`)
-      res.json({ ok: true })
-    } catch (e) {
-      res.status(500).json({ error: e.message })
-    }
-  })
+  // There is deliberately no write route here. `POST /api/file` lived at
+  // this spot from the turtb migration (603eba5) until 2026-08-01: it took
+  // a path and content from any HTTP body and committed them *signed with
+  // this server's key*, with no auth, token, or signature check. Nothing in
+  // the repo ever called it. Its own comment claimed relay-only servers
+  // were protected "via a route guard upstream" — there was no such guard;
+  // they failed closed only because commit() threw on a non-writable local.
+  //
+  // Writes go through the CLI, the REPL, or the library. If an HTTP write
+  // path is ever wanted, it needs a signed payload from a registered
+  // author, not a bare POST — see ROADMAP's note, which called this
+  // correctly three months before anyone acted on it.
 
   // Current value of the home streamo for this host as JSON.
   app.get('/', async (req, res) => {

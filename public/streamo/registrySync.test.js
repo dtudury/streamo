@@ -1084,9 +1084,10 @@ describe(import.meta.url, ({ test }) => {
     const session = await registrySync(clientRegistry, `localhost:${port}`)
     const clientRepo = await session.subscribe(keyHex)
     await waitFor(() => clientRepo.get('count') === 0)
-    clientRepo.attachSigner(SIGNER, (await realKey(100)).name)
+    // subscribe returns a Mirror; authoring goes through `.local`.
+    clientRepo.local.attachSigner(SIGNER, (await realKey(100)).name)
 
-    await commitWithRetry(clientRepo, c => ({ ...c, count: 1 }))
+    await commitWithRetry(clientRepo.local, c => ({ ...c, count: 1 }))
     assert.equal(clientRepo.get('count'), 1, 'updateFn applied locally')
 
     // **Regression marker (2026-05-26 browser-found):** update must ACTUALLY

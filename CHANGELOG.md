@@ -5,6 +5,39 @@ for what's next.
 
 ---
 
+## 16.0.0 — UNRELEASED · Mirror-and-Draft, mid-migration
+
+**Breaking:** `registry.get()` and `registry._materialize()` return a
+`Mirror`, not a `StreamoRecord`. `mirror.local` is the byte-store; reads
+delegate, authoring goes through `.local`. `StreamoRecordRegistry` is a
+public export, so this changes a public surface — hence the major, not the
+15.0.3 patch the version field carried.
+
+**Transitional and deliberate:** `mirror.get()` works and `mirror.set()`
+throws. That asymmetry is prop-7's own footgun, chosen over migrating ~59
+call sites inside the same commit that flipped the registry. It dissolves
+when Mirror-and-Draft finishes — `relayInboundStream.js` still exists and
+`_awaitChainHash` has not dissolved yet. **Anyone publishing from here is
+shipping a half-migrated API on purpose.**
+
+- `Mirror.makeReceiveStream()` — byte comparison at `remoteLength` replaces
+  the chain-hash alignment check
+- type errors in the sync path rethrow instead of closing the socket, so a
+  bug stops looking like a peer sending garbage
+- **fix:** `index.js` re-exported `ContextRecord` and `contextTurner`,
+  deleted in 15.0.2 — `import '@dtudury/streamo'` threw for every consumer
+  of the published package. Same bug 15.0.0 shipped in `bin/streamo.js`;
+  15.0.2's fix caught the binary and missed the barrel.
+- **removed:** `POST /api/file`, an unauthenticated write route that
+  committed arbitrary content signed with the server's key. Zero callers.
+- **added:** `entrypoint.test.js` — resolves every relative import
+  reachable from both entry points, so the above class fails the suite
+  instead of the registry.
+
+115 commits since 15.0.2; this entry covers the load-bearing ones.
+
+---
+
 ## 15.0.2 — cut contextTurner + `--chat` (the API-summon false-start)
 
 15.0.0 left an orphan: `ContextRecord.js` was deleted but `contextTurner.js`

@@ -327,6 +327,52 @@ Not asking these to be adopted — flagging as positions I'd start from if imple
 
 ---
 
+## Kingfisher 2026-08-01 — steps 4 and 5-receive are done; 5-swap is coupled to 6
+
+**Landed:** `Mirror.makeReceiveStream()` (`b069d0a`), transitional read
+delegation (`add208c`), and `registry.get()`/`_materialize()` returning
+Mirror (`6fd8706`, 482 green). Step 3 and step 4 complete; step 5's *new*
+code exists but nothing calls it yet.
+
+**Why the swap didn't follow immediately.** Deleting
+`relayInboundStream.js` means pointing the two live call sites
+(`registrySync.js:311`, `originSync.js:101`) at `makeReceiveStream`. But
+the old path does something the new one deliberately doesn't:
+
+```js
+record._session?.setRelayChainHash?.(record.publicKeyHex, pendingChainHash)
+```
+
+on every SIG arrival. `WritableStreamoRecord._awaitChainHash` (line ~397)
+polls exactly that, and `commitWithRetry` in `Draft.js` awaits it. Swap the
+receive path without migrating those and every author round-trip hangs —
+so **step 5's deletion and step 6's `_awaitChainHash` migration are one
+change, not two.** The doc lists them separately and that's misleading.
+
+**The obstacle is direction.** `Mirror` holds `local`; `local` has no
+reference back. `_awaitChainHash` lives on the record and would need to
+watch `mirror.remoteLength`, which it cannot reach. Three ways out:
+
+1. **Back-reference** — `local._mirror`, set at Mirror construction.
+   Smallest diff, and it re-couples the two classes the split just
+   separated. The 11.0 archaeology is worth reading before choosing this.
+2. **Move the waiting up** — `commitWithRetry(mirror, ...)` instead of
+   `commitWithRetry(record, ...)`, so the awaiting code holds the Mirror
+   and `_awaitChainHash` deletes outright. Truest to the design (the doc
+   already says `_awaitChainHash` *dissolves*), largest caller diff.
+3. **Keep both signals during migration** — `makeReceiveStream` also sets
+   `relayChainHash`. Cheapest, and it's the compromise that sediments;
+   see the 55-day wire-state flag in `EXPLORATION-streamorecord-slimming.md`
+   for what that costs.
+
+I'd take (2) and think (1) is the one that looks cheap and isn't — but
+this is David's call, not a plumbing detail to decide alone at the end of
+a long session.
+
+**Before starting:** read `the-grove/memory/reference_debugging_the_test_suite.md`.
+A failing test makes `npm test` hang rather than fail, which cost an hour
+on this arc before anyone wrote it down.
+
 ## What this doc doesn't try to do
 
 - Doesn't specify `Mirror` class implementation line-by-line — the

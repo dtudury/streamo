@@ -16,7 +16,7 @@ import { webSync } from './webSync.js'
 async function seedRecord (registry, keyHex, value) {
   registry._writableKeys ??= new Set()
   registry._writableKeys.add(keyHex)
-  const repo = /** @type {WritableStreamoRecord} */ (await registry._materialize(keyHex))
+  const repo = /** @type {WritableStreamoRecord} */ ((await registry._materialize(keyHex)).local)
   const working = repo.checkout()
   working.set(value)
   repo.commit(working, 'seed')
@@ -158,7 +158,7 @@ describe(import.meta.url, ({ test }) => {
       }
     })
     registryA._writableKeys = new Set([sharedKey])
-    const repoA = /** @type {WritableStreamoRecord} */ (await registryA._materialize(sharedKey))
+    const repoA = /** @type {WritableStreamoRecord} */ ((await registryA._materialize(sharedKey)).local)
     repoA.attachSigner(signer, 'federation-test')
     const working = repoA.checkout()
     working.set({ from: 'relay-A', payload: 'federated' })

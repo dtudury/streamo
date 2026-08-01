@@ -126,6 +126,7 @@ export class Mirror {
   get lastCommit () { return this.local.lastCommit }
   get committedChainHash () { return this.local.committedChainHash }
   get (...args) { return this.local.get(...args) }
+  decode (...args) { return this.local.decode(...args) }
   slice (start, end) { return this.local.slice(start, end) }
   makeReadableStream (options) { return this.local.makeReadableStream(options) }
 

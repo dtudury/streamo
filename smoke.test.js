@@ -48,13 +48,18 @@ describe(import.meta.url, ({ test }) => {
 
   test('GET /streams/:key/raw loads into a fresh Streamo', async ({ assert }) => {
     const { publicKeyHex } = await makeKey()
-    const stream = new Streamo()
+    // The registry's factory contract is a StreamoRecord; Mirror enforces it
+    // now, and a bare Streamo has no author surface anyway.
+    const stream = new WritableStreamoRecord()
     stream.set({ hello: 'world' })
     const { port, close } = await startServer(publicKeyHex, stream)
     try {
       const buf = await fetch(`http://localhost:${port}/streams/${publicKeyHex}/raw`)
         .then(r => r.arrayBuffer())
-      const fresh = new Streamo()
+      // A Record, not a bare Streamo: the source auto-commits, so the top
+      // chunk on the wire is a COMMIT wrapping the value. Same reason the
+      // WebSocket test below uses one.
+      const fresh = new StreamoRecord()
       await fresh.makeWritableStream().getWriter().write(new Uint8Array(buf))
       assert.deepEqual(fresh.get(), { hello: 'world' })
     } finally {

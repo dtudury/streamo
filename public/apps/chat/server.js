@@ -166,7 +166,7 @@ if (server.signer) {
     // Migrated 2026-07-16 to Draft API via commitWithRetry — server
     // startup seed keeps auto-retry-on-conflict shape (defensive; no
     // concurrent user).
-    await commitWithRetry(server.streamo, c => ({
+    await commitWithRetry(server.mirror, c => ({
       ...(c ?? {}),
       'journalists.json': nextJournalists,
       'entries.json': nextEntries,

@@ -113,7 +113,12 @@ export class StreamoRecordRegistry {
    * want `session.subscribe` instead.
    *
    * @param {string} publicKeyHex
-   * @returns {Promise<StreamoRecord>}
+   * @returns {Promise<import('./Mirror.js').Mirror>} the Mirror wrapping the
+   *   local byte-store. **Returns a Mirror, not a StreamoRecord** — changed
+   *   in Mirror-and-Draft step 4 (`6fd8706`); the JSDoc said `StreamoRecord`
+   *   until 2026-08-01, so every caller reading `.local` looked like a type
+   *   error and every caller treating the result as a Record looked fine.
+   *   Reads delegate through the Mirror; authoring goes via `.local`.
    */
   async _materialize (publicKeyHex) {
     if (this.#streams.has(publicKeyHex)) return this.#streams.get(publicKeyHex)

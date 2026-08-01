@@ -47,6 +47,9 @@ export class StreamoServer {
   streamo
   registry
 
+  /** @type {import('./Mirror.js').Mirror} the byte-store plus its wire cursor — pass this to commitWithRetry, not `streamo` */
+  mirror
+
   constructor (fields) {
     Object.assign(this, fields)
   }
@@ -107,11 +110,16 @@ export class StreamoServer {
         return record
       }
     })
-    const streamo = (await registry._materialize(resolvedPublicKeyHex)).local
+    // Keep the Mirror, not just its byte-store. `streamo` stays the record
+    // because every existing caller reads it; `mirror` is what
+    // commitWithRetry wants, since a Mirror-backed Draft awaits
+    // remoteLength rather than _awaitChainHash. See Mirror.awaitLanded.
+    const mirror = await registry._materialize(resolvedPublicKeyHex)
+    const streamo = mirror.local
     // Type cast: factory above produced Writable iff signer !== null.
     if (signer) /** @type {WritableStreamoRecord} */ (streamo).attachSigner(signer, name)
 
-    const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, registry })
+    const server = new StreamoServer({ name, username, publicKeyHex: resolvedPublicKeyHex, signer, streamo, mirror, registry })
     server.#keyIterations = keyIterations
     server.#archiveClosers = archiveClosers
     server.#writableKeys = writableKeys

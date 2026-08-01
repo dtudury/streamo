@@ -315,7 +315,10 @@ export class Draft {
  * conflict is user-facing signal, use Draft directly.
  *
  * @template T
- * @param {import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
+ * @param {import('./Mirror.js').Mirror | import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
+ *   Polymorphic since 2026-08-01: it only needs `newDraft` + `get`, which
+ *   both Mirror and StreamoRecord have. A Mirror gets the remoteLength
+ *   await; a record gets the legacy `_awaitChainHash`.
  * @param {(current: any) => T} updater  called with mirror's current value on each attempt
  * @param {object} [options]
  * @param {number} [options.retries=3]  max total attempts is retries + 1

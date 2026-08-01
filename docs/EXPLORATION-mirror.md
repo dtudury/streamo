@@ -369,6 +369,43 @@ I'd take (2) and think (1) is the one that looks cheap and isn't — but
 this is David's call, not a plumbing detail to decide alone at the end of
 a long session.
 
+### The order is receive-path first, and the doc's numbering hides that
+
+Tried to start with the await migration (option 2) and hit a wall worth
+recording, because it costs a session to rediscover.
+
+`Draft.commit` has exactly one call — `Draft.js:226`,
+`await this.#mirror._awaitChainHash(target)` — and replacing it looks
+trivial. Right above it the code already waits for auto-sign to finish, so
+`record.byteLength` at that moment IS the target byte-position, and the new
+form is `when(() => mirror.remoteLength >= targetLength)`.
+
+**But `_awaitChainHash` does two jobs, and only one is about landing.** It
+also watches `pushRejected` and `conflictDetected` and *rejects* the
+promise, which is how a superseded Draft learns it lost. In the target
+design those cells dissolve into `Mirror.divergence` — set by
+`makeReceiveStream`, which nothing calls yet.
+
+So a `remoteLength`-only await has no rejection path: a rejected push waits
+forever instead of throwing `superseded`. Every commitWithRetry caller
+would hang rather than retry.
+
+**Therefore:**
+
+1. **Wire `makeReceiveStream` in first** (registrySync:311, originSync:101)
+   so `Mirror.divergence` actually fires. Keep `_awaitChainHash` working
+   throughout — the old receive path can set relayChainHash AND the new one
+   can advance remoteLength during the overlap if needed.
+2. **Then** migrate the await to `remoteLength` + `divergence`, both
+   signals now live.
+3. **Then** delete `relayInboundStream.js` and `_awaitChainHash` together.
+
+The doc lists deletion (5) before the await migration (6), which reads as
+"delete, then fix the callers." It's the reverse: the new signals have to
+be flowing before anything can depend on them. A `Mirror.newDraft()`
+entrypoint is worth adding somewhere in here, but it's an alias until the
+await underneath it changes, so it isn't a useful first step on its own.
+
 **Before starting:** read `the-grove/memory/reference_debugging_the_test_suite.md`.
 A failing test makes `npm test` hang rather than fail, which cost an hour
 on this arc before anyone wrote it down.

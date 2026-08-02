@@ -415,9 +415,9 @@ translation:
 
 | # | reader | the question it's really asking | `remoteLength` form | status |
 |---|---|---|---|---|
-| 1 | `WritableStreamoRecord.js:405` (`_awaitChainHash`) | did *my* commit land? | `remoteLength >= targetLength` | **built** — `Mirror.awaitLanded`; callers migrating |
-| 2 | `StreamoRecord.js:346` (`caughtUpToRelay` → `isReadyToAuthor`) | has the wire told us *anything* yet? | `remoteLength > 0`, or `>= signedLength` for the precise form the comment says it wanted | not started |
-| 3 | `registrySync.js:643` (resync anchor) | after a from-zero resubscribe, has the relay sent its first SIG? | `remoteLength > 0` | not started |
+| 1 | `WritableStreamoRecord.js:405` (`_awaitChainHash`) | did *my* commit land? | `remoteLength >= targetLength` | **DONE** — `Mirror.awaitLanded`. Probe: 0 hits suite-wide |
+| 2 | `StreamoRecord.js:346` (`caughtUpToRelay` → `isReadyToAuthor`) | has the wire told us *anything* yet? | `remoteLength > 0` | **DONE for production** — `Mirror.isReadyToAuthor`. Probe: 3 hits, all from two unit tests of the record-level getter, which die with it at 5d |
+| 3 | `registrySync.js:643` (resync anchor) | after a from-zero resubscribe, has the relay sent its first SIG? | `remoteLength > 0` — **but note the anchor**: `subscribeToKey` only raises `remoteLength`, and this path resubscribes at `fromOffset: 0` without going through it, so a previously-synced Mirror already reads `> 0`. Needs a from-this-moment comparison, not an absolute one | **not started — the only thing left** |
 
 **Reader 2 is the interesting one.** Its own comment admits
 `relayChainHash !== null` is a *proxy* — *"not as precise as the watermark,
@@ -431,6 +431,12 @@ unblocked, tried it, and hung the suite. Reader 2 wasn't in either grep —
 it reaches the cell through a *different* getter on a *different* class.
 `grep -rn 'relayChainHash'` finds all three in one command; no narrower
 grep does.
+
+**Status 2026-08-01: readers 1 and 2 are done. Reader 3 is the only thing
+between here and the swap**, and it's the subtlest of the three — see its
+row. Verify with the probe, not by reading: make the getter throw, run the
+suite, count hits. That's how reader 1 was proved clear and how reader 2's
+remaining three were traced to tests rather than production.
 
 **So the gate is: all three readers on `remoteLength`, then swap, then
 delete.** And the swap itself stays one line, which is why getting the

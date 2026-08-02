@@ -523,8 +523,20 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // StreamoRecord → disk: retries if a write is in progress so no commit is ever dropped
   let writingToDisk = false
   let pendingDiskFlush = false
+  // Handle on the in-flight flush so close() can await it. Without this the
+  // promise is discarded and an orphaned flush outlives its caller — see the
+  // errno note in the catch below for what that costs.
+  let inFlightFlush = null
+  let closed = false
+
+  // Errnos that all mean the same thing: the directory we manage stopped
+  // existing underneath us. ENOENT and ENOTDIR are the portable forms;
+  // macOS reports EINVAL when opening into a directory that has been
+  // removed while a handle to it is still live.
+  const FOLDER_VANISHED = new Set(['ENOENT', 'ENOTDIR', 'EINVAL'])
 
   async function flushToDisk () {
+    if (closed) return
     if (writingToDisk) { pendingDiskFlush = true; return }
     writingToDisk = true
     pendingDiskFlush = false
@@ -541,9 +553,20 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
         await writeToFolder(folder, target)
         await deleteFromFolder(folder, toDelete)
       }
+    } catch (err) {
+      // This function is fired unawaited from the recaller watch below, so
+      // anything thrown here becomes an unhandled rejection attributed to
+      // whatever happens to be running — which is exactly the failure the
+      // disk→repo handler's catch was written to prevent, and it was never
+      // applied to this direction. Abandoning the flush is correct when the
+      // folder is gone; anything else is a real fault and stays loud.
+      if (!FOLDER_VANISHED.has(err?.code)) {
+        console.error('fileSync: flush-to-disk failed:', err?.message ?? err)
+        if (err?.stack) console.error(err.stack)
+      }
     } finally {
       writingToDisk = false
-      if (pendingDiskFlush) flushToDisk()
+      if (pendingDiskFlush && !closed) inFlightFlush = flushToDisk()
     }
   }
 
@@ -552,11 +575,11 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   let committingFromDisk = false
 
   // StreamoRecord → disk: fires when a new commit lands (from peer, archive, or local commit)
-  repo.recaller.watch('fileSync:repo→disk', () => {
+  const unwatchRepoToDisk = repo.recaller.watch('fileSync:repo→disk', () => {
     if (committingFromDisk) return
     const commit = repo.lastCommit
     if (!commit) return
-    flushToDisk()
+    inFlightFlush = flushToDisk()
   })
 
   // Disk → repo: fires when the filesystem changes. Uses
@@ -676,6 +699,19 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       }
     })()
   })
+
+  // Additive, so every existing caller of subscription.unsubscribe() keeps
+  // working. close() is the one that actually finishes: unsubscribe stops
+  // only the disk→repo half, and the repo→disk half is a recaller watch
+  // firing an unawaited flush — which is how an orphaned write outlives its
+  // owner and throws into whatever is running next.
+  subscription.close = async () => {
+    closed = true
+    if (typeof unwatchRepoToDisk === 'function') unwatchRepoToDisk()
+    await subscription.unsubscribe()
+    await inFlightFlush
+  }
+  subscription.drain = async () => { await inFlightFlush }
 
   return subscription
 }

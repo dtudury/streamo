@@ -403,10 +403,38 @@ migrate every caller to a Mirror-backed await first, then swap once
 - **5b — partial.** `StreamoServer.mirror` exists and `chat/server.js` uses
   it. Still passing records: `fileSync.js:518,661`, `FolderRecord.js:214,283`,
   and `registrySync.test.js:1090`.
-- **5c — blocked until `grep -rn '_awaitChainHash' | grep -v '\.test\.'`
-  returns only its own definition.** That grep is the gate; it's cheap and
-  it's checkable.
+- **5c — gated, and the gate is bigger than `_awaitChainHash`.** See below.
 - **5d — delete `relayInboundStream.js` and `_awaitChainHash` together.**
+
+#### The actual 5c gate: three consumers of one cell
+
+`relayInboundStream.js:140` is the **only** writer of
+`session.relayChainHash`. Deleting it removes the cell's supply, so every
+reader breaks. There are exactly three, and each has a clean `remoteLength`
+translation:
+
+| # | reader | the question it's really asking | `remoteLength` form | status |
+|---|---|---|---|---|
+| 1 | `WritableStreamoRecord.js:405` (`_awaitChainHash`) | did *my* commit land? | `remoteLength >= targetLength` | **built** — `Mirror.awaitLanded`; callers migrating |
+| 2 | `StreamoRecord.js:346` (`caughtUpToRelay` → `isReadyToAuthor`) | has the wire told us *anything* yet? | `remoteLength > 0`, or `>= signedLength` for the precise form the comment says it wanted | not started |
+| 3 | `registrySync.js:643` (resync anchor) | after a from-zero resubscribe, has the relay sent its first SIG? | `remoteLength > 0` | not started |
+
+**Reader 2 is the interesting one.** Its own comment admits
+`relayChainHash !== null` is a *proxy* — *"not as precise as the watermark,
+but keeps `isReadyToAuthor` from returning true before wire has told us
+anything."* `remoteLength` **is** the watermark it wanted. So this isn't a
+migration, it's the fix the comment has been asking for.
+
+**Why this list matters more than the step numbering.** I found readers 1
+and 3 by grepping `_awaitChainHash` and the failure cells, concluded 5c was
+unblocked, tried it, and hung the suite. Reader 2 wasn't in either grep —
+it reaches the cell through a *different* getter on a *different* class.
+`grep -rn 'relayChainHash'` finds all three in one command; no narrower
+grep does.
+
+**So the gate is: all three readers on `remoteLength`, then swap, then
+delete.** And the swap itself stays one line, which is why getting the
+order wrong is cheap to discover and cheap to undo.
 
 **What this cost and what it bought.** Two tool calls to make, one hung
 suite to notice, one revert. Cheap — *because* the swap is one line. The

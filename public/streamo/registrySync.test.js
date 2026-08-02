@@ -1067,6 +1067,40 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(rejected, 'retryFirstConnect: false rejects on first-connect failure')
   })
 
+  test('remoteLength advances as the wire confirms bytes (the Mirror cursor)', async ({ assert }) => {
+    // Guards the transitional bridge in relayInboundStream: the OLD receive
+    // path has to advance mirror.remoteLength so the three readers of
+    // session.relayChainHash can migrate off it BEFORE the receive swap.
+    // Without this the cursor stays at its subscribe anchor forever and
+    // every remoteLength-based check silently reads stale.
+    const serverRegistry = newRegistry()
+    const { repo: serverRepo, hex: keyHex } = await openWriter(serverRegistry, 101)
+    serverRepo.set({ n: 0 })
+
+    const { wss, port } = await startServer(serverRegistry, keyHex)
+    const clientRegistry = newRegistry()
+    const session = await registrySync(clientRegistry, `localhost:${port}`)
+    const clientMirror = await session.subscribe(keyHex)
+
+    await waitFor(() => clientMirror.get('n') === 0)
+    const afterFirst = clientMirror.remoteLength
+    assert.ok(afterFirst > 0,
+      `remoteLength should advance past 0 once bytes land (got ${afterFirst})`)
+    assert.equal(afterFirst, clientMirror.local.byteLength,
+      'cursor should sit exactly at the bytes we hold — the wire sent them all')
+
+    // A second commit must move it again, not just the first.
+    serverRepo.set({ n: 1 })
+    await waitFor(() => clientMirror.get('n') === 1)
+    assert.ok(clientMirror.remoteLength > afterFirst,
+      `remoteLength should advance on each confirmed batch (${afterFirst} → ${clientMirror.remoteLength})`)
+    assert.equal(clientMirror.remoteLength, clientMirror.local.byteLength,
+      'cursor still exactly at our byte count')
+
+    session.close()
+    await new Promise(r => wss.close(r))
+  })
+
   // ── repo.update — the 10.0.0 conflict-safe write primitive ──────────────
 
   test('update applies updateFn and lands on the relay (happy path)', async ({ assert }) => {

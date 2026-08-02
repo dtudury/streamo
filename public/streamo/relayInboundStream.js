@@ -57,9 +57,21 @@ import { arraysEqual } from './utils.js'
  *   StreamoRecord to append into and whose reactive flags to mutate
  * @param {number} [maxFrameSize=64*1024*1024]  defensive cap so a
  *   malformed length prefix can't allocate unbounded memory
+ * @param {import('./Mirror.js').Mirror | null} [mirror]  transitional
+ *   bridge: when given, advance `mirror.remoteLength` to the record's
+ *   byteLength after each SIG batch lands. This path appends the wire's
+ *   bytes in order, so after a batch `record.byteLength` IS the wire
+ *   position.
+ *
+ *   Why it exists: the three readers of `session.relayChainHash`
+ *   (`_awaitChainHash`, `caughtUpToRelay`, registrySync's resync anchor)
+ *   all have to move to `remoteLength` **before** the receive path can be
+ *   swapped — but nothing advanced `remoteLength` under the old path, so
+ *   they had nothing to move to. Chicken-and-egg, broken here. Goes away
+ *   with the whole file at step 5d.
  * @returns {WritableStream}
  */
-export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024) {
+export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024, mirror = null) {
   let buf = new Uint8Array(0)
   let bufOffset = 0
   let staged = []                                  // not-already-present chunks awaiting a covering SIG
@@ -138,6 +150,12 @@ export function makeRelayInboundStream (record, maxFrameSize = 64 * 1024 * 1024)
           // attaching a session simply skip the wire-state update.
           // See docs/EXPLORATION-mirror-and-draft-migration.md.
           record._session?.setRelayChainHash?.(record.publicKeyHex, pendingChainHash)
+          // Transitional bridge — see the `mirror` param. Guarded because
+          // the setter refuses backward moves and a resync echo can close a
+          // batch we already hold.
+          if (mirror && record.byteLength > mirror.remoteLength) {
+            mirror.remoteLength = record.byteLength
+          }
           turtleLocal('sig', record.publicKeyHex, { chainHash: pendingChainHash })
         } else if (!alreadyHave) {
           staged.push(code)

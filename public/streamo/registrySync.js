@@ -20,6 +20,7 @@ import { hexToBytes, bytesToHex, parseOrigin, arraysEqual } from './utils.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { turtleIn, turtleOut, turtleLocal } from './utils/turtleLog.js'
+import { makeRelayInboundStream } from './relayInboundStream.js'
 
 const UNKNOWN_KEY = '0'.repeat(66)
 
@@ -317,7 +318,11 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
         // updateFn and lands on the relay" hangs, no failure printed.
         //
         // The receive swap is genuinely last. See EXPLORATION-mirror.md.
-        writer = repo.local.makeRelayInboundStream().getWriter()
+        // `repo` is the Mirror; pass it so the old path advances
+        // `remoteLength` too. That's what lets the three relayChainHash
+        // readers migrate before the swap. See relayInboundStream's
+        // `mirror` param.
+        writer = makeRelayInboundStream(repo.local, undefined, repo).getWriter()
       }
       writers.set(keyHex, writer)
       const pending = pendingChunks.get(keyHex) ?? []

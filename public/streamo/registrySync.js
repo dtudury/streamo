@@ -613,46 +613,20 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     cleanup()
   })
 
-  /**
-   * Drop the current subscription state for `keyHex` and re-subscribe
-   * from offset 0. Lives at this scope (handleRegistryPeer) because it
-   * mutates readers/writers/pendingChunks and calls sendJson/syncKey,
-   * all defined in this closure. The session-level wrapper delegates
-   * here when a live peer is present.
-   *
-   * Used by `repo.update()` between retry attempts after a rejected
-   * push (caller has already `_reset()`'d the local Record).
-   */
-  async function _resyncRepo (keyHex) {
-    const oldReader = readers.get(keyHex)
-    if (oldReader) {
-      oldReader.cancel().catch(() => {})
-      readers.delete(keyHex)
-    }
-    const oldWriter = writers.get(keyHex)
-    if (oldWriter) {
-      try { await oldWriter.close() } catch {}
-      writers.delete(keyHex)
-    }
-    pendingChunks.delete(keyHex)
-    sendJson({
-      type: 'subscribe',
-      key: keyHex,
-      fromOffset: 0,
-      fromChainHash: bytesToHex(new Uint8Array(32))
-    })
-    await syncKey(keyHex, 0)
-    const repo = await registry._materialize(keyHex)
-    await new Promise(resolve => {
-      const fn = () => {
-        if (repo.local._session?.getRelayChainHash?.(repo.publicKeyHex)) {
-          repo.recaller.unwatch(fn)
-          resolve(undefined)
-        }
-      }
-      repo.recaller.watch('peer:resync-wait-anchor', fn)
-    })
-  }
+  // `_resyncRepo` lived here until 2026-08-01: drop a key's subscription
+  // state and resubscribe from offset 0. Its only documented caller was
+  // `repo.update()`, removed 2026-07-17 (item 3b). Every remaining mention
+  // is a test stub (`_resyncRepo: () => {}`) or a comment.
+  //
+  // Deleted rather than migrated because it held the third and last reader
+  // of `session.relayChainHash` (see EXPLORATION-mirror.md's gate table),
+  // and migrating dead code to unblock a swap is the wrong shape. It also
+  // wasn't a small migration: the caller `_reset()`s local to zero bytes
+  // first, so `remoteLength` would have needed a *reset* affordance rather
+  // than a forward move — Mirror's setter refuses backward moves on
+  // purpose. If resubscribe-from-zero is ever wanted again, recover with
+  // `git show <this commit>^:public/streamo/registrySync.js` and design
+  // that reset deliberately.
 
   return {
     /** Declare interest in a topic — receive future `announce` messages for it. */
@@ -666,8 +640,6 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
      * @returns {Promise<import('./StreamoRecord.js').StreamoRecord>}
      */
     subscribe (key) { return subscribeToKey(key) },
-    /** Resync a single key's wire state. Internal — used by session._resyncRepo. */
-    _resyncRepo
   }
 }
 
@@ -1040,26 +1012,6 @@ export function registrySync (registry, hostPort, options = {}) {
       repo.local._attachSession?.(session)
       return repo
     },
-    /**
-     * Drop the current subscription state for `keyHex` and re-subscribe
-     * from offset 0. Used by `WritableStreamoRecord.update()` between
-     * retry attempts after a rejected push:
-     *
-     *   1. Caller has already `_reset()`'d the StreamoRecord.
-     *   2. The peer-level `_resyncRepo` closes its readers/writers/
-     *      pending state, sends a fresh `subscribe` JSON with
-     *      `fromOffset: 0`, recreates reader+writer, and waits for the
-     *      first SIG from the relay to re-anchor `relayChainHash`.
-     *   3. Caller's update can re-apply against fresh state.
-     *
-     * Throws if there's no live peer (reconnect in progress).
-     * Underscore-prefixed because this is substrate-internal — apps
-     * use `repo.update()`, which orchestrates the full retry.
-     */
-    async _resyncRepo (keyHex) {
-      if (!peer) throw new Error('session._resyncRepo: no live peer (mid-reconnect?)')
-      return peer._resyncRepo(keyHex)
-    }
   }
 
   // First-connect: retry by default until success (symmetric with the

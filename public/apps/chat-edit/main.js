@@ -152,8 +152,8 @@ async function connect (hisPubkey, signer) {
   myRepo  = await session.subscribe(myPubkey)
   hisRepo = await session.subscribe(hisPubkey)
   if (signer) {
-    hisRepo.attachSigner(signer, HIS_STREAM_NAME)
-    hisRepo.defaultMessage = `${ui.get('username')}'s page`
+    hisRepo.local.attachSigner(signer, HIS_STREAM_NAME)
+    hisRepo.local.defaultMessage = `${ui.get('username')}'s page`
   }
   uset({ phase: 'editor', status: 'connected' })
   window.__chatEdit = { myRepo, hisRepo, ui }

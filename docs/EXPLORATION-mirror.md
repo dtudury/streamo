@@ -704,3 +704,46 @@ is the difference — at which case the design question is whether
 `makeReceiveStream` should stage to the SIG boundary too, or whether readers
 should be reading `signedLength`-bounded state. **That's a design call for
 David, not a bug to patch.**
+
+### 5d-2 attempted and reverted — it is a test migration, not a deletion
+
+**Status: 5c and 5d-1 are done and green at 494. 5d-2 is not, and the
+reason is worth having.**
+
+Deleting `_awaitChainHash` + `Draft`'s record fallback + `isMirror`'s
+dual-path is three lines of production code. It is **not** a three-line
+change, because deleting the record path means **every test that builds a
+Draft from a bare `WritableStreamoRecord` has to build a Mirror instead**,
+and that reaches further than it looks:
+
+- `Draft.test.js` — 5 sites (done cleanly, this part works)
+- `FolderRecord.test.js` — bare-record sites *and* three
+  `(await registry._materialize(PK_A)).local` sites, which are Kingfisher's
+  step-4 workaround and should unwind to the Mirror
+- `fileSync.test.js` — every `fileSync(repo, …)` fixture, since fileSync's
+  contract is now Mirror-based
+
+Production code needs **no** changes: `chat-edit/main.js` already holds a
+Mirror (`session.subscribe` returns one), and every other caller migrated
+in 5b.
+
+**What went wrong in the attempt** — failures went 17 → 7 → 5 → 4 → 4, and
+that last round fixed two tests while breaking two others. Converging
+turned into thrashing because I was doing global string replacements across
+files whose fixtures come from *two different sources* (bare records vs
+`_materialize`), so each replace hit sites of both kinds. Reverted at that
+point; thrashing is the signal, not the context number.
+
+**How to do it in one pass instead of five:** before changing anything,
+classify every FolderRecord/fileSync/Draft construction site by where its
+record comes from — `new WritableStreamoRecord` (needs wrapping) vs
+`registry._materialize` (already a Mirror; may have a `.local` to unwind).
+Fix by classification, not by string. It's maybe 30 sites and one careful
+pass.
+
+**Also worth knowing:** two live bugs of exactly this shape are already in
+the tree, both from step 4 and both uncovered by tests —
+`claudeSync.js` calls `.local` on a `WritableStreamoRecord` it constructs
+itself, and `chat-edit/main.js:155` calls `attachSigner` on a Mirror, which
+doesn't delegate it. Neither is 5d-2's job, but they're the same migration
+and the same blind spot.

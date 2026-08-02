@@ -383,60 +383,11 @@ export class WritableStreamoRecord extends StreamoRecord {
     return sig
   }
 
-  /**
-   * Wait for `committedChainHash` of the upstream relay to reach
-   * `target` — i.e., the relay confirmed the bytes that produced that
-   * chainHash. Resolves on match. Rejects if `pushRejected` fires
-   * (the relay said no) or `conflictDetected` fires (local alignment
-   * caught divergence on incoming bytes).
-   *
-   * Internal helper; used by `update()` to await push acceptance.
-   *
-   * @param {Uint8Array} target  the 32-byte chainHash to wait for
-   */
-  _awaitChainHash (target) {
-    return new Promise((resolve, reject) => {
-      const fn = () => {
-        // pushRejected + conflictDetected + relayChainHash all live on the
-        // session (Mirror-and-Draft item 6). Session-null bypass below
-        // handles the archive-only / sessionless caller case.
-        const rejected = this._session?.getPushRejected?.(this.publicKeyHex) ?? null
-        const conflict = this._session?.getConflictDetected?.(this.publicKeyHex) ?? null
-        const relayHash = this._session?.getRelayChainHash?.(this.publicKeyHex) ?? null
-        if (rejected) {
-          this.recaller.unwatch(fn)
-          const err = /** @type {Error & { pushRejected?: any }} */ (new Error(`push rejected: ${rejected.reason ?? 'unknown reason'}`))
-          err.pushRejected = rejected
-          reject(err)
-          return
-        }
-        if (conflict) {
-          this.recaller.unwatch(fn)
-          const err = /** @type {Error & { conflictDetected?: any }} */ (new Error('local store diverged from incoming chain'))
-          err.conflictDetected = conflict
-          reject(err)
-          return
-        }
-        if (relayHash && arraysEqual(relayHash, target)) {
-          this.recaller.unwatch(fn)
-          resolve()
-          return
-        }
-        // No session attached AND no error signal armed → no relay ack
-        // will ever arrive, nothing will mutate these cells from the
-        // wire. Resolve cleanly. This is what lets update() be a
-        // drop-in for sessionless callers (fileSync's archive-only
-        // paths, claudeSync's originSync architecture). Tests that
-        // pre-arm `conflictDetected` still exercise the reject path
-        // — the checks above fire first.
-        if (!this._session) {
-          this.recaller.unwatch(fn)
-          resolve()
-        }
-      }
-      this.recaller.watch('repo:_awaitChainHash', fn)
-    })
-  }
+  // `_awaitChainHash` lived here until 2026-08-01. It resolved on
+  // session.relayChainHash and rejected on pushRejected/conflictDetected —
+  // three outcomes under a name advertising one, which is why it looked
+  // like a one-line replacement and wasn't. It's `Mirror.awaitLanded` now:
+  // same three outcomes, landing expressed as a byte-position.
 
   // update() was removed 2026-07-17 (item 3b). Callers use Draft
   // (via Mirror.newDraft) or the commitWithRetry helper for the old

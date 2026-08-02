@@ -1,4 +1,5 @@
 import { describe } from './utils/testing.js'
+import { Mirror } from './Mirror.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { Recaller } from './utils/Recaller.js'
 import { Signer } from './Signer.js'
@@ -11,20 +12,22 @@ describe('Draft (first-mile facade)', ({ test }) => {
     const recaller = new Recaller('draft-test')
     const repo = new WritableStreamoRecord({ recaller })
     repo.attachSigner(SIGNER, name)
-    return { repo, recaller }
+    // Drafts come from Mirrors as of 2026-08-01; the record path is gone.
+    const mirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+    return { repo, mirror, recaller }
   }
 
   test('Draft can be constructed from a WritableStreamoRecord with a signer', async ({ assert }) => {
-    const { repo } = await makeWriter('c1')
-    const draft = repo.newDraft()
+    const { repo, mirror } = await makeWriter('c1')
+    const draft = mirror.newDraft()
     assert.ok(draft instanceof Draft, 'newDraft returns a Draft instance')
     assert.equal(draft.status, 'draft', 'initial status is draft')
     assert.ok(draft.parentChainHash, 'parent chainHash snapshot at construction')
   })
 
   test('Draft.set mutates pendingValue reactively', async ({ assert }) => {
-    const { repo, recaller } = await makeWriter('c2')
-    const draft = repo.newDraft()
+    const { repo, mirror, recaller } = await makeWriter('c2')
+    const draft = mirror.newDraft()
     let notified = 0
     recaller.watch('test:pendingValue', () => {
       draft.pendingValue  // register dep
@@ -39,16 +42,16 @@ describe('Draft (first-mile facade)', ({ test }) => {
   })
 
   test('Draft.set with function updater applies to current pendingValue', async ({ assert }) => {
-    const { repo } = await makeWriter('c3')
-    const draft = repo.newDraft()
+    const { repo, mirror } = await makeWriter('c3')
+    const draft = mirror.newDraft()
     draft.set({ x: 1 })
     draft.set(v => ({ ...v, y: 2 }))
     assert.deepEqual(draft.pendingValue, { x: 1, y: 2 }, 'updater received current pendingValue')
   })
 
   test('Draft.cancel transitions to cancelled; subsequent set throws', async ({ assert }) => {
-    const { repo } = await makeWriter('c4')
-    const draft = repo.newDraft()
+    const { repo, mirror } = await makeWriter('c4')
+    const draft = mirror.newDraft()
     draft.cancel()
     assert.equal(draft.status, 'cancelled', 'status is cancelled')
     let threw = false
@@ -74,8 +77,8 @@ describe('Draft (first-mile facade)', ({ test }) => {
   })
 
   test('Draft.commit throws if trying to commit after cancel', async ({ assert }) => {
-    const { repo } = await makeWriter('c5')
-    const draft = repo.newDraft()
+    const { repo, mirror } = await makeWriter('c5')
+    const draft = mirror.newDraft()
     draft.cancel()
     let threw = false
     try { await draft.commit({ message: 'test' }) } catch { threw = true }

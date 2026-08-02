@@ -47,7 +47,6 @@
  */
 import { Streamo } from './Streamo.js'
 import { verifySignature } from './Signer.js'
-import { Draft } from './Draft.js'
 
 /**
  * A Streamo whose values are commit records.
@@ -363,24 +362,9 @@ export class StreamoRecord extends Streamo {
     return this.caughtUpToRelay
   }
 
-  /**
-   * Create a `Draft` — an ephemeral author-work object attached to this
-   * StreamoRecord (acting as the Mirror). See `Draft.js` and
-   * `EXPLORATION-sync-model.md` for the design; this is the first-mile
-   * facade over `WritableStreamoRecord.update()`.
-   *
-   * The Draft throws at commit-time if this record isn't Writable
-   * (doesn't have `.set()`/`.commit()`). Until the full Mirror-and-Draft
-   * separation lands, use this on a `WritableStreamoRecord` instance.
-   *
-   * @param {import('./Signer.js').Signer} [signer]  optional if mirror
-   *   already has a signer attached
-   * @param {string} [signerName]  keysFor input; optional if already attached
-   * @returns {import('./Draft.js').Draft}
-   */
-  newDraft (signer = null, signerName = null) {
-    return new Draft(this, signer, signerName)
-  }
+  // `newDraft` lived here until 2026-08-01. Authoring is a Mirror's job —
+  // `mirror.newDraft(signer)` — because a Draft's commit awaits the wire
+  // cursor, and only the Mirror has one.
 
   /**
    * @override Wipes local bytes (via Streamo._reset) AND clears the

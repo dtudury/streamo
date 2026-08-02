@@ -1,5 +1,6 @@
 import { describe } from './utils/testing.js'
 import { StreamoRecord } from './StreamoRecord.js'
+import { Mirror } from './Mirror.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { fileSync } from './fileSync.js'
 import { mkdtemp, rm, writeFile, readFile } from 'fs/promises'
@@ -40,7 +41,8 @@ describe(import.meta.url, ({ test }) => {
     try {
       await writeFile(join(dir, 'index.html'), '<h1>hi</h1>')
       const repo = new WritableStreamoRecord()
-      const sub = await fileSync(repo, dir, dataDir)
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir)
       try {
         assert.equal(repo.get('index.html'), '<h1>hi</h1>')
       } finally {
@@ -56,7 +58,8 @@ describe(import.meta.url, ({ test }) => {
     try {
       await writeFile(join(dir, 'index.html'), '<fresh>')
       const repo = new WritableStreamoRecord()
-      const sub = await fileSync(repo, dir, dataDir)
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir)
       try {
         assert.equal(repo.get('index.html'), '<fresh>')
       } finally {
@@ -71,11 +74,12 @@ describe(import.meta.url, ({ test }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
       const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
       const working = repo.checkout()
       working.set({ 'a.html': '<a>' })
       repo.commit(working, 'seed with files')
       await new Promise(r => setTimeout(r, 30))
-      const sub = await fileSync(repo, dir, dataDir)
+      const sub = await fileSync(repoMirror, dir, dataDir)
       try {
         const content = await readFile(join(dir, 'a.html'), 'utf8')
         assert.equal(content, '<a>')
@@ -91,12 +95,13 @@ describe(import.meta.url, ({ test }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
       const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
       const working = repo.checkout()
       working.set({ 'old.html': '<old>' })
       repo.commit(working, 'old seed')
       await new Promise(r => setTimeout(r, 30))
       await writeFile(join(dir, 'new.html'), '<new>')
-      const sub = await fileSync(repo, dir, dataDir)
+      const sub = await fileSync(repoMirror, dir, dataDir)
       try {
         assert.equal(repo.get('new.html'), '<new>')
       } finally {
@@ -123,7 +128,7 @@ describe(import.meta.url, ({ test }) => {
    * about Records before the flatten arc) and translates to flat storage:
    * filenames at top-level, mounts at value['mounts.json'].mounts.
    */
-  function sealedRepo (value, msg = 'seed') {
+  function sealedRepo (publicKeyHex, value, msg = 'seed') {
     let next = {}
     if (value) {
       const { mounts, files = {}, ...rest } = value
@@ -134,14 +139,18 @@ describe(import.meta.url, ({ test }) => {
     const w = r.checkout()
     w.set(next)
     r.commit(w, msg)
-    return r
+    // Returns a Mirror, not the record: fileSync and FolderRecord both take
+    // Mirrors as of 2026-08-01, and makeStubRegistry stores these directly
+    // so `_materialize` hands back the SAME Mirror the test passed in —
+    // one Mirror per (registry, pubkey), same as the real registry.
+    return new Mirror({ publicKeyHex, local: r })
   }
 
   test('mounts: materializes mounted files at their prefix paths on disk', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const b = sealedRepo({ files: { 'h.js': 'export const h = …' } })
-      const a = sealedRepo({
+      const b = sealedRepo(KEY_B, { files: { 'h.js': 'export const h = …' } })
+      const a = sealedRepo(KEY_A, {
         files: { 'main.js': "import { h } from '../streamo/h.js'" },
         mounts: { 'streamo/': { key: KEY_B } }
       })
@@ -173,7 +182,7 @@ describe(import.meta.url, ({ test }) => {
       w = b.checkout()
       w.set({ 'h.js': 'v2' })
       b.commit(w, 'v2')
-      const a = sealedRepo({
+      const a = sealedRepo(KEY_A, {
         mounts: { 'streamo/': { key: KEY_B, dataAddress: v1Addr } }
       })
       const sub = await fileSync(a, dir, dataDir, {
@@ -194,11 +203,11 @@ describe(import.meta.url, ({ test }) => {
   test('mounts: cycle detection — A→B→A stops at the loop', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const a = sealedRepo({
+      const a = sealedRepo(KEY_A, {
         files: { 'a.txt': 'A-self' },
         mounts: { 'b/': { key: KEY_B } }
       })
-      const b = sealedRepo({
+      const b = sealedRepo(KEY_B, {
         files: { 'b.txt': 'B-self' },
         mounts: { 'back-to-a/': { key: KEY_A } }
       })
@@ -225,12 +234,12 @@ describe(import.meta.url, ({ test }) => {
   test('mounts: nested mount-through-mount materializes A→B→C', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const c = sealedRepo({ files: { 'leaf.txt': 'deep' } })
-      const b = sealedRepo({
+      const c = sealedRepo(KEY_C, { files: { 'leaf.txt': 'deep' } })
+      const b = sealedRepo(KEY_B, {
         files: { 'mid.txt': 'middle' },
         mounts: { 'c/': { key: KEY_C } }
       })
-      const a = sealedRepo({
+      const a = sealedRepo(KEY_A, {
         files: { 'top.txt': 'top' },
         mounts: { 'b/': { key: KEY_B } }
       })
@@ -253,8 +262,8 @@ describe(import.meta.url, ({ test }) => {
   test('mounts: disabled when registry/pubkeyHex not provided (files-only)', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {
-      const b = sealedRepo({ files: { 'h.js': 'lib' } })
-      const a = sealedRepo({
+      const b = sealedRepo(KEY_B, { files: { 'h.js': 'lib' } })
+      const a = sealedRepo(KEY_A, {
         files: { 'main.js': 'app' },
         mounts: { 'streamo/': { key: KEY_B } }
       })
@@ -284,7 +293,8 @@ describe(import.meta.url, ({ test }) => {
     try {
       await writeFile(join(dir, 'streamo.json'), '{"title":"hello"}')
       const repo = new WritableStreamoRecord()
-      const sub = await fileSync(repo, dir, dataDir, { recordFile: 'streamo.json' })
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir, { recordFile: 'streamo.json' })
       try {
         assert.deepEqual(repo.get('streamo.json'), { title: 'hello' })
       } finally {
@@ -301,7 +311,8 @@ describe(import.meta.url, ({ test }) => {
       await writeFile(join(dir, 'streamo.json'), '{ broken')
       await writeFile(join(dir, 'index.html'), '<ok>')
       const repo = new WritableStreamoRecord()
-      const sub = await fileSync(repo, dir, dataDir, { recordFile: 'streamo.json' })
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir, { recordFile: 'streamo.json' })
       try {
         // Other files commit fine; broken JSON entry is absent.
         assert.equal(repo.get('index.html'), '<ok>')

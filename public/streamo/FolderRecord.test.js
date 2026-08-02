@@ -2,6 +2,7 @@ import { describe } from './utils/testing.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
 import { Recaller } from './utils/Recaller.js'
+import { Mirror } from './Mirror.js'
 import { FolderRecord } from './FolderRecord.js'
 import { commitWithRetry } from './Draft.js'
 
@@ -32,6 +33,7 @@ describe(import.meta.url, ({ test }) => {
       recaller,
       factory: async (key) => {
         const repo = new WritableStreamoRecord({ recaller })
+        const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
         const value = perKey[key]
         if (value !== undefined) commit(repo, value)
         return repo
@@ -190,14 +192,16 @@ describe(import.meta.url, ({ test }) => {
 
   test('write commits value at top-level path', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w1') })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     await folder.write('hello.txt', 'world')
     assert.equal(repo.get('hello.txt'), 'world')
   })
 
   test('write preserves siblings (spread-then-set shape)', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w2') })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     await folder.write('a.txt', 'A')
     await folder.write('b.txt', 'B')
     assert.equal(repo.get('a.txt'), 'A')
@@ -206,24 +210,27 @@ describe(import.meta.url, ({ test }) => {
 
   test('write accepts options.message (forwarded to repo.update)', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w3') })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     await folder.write('greeting.txt', 'hi', { message: 'add greeting' })
     assert.equal(repo.lastCommit.message, 'add greeting')
   })
 
   test('write of object at .json path stores the parsed object', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w4') })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     await folder.write('streamo.json', { title: 'home', count: 3 })
     assert.deepEqual(repo.get('streamo.json'), { title: 'home', count: 3 })
   })
 
   test('write throws when path falls under a mount (read-only)', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w5') })
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
     const w = repo.checkout()
     w.set({ 'mounts.json': { mounts: { 'apps/chat/': { key: PK_B } } } })
     repo.commit(w, 'seed mounts')
-    const folder = new FolderRecord(repo)
+    const folder = new FolderRecord(repoMirror)
     await assert.rejects(
       () => folder.write('apps/chat/index.html', '<html>'),
       /apps\/chat\/.*read-only.*we don't own/
@@ -232,10 +239,11 @@ describe(import.meta.url, ({ test }) => {
 
   test('write throws when ours:true mount lacks {signer, signerName} on FolderRecord', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('w6') })
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
     const w = repo.checkout()
     w.set({ 'mounts.json': { mounts: { 'apps/chat/': { key: PK_B, ours: true } } } })
     repo.commit(w, 'seed mounts')
-    const folder = new FolderRecord(repo)  // no signer
+    const folder = new FolderRecord(repoMirror)  // no signer
     await assert.rejects(
       () => folder.write('apps/chat/messages.json', []),
       /ours:true mount.*pass \{signer, signerName\}/
@@ -262,13 +270,14 @@ describe(import.meta.url, ({ test }) => {
     await registry._materialize(childKey)
 
     // Build parent with mounts.json pointing at the derived child key.
-    const parent = (await registry._materialize(PK_A)).local
+    const parentMirror = await registry._materialize(PK_A)
+    const parent = parentMirror.local  // seeding below uses checkout/commit
     const w = parent.checkout()
     w.set({ 'mounts.json': { mounts: { 'sub/': { key: childKey, ours: true } } } })
     parent.commit(w, 'seed parent mounts')
 
     // FolderRecord with signer + signerName — enables cross-Record write.
-    const folder = new FolderRecord(parent, registry, { signer, signerName: parentName })
+    const folder = new FolderRecord(parentMirror, registry, { signer, signerName: parentName })
     await folder.write('sub/hello.txt', 'world!')
 
     // Child Record should now hold the file.
@@ -285,12 +294,13 @@ describe(import.meta.url, ({ test }) => {
       recaller,
       factory: async () => new WritableStreamoRecord({ recaller })
     })
-    const parent = (await registry._materialize(PK_A)).local
+    const parentMirror = await registry._materialize(PK_A)
+    const parent = parentMirror.local  // seeding below uses checkout/commit
     const w = parent.checkout()
     // mounts.json points at PK_B but the derived child would be different
     w.set({ 'mounts.json': { mounts: { 'apps/x/': { key: PK_B, ours: true } } } })
     parent.commit(w, 'seed wrong key')
-    const folder = new FolderRecord(parent, registry, { signer, signerName: 'parent' })
+    const folder = new FolderRecord(parentMirror, registry, { signer, signerName: 'parent' })
     await assert.rejects(
       () => folder.write('apps/x/f.txt', 'hi'),
       /derived child pubkey.*doesn't match mount target.*different naming convention/
@@ -317,6 +327,7 @@ describe(import.meta.url, ({ test }) => {
   test('reactivity: record.get inside a watcher re-fires when value arrives', async ({ assert }) => {
     const recaller = new Recaller('reactive-record')
     const repo = new WritableStreamoRecord({ recaller })
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
     let calls = 0
     let lastValue
     recaller.watch('probe', () => {
@@ -325,7 +336,7 @@ describe(import.meta.url, ({ test }) => {
     })
     assert.equal(calls, 1, 'watcher fires once on register')
     assert.equal(lastValue, undefined, 'no data yet → undefined')
-    await commitWithRetry(repo, v => ({ ...(v ?? {}), x: 'hello' }))
+    await commitWithRetry(repoMirror, v => ({ ...(v ?? {}), x: 'hello' }))
     // Recaller flushes asynchronously via nextTick — give it a beat.
     await new Promise(r => setTimeout(r, 0))
     assert.equal(calls, 2, 'watcher re-fired after value arrived')
@@ -335,7 +346,8 @@ describe(import.meta.url, ({ test }) => {
   test('reactivity: FolderRecord.files() inside a watcher re-fires on commit', async ({ assert }) => {
     const recaller = new Recaller('reactive-folder')
     const repo = new WritableStreamoRecord({ recaller })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     let calls = 0
     let lastKeys = []
     recaller.watch('probe', () => {
@@ -357,7 +369,8 @@ describe(import.meta.url, ({ test }) => {
   test('resolveReactive returns value for direct file + re-fires when value arrives', async ({ assert }) => {
     const recaller = new Recaller('rr-direct')
     const repo = new WritableStreamoRecord({ recaller })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     let calls = 0
     let lastValue
     recaller.watch('probe', () => {
@@ -375,7 +388,8 @@ describe(import.meta.url, ({ test }) => {
   test('resolveReactive returns undefined for unknown path (no mount, no file)', async ({ assert }) => {
     const recaller = new Recaller('rr-nope')
     const repo = new WritableStreamoRecord({ recaller })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     assert.equal(folder.resolveReactive('does/not/exist.txt'), undefined)
   })
 
@@ -397,7 +411,8 @@ describe(import.meta.url, ({ test }) => {
 
   test('writeMany routes flat files to home Record (no mounts)', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('wm1') })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     await folder.writeMany({ 'a.txt': 'A', 'b.txt': 'B', 'sub/c.txt': 'C' })
     assert.equal(repo.get('a.txt'), 'A')
     assert.equal(repo.get('b.txt'), 'B')
@@ -406,7 +421,8 @@ describe(import.meta.url, ({ test }) => {
 
   test('writeMany with replace:true wipes prior siblings (mirror-disk semantics)', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('wm2') })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     await folder.writeMany({ 'a.txt': 'A', 'b.txt': 'B' })
     await folder.writeMany({ 'c.txt': 'C' }, { replace: true })
     assert.equal(repo.get('a.txt'), undefined, 'a.txt wiped')
@@ -416,10 +432,11 @@ describe(import.meta.url, ({ test }) => {
 
   test('writeMany silently skips files under read-only mounts', async ({ assert }) => {
     const repo = new WritableStreamoRecord({ recaller: new Recaller('wm3') })
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
     const w = repo.checkout()
     w.set({ 'mounts.json': { mounts: { 'theirs/': { key: PK_B } } } })  // no ours:true
     repo.commit(w, 'seed')
-    const folder = new FolderRecord(repo)
+    const folder = new FolderRecord(repoMirror)
     await folder.writeMany({ 'mine.txt': 'M', 'theirs/x.txt': 'X' })
     assert.equal(repo.get('mine.txt'), 'M', 'home file landed')
     assert.equal(repo.get('theirs/x.txt'), undefined, 'read-only mount file skipped')
@@ -444,7 +461,8 @@ describe(import.meta.url, ({ test }) => {
     })
     await registry._materialize(cAKey)
     await registry._materialize(cBKey)
-    const parent = (await registry._materialize(PK_A)).local
+    const parentMirror = await registry._materialize(PK_A)
+    const parent = parentMirror.local  // seeding below uses checkout/commit
     const w = parent.checkout()
     w.set({
       'mounts.json': {
@@ -456,7 +474,7 @@ describe(import.meta.url, ({ test }) => {
     })
     parent.commit(w, 'seed parent mounts')
 
-    const folder = new FolderRecord(parent, registry, { signer, signerName: parentName })
+    const folder = new FolderRecord(parentMirror, registry, { signer, signerName: parentName })
     await folder.writeMany({
       'index.html':       '<html>home</html>',
       'apps/a/index.html': '<html>app a</html>',
@@ -506,7 +524,8 @@ describe(import.meta.url, ({ test }) => {
   test('reactivity: FolderRecord.mounts() inside a watcher re-fires when mounts.json is written', async ({ assert }) => {
     const recaller = new Recaller('reactive-mounts')
     const repo = new WritableStreamoRecord({ recaller })
-    const folder = new FolderRecord(repo)
+    const repoMirror = new Mirror({ publicKeyHex: PK_A, local: repo })
+    const folder = new FolderRecord(repoMirror)
     let calls = 0
     let lastMounts = {}
     recaller.watch('probe', () => {

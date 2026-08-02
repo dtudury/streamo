@@ -46,23 +46,6 @@ function arraysEqual (a, b) {
 }
 
 /**
- * Is this a Mirror (carries its byte-store on `.local`) rather than a bare
- * WritableStreamoRecord?
- *
- * Structural rather than `instanceof Mirror` because Mirror imports Draft;
- * importing back would close the cycle. Written as a **type predicate** so
- * the narrowing is real to the typechecker — the alternative was a cast
- * plus a comment asserting the cast is fine, which is precisely the shape
- * that put an invented route-guard in `webSync.js` for three months.
- *
- * @param {any} x
- * @returns {x is import('./Mirror.js').Mirror}
- */
-function isMirror (x) {
-  return x != null && typeof x === 'object' && 'local' in x
-}
-
-/**
  * Can this byte-store be authored to? `checkout` + `commit` are the two
  * verbs signing needs, and a Mirror's `.local` is only *typed* as
  * `StreamoRecord | WritableStreamoRecord` — a read-only Mirror is a real
@@ -95,11 +78,10 @@ export class Draft {
   #targetChainHash = null
 
   /**
-   * @param {import('./Mirror.js').Mirror | import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
-   *   A **Mirror** (preferred) or a bare WritableStreamoRecord (legacy).
-   *   Given a Mirror, the round-trip await watches `remoteLength`; given a
-   *   record, it falls back to `_awaitChainHash`. Both need a session
-   *   attached for `commit()` to reach the wire.
+   * @param {import('./Mirror.js').Mirror} mirror
+   *   The Mirror to author into. Its `.local` must be writable and it needs
+   *   a session attached for `commit()` to reach the wire. Prefer
+   *   `mirror.newDraft(...)` over constructing directly.
    * @param {import('./Signer.js').Signer} [signer]  Signer for the key.
    *   Optional if one is already attached.
    * @param {string} [signerName]  keysFor input for the signer. Optional if
@@ -111,15 +93,14 @@ export class Draft {
     // delegate commit/checkout (writes are absent so callers move). A bare
     // record has them directly. Duck-typed rather than `instanceof Mirror`
     // because Mirror imports Draft — importing back would close the cycle.
-    const wire = isMirror(mirror) ? mirror : null
-    const record = wire ? wire.local : mirror
+    const record = mirror.local
     if (!isAuthorable(record)) {
       throw new Error(
         'Draft: needs a WritableStreamoRecord, or a Mirror over one — ' +
         'commit + checkout are required for signing'
       )
     }
-    this.#wire = wire
+    this.#wire = mirror
     this.#mirror = record
     this.#signer = signer
     this.#signerName = signerName
@@ -275,8 +256,7 @@ export class Draft {
       // Either way this rejects on pushRejected or divergence — a
       // landing-only await would hang rather than fail, which is the
       // trap _awaitChainHash's name hides (see Mirror.awaitLanded).
-      if (this.#wire) await this.#wire.awaitLanded(this.#mirror.byteLength)
-      else await this.#mirror._awaitChainHash(target)
+      await this.#wire.awaitLanded(this.#mirror.byteLength)
 
       this.#targetChainHash = target
       succeeded = true

@@ -322,45 +322,18 @@ export class StreamoRecord extends Streamo {
   // docs/EXPLORATION-mirror-and-draft-migration.md.
 
   /**
-   * Reactive: true once this StreamoRecord has caught up to the relay's
-   * chain head as of the moment we subscribed. Monotonic — once true,
-   * stays true.
-   *
-   * Two paths to "caught up":
-   *   1. The registrySync path: the `{type:'subscribed', atOffset}` ack
-   *      lands, `relaySubscribedAtOffset` is set, and we wait for our
-   *      byteLength to reach that watermark.
-   *   2. The originSync fallback: originSync's handshake doesn't include
-   *      `subscribed/atOffset`, so `relaySubscribedAtOffset` stays null
-   *      forever. Fall back to "have we received at least one SIG from
-   *      the wire?" — proxied by `relayChainHash !== null` (set by
-   *      relayInboundStream on each incoming SIG). Not as precise as
-   *      the watermark, but keeps `isReadyToAuthor` from returning true
-   *      before wire has told us anything.
-   */
-  get caughtUpToRelay () {
-    const watermark = this.#session?.getRelaySubscribedAtOffset?.(this.publicKeyHex) ?? null
-    if (watermark !== null) return this.byteLength >= watermark
-    return (this.#session?.getRelayChainHash?.(this.publicKeyHex) ?? null) !== null
-  }
-
-  /**
    * Can this store be authored to? Always false here; WritableStreamoRecord
    * overrides. Declared on the base so `isAuthorable` means the same thing
-   * on a Record, a WritableRecord and a Mirror — callers that hold "some
-   * byte-store" can ask without knowing which they got, and without
-   * `instanceof` or duck-typing on `commit`.
+   * on a Record, a WritableRecord and a Mirror — callers holding "some
+   * byte-store" can ask without knowing which they got.
    */
   get isAuthorable () { return false }
 
-  /**
-   * Reactive: true when it's safe to make disk-vs-repo authority
-   * decisions and commit local writes (the fileSync startup gate).
-   */
-  get isReadyToAuthor () {
-    if (!this.hasRelay) return true
-    return this.caughtUpToRelay
-  }
+  // `caughtUpToRelay` and `isReadyToAuthor` lived here until 2026-08-01.
+  // They asked "has the wire told us anything yet" and fell back to
+  // `relayChainHash !== null` — which the code itself called a proxy, "not
+  // as precise as the watermark". `Mirror.remoteLength` IS that watermark,
+  // so both moved to Mirror and read it directly.
 
   // `newDraft` lived here until 2026-08-01. Authoring is a Mirror's job —
   // `mirror.newDraft(signer)` — because a Draft's commit awaits the wire

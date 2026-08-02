@@ -110,15 +110,12 @@ test('awaitLanded unwatches once settled — leaving it live leaks a watcher per
   }
 })
 
-test('Draft over a Mirror takes the remoteLength path, not _awaitChainHash', async () => {
-  // The whole point of the migration, and the thing 485 passing tests did
-  // NOT cover: until Mirror.newDraft existed, every Draft in the suite held
-  // a bare record, so #wire was null everywhere and awaitLanded was dead
-  // code. This is the first test that exercises it end to end.
+test('Draft over a Mirror awaits remoteLength', async () => {
+  // The whole point of the migration. This test used to also stub
+  // `_awaitChainHash` and assert it wasn't reached — a check that became
+  // vacuous when the method was deleted in 5d-2, so it's gone. A test that
+  // cannot fail is worse than no test.
   const { mirror, local } = mirrorWithSession()
-  let chainHashAwaited = false
-  local._awaitChainHash = () => { chainHashAwaited = true; return Promise.resolve() }
-
   const draft = mirror.newDraft()
   draft.set({ hello: 'wire' })
   // No signer attached → commit() takes the no-signer early return, which
@@ -126,6 +123,5 @@ test('Draft over a Mirror takes the remoteLength path, not _awaitChainHash', asy
   // await, and it must not throw.
   const { chainHash } = await draft.commit({ message: 'from a Mirror' })
   assert.ok(chainHash !== undefined, 'commit should report the landed chainHash')
-  assert.strictEqual(chainHashAwaited, false, '_awaitChainHash must not be reached from a Mirror-backed Draft')
   assert.deepStrictEqual(local.get(), { hello: 'wire' }, 'the value should have landed in local')
 })

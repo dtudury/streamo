@@ -322,7 +322,7 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
         // `remoteLength` too. That's what lets the three relayChainHash
         // readers migrate before the swap. See relayInboundStream's
         // `mirror` param.
-        writer = makeRelayInboundStream(repo.local, undefined, repo).getWriter()
+        writer = repo.makeReceiveStream().getWriter()
       }
       writers.set(keyHex, writer)
       const pending = pendingChunks.get(keyHex) ?? []

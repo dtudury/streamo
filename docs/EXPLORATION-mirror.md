@@ -659,27 +659,30 @@ fails:
 **So fileSync stops materializing a file to disk during initial sync.** Not
 a crash, not a divergence report — a file that should appear doesn't.
 
-I reverted rather than chase it, at ~88% context, because this is a real
-investigation and a half-finished one is worse than none. What I'd check
-first, in order:
+**The gate hypothesis is FALSIFIED — don't spend time on it.** Instrumented
+`fileSync`'s startup gate and ran the one test:
 
-1. **Does `remoteLength` advance at all in that test?** The old path's
-   bridge advanced it; the new path advances it from its own cursor. If the
-   test's record syncs by some route that doesn't go through
-   `registrySync:311`, the cursor never moves and
-   `Mirror.caughtUpToRelay` (`remoteLength > 0`) stays false — so
-   `isReadyToAuthor` stays false and fileSync's startup gate never opens.
-   **That's my leading hypothesis** and it would explain a missing file
-   exactly: not an error, just a gate that never releases.
-2. If so, the question is what "caught up" means for a Record whose bytes
-   arrive by a path other than the client receive stream — `originSync`,
-   `archiveSync`, a local seed. `hasRelay` currently guards that; check
-   whether it's true here when it shouldn't be.
-3. The old `alreadyHave` content-dedup vs the new position-comparison is
-   the other candidate. They agree only because the relay streams from our
-   subscribe offset; anything that streams from elsewhere breaks the
-   equivalence.
+```
+[PROBE] hasRelay=undefined remoteLength=undefined isReadyToAuthor=true byteLength=160
+```
 
-**Do not raise the estimate by guessing.** Run the one test, print
-`remoteLength` and `isReadyToAuthor` at the gate, and the answer will be in
-the first run.
+Three things at once. `isReadyToAuthor` is **true**, so the gate opens fine.
+`remoteLength`/`hasRelay` are **undefined**, so `repo` in that test isn't a
+Mirror at all — the test calls `fileSync` directly with a record. And
+`byteLength` climbs (0 → 160 → 343), so bytes *are* arriving.
+
+**So it's the receive path's semantics, and the live suspect is staging.**
+The old path holds non-SIG chunks in `staged[]` and appends them only when a
+covering SIG arrives, so a Record never transiently contains an unsigned
+partial batch. `makeReceiveStream` appends each frame as it arrives. That's
+a real behavioural difference and it's exactly what a test named *"invalid
+JSON during initial sync is dropped (**mid-edit grace**)"* would catch:
+the new path exposes intermediate states the old one hid.
+
+Next step is one command, not an investigation: in that test, log
+`signedLength` alongside `byteLength` at the moment fileSync reads. If
+`signedLength < byteLength`, the record is being read mid-batch and staging
+is the difference — at which case the design question is whether
+`makeReceiveStream` should stage to the SIG boundary too, or whether readers
+should be reading `signedLength`-bounded state. **That's a design call for
+David, not a bug to patch.**

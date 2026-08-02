@@ -629,8 +629,8 @@ against today's actual spend on comparable steps.
 | step | what | est. | independently green? |
 |---|---|---|---|
 | **5c-1** | **Reader 3** — `registrySync.js:643`'s resync anchor moves to `remoteLength`. *Not* a threshold: `subscribeToKey` only raises the cursor and this path bypasses it, so an already-synced Mirror reads `> 0` before anything arrives. Capture the value before resubscribing, wait for it to exceed that. | ~4% | yes |
-| **5c-2** | **The swap** — `registrySync.js:311` → `repo.makeReceiveStream()`. One line. | ~3% | yes |
-| **5c-3** | **Probe** — make `getRelayChainHash` throw, run the suite, expect 0 hits. If non-zero, a fourth reader exists and the swap is not safe. | ~2% | n/a (check only) |
+| **5c-2** | **The swap** — `registrySync.js:311` → `repo.makeReceiveStream()`. One line, **and not purely mechanical** — attempted 2026-08-01 with the gate fully clear and it still fails one test. See below. | ~8% (revised) | yes, once the failure below is understood |
+| ~~5c-3~~ | ~~Probe~~ **DONE 2026-08-01** — `getRelayChainHash` made to throw, whole suite run: **0 hits**. Not "no production callers" — zero reads. | — | — |
 | **5d-1** | Delete `relayInboundStream.js` + `StreamoRecord.makeRelayInboundStream` shim. `originSync.js:101` uses the shim — migrate or keep it a Record path, decide there. | ~3% | yes |
 | **5d-2** | Delete `_awaitChainHash`, `Draft`'s `#wire`-null fallback branch, and `isMirror`'s dual-path (Draft takes only Mirrors). | ~4% | yes |
 | **5d-3** | Delete the session's `relayChainHash` cell + `setRelayChainHash`, and `StreamoRecord.caughtUpToRelay` / `isReadyToAuthor` **with their two unit tests** — those tests are the only remaining readers. | ~4% | yes |
@@ -644,3 +644,42 @@ hits. Inspection said reader 1 was clear twice and was wrong once. The probe
 settled it in one run, and separately revealed that reader 2's three
 remaining hits were unit tests rather than production code — which no grep
 would have told you.
+
+### 5c-2's one failure, for whoever picks this up
+
+The gate is clear and the swap still isn't free. With
+`writer = repo.makeReceiveStream().getWriter()` in place, 494 pass and one
+fails:
+
+```
+✖ streamo.json: invalid JSON during initial sync is dropped (mid-edit grace)
+  Error: ENOENT: no such file or directory, open '…/fs-test-XXXX/index.html'
+```
+
+**So fileSync stops materializing a file to disk during initial sync.** Not
+a crash, not a divergence report — a file that should appear doesn't.
+
+I reverted rather than chase it, at ~88% context, because this is a real
+investigation and a half-finished one is worse than none. What I'd check
+first, in order:
+
+1. **Does `remoteLength` advance at all in that test?** The old path's
+   bridge advanced it; the new path advances it from its own cursor. If the
+   test's record syncs by some route that doesn't go through
+   `registrySync:311`, the cursor never moves and
+   `Mirror.caughtUpToRelay` (`remoteLength > 0`) stays false — so
+   `isReadyToAuthor` stays false and fileSync's startup gate never opens.
+   **That's my leading hypothesis** and it would explain a missing file
+   exactly: not an error, just a gate that never releases.
+2. If so, the question is what "caught up" means for a Record whose bytes
+   arrive by a path other than the client receive stream — `originSync`,
+   `archiveSync`, a local seed. `hasRelay` currently guards that; check
+   whether it's true here when it shouldn't be.
+3. The old `alreadyHave` content-dedup vs the new position-comparison is
+   the other candidate. They agree only because the relay streams from our
+   subscribe offset; anything that streams from elsewhere breaks the
+   equivalence.
+
+**Do not raise the estimate by guessing.** Run the one test, print
+`remoteLength` and `isReadyToAuthor` at the gate, and the answer will be in
+the first run.

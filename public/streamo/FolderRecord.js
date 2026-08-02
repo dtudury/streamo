@@ -140,7 +140,7 @@ export class FolderRecord {
     }
 
     const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-    const child = new FolderRecord(mountedRepo.local, this.registry, {
+    const child = new FolderRecord(mountedRepo, this.registry, {
       session: this.session,
       materializeTimeoutMs: this.materializeTimeoutMs
     })
@@ -196,7 +196,7 @@ export class FolderRecord {
       }
       mountedRepo.local.attachSigner(this.signer, childName)
       // Recurse into a child FolderRecord scoped to the mounted Record.
-      const child = new FolderRecord(mountedRepo.local, this.registry, {
+      const child = new FolderRecord(mountedRepo, this.registry, {
         session: this.session,
         materializeTimeoutMs: this.materializeTimeoutMs,
         signer: this.signer,
@@ -205,7 +205,7 @@ export class FolderRecord {
       const innerPath = path.startsWith(mountPrefix) ? path.slice(mountPrefix.length) : ''
       return child.write(innerPath, value, options)
     }
-    if (typeof this.record.commit !== 'function') {
+    if (!this.record.isAuthorable) {
       throw new Error('FolderRecord.write: this Record is not Writable (slim StreamoRecord has no author surface — use WritableStreamoRecord)')
     }
     // Migrated 2026-07-17 to Draft API via commitWithRetry —
@@ -276,7 +276,7 @@ export class FolderRecord {
 
     // Commit home Record's files.
     if (Object.keys(homeFiles).length > 0) {
-      if (typeof this.record.commit !== 'function') {
+      if (!this.record.isAuthorable) {
         throw new Error('FolderRecord.writeMany: home Record is not Writable')
       }
       // Migrated 2026-07-17 to Draft API via commitWithRetry.
@@ -308,7 +308,7 @@ export class FolderRecord {
         throw new Error(`FolderRecord.writeMany: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mounts`)
       }
       mountedRepo.local.attachSigner(this.signer, childName)
-      const child = new FolderRecord(mountedRepo.local, this.registry, {
+      const child = new FolderRecord(mountedRepo, this.registry, {
         session: this.session,
         materializeTimeoutMs: this.materializeTimeoutMs,
         signer: this.signer,
@@ -405,7 +405,7 @@ export class FolderRecord {
 
     // Recurse into a child FolderRecord (signer/session propagate).
     const innerPath = path.startsWith(bestPrefix) ? path.slice(bestPrefix.length) : ''
-    const child = new FolderRecord(mountedRepo.local, this.registry, {
+    const child = new FolderRecord(mountedRepo, this.registry, {
       session: this.session,
       materializeTimeoutMs: this.materializeTimeoutMs,
       signer: this.signer,

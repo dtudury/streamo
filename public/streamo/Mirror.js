@@ -132,12 +132,13 @@ export class Mirror {
   makeReadableStream (options) { return this.local.makeReadableStream(options) }
 
   /**
-   * True if `local` is a WritableStreamoRecord (authorable). Non-reactive —
-   * a Mirror's authorability is fixed at construction (per the 11.0
-   * class-split's type-level guarantee).
+   * Can this be authored to? Delegates — `isAuthorable` is declared on
+   * StreamoRecord (false) and overridden on WritableStreamoRecord (true),
+   * so the question has the same answer shape whether you hold a Record or
+   * a Mirror. Non-reactive: fixed at construction by the 11.0 class split.
    */
   get isAuthorable () {
-    return this.local instanceof WritableStreamoRecord
+    return this.local.isAuthorable
   }
 
   /**
@@ -216,6 +217,38 @@ export class Mirror {
         mirror.remoteLength = cursor
       }
     })
+  }
+
+  /**
+   * Reactive: has the wire caught us up to where it said it would?
+   *
+   * This is `StreamoRecord.caughtUpToRelay` with its proxy removed. That
+   * version fell back to `relayChainHash !== null` and said so in its own
+   * comment — *"not as precise as the watermark, but keeps isReadyToAuthor
+   * from returning true before wire has told us anything."* **`remoteLength`
+   * is that watermark.** So this isn't a migration of the check, it's the
+   * check the comment was describing.
+   *
+   * Two paths, same as before:
+   *   1. registrySync acks `{type:'subscribed', atOffset}` → compare the
+   *      cursor against that offset.
+   *   2. originSync's handshake carries no ack, so the offset stays null
+   *      forever → fall back to "has the wire confirmed anything at all."
+   */
+  get caughtUpToRelay () {
+    const watermark = this.local._session?.getRelaySubscribedAtOffset?.(this.publicKeyHex) ?? null
+    if (watermark !== null) return this.remoteLength >= watermark
+    return this.remoteLength > 0
+  }
+
+  /**
+   * Reactive: safe to make disk-vs-repo authority decisions and commit
+   * local writes — fileSync's startup gate. No relay means nobody can
+   * contradict us, so authoring is trivially safe.
+   */
+  get isReadyToAuthor () {
+    if (!this.local.hasRelay) return true
+    return this.caughtUpToRelay
   }
 
   /**

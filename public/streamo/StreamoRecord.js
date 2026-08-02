@@ -347,6 +347,15 @@ export class StreamoRecord extends Streamo {
   }
 
   /**
+   * Can this store be authored to? Always false here; WritableStreamoRecord
+   * overrides. Declared on the base so `isAuthorable` means the same thing
+   * on a Record, a WritableRecord and a Mirror — callers that hold "some
+   * byte-store" can ask without knowing which they got, and without
+   * `instanceof` or duck-typing on `commit`.
+   */
+  get isAuthorable () { return false }
+
+  /**
    * Reactive: true when it's safe to make disk-vs-repo authority
    * decisions and commit local writes (the fileSync startup gate).
    */

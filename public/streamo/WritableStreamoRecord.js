@@ -445,6 +445,9 @@ export class WritableStreamoRecord extends StreamoRecord {
 
 
 
+  /** @override Writable by definition — this is the class split's point. */
+  get isAuthorable () { return true }
+
   /** @override Also resets locallyAuthoredOffset. */
   _reset () {
     super._reset()

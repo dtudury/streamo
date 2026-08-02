@@ -1121,7 +1121,12 @@ describe(import.meta.url, ({ test }) => {
     // subscribe returns a Mirror; authoring goes through `.local`.
     clientRepo.local.attachSigner(SIGNER, (await realKey(100)).name)
 
-    await commitWithRetry(clientRepo.local, c => ({ ...c, count: 1 }))
+    // Pass the Mirror, not `.local` — that's what routes the round-trip
+    // through Mirror.awaitLanded (remoteLength) instead of the legacy
+    // _awaitChainHash (relayChainHash). As of 2026-08-01 this was the last
+    // caller anywhere reaching the legacy await; verified by making
+    // _awaitChainHash throw and running the suite.
+    await commitWithRetry(clientRepo, c => ({ ...c, count: 1 }))
     assert.equal(clientRepo.get('count'), 1, 'updateFn applied locally')
 
     // **Regression marker (2026-05-26 browser-found):** update must ACTUALLY
@@ -1141,11 +1146,13 @@ describe(import.meta.url, ({ test }) => {
     // intermittently, the sign-completion wait drifted.
     assert.equal(serverRepo.get('count'), 1,
       'server has the bytes BEFORE update returns (no waitFor) — update properly awaited broadcast-back')
-    // And relayChainHash should equal committedChainHash by this point —
-    // the round-trip is complete.
-    const a = session.getRelayChainHash(clientRepo.publicKeyHex), b = clientRepo.committedChainHash
-    assert.ok(a && b && a.length === b.length && a.every((v, i) => v === b[i]),
-      'after update, relayChainHash equals committedChainHash')
+    // And the wire cursor should have caught up to our bytes — the
+    // round-trip is complete. This replaces the old
+    // relayChainHash-equals-committedChainHash assertion: same claim,
+    // stated in the units the design actually uses, and it survives the
+    // deletion of relayChainHash at step 5d.
+    assert.ok(clientRepo.remoteLength >= clientRepo.local.byteLength,
+      `after update, remoteLength (${clientRepo.remoteLength}) should cover our bytes (${clientRepo.local.byteLength})`)
 
     session.close()
     await new Promise(r => wss.close(r))

@@ -258,7 +258,7 @@ export class StreamoServer {
       signerName: options.signerName ?? this.name,
       ...options
     }
-    return fileSync(this.streamo, folder, options.dataDir, opts)
+    return fileSync(this.mirror, folder, options.dataDir, opts)
   }
 
   async s3 ({ bucket, endpoint, region, accessKeyId, secretAccessKey }) {

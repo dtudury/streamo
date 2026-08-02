@@ -308,6 +308,15 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
           }
         })
       } else {
+        // Still the old path, and it cannot move until every caller is off
+        // `_awaitChainHash`. Attempted the swap 2026-08-01 and reverted:
+        // `_awaitChainHash` RESOLVES on `session.relayChainHash`, which only
+        // this factory sets (relayInboundStream.js:140). Swapping removes
+        // the legacy await's *success* signal, so every record-backed
+        // caller waits forever — `registrySync.test.js`'s "update applies
+        // updateFn and lands on the relay" hangs, no failure printed.
+        //
+        // The receive swap is genuinely last. See EXPLORATION-mirror.md.
         writer = repo.local.makeRelayInboundStream().getWriter()
       }
       writers.set(keyHex, writer)
@@ -373,6 +382,23 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
       const repo = await registry._materialize(keyHex)
       const fromOffset = repo.signedLength ?? 0
       const fromChainHash = bytesToHex(repo.committedChainHash ?? new Uint8Array(32))
+
+      // Anchor the wire cursor to what we're about to claim. `remoteLength`
+      // means "byte-length the wire has confirmed", and the subscribe
+      // handshake is exactly that assertion: we tell the peer our chain is
+      // valid through `fromOffset` with `fromChainHash`, and it either
+      // streams from there or rejects with `chain-mismatch`.
+      //
+      // Without this the cursor stays 0 while the relay streams from
+      // `fromOffset`, so `makeReceiveStream` would compare the relay's
+      // bytes-at-fromOffset against our bytes-at-0 and report divergence on
+      // every reconnect that has existing data. A fresh-repo test can't see
+      // it, because there fromOffset IS 0.
+      //
+      // Optimistic by one round-trip: set before the peer validates. If it
+      // rejects, the connection tears down and divergence handling owns it.
+      if (fromOffset > repo.remoteLength) repo.remoteLength = fromOffset
+
       sendJson({ type: 'subscribe', key: keyHex, fromOffset, fromChainHash })
       await syncKey(keyHex)
     }

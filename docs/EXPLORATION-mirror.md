@@ -369,7 +369,62 @@ I'd take (2) and think (1) is the one that looks cheap and isn't — but
 this is David's call, not a plumbing detail to decide alone at the end of
 a long session.
 
-### Correction (Bittern, 2026-08-01): the order is NOT forced. The await's *signal set* is.
+### Correction to the correction (Bittern, 2026-08-01, same day)
+
+**I tried the receive swap on the strength of the section below and it hung
+the suite. The section is wrong where it matters. Read this first.**
+
+What I got right: `pushRejected` is armed by the relay's message handler and
+survives the swap; `conflictDetected` is armed only by `relayInboundStream`
+and dies with it. Both verified.
+
+**What I never checked: who feeds the *landing* signal.**
+`_awaitChainHash` resolves on `session.relayChainHash`, and the **only**
+writer of that cell is `relayInboundStream.js:140`. So swapping the receive
+path doesn't just move a failure arm — **it removes the legacy await's
+success signal.** Every caller still holding a record instead of a Mirror
+waits forever.
+
+Observed, not reasoned: `registrySync.test.js`'s *"update applies updateFn
+and lands on the relay (happy path)"* hangs, **and prints no failure**,
+because line 1090 passes `clientRepo.local`. 441 tests pass and then the
+run stops.
+
+So **the original claim at the top of this section was right: the receive
+swap and the await migration are one change.** They can be *sequenced* —
+migrate every caller to a Mirror-backed await first, then swap once
+`_awaitChainHash` has zero callers — but the swap is genuinely **last**, and
+"the order is not forced" was false.
+
+**The actual state and sequence:**
+
+- **5a — done.** `Mirror.awaitLanded` watches all three outcomes; `Draft`
+  takes a Mirror or a record and picks the matching await.
+- **5b — partial.** `StreamoServer.mirror` exists and `chat/server.js` uses
+  it. Still passing records: `fileSync.js:518,661`, `FolderRecord.js:214,283`,
+  and `registrySync.test.js:1090`.
+- **5c — blocked until `grep -rn '_awaitChainHash' | grep -v '\.test\.'`
+  returns only its own definition.** That grep is the gate; it's cheap and
+  it's checkable.
+- **5d — delete `relayInboundStream.js` and `_awaitChainHash` together.**
+
+**What this cost and what it bought.** Two tool calls to make, one hung
+suite to notice, one revert. Cheap — *because* the swap is one line. The
+expensive version is the one where the same reasoning error rides into a
+change big enough that reverting isn't obvious.
+
+**The lesson is the day's, one turn after I wrote it down:** I enumerated
+`_awaitChainHash`'s three exit conditions, checked *who writes* two of them,
+and generalized from two to three. **The unchecked one was the one that
+mattered**, and it was unchecked because it's the success path — the arm you
+don't think of as a signal.
+
+*One thing from the attempt is kept below and is worth having:* the
+`remoteLength` initialization at subscribe. That fix is correct
+independently of the swap, and without it the swap would have failed a
+second, subtler way.
+
+### Superseded reasoning, kept as archaeology: "the order is NOT forced"
 
 The section below concludes "receive-path first." Having traced where each
 signal is actually armed, that's stronger than the evidence supports, and

@@ -80,7 +80,7 @@ const RECONNECT_RESET_MS = 30000
 /**
  * @typedef {Object} RegistrySyncOptions
  *
- * @property {(keyHex: string, repo: import('./StreamoRecord.js').StreamoRecord, subscribe: (keyHex: string) => void) => void} [follow]
+ * @property {(keyHex: string, repo: import('./StreamoRecord.js').ReadableRecord, subscribe: (keyHex: string) => void) => void} [follow]
  *   Called reactively whenever a synced repository's value changes.  Use this
  *   to extract repository keys embedded in the data and call `subscribe(key)`
  *   on each one.  The registry will then sync that repo too, and `follow` will
@@ -633,10 +633,12 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     /** Announce `key` as related to `topic` — routed to all peers interested in that topic. */
     announce (key, topic) { sendJson({ type: 'announce', key, topic }) },
     /**
-     * Subscribe to a specific repo key. Opens the StreamoRecord locally if not yet
-     * opened, sets up bidirectional wire sync, and returns the StreamoRecord.
+     * Subscribe to a specific repo key. Opens the Record locally if not yet
+     * opened, sets up bidirectional wire sync, and returns the **Mirror**
+     * wrapping it — `subscribeToKey` returns whatever `registry._materialize`
+     * returns, and that has been a Mirror since Mirror-and-Draft step 4.
      * The everyday "I want this key live" verb.
-     * @returns {Promise<import('./StreamoRecord.js').StreamoRecord>}
+     * @returns {Promise<import('./Mirror.js').Mirror>}
      */
     subscribe (key) { return subscribeToKey(key) },
   }

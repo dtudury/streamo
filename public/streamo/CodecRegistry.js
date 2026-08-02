@@ -87,8 +87,10 @@ export class CodecRegistry extends Addressifier {
   }
 
   /**
-   * Decode any JS value from a code (Uint8Array) or address (number).
-   * @param {Uint8Array|number} codeOrAddress
+   * Decode any JS value from a code (Uint8Array), an address (number), or a
+   * Variable — the third case is what `#decodeWith` handles first and what
+   * the parameter has been named after all along.
+   * @param {Uint8Array|number|import('./Variable.js').Variable} codeOrAddressOrVariable
    * @param {boolean|boolean[]} [asRefs=false]
    * @returns {any}
    */

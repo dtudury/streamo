@@ -24,7 +24,11 @@ const cryptoSubtle = typeof crypto !== 'undefined' ? crypto.subtle : (await impo
  * SHA-256 digest of `bytes`. Returns a 32-byte Uint8Array.
  * Consolidated from local copies in WritableStreamoRecord.js and
  * StreamoRecordSerializer.js on 2026-07-24.
- * @param {Uint8Array} bytes
+ * @param {Uint8Array<ArrayBuffer>} bytes  not just `Uint8Array`: WebCrypto's
+ *   `digest` refuses a view that might sit on a `SharedArrayBuffer`, and
+ *   plain `Uint8Array` means `Uint8Array<ArrayBufferLike>`, which might.
+ *   Every caller here allocates its own buffer, so stating the narrower
+ *   type is describing what already happens rather than promising it.
  * @returns {Promise<Uint8Array>}
  */
 export async function sha256 (bytes) {
@@ -45,7 +49,7 @@ export async function sha256 (bytes) {
  * valid); the single source of truth eliminates that failure mode.
  *
  * @param {Uint8Array} prev  the previous chainHash (32 zeros for the seed)
- * @param {Uint8Array} newBytes  the bytes appended since the previous SIG
+ * @param {Uint8Array<ArrayBuffer>} newBytes  the bytes appended since the previous SIG
  * @returns {Promise<Uint8Array>}  the new 32-byte chainHash
  */
 export async function chainHashOf (prev, newBytes) {

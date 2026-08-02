@@ -54,6 +54,28 @@ export class StreamoServer {
     Object.assign(this, fields)
   }
 
+  /**
+   * Two modes, and the type has to allow both because the runtime does.
+   * Either `publicKeyHex` (relay-only: open by pubkey, no signer, bytes
+   * arrive over sync) **or** `{name, username, password}` (author). The
+   * three throws at the top of the body are the real contract — including
+   * the one that rejects mixing them.
+   *
+   * Untyped until 2026-08-02, so TypeScript inferred every destructured
+   * field as required from the pattern alone, and the two legitimate call
+   * shapes — `bin/streamo.js`'s relay branch and its author branch — each
+   * looked like they were missing the other's arguments.
+   *
+   * @param {object} options
+   * @param {string} [options.name]  keysFor name for the author's key
+   * @param {string} [options.username]
+   * @param {string} [options.password]
+   * @param {string} [options.publicKeyHex]  relay-only mode; mutually
+   *   exclusive with username/password
+   * @param {import('./StorageTier.js').StorageTier[]} [options.tiers]
+   *   defaults to a single `.streamo` DiskTier with infinite capacity
+   * @param {number} [options.keyIterations=100000]
+   */
   static async create ({ name, username, password, publicKeyHex, tiers, keyIterations = 100000 }) {
     let signer = null
     let resolvedPublicKeyHex

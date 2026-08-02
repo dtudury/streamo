@@ -150,7 +150,13 @@ export class Addressifier {
    * Extract a byte range as a single Uint8Array.
    * @param {number} [start=0]
    * @param {number} [end=this.byteLength]
-   * @returns {Uint8Array}
+   * @returns {Uint8Array<ArrayBuffer>}  the `<ArrayBuffer>` is not a promise
+   *   about the caller, it's a fact about the two lines below that produce
+   *   the return value: `uint8Array.slice(...)` allocates a fresh buffer per
+   *   spec, and `new Uint8Array(n)` obviously does. Neither can hand back a
+   *   view onto a SharedArrayBuffer. `utils.sha256` needs to know that —
+   *   WebCrypto's `digest` rejects possibly-shared views — and this is where
+   *   it's true rather than merely believed.
    */
   slice (start = 0, end = this.byteLength) {
     const parts = []

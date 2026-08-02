@@ -51,7 +51,12 @@ export class StorageTier {
    * would exceed capacity).
    * @param {string} key
    * @param {Uint8Array} bytes
-   * @returns {Promise<void>}
+   * @returns {void | Promise<void>}  sync is allowed, per the "all methods
+   *   are async-capable; concrete impls may return sync values where I/O
+   *   isn't needed" contract at the top of this file — MemoryTier.append is
+   *   exactly that case. This said `Promise<void>` until 2026-08-02, which
+   *   made the tier that the doc names as the sync one look like the
+   *   violation.
    */
   append (key, bytes) { throw new Error('StorageTier.append: abstract') }
 
@@ -64,11 +69,37 @@ export class StorageTier {
    */
   evict (key) { throw new Error('StorageTier.evict: abstract') }
 
-  /** Current total bytes stored in this tier. */
+  /**
+   * Current total bytes stored in this tier.
+   *
+   * The `@returns` is load-bearing: an abstract getter whose body only
+   * throws infers `void`, so every concrete `get size () { return n }` read
+   * as an override-mismatch and `Cascade`'s `sum + t.size` read as
+   * arithmetic on `void`.
+   * @returns {number}
+   */
   get size () { throw new Error('StorageTier.size: abstract') }
 
-  /** Max bytes this tier will hold. `Infinity` for canonical (terminal) tier. */
+  /**
+   * Max bytes this tier will hold. `Infinity` for canonical (terminal) tier.
+   * @returns {number}
+   */
   get capacity () { throw new Error('StorageTier.capacity: abstract') }
+
+  /**
+   * Lifecycle hook: warm whatever this tier caches before first use.
+   * `DiskTier.init()` walks its directory to populate the size cache;
+   * MemoryTier has nothing to warm, so the base no-op is the whole
+   * implementation for it.
+   *
+   * A no-op rather than `abstract` on purpose. It used to exist only on
+   * DiskTier, which made `typeof tier.init === 'function'` the caller's
+   * problem — and a caller who forgets the guard gets a DiskTier serving
+   * `size === 0` until the first append. Defined here, every tier answers
+   * `init()`, and "call it in just the right way" stops being the contract.
+   * @returns {Promise<void>}
+   */
+  async init () {}
 
   /**
    * Pick the next key to evict according to this tier's strategy.

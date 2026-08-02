@@ -35,10 +35,16 @@ export class Mirror {
 
   /**
    * @param {{
-   *   publicKeyHex: string,
-   *   local: StreamoRecord | WritableStreamoRecord,
+   *   publicKeyHex?: string,
+   *   local?: StreamoRecord | WritableStreamoRecord,
    *   recaller?: import('./utils/Recaller.js').Recaller
-   * }} options
+   * }} [options]
+   *   `publicKeyHex` and `local` are **required at runtime** — marked
+   *   optional in the type only so the `= {}` default literal below
+   *   type-checks. The three throws immediately following are the real
+   *   contract, and they say which one is missing. Same shape, and the same
+   *   reason, as `StreamoRecordRegistry`'s `recaller`.
+   *
    *   `recaller` defaults to `local.recaller` (the typical shared-Recaller
    *   case). Pass an explicit recaller only if you need Mirror's reactive
    *   events on a different one than local's chunk-arrival events.
@@ -127,7 +133,12 @@ export class Mirror {
   get lastCommit () { return this.local.lastCommit }
   get committedChainHash () { return this.local.committedChainHash }
   get (...args) { return this.local.get(...args) }
-  decode (...args) { return this.local.decode(...args) }
+  // Spelled out rather than `...args`: `decode` takes two positional
+  // parameters, not a rest, so a spread through it has no tuple to check
+  // against. Delegating the real arity is both the fix and the documentation.
+  decode (codeOrAddressOrVariable, asRefs = false) {
+    return this.local.decode(codeOrAddressOrVariable, asRefs)
+  }
   slice (start, end) { return this.local.slice(start, end) }
   makeReadableStream (options) { return this.local.makeReadableStream(options) }
 

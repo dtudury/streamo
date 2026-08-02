@@ -74,7 +74,7 @@ function normalize (urlPath) {
 /**
  * Read the (flat) files-map out of a StreamoRecord — the whole value
  * IS the map, with filenames as top-level keys.
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./StreamoRecord.js').ReadableRecord} repo
  */
 function readFilesMap (repo) {
   if (!repo.lastCommit) return undefined
@@ -97,7 +97,7 @@ function readFilesMap (repo) {
  * present, pins to a specific commit (otherwise we serve the mounted
  * record's latest content).
  *
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./StreamoRecord.js').ReadableRecord} repo
  * @param {number} [atDataAddress]  if set, read mounts from this
  *   specific commit's data instead of HEAD (for pinned-mount chains).
  */
@@ -123,7 +123,7 @@ function readMounts (repo, atDataAddress) {
  * record's content as it was at a specific commit. Returns undefined
  * when the file isn't in the map.
  *
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./StreamoRecord.js').ReadableRecord} repo
  * @param {string} path
  * @param {number} [atDataAddress]
  */
@@ -164,7 +164,7 @@ function readFile (repo, path, atDataAddress) {
  * Returns null if the path can't be resolved (no matching file, no
  * matching mount, mount target not in registry, or cycle detected).
  *
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./StreamoRecord.js').ReadableRecord} repo
  * @param {string} pubkeyHex
  * @param {string} path
  * @param {number|undefined} atDataAddress
@@ -254,7 +254,7 @@ function injectImportMap (html, importMap) {
 /**
  * Express middleware factory: serve files from a StreamoRecord.
  *
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./StreamoRecord.js').ReadableRecord} repo
  * @param {object} [options]
  * @param {boolean} [options.injectImportMap=true]  inject an importmap into
  *   HTML responses so bare specifiers like `@dtudury/streamo` resolve

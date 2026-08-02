@@ -49,6 +49,20 @@ import { Streamo } from './Streamo.js'
 import { verifySignature } from './Signer.js'
 
 /**
+ * Anything you can read a chain out of: a StreamoRecord, or a Mirror
+ * delegating to one. Mirror forwards the read verbs (`get`, `decode`,
+ * `lastCommit`, `slice`, `byteLength`, `signedLength`, …) and deliberately
+ * does *not* forward the write verbs — "writes are absent on purpose so
+ * they have to move," per Mirror's own comment. So a read-only lens really
+ * does accept both, and saying so is more honest than the alternative:
+ * a `@param {StreamoRecord}` that every mount-following call site violates.
+ *
+ * Type-only import — no runtime edge from StreamoRecord to Mirror.
+ *
+ * @typedef {StreamoRecord | import('./Mirror.js').Mirror} ReadableRecord
+ */
+
+/**
  * A Streamo whose values are commit records.
  *
  * Every byte on the chain is either a COMMIT, a child chunk referenced

@@ -1213,14 +1213,16 @@ describe(import.meta.url, ({ test }) => {
     await new Promise(r => wss.close(r))
   })
 
-  test('subscriber: incoming bytes that diverge from local archive surface conflictDetected (no silent overwrite)', async ({ assert }) => {
+  test('subscriber: incoming bytes that diverge from local archive surface mirror.divergence (no silent overwrite)', async ({ assert }) => {
     // The "watch is canonical and two truths disagree" scenario David asked
     // about during the demo build. The substrate-level behavior is already
     // pinned by Streamo.test.js (`makeRelayInboundStream: alignment check
     // catches the push-in-flight race`) — this test verifies the same
     // behavior reaches the registrySync wire layer cleanly:
     //
-    //   - the conflictDetected reactive cell fires
+    //   - the divergence reactive cell fires (was session.conflictDetected
+    //     until 2026-08-01; the receive path now reports on the Mirror, and
+    //     `conflictDetected` dies with relayInboundStream.js at step 5d)
     //   - the conflict carries enough info to recover (dataAddress of the
     //     local commit that would have been lost)
     //   - the local store is preserved (incoming chunks don't land)
@@ -1245,21 +1247,23 @@ describe(import.meta.url, ({ test }) => {
 
     const { wss, port } = await startServer(serverRegistry, keyHex)
     const session = await registrySync(clientRegistry, `localhost:${port}`)
-    // Explicit subscribe attaches session to clientRepo so the session-side
-    // conflictDetected map gets written when the alignment check fires
-    // (Mirror-and-Draft item 6: session-side reads require session-attach).
-    await session.subscribe(clientRepo.publicKeyHex)
+    // subscribe returns the Mirror — the thing that now carries divergence.
+    const mirror = await session.subscribe(clientRepo.publicKeyHex)
 
-    // Hello+auto-subscribe fires; the client's chain doesn't anchor on the
-    // server's chain, so when the server's SIG arrives the relay-inbound
-    // alignment check rejects.
-    await waitFor(() => session.getConflictDetected(clientRepo.publicKeyHex) != null, 2000)
+    // Hello+auto-subscribe fires; the client holds unpushed bytes at the
+    // positions the server is streaming into, so the receive path's byte
+    // comparison at `remoteLength` mismatches and reports.
+    await waitFor(() => mirror.divergence != null, 2000)
 
-    const conflict = session.getConflictDetected(clientRepo.publicKeyHex)
-    assert.ok(conflict,
-      'conflictDetected fires when subscribed bytes diverge from local')
-    assert.ok(conflict.dataAddress != null,
-      'conflict carries the local-commit dataAddress for recovery UX')
+    const divergence = mirror.divergence
+    assert.ok(divergence,
+      'mirror.divergence fires when subscribed bytes diverge from local')
+    assert.ok(divergence.atRemoteLength != null,
+      'divergence carries the cursor position it happened at')
+    assert.ok(divergence.preClone && divergence.wireBytes,
+      'divergence carries both sides — the local record and the wire bytes that disagreed')
+    assert.equal(typeof divergence.acknowledge, 'function',
+      'divergence is acknowledgeable so a consumer can clear it deliberately')
     assert.equal(clientRepo.get('branch'), 'client-side',
       'local state preserved — divergent incoming bytes did NOT silently overwrite')
 

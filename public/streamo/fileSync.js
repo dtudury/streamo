@@ -218,12 +218,9 @@ function readRepoMounts (repo) {
  * Pin-aware: when `atDataAddress` is set, reads the mounted record's
  * value at that specific commit instead of HEAD.
  *
- * @param {{
- *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
- *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
- * }} registry
- *   Structural subset of StreamoRecordRegistry — anything with these
- *   two methods works. (full registry passes trivially.)
+ * @param {import('./StreamoRecordRegistry.js').MirrorRegistry} registry
+ *   Structural — anything with `recaller`/`get`/`_materialize` works;
+ *   the full registry passes trivially.
  * @param {string} targetKey
  * @param {number|undefined} atDataAddress
  * @param {Set<string>} visited
@@ -288,12 +285,9 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
  * the same record appearing at two different top-level mount paths
  * (the diamond case) is correctly materialized at both locations.
  *
- * @param {import('./StreamoRecord.js').StreamoRecord} repo
+ * @param {import('./StreamoRecord.js').StreamoRecord | import('./Mirror.js').Mirror} repo
  * @param {string|null} ownKey
- * @param {{
- *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
- *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
- * }|null} registry
+ * @param {import('./StreamoRecordRegistry.js').MirrorRegistry|null} registry
  */
 async function collectAllMounted (repo, ownKey, registry) {
   if (!registry || !ownKey) return {}
@@ -397,15 +391,19 @@ function resolveRecordFileName (opt) {
  * Cycle detection during materialization stops at loops; diamonds (same
  * Record at two top-level mount paths) materialize at both locations.
  *
- * @param {import('./WritableStreamoRecord.js').WritableStreamoRecord} repo
- *   Must be Writable — fileSync commits the disk's state into the Record.
+ * @param {import('./Mirror.js').Mirror} repo
+ *   **A Mirror, and its `.local` must be Writable** — fileSync commits the
+ *   disk's state into the Record, and both of the things it needs to do that
+ *   live on the Mirror: `isReadyToAuthor` (line ~479) and `newDraft` via
+ *   `commitWithRetry` (lines ~518, ~684). Both moved off StreamoRecord on
+ *   2026-08-01; this said `WritableStreamoRecord` until 2026-08-02, which is
+ *   why the two reads below looked like errors and the two commits looked
+ *   fine. Every caller already passes a Mirror (`StreamoServer.js:261`,
+ *   `scripts/demo-mounts.js`, the test suite).
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
  * @param {object} [options]
- * @param {{
- *   get: (k: string) => import('./StreamoRecord.js').StreamoRecord|undefined,
- *   _materialize: (k: string) => Promise<import('./StreamoRecord.js').StreamoRecord>
- * }|null} [options.registry=null]
+ * @param {import('./StreamoRecordRegistry.js').MirrorRegistry|null} [options.registry=null]
  *   registry providing the bytes for mount targets. Unset → files-only.
  * @param {string|null} [options.pubkeyHex=null]  the pubkey of `repo`,
  *   used as the cycle-detection seed for mount materialization.
@@ -414,7 +412,19 @@ function resolveRecordFileName (opt) {
  *   a watcher batch causes that one file to be dropped from the commit
  *   (so a transient broken JSON doesn't overwrite the previous valid
  *   object). Default `streamo.json`. Pass `false` to disable.
- * @returns {Promise<import('@parcel/watcher').AsyncSubscription>}
+ * @param {import('./Signer.js').Signer|null} [options.signer=null]  with
+ *   `signerName` + `registry`, enables auto-sharding: writes route through
+ *   `FolderRecord.writeMany` and files under `ours: true` mounts go to
+ *   derived child Records.
+ * @param {string|null} [options.signerName=null]  the keysFor name `signer`
+ *   was attached under; child shards derive as `signerName + '/' + prefix`.
+ * @param {boolean} [options.mountsOnly=false]  commit only `mounts.json` and
+ *   mount-routed files from this Record — drop everything else on the floor.
+ * @returns {Promise<import('@parcel/watcher').AsyncSubscription & {
+ *   close: () => Promise<void>, drain: () => Promise<void>
+ * }>}
+ *   `close`/`drain` are added on top of parcel's subscription — see the
+ *   return statement at the bottom of this function.
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
   const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, signer = null, signerName = null, mountsOnly = false } = options
@@ -575,12 +585,21 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   let committingFromDisk = false
 
   // StreamoRecord → disk: fires when a new commit lands (from peer, archive, or local commit)
-  const unwatchRepoToDisk = repo.recaller.watch('fileSync:repo→disk', () => {
+  //
+  // Held in a named const because `Recaller.watch` returns nothing —
+  // `unwatch` takes the function, not a disposer. `close()` used to do
+  // `const unwatch = recaller.watch(...)` and then
+  // `if (typeof unwatch === 'function') unwatch()`, which is `undefined` and
+  // so never ran: the watch survived every close. The `closed` flag kept it
+  // harmless (flushToDisk bails), so it leaked quietly rather than
+  // misbehaving — but the teardown that reads as present was not present.
+  const repoToDisk = () => {
     if (committingFromDisk) return
     const commit = repo.lastCommit
     if (!commit) return
     inFlightFlush = flushToDisk()
-  })
+  }
+  repo.recaller.watch('fileSync:repo→disk', repoToDisk)
 
   // Disk → repo: fires when the filesystem changes. Uses
   // acceptsForCommit so events under mount prefixes never trigger
@@ -705,13 +724,13 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
   // only the disk→repo half, and the repo→disk half is a recaller watch
   // firing an unawaited flush — which is how an orphaned write outlives its
   // owner and throws into whatever is running next.
-  subscription.close = async () => {
-    closed = true
-    if (typeof unwatchRepoToDisk === 'function') unwatchRepoToDisk()
-    await subscription.unsubscribe()
-    await inFlightFlush
-  }
-  subscription.drain = async () => { await inFlightFlush }
-
-  return subscription
+  return Object.assign(subscription, {
+    close: async () => {
+      closed = true
+      repo.recaller.unwatch(repoToDisk)
+      await subscription.unsubscribe()
+      await inFlightFlush
+    },
+    drain: async () => { await inFlightFlush }
+  })
 }

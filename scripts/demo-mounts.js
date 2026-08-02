@@ -51,12 +51,14 @@ const lib = new WritableStreamoRecord()
 lib.attachSigner(libSigner, 'lib')
 {
   const w = lib.checkout()
+  // Flat shape (2026-06-04): the value IS the files map. This demo carried
+  // the 9.0.0 nested `{ files: {...} }` shape until 2026-08-02, which made
+  // it die on `encodeFile: files requires a string or Uint8Array` — fileSync
+  // saw one "file" named `files` whose value was an object.
   w.set({
-    files: {
-      'h.js':    '// fake h.js — tagged template literal parser\nexport function h () { return "(stub)" }\n',
-      'mount.js': '// fake mount.js — reactive DOM renderer\nexport function mount () { /* … */ }\n',
-      'StreamoRecord.js': '// fake StreamoRecord.js — the signed-chain wrapper\nexport class StreamoRecord {}\n'
-    }
+    'h.js':    '// fake h.js — tagged template literal parser\nexport function h () { return "(stub)" }\n',
+    'mount.js': '// fake mount.js — reactive DOM renderer\nexport function mount () { /* … */ }\n',
+    'StreamoRecord.js': '// fake StreamoRecord.js — the signed-chain wrapper\nexport class StreamoRecord {}\n'
   })
   lib.commit(w, 'seed library')
 }
@@ -70,13 +72,15 @@ const app = new WritableStreamoRecord()
 app.attachSigner(appSigner, 'app')
 {
   const w = app.checkout()
+  // Flat shape: files at the top level, routing table at `mounts.json`
+  // (was `value.mounts`, the 8.x legacy position — unread since the flatten).
   w.set({
-    files: {
-      'index.html': '<!doctype html>\n<title>mounts demo</title>\n<script type="module" src="./main.js"></script>\n<h1>App</h1>\n',
-      'main.js':    "// app code that imports from the mounted library\nimport { h, mount } from './streamo/h.js'\nconsole.log('app booted', h(), mount)\n"
-    },
-    mounts: {
-      'streamo/': { key: libKeyHex }
+    'index.html': '<!doctype html>\n<title>mounts demo</title>\n<script type="module" src="./main.js"></script>\n<h1>App</h1>\n',
+    'main.js':    "// app code that imports from the mounted library\nimport { h, mount } from './streamo/h.js'\nconsole.log('app booted', h(), mount)\n",
+    'mounts.json': {
+      mounts: {
+        'streamo/': { key: libKeyHex }
+      }
     }
   })
   app.commit(w, 'seed app + mount')
@@ -95,7 +99,9 @@ const registry = new StreamoRecordRegistry({
   }
 })
 await registry._materialize(libKeyHex)
-await registry._materialize(appKeyHex)
+// The Mirror, not the raw record — fileSync reads `isReadyToAuthor` and
+// authors through `newDraft`, and both live on Mirror since 2026-08-01.
+const appMirror = await registry._materialize(appKeyHex)
 
 // ── fileSync the app to a temp folder, mounts enabled ───────────────────
 
@@ -104,7 +110,7 @@ const dataDir = await mkdtemp(join(tmpdir(), 'streamo-mounts-demo-data-'))
 
 console.log(`\n  materializing → ${outDir}`)
 
-const sub = await fileSync(app, outDir, dataDir, {
+const sub = await fileSync(appMirror, outDir, dataDir, {
   registry,
   pubkeyHex: appKeyHex
 })

@@ -42,6 +42,39 @@ import { commitWithRetry } from './Draft.js'
 
 const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 
+/**
+ * Can this byte-store be authored *through*? Only a Mirror can — `newDraft`
+ * moved off StreamoRecord on 2026-08-01 because a Draft's commit awaits the
+ * Mirror's wire cursor, and nothing else has one.
+ *
+ * `isAuthorable` is the wrong question on its own: a bare
+ * WritableStreamoRecord answers `true` and then dies inside commitWithRetry
+ * on `newDraft is not a function`. Both checks stay, in order, so the slim-
+ * Record case keeps its own message.
+ *
+ * Same discipline as `Draft.js`'s `isAuthorable`: the check that throws is
+ * the check that narrows, so the two can't drift.
+ *
+ * @param {any} x
+ * @returns {x is import('./Mirror.js').Mirror}
+ */
+function canAuthor (x) {
+  return x != null && typeof x.newDraft === 'function'
+}
+
+/**
+ * Does this byte-store carry the author surface? A Mirror's `.local` is
+ * typed `StreamoRecord | WritableStreamoRecord` and the read-only case is
+ * real, not a typechecker artifact — a mount target the registry factory
+ * built slim.
+ *
+ * @param {any} x
+ * @returns {x is import('./WritableStreamoRecord.js').WritableStreamoRecord}
+ */
+function hasAuthorSurface (x) {
+  return x != null && typeof x.attachSigner === 'function'
+}
+
 // Flat-shape convention (2026-06-04): value IS the files map. Filenames
 // are top-level keys; `value['mounts.json'].mounts` is the routing table;
 // `value['streamo.json']` is the meta. Records still in the 9.0.0 nested
@@ -51,13 +84,21 @@ const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 
 export class FolderRecord {
   /**
-   * @param {import('./StreamoRecord.js').StreamoRecord} record
-   * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} [registry]
+   * @param {import('./StreamoRecord.js').StreamoRecord | import('./Mirror.js').Mirror} record
+   *   Reads work on either. **Writes need a Mirror** — see `canAuthor`
+   *   above. The registry hands out Mirrors (`_materialize` / `get`), so
+   *   the mount-following paths below are always in the Mirror case.
+   * @param {import('./StreamoRecordRegistry.js').MirrorRegistry} [registry]
    * @param {object} [options]
    * @param {{ subscribe(pubkeyHex: string): Promise<unknown> }} [options.session]
    *   if present, subscribed to before following mounts (over-the-wire case)
    * @param {number} [options.materializeTimeoutMs=30000]
    *   how long to wait for a mounted record to materialize after subscribe
+   * @param {import('./Signer.js').Signer} [options.signer]
+   *   root signer for cross-Record writes through `ours: true` mounts
+   * @param {string} [options.signerName]
+   *   the keysFor input `signer` was attached under; child shards derive as
+   *   `signerName + '/' + mountPrefix`
    */
   constructor (record, registry, options = {}) {
     this.record = record
@@ -191,10 +232,11 @@ export class FolderRecord {
       }
       // Materialize the mounted Record + attach the derived signer-name.
       const mountedRepo = await this.registry._materialize(mount.key)
-      if (typeof mountedRepo.local?.attachSigner !== 'function') {
+      const mountedLocal = mountedRepo.local
+      if (!hasAuthorSurface(mountedLocal)) {
         throw new Error(`FolderRecord.write: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mount targets`)
       }
-      mountedRepo.local.attachSigner(this.signer, childName)
+      mountedLocal.attachSigner(this.signer, childName)
       // Recurse into a child FolderRecord scoped to the mounted Record.
       const child = new FolderRecord(mountedRepo, this.registry, {
         session: this.session,
@@ -207,6 +249,9 @@ export class FolderRecord {
     }
     if (!this.record.isAuthorable) {
       throw new Error('FolderRecord.write: this Record is not Writable (slim StreamoRecord has no author surface — use WritableStreamoRecord)')
+    }
+    if (!canAuthor(this.record)) {
+      throw new Error('FolderRecord.write: authoring needs a Mirror, not a bare WritableStreamoRecord — the commit awaits a wire cursor. Wrap it (registry._materialize / registry.get) or pass server.mirror.')
     }
     // Migrated 2026-07-17 to Draft API via commitWithRetry —
     // preserves the auto-retry-on-conflict semantics FolderRecord's
@@ -236,7 +281,15 @@ export class FolderRecord {
    *   Record's value is REPLACED with the routed files map (fileSync's
    *   mirror-disk-to-Record semantics). Default merges into existing
    *   value (preserving sibling files at the destination).
-   * @param {string} [options.message]  forwarded to repo.update
+   * @param {string} [options.message]  forwarded to the commit
+   * @param {Date} [options.date]  forwarded to the commit; seed-history uses
+   *   it to replay git author dates
+   * @param {{ host: string, repo: string, dataAddress: number }} [options.remoteParent]
+   *   forwarded to the commit — the soft cryptographic footnote citing
+   *   another author's value (see StreamoRecord's file header)
+   * @param {boolean} [options.mountsOnly=false]  drop every unrouted file
+   *   except `mounts.json` itself. Per-layer, not cascading: children are
+   *   recursed into with `mountsOnly: false`.
    */
   async writeMany (filesMap, options = {}) {
     const { replace = false, message, date, remoteParent, mountsOnly = false } = options
@@ -279,6 +332,9 @@ export class FolderRecord {
       if (!this.record.isAuthorable) {
         throw new Error('FolderRecord.writeMany: home Record is not Writable')
       }
+      if (!canAuthor(this.record)) {
+        throw new Error('FolderRecord.writeMany: authoring needs a Mirror, not a bare WritableStreamoRecord — the commit awaits a wire cursor. Wrap it (registry._materialize / registry.get) or pass server.mirror.')
+      }
       // Migrated 2026-07-17 to Draft API via commitWithRetry.
       await commitWithRetry(
         this.record,
@@ -304,10 +360,11 @@ export class FolderRecord {
         throw new Error(`FolderRecord.writeMany: derived child pubkey ${derivedHex.slice(0, 16)}... doesn't match mount target ${mount.key.slice(0, 16)}... for '${mountPrefix}' — fix mounts.json to use the derived pubkey`)
       }
       const mountedRepo = await this.registry._materialize(mount.key)
-      if (typeof mountedRepo.local?.attachSigner !== 'function') {
+      const mountedLocal = mountedRepo.local
+      if (!hasAuthorSurface(mountedLocal)) {
         throw new Error(`FolderRecord.writeMany: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mounts`)
       }
-      mountedRepo.local.attachSigner(this.signer, childName)
+      mountedLocal.attachSigner(this.signer, childName)
       const child = new FolderRecord(mountedRepo, this.registry, {
         session: this.session,
         materializeTimeoutMs: this.materializeTimeoutMs,

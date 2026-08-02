@@ -3,6 +3,24 @@ import { Mirror } from './Mirror.js'
 import { Recaller } from './utils/Recaller.js'
 
 /**
+ * The structural contract the mount-following code actually depends on:
+ * materialize a key into a Mirror, look one up, and share a Recaller.
+ * `StreamoRecordRegistry` satisfies it, and so does any stand-in a caller
+ * builds — that latitude is why the shape was written structurally in the
+ * first place.
+ *
+ * Named once here because `fileSync.js` carried three inline copies of it,
+ * and all three still said `StreamoRecord` after `_materialize` started
+ * returning Mirrors — the duplication is what let them drift silently.
+ *
+ * @typedef {{
+ *   recaller: Recaller,
+ *   get: (publicKeyHex: string) => Mirror|undefined,
+ *   _materialize: (publicKeyHex: string) => Promise<Mirror>
+ * }} MirrorRegistry
+ */
+
+/**
  * Manages a collection of StreamoRecords keyed by hex-encoded public key. Every
  * registry has a shared Recaller — its reactive coordination point —
  * which **must be provided by the caller**. The default factory creates
@@ -122,7 +140,7 @@ export class StreamoRecordRegistry {
    */
   async _materialize (publicKeyHex) {
     if (this.#streams.has(publicKeyHex)) return this.#streams.get(publicKeyHex)
-    /** @type {(stream: StreamoRecord) => void} */
+    /** @type {(mirror: Mirror) => void} */
     let resolve = () => {}
     const placeholder = new Promise(r => { resolve = r })
     this.#streams.set(publicKeyHex, placeholder)
@@ -162,17 +180,25 @@ export class StreamoRecordRegistry {
   offOpen (cb) { this.#openCallbacks.delete(cb) }
 
   /**
-   * Return an already-open StreamoRecord, or undefined if not opened yet.
+   * Return an already-open Mirror, or undefined if not opened yet.
    * Reports access on `(registry, 'keys')` so the calling reactive
    * cell re-runs when the set of open repos changes.
+   *
+   * **Returns a Mirror, not a StreamoRecord** — same correction
+   * `_materialize`'s JSDoc got on 2026-08-01, applied here on 2026-08-02.
+   * The `instanceof Mirror` filter below was already the truth; only the
+   * `@returns` was stale, so every caller reading `.local` off a `get()`
+   * looked like a type error. Reads delegate through the Mirror;
+   * authoring goes via `.local`.
+   *
    * @param {string} publicKeyHex
-   * @returns {StreamoRecord|undefined}
+   * @returns {Mirror|undefined}
    */
   get (publicKeyHex) {
     this.recaller.reportKeyAccess(this, 'keys')
     const entry = this.#streams.get(publicKeyHex)
     // Filters out the pending-Promise placeholder; what remains is the
-    // resolved StreamoRecord (or undefined for not-yet-opened keys).
+    // resolved Mirror (or undefined for not-yet-opened keys).
     return entry instanceof Mirror ? entry : undefined
   }
 
@@ -183,9 +209,10 @@ export class StreamoRecordRegistry {
   }
 
   /**
-   * Iterate over [publicKeyHex, StreamoRecord] pairs (only fully-opened).
+   * Iterate over [publicKeyHex, Mirror] pairs (only fully-opened).
    * Reports access — slots iterating the registry auto-subscribe to
    * new-repo opens.
+   * @returns {Generator<[string, Mirror]>}
    */
   [Symbol.iterator] () {
     this.recaller.reportKeyAccess(this, 'keys')

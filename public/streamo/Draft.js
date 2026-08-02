@@ -71,6 +71,7 @@ export class Draft {
   #signerName
   #parentChainHash
   #pendingValue
+  /** @type {'draft'|'pending'|'landed'|'superseded'|'cancelled'|'failed'} */
   #status = 'draft'
   #error = null
   #recaller
@@ -175,8 +176,14 @@ export class Draft {
    * @param {Date} [options.date]
    */
   async commit (options = {}) {
-    if (this.#status !== 'draft') {
-      throw new Error(`Draft.commit: status is '${this.#status}'; only 'draft' is commit-able`)
+    // Read once into a local rather than guarding on `this.#status` directly.
+    // Narrowing a field to `'draft'` here survives every `#setStatus` call
+    // below — the typechecker can't see a private-field write through a
+    // method — so the `=== 'pending'` check in the catch read as dead code.
+    // It isn't; by then `#setStatus('pending')` has run.
+    const entryStatus = this.#status
+    if (entryStatus !== 'draft') {
+      throw new Error(`Draft.commit: status is '${entryStatus}'; only 'draft' is commit-able`)
     }
     const { message, date } = options
 
@@ -295,10 +302,16 @@ export class Draft {
  * conflict is user-facing signal, use Draft directly.
  *
  * @template T
- * @param {import('./Mirror.js').Mirror | import('./WritableStreamoRecord.js').WritableStreamoRecord} mirror
- *   Polymorphic since 2026-08-01: it only needs `newDraft` + `get`, which
- *   both Mirror and StreamoRecord have. A Mirror gets the remoteLength
- *   await; a record gets the legacy `_awaitChainHash`.
+ * @param {import('./Mirror.js').Mirror} mirror
+ *   **A Mirror, not a record.** This JSDoc claimed polymorphism over
+ *   `WritableStreamoRecord` from 2026-08-01 to 2026-08-02 — *"it only needs
+ *   `newDraft` + `get`, which both Mirror and StreamoRecord have."* By the
+ *   time that sentence was written `newDraft` had already moved off
+ *   StreamoRecord onto Mirror (StreamoRecord.js's own tombstone comment
+ *   records the move, same day), so the claim was false when made and a bare
+ *   record died on `mirror.newDraft is not a function`. `scripts/seed-history.js`
+ *   was passing `server.streamo` and hitting exactly that. Authoring needs a
+ *   wire cursor to await, and only a Mirror has one.
  * @param {(current: any) => T} updater  called with mirror's current value on each attempt
  * @param {object} [options]
  * @param {number} [options.retries=3]  max total attempts is retries + 1
@@ -310,6 +323,15 @@ export class Draft {
  */
 export async function commitWithRetry (mirror, updater, options = {}) {
   const { retries = 3, message, date, signer = null, signerName = null } = options
+  if (typeof mirror?.newDraft !== 'function') {
+    throw new TypeError(
+      'commitWithRetry: needs a Mirror (got something without newDraft). ' +
+      'A bare WritableStreamoRecord answers isAuthorable === true but cannot ' +
+      'author — newDraft moved to Mirror on 2026-08-01 because a Draft\'s ' +
+      'commit awaits the wire cursor. If you hold a StreamoServer, that\'s ' +
+      '`server.mirror`, not `server.streamo`.'
+    )
+  }
   let lastError = null
   for (let attempt = 1; attempt <= retries + 1; attempt++) {
     const draft = mirror.newDraft(signer, signerName)

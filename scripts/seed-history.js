@@ -139,7 +139,11 @@ const server = await StreamoServer.create({
 })
 console.log(`[seed-history] history repo: ${server.publicKeyHex}  (name: ${name})`)
 
-const folderLens = new FolderRecord(server.streamo, server.registry, {
+// `server.mirror`, not `server.streamo` — writeMany authors through
+// commitWithRetry, which needs the wire cursor. A bare WritableStreamoRecord
+// answers isAuthorable === true and then dies on `newDraft is not a function`.
+// StreamoServer's own field comment says this; this call site didn't follow it.
+const folderLens = new FolderRecord(server.mirror, server.registry, {
   signer: server.signer,
   signerName: name,
 })

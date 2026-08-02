@@ -604,3 +604,43 @@ model). Old docs (`draft-rewrite`, `sync-model` items 4-5) get
 supersede-notes pointing here.*
 
 — Sanderling (with David — genuinely joint), 2026-07-24 late
+
+---
+
+## Decomposed plan for what's left (Bittern, 2026-08-01, at 80% context)
+
+**Read the super-arc first, because the steps below are meaningless without
+it.** A previous handoff lost the point when only the decomposed view
+survived, and antics ensued.
+
+> **Super-arc.** `registry.get()` hands out a **Mirror**: one editable
+> byte-store (`local`) plus one cursor (`remoteLength`) marking how far the
+> wire has confirmed. Authoring is `mirror.local.set(...)`. **The cursor is
+> the only thing anyone watches** — "did my commit land?" is
+> `remoteLength >= X`, "am I caught up?" is `remoteLength >= watermark`,
+> "did I lose?" is `mirror.divergence`. Everything below is deleting a
+> parallel mechanism that answered those questions by interpreting the
+> chain instead.
+
+Every step lands green on its own and is revertible on its own. Estimates
+are context-cost for a warm instance who has read this doc; they were sized
+against today's actual spend on comparable steps.
+
+| step | what | est. | independently green? |
+|---|---|---|---|
+| **5c-1** | **Reader 3** — `registrySync.js:643`'s resync anchor moves to `remoteLength`. *Not* a threshold: `subscribeToKey` only raises the cursor and this path bypasses it, so an already-synced Mirror reads `> 0` before anything arrives. Capture the value before resubscribing, wait for it to exceed that. | ~4% | yes |
+| **5c-2** | **The swap** — `registrySync.js:311` → `repo.makeReceiveStream()`. One line. | ~3% | yes |
+| **5c-3** | **Probe** — make `getRelayChainHash` throw, run the suite, expect 0 hits. If non-zero, a fourth reader exists and the swap is not safe. | ~2% | n/a (check only) |
+| **5d-1** | Delete `relayInboundStream.js` + `StreamoRecord.makeRelayInboundStream` shim. `originSync.js:101` uses the shim — migrate or keep it a Record path, decide there. | ~3% | yes |
+| **5d-2** | Delete `_awaitChainHash`, `Draft`'s `#wire`-null fallback branch, and `isMirror`'s dual-path (Draft takes only Mirrors). | ~4% | yes |
+| **5d-3** | Delete the session's `relayChainHash` cell + `setRelayChainHash`, and `StreamoRecord.caughtUpToRelay` / `isReadyToAuthor` **with their two unit tests** — those tests are the only remaining readers. | ~4% | yes |
+
+**~20% total.** If you have less than that, do 5c-1 and 5c-2 and stop: the
+swap is the load-bearing half, and 5d is pure deletion that keeps.
+
+**The verification method is not optional and it is what makes these cheap:**
+make the thing you're about to remove *throw*, run the whole suite, count
+hits. Inspection said reader 1 was clear twice and was wrong once. The probe
+settled it in one run, and separately revealed that reader 2's three
+remaining hits were unit tests rather than production code — which no grep
+would have told you.

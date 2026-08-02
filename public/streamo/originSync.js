@@ -1,4 +1,5 @@
 import WebSocket from 'ws'
+import { Mirror } from './Mirror.js'
 import { parseOrigin } from './utils.js'
 
 const RETRY_BASE_MS = 500
@@ -94,11 +95,21 @@ export async function originSync (record, publicKeyHex, hostPort, { retryFirstCo
       } catch {}
     })()
 
-    // Trust+append via makeRelayInboundStream — the upstream IS chain
-    // authority. The alignment check still catches push-in-flight races
-    // (we wrote locally before the upstream acknowledged our push, and
-    // it sends down something else in the meantime).
-    const writer = record.makeRelayInboundStream().getWriter()
+    // Trust+append via the Mirror's receive stream — the upstream IS chain
+    // authority. Byte comparison at `remoteLength` still catches
+    // push-in-flight races (we wrote locally before the upstream
+    // acknowledged our push and it sent down something else meanwhile);
+    // it just does it by comparing bytes rather than interpreting chains.
+    //
+    // One Mirror per upstream connection, constructed here rather than
+    // taken as a parameter: originSync has no registry, and the cursor
+    // means "how far THIS connection has confirmed" — which is per-
+    // connection by definition. `record` may already hold bytes; the
+    // upstream streams from 0, so the cursor starts at 0 and walks the
+    // echo of what we already have, matching byte-for-byte, until it
+    // reaches new material.
+    const mirror = new Mirror({ publicKeyHex, local: record })
+    const writer = mirror.makeReceiveStream().getWriter()
 
     ws.on('message', data => {
       writer.write(new Uint8Array(data)).catch(e => {

@@ -20,7 +20,6 @@ import { hexToBytes, bytesToHex, parseOrigin, arraysEqual } from './utils.js'
 import { StreamoRecordSerializer, ConnectionAccumulator } from './StreamoRecordSerializer.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { turtleIn, turtleOut, turtleLocal } from './utils/turtleLog.js'
-import { makeRelayInboundStream } from './relayInboundStream.js'
 
 const UNKNOWN_KEY = '0'.repeat(66)
 

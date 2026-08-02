@@ -47,7 +47,6 @@
  */
 import { Streamo } from './Streamo.js'
 import { verifySignature } from './Signer.js'
-import { makeRelayInboundStream as _makeRelayInboundStream } from './relayInboundStream.js'
 import { Draft } from './Draft.js'
 
 /**
@@ -398,20 +397,10 @@ export class StreamoRecord extends Streamo {
     // explicit reset (full resync UX), the caller does it via session.
   }
 
-  /**
-   * Like Streamo.makeWritableStream(), for the client-side receive path
-   * from a trusted relay.
-   *
-   * "What comes down is always from the top, and always correct" — the
-   * relay's StreamoRecordSerializer has already validated the chain and
-   * the signatures, so this writer skips those checks. It does perform
-   * a chain-hash alignment check at SIG arrival to catch the push-in-
-   * flight race; on failure it raises `conflictDetected`.
-   *
-   * @param {number} [maxFrameSize]
-   * @returns {WritableStream}
-   */
-  makeRelayInboundStream (maxFrameSize = 64 * 1024 * 1024) {
-    return _makeRelayInboundStream(this, maxFrameSize)
-  }
+  // The client-side receive path lived here as `makeRelayInboundStream`
+  // until 2026-08-01 — a shim onto relayInboundStream.js, which staged
+  // chunks and compared chain hashes at each SIG. It's `Mirror.makeReceiveStream`
+  // now: byte comparison at `remoteLength`, no chain interpretation. The
+  // job moved off the Record deliberately, because trust-and-append is
+  // something the wire does TO a Record, not part of a Record's identity.
 }

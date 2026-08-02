@@ -376,87 +376,11 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(await s.verify(sig, publicKey), 'verify must accept sign\'s output')
   })
 
-  test('makeRelayInboundStream: alignment check catches the push-in-flight race', async ({ assert }) => {
-    // The client-side receive path: "what comes down is always from the
-    // top, always correct" — no chain or crypto check (relay validated),
-    // but the alignment check stays. It fires when the client has local
-    // content past the last shared sig (typically: a push in flight,
-    // unaccepted by the relay yet) and incoming relay bytes would land
-    // past that local content with their refs pointing at positions the
-    // local content occupies → would corrupt decodes.
-
-    const signer = new Signer('alice', 'hunter2', 1)
-    const name = 'inbound-alignment'
-    const { publicKey: _ } = await signer.keysFor(name)
-
-    const readChunks = s => {
-      const out = []
-      let addr = s.byteLength - 1
-      while (addr >= 0) { const c = s.resolve(addr); out.unshift(c); addr -= c.length }
-      return out
-    }
-    const frame = code => {
-      const f = new Uint8Array(4 + code.length)
-      new DataView(f.buffer).setUint32(0, code.length, true)
-      f.set(code, 4)
-      return f
-    }
-
-    // Set up a "shared" history: both sides agree on this prefix.
-    const shared = new WritableStreamoRecord()
-    shared.set({ v: 'one' })
-    await shared.sign(signer, name)
-    const sharedChunks = readChunks(shared)
-
-    // Client: has shared + local-pending (banana, signed locally, not yet
-    // accepted by any relay)
-    const client = new WritableStreamoRecord()
-    // Attach a mock session so the wire-inbound path can write conflictDetected
-    // through session (Mirror-and-Draft item 6 step 3e). The mock stores
-    // the flag; assertions below read via the session.
-    const conflictStore = new Map()
-    const fakeSession = {
-      _resyncRepo: () => {},
-      getConflictDetected: (key) => conflictStore.get(key) ?? null,
-      setConflictDetected: (key, info) => { conflictStore.set(key, info) }
-    }
-    client._attachSession(fakeSession)
-    const inA = client.makeRelayInboundStream().getWriter()
-    for (const c of sharedChunks) await inA.write(frame(c))
-    client.set({ v: 'banana' })
-    await client.sign(signer, name)
-    const clientByteLengthBeforeMerge = client.byteLength
-
-    // "Relay" view: extends the SAME shared base with cherry (a divergent
-    // commit). To make the base truly shared at the byte level (commit
-    // chunks include a date; reconstructing via set() would produce
-    // different bytes), copy shared's actual chunks into the relay via the
-    // unverified writer, then extend with cherry on top.
-    const relay = new WritableStreamoRecord()
-    const relayLoader = relay.makeWritableStream().getWriter()
-    for (const c of sharedChunks) await relayLoader.write(frame(c))
-    relay.set({ v: 'cherry' })
-    await relay.sign(signer, name)
-
-    // New writer (the "second connection" simulating reconnect / new sync)
-    const inB = client.makeRelayInboundStream().getWriter()
-    let caught = null
-    try {
-      for (const c of readChunks(relay)) await inB.write(frame(c))
-    } catch (e) { caught = e }
-
-    assert.ok(caught, 'alignment failure must throw')
-    const conflict = fakeSession.getConflictDetected(client.publicKeyHex)
-    assert.ok(conflict, 'conflictDetected flag fires')
-    assert.ok(conflict.dataAddress != null,
-      'conflictDetected carries the local rejected commit\'s dataAddress for recovery UX')
-    assert.deepEqual(client.decode(conflict.dataAddress), { v: 'banana' },
-      'the dataAddress decodes to the value the user tried to write')
-    assert.equal(client.byteLength, clientByteLengthBeforeMerge,
-      'no remote chunks land — local store stays decode-safe')
-    assert.equal(client.get('v'), 'banana', 'client can still read its local-pending value')
-  })
-
+  // 'makeRelayInboundStream: alignment check catches the push-in-flight
+  // race' was deleted 2026-08-01 with the code it tested. Its successor is
+  // registrySync.test.js's 'subscriber: incoming bytes that diverge from
+  // local archive surface mirror.divergence' — same scenario, asserted on
+  // the cell that now carries it.
   test('makeReadableStream({ fromOffset }) skips bytes the receiver already has + batches ready chunks', async ({ assert }) => {
     // The wire-protocol cleanup lets the receiver carry its signedLength in
     // the subscribe handshake; the sender starts from there rather than from

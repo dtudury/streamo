@@ -15,6 +15,7 @@ import readline from 'node:readline'
 import { Signer } from '../../streamo/Signer.js'
 import { StreamoRecord } from '../../streamo/StreamoRecord.js'
 import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { hasAuthorSurface } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { registrySync } from '../../streamo/registrySync.js'
@@ -80,10 +81,17 @@ const session = await registrySync(registry, `${host}:${port}`, {
 // materialize) so the wire actually subscribes — pre-10.0.0 this used
 // `registry.open` and bytes arrived only via side-effect cascades.
 const myRepo = await session.subscribe(myKey)
-myRepo.attachSigner(signer, 'chat')
+// `.local`: session.subscribe returns a Mirror, which delegates reads and
+// withholds the author verbs on purpose. The guard narrows and throws in one
+// statement so the two can't drift.
+const myRecord = myRepo.local
+if (!hasAuthorSurface(myRecord)) {
+  throw new Error('chat cli: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')
+}
+myRecord.attachSigner(signer, 'chat')
 if (!myRepo.get('name')) {
-  myRepo.defaultMessage = `joined as ${username} (cli)`
-  myRepo.set({ name: username, messages: [] })
+  myRecord.defaultMessage = `joined as ${username} (cli)`
+  myRecord.set({ name: username, messages: [] })
 }
 
 // Announce and express interest
@@ -137,8 +145,8 @@ rl.on('line', async line => {
   if (!text) { rl.prompt(); return }
   const messages = myRepo.get('messages') ?? []
   const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
-  myRepo.defaultMessage = `"${preview}" (cli)`
-  myRepo.set({ name: username, messages: [...messages, { text, at: new Date() }] })
+  myRecord.defaultMessage = `"${preview}" (cli)`
+  myRecord.set({ name: username, messages: [...messages, { text, at: new Date() }] })
   rl.prompt()
 })
 

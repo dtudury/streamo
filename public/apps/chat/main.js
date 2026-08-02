@@ -13,6 +13,7 @@ import { Signer }         from '../../streamo/Signer.js'
 import { Recaller }       from '../../streamo/utils/Recaller.js'
 import { StreamoRecord }  from '../../streamo/StreamoRecord.js'
 import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { hasAuthorSurface } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry }   from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync }   from '../../streamo/registrySync.js'
 import { liveValue }      from '../../streamo/LiveSource.js'
@@ -272,8 +273,14 @@ async function login (e) {
     // Without going through session.subscribe (or having it tripped via
     // another tab's announce), our own bytes would sit unsynced.
     myRepo = await session.subscribe(myKey)
-    myRepo.attachSigner(signer, 'chat')
-    myRepo.defaultMessage = `joined as ${username} (web)`
+    // `.local`: session.subscribe returns a Mirror, which withholds the
+    // author verbs on purpose. Narrow and throw in one statement.
+    const myRecord = myRepo.local
+    if (!hasAuthorSurface(myRecord)) {
+      throw new Error('chat: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')
+    }
+    myRecord.attachSigner(signer, 'chat')
+    myRecord.defaultMessage = `joined as ${username} (web)`
     // Expose for manual archive surgery — the relay stores per-key as
     // `.streamo/<myKey>.bin`. Logged at INFO so it's visible without
     // turning on verbose channels.

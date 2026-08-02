@@ -12,7 +12,7 @@ import { h, handle }    from '../../streamo/h.js'
 import { mount }        from '../../streamo/mount.js'
 import { Signer }       from '../../streamo/Signer.js'
 import { StreamoRecord } from '../../streamo/StreamoRecord.js'
-import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { WritableStreamoRecord, hasAuthorSurface } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { bytesToHex }   from '../../streamo/utils.js'
@@ -255,7 +255,13 @@ async function login (e) {
   const idxKey = bytesToHex(idxPub)
   registry._writableKeys.add(idxKey)
   myDeckIndex = await session.subscribe(idxKey)
-  myDeckIndex.attachSigner(signer, idxStream)
+  // `.local`: session.subscribe returns a Mirror, which withholds the author
+  // verbs on purpose. Narrow and throw in one statement.
+  const idxRecord = myDeckIndex.local
+  if (!hasAuthorSurface(idxRecord)) {
+    throw new Error('flashcards: deck index opened read-only — registry._writableKeys must contain it before the first materialize')
+  }
+  idxRecord.attachSigner(signer, idxStream)
 
   state.set('connecting', false)
   state.set('loggedIn', true)

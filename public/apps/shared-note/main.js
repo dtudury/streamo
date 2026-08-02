@@ -23,6 +23,7 @@ import { Signer } from '../../streamo/Signer.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { StreamoRecord } from '../../streamo/StreamoRecord.js'
 import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { hasAuthorSurface } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { liveObject } from '../../streamo/LiveSource.js'
@@ -60,8 +61,14 @@ async function login (e) {
     onConnectionChange: c => ui.set('connected', c)
   })
   myRepo = await session.subscribe(myKey)
-  myRepo.attachSigner(signer, 'shared-note')
-  myRepo.defaultMessage = `edit by ${username}`
+  // `.local`: session.subscribe returns a Mirror, which withholds the author
+  // verbs on purpose. Narrow and throw in one statement.
+  const myRecord = myRepo.local
+  if (!hasAuthorSurface(myRecord)) {
+    throw new Error('shared-note: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')
+  }
+  myRecord.attachSigner(signer, 'shared-note')
+  myRecord.defaultMessage = `edit by ${username}`
   // Make the repo inspectable from the devtools console.
   window.sharedNoteRepo = myRepo
 

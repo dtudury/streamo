@@ -39,6 +39,7 @@
  */
 
 import { commitWithRetry } from './Draft.js'
+import { hasAuthorSurface } from './WritableStreamoRecord.js'
 
 const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 
@@ -62,18 +63,6 @@ function canAuthor (x) {
   return x != null && typeof x.newDraft === 'function'
 }
 
-/**
- * Does this byte-store carry the author surface? A Mirror's `.local` is
- * typed `StreamoRecord | WritableStreamoRecord` and the read-only case is
- * real, not a typechecker artifact — a mount target the registry factory
- * built slim.
- *
- * @param {any} x
- * @returns {x is import('./WritableStreamoRecord.js').WritableStreamoRecord}
- */
-function hasAuthorSurface (x) {
-  return x != null && typeof x.attachSigner === 'function'
-}
 
 // Flat-shape convention (2026-06-04): value IS the files map. Filenames
 // are top-level keys; `value['mounts.json'].mounts` is the routing table;

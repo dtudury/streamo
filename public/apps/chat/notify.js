@@ -23,6 +23,7 @@
 import { Signer } from '../../streamo/Signer.js'
 import { StreamoRecord } from '../../streamo/StreamoRecord.js'
 import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { hasAuthorSurface } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { Recaller } from '../../streamo/utils/Recaller.js'
 import { registrySync } from '../../streamo/registrySync.js'
@@ -89,7 +90,13 @@ const session = await registrySync(registry, `${secure ? 'wss' : 'ws'}://${host}
 // streams my history down. attachSigner makes the commit provably mine;
 // announce lets any open chat tab discover me and start listening.
 const myRepo = await session.subscribe(myKey)
-myRepo.attachSigner(signer, 'chat')
+// `.local`: session.subscribe returns a Mirror, which withholds the author
+// verbs on purpose. Narrow and throw in one statement.
+const myRecord = myRepo.local
+if (!hasAuthorSurface(myRecord)) {
+  throw new Error('chat notify: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')
+}
+myRecord.attachSigner(signer, 'chat')
 session.interest(rootKey)
 session.announce(myKey, rootKey)
 
@@ -100,13 +107,13 @@ await settle(() => myRepo.byteLength, { minMs: 1500, quietMs: 600, capMs: 8000 }
 
 const messages = myRepo.get('messages') ?? []
 const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
-myRepo.defaultMessage = `"${preview}" (notify)`
-myRepo.set({ name: myRepo.get('name') ?? username, messages: [...messages, { text, at: new Date() }] })
+myRecord.defaultMessage = `"${preview}" (notify)`
+myRecord.set({ name: myRepo.get('name') ?? username, messages: [...messages, { text, at: new Date() }] })
 
 // Give the push ~2s to travel up the WebSocket before we exit — there's
 // no relay ack to wait on; pushRejected is the one failure signal.
 await new Promise(r => setTimeout(r, 2000))
-if (myRepo._session?.getPushRejected?.(myRepo.publicKeyHex)) {
+if (myRepo.local._session?.getPushRejected?.(myRepo.publicKeyHex)) {
   console.error('notify.js: relay rejected the push — chain diverged')
   process.exit(1)
 }

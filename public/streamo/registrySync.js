@@ -658,10 +658,18 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *   Announce a repository as related to `topic`.  The server fans this out to
  *   all other connected peers that have called `interest(topic)`.  Ephemeral —
  *   no persistence, only routes to currently-connected interested peers.
- * @property {(key: string) => Promise<import('./StreamoRecord.js').StreamoRecord>} subscribe
- *   Open the StreamoRecord for `key` if not yet opened, set up bidirectional wire
- *   sync, and return the StreamoRecord. The everyday "I want this key live" verb —
- *   collapses `registry._materialize` + wire setup into one call.
+ * @property {(key: string) => Promise<import('./Mirror.js').Mirror>} subscribe
+ *   Open the Record for `key` if not yet opened, set up bidirectional wire
+ *   sync, and return the **Mirror** wrapping it. The everyday "I want this
+ *   key live" verb — collapses `registry._materialize` + wire setup into one
+ *   call.
+ *
+ *   **Authoring goes through `.local`.** A Mirror delegates the read verbs
+ *   and deliberately withholds the write ones, so `subscribe(k).attachSigner(...)`
+ *   throws and `subscribe(k).defaultMessage = '…'` silently writes to a
+ *   property nothing reads. This said `StreamoRecord` from Mirror-and-Draft
+ *   step 4 until 2026-08-02, and it is the copy every app reads — six login
+ *   paths were broken behind it.
  */
 
 /**
@@ -974,11 +982,16 @@ export function registrySync (registry, hostPort, options = {}) {
       peer?.announce(key, topic)
     },
     /**
-     * Subscribe to a specific repo key: open the StreamoRecord locally, plumb the
-     * wire, and return the StreamoRecord. While reconnecting there is no live peer —
-     * the StreamoRecord still opens locally and the wire plumbing replays once the
-     * connection returns.
-     * @returns {Promise<import('./StreamoRecord.js').StreamoRecord>}
+     * Subscribe to a specific repo key: open the Record locally, plumb the
+     * wire, and return the **Mirror** wrapping it. While reconnecting there is
+     * no live peer — the Record still opens locally and the wire plumbing
+     * replays once the connection returns.
+     *
+     * Third and last copy of this return type (the `RegistrySession` typedef
+     * and `handleRegistryPeer`'s inline object are the other two); all three
+     * said `StreamoRecord` until 2026-08-02. The body has already migrated —
+     * `repo.local._attachSession?.(...)` below only makes sense on a Mirror.
+     * @returns {Promise<import('./Mirror.js').Mirror>}
      */
     async subscribe (key) {
       subscribed.add(key)

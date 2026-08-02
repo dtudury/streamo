@@ -34,6 +34,31 @@ import { arraysEqual, chainHashOf } from './utils.js'
 // duplicated across 5 files total.
 
 /**
+ * Does this byte-store carry the author surface?
+ *
+ * The question that needs asking wherever a `Mirror.local` is about to be
+ * written to: `local` is typed `StreamoRecord | WritableStreamoRecord` and
+ * the read-only case is real, not a typechecker artifact. A registry factory
+ * decides per key, and `todomvc/main.js` documents the exact way it goes
+ * wrong — visit your own list URL before logging in and the watcher
+ * materializes your key slim, so `attachSigner` throws.
+ *
+ * Written as a predicate, following `Draft.js`'s rule that the check which
+ * throws is the check that narrows, so the two can't drift apart. Consolidated
+ * here on 2026-08-02 from a local copy in FolderRecord.js — same reason
+ * `arraysEqual` and `sha256` were consolidated into utils.js.
+ *
+ * `instanceof` would be the other option, but the duck-type is what the
+ * runtime failure actually depends on and it costs nothing.
+ *
+ * @param {any} x
+ * @returns {x is WritableStreamoRecord}
+ */
+export function hasAuthorSurface (x) {
+  return x != null && typeof x.attachSigner === 'function'
+}
+
+/**
  * Fetch a StreamoRecord snapshot from an HTTP source URL or host shorthand.
  * Returns `{ repo, host, keyHex }` — the loaded slim StreamoRecord plus
  * enough context to construct a `remoteParent` citation automatically.

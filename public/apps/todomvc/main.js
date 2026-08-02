@@ -10,6 +10,7 @@ import { Signer }       from '../../streamo/Signer.js'
 import { Recaller }     from '../../streamo/utils/Recaller.js'
 import { StreamoRecord } from '../../streamo/StreamoRecord.js'
 import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { hasAuthorSurface } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { registrySync } from '../../streamo/registrySync.js'
 import { liveValue }    from '../../streamo/LiveSource.js'
@@ -130,8 +131,15 @@ async function login (e) {
     // navigate to your list. Real fix needs a registry "promote to
     // Writable" verb — tracked as 11.0.x follow-up.
     myRepo = await session.subscribe(myKey)
-    myRepo.attachSigner(signer, 'todomvc')
-    myRepo.defaultMessage = `signed in as ${username}`
+    // `.local`: session.subscribe returns a Mirror, which withholds the
+    // author verbs on purpose. The guard is the 11.0 limitation named just
+    // above, turned from a TypeError into a sentence.
+    const myRecord = myRepo.local
+    if (!hasAuthorSurface(myRecord)) {
+      throw new Error('todomvc: your list opened read-only — you visited its URL before logging in, so it was materialized slim. Reload after logging in.')
+    }
+    myRecord.attachSigner(signer, 'todomvc')
+    myRecord.defaultMessage = `signed in as ${username}`
     // If the URL doesn't already point at a valid key (fresh visit,
     // or user pasted a malformed URL), navigate to our own list. If
     // the URL DOES carry a key, leave it alone — the user is here to

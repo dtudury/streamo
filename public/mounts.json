@@ -23,6 +23,9 @@
     "apps/styles/": {
       "key": "020869c42cc43195d92ed0351c7a3f24b81a61ad4983de662302d56f939a8ce435",
       "ours": true
+    },
+    "apps/grove/": {
+      "ours": true
     }
   }
 }

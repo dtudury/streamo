@@ -131,9 +131,6 @@ async function login (e) {
     // navigate to your list. Real fix needs a registry "promote to
     // Writable" verb — tracked as 11.0.x follow-up.
     myRepo = await session.subscribe(myKey)
-    // `.local`: session.subscribe returns a Mirror, which withholds the
-    // author verbs on purpose. The guard is the 11.0 limitation named just
-    // above, turned from a TypeError into a sentence.
     const myRecord = myRepo.local
     if (!hasAuthorSurface(myRecord)) {
       throw new Error('todomvc: your list opened read-only — you visited its URL before logging in, so it was materialized slim. Reload after logging in.')

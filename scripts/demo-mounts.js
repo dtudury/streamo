@@ -51,10 +51,6 @@ const lib = new WritableStreamoRecord()
 lib.attachSigner(libSigner, 'lib')
 {
   const w = lib.checkout()
-  // Flat shape (2026-06-04): the value IS the files map. This demo carried
-  // the 9.0.0 nested `{ files: {...} }` shape until 2026-08-02, which made
-  // it die on `encodeFile: files requires a string or Uint8Array` — fileSync
-  // saw one "file" named `files` whose value was an object.
   w.set({
     'h.js':    '// fake h.js — tagged template literal parser\nexport function h () { return "(stub)" }\n',
     'mount.js': '// fake mount.js — reactive DOM renderer\nexport function mount () { /* … */ }\n',
@@ -64,7 +60,7 @@ lib.attachSigner(libSigner, 'lib')
 }
 
 // ── App record ──────────────────────────────────────────────────────────
-// Its own `files` + a `mounts` entry pointing at the library record.
+// Its own files + a `mounts.json` pointing at the library record.
 // The app's `main.js` imports from `./streamo/h.js` as if streamo were
 // a sibling folder — the mount makes that path real.
 
@@ -72,8 +68,6 @@ const app = new WritableStreamoRecord()
 app.attachSigner(appSigner, 'app')
 {
   const w = app.checkout()
-  // Flat shape: files at the top level, routing table at `mounts.json`
-  // (was `value.mounts`, the 8.x legacy position — unread since the flatten).
   w.set({
     'index.html': '<!doctype html>\n<title>mounts demo</title>\n<script type="module" src="./main.js"></script>\n<h1>App</h1>\n',
     'main.js':    "// app code that imports from the mounted library\nimport { h, mount } from './streamo/h.js'\nconsole.log('app booted', h(), mount)\n",
@@ -99,8 +93,7 @@ const registry = new StreamoRecordRegistry({
   }
 })
 await registry._materialize(libKeyHex)
-// The Mirror, not the raw record — fileSync reads `isReadyToAuthor` and
-// authors through `newDraft`, and both live on Mirror since 2026-08-01.
+// fileSync authors through the Mirror, not the record.
 const appMirror = await registry._materialize(appKeyHex)
 
 // ── fileSync the app to a temp folder, mounts enabled ───────────────────

@@ -55,16 +55,10 @@ export class StreamoServer {
   }
 
   /**
-   * Two modes, and the type has to allow both because the runtime does.
-   * Either `publicKeyHex` (relay-only: open by pubkey, no signer, bytes
-   * arrive over sync) **or** `{name, username, password}` (author). The
-   * three throws at the top of the body are the real contract — including
-   * the one that rejects mixing them.
-   *
-   * Untyped until 2026-08-02, so TypeScript inferred every destructured
-   * field as required from the pattern alone, and the two legitimate call
-   * shapes — `bin/streamo.js`'s relay branch and its author branch — each
-   * looked like they were missing the other's arguments.
+   * Two modes, and every field is optional here because the runtime allows
+   * both: either `publicKeyHex` (relay-only — no signer, bytes arrive over
+   * sync) or `{name, username, password}` (author). Mixing them throws; the
+   * real contract is the three throws at the top of the body.
    *
    * @param {object} options
    * @param {string} [options.name]  keysFor name for the author's key

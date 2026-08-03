@@ -176,11 +176,9 @@ export class Draft {
    * @param {Date} [options.date]
    */
   async commit (options = {}) {
-    // Read once into a local rather than guarding on `this.#status` directly.
-    // Narrowing a field to `'draft'` here survives every `#setStatus` call
-    // below — the typechecker can't see a private-field write through a
-    // method — so the `=== 'pending'` check in the catch read as dead code.
-    // It isn't; by then `#setStatus('pending')` has run.
+    // Via a local: comparing `this.#status` directly narrows it to 'draft'
+    // for the rest of the method — TS can't see `#setStatus` widening it —
+    // and the catch below then reads `=== 'pending'` as a type error.
     const entryStatus = this.#status
     if (entryStatus !== 'draft') {
       throw new Error(`Draft.commit: status is '${entryStatus}'; only 'draft' is commit-able`)
@@ -303,15 +301,9 @@ export class Draft {
  *
  * @template T
  * @param {import('./Mirror.js').Mirror} mirror
- *   **A Mirror, not a record.** This JSDoc claimed polymorphism over
- *   `WritableStreamoRecord` from 2026-08-01 to 2026-08-02 — *"it only needs
- *   `newDraft` + `get`, which both Mirror and StreamoRecord have."* By the
- *   time that sentence was written `newDraft` had already moved off
- *   StreamoRecord onto Mirror (StreamoRecord.js's own tombstone comment
- *   records the move, same day), so the claim was false when made and a bare
- *   record died on `mirror.newDraft is not a function`. `scripts/seed-history.js`
- *   was passing `server.streamo` and hitting exactly that. Authoring needs a
- *   wire cursor to await, and only a Mirror has one.
+ *   A Mirror, not a record: authoring awaits the wire cursor, and only a
+ *   Mirror has one. A bare WritableStreamoRecord still answers
+ *   `isAuthorable === true`, which is why the throw below is worth its lines.
  * @param {(current: any) => T} updater  called with mirror's current value on each attempt
  * @param {object} [options]
  * @param {number} [options.retries=3]  max total attempts is retries + 1

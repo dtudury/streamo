@@ -90,8 +90,6 @@ const session = await registrySync(registry, `${secure ? 'wss' : 'ws'}://${host}
 // streams my history down. attachSigner makes the commit provably mine;
 // announce lets any open chat tab discover me and start listening.
 const myRepo = await session.subscribe(myKey)
-// `.local`: session.subscribe returns a Mirror, which withholds the author
-// verbs on purpose. Narrow and throw in one statement.
 const myRecord = myRepo.local
 if (!hasAuthorSurface(myRecord)) {
   throw new Error('chat notify: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')

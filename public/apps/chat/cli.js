@@ -81,9 +81,6 @@ const session = await registrySync(registry, `${host}:${port}`, {
 // materialize) so the wire actually subscribes — pre-10.0.0 this used
 // `registry.open` and bytes arrived only via side-effect cascades.
 const myRepo = await session.subscribe(myKey)
-// `.local`: session.subscribe returns a Mirror, which delegates reads and
-// withholds the author verbs on purpose. The guard narrows and throws in one
-// statement so the two can't drift.
 const myRecord = myRepo.local
 if (!hasAuthorSurface(myRecord)) {
   throw new Error('chat cli: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')

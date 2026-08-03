@@ -255,8 +255,6 @@ async function login (e) {
   const idxKey = bytesToHex(idxPub)
   registry._writableKeys.add(idxKey)
   myDeckIndex = await session.subscribe(idxKey)
-  // `.local`: session.subscribe returns a Mirror, which withholds the author
-  // verbs on purpose. Narrow and throw in one statement.
   const idxRecord = myDeckIndex.local
   if (!hasAuthorSurface(idxRecord)) {
     throw new Error('flashcards: deck index opened read-only — registry._writableKeys must contain it before the first materialize')

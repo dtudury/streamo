@@ -9,10 +9,6 @@ import { Recaller } from './utils/Recaller.js'
  * builds — that latitude is why the shape was written structurally in the
  * first place.
  *
- * Named once here because `fileSync.js` carried three inline copies of it,
- * and all three still said `StreamoRecord` after `_materialize` started
- * returning Mirrors — the duplication is what let them drift silently.
- *
  * @typedef {{
  *   recaller: Recaller,
  *   get: (publicKeyHex: string) => Mirror|undefined,
@@ -183,14 +179,6 @@ export class StreamoRecordRegistry {
    * Return an already-open Mirror, or undefined if not opened yet.
    * Reports access on `(registry, 'keys')` so the calling reactive
    * cell re-runs when the set of open repos changes.
-   *
-   * **Returns a Mirror, not a StreamoRecord** — same correction
-   * `_materialize`'s JSDoc got on 2026-08-01, applied here on 2026-08-02.
-   * The `instanceof Mirror` filter below was already the truth; only the
-   * `@returns` was stale, so every caller reading `.local` off a `get()`
-   * looked like a type error. Reads delegate through the Mirror;
-   * authoring goes via `.local`.
-   *
    * @param {string} publicKeyHex
    * @returns {Mirror|undefined}
    */

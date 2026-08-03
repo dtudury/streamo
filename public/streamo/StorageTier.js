@@ -51,12 +51,8 @@ export class StorageTier {
    * would exceed capacity).
    * @param {string} key
    * @param {Uint8Array} bytes
-   * @returns {void | Promise<void>}  sync is allowed, per the "all methods
-   *   are async-capable; concrete impls may return sync values where I/O
-   *   isn't needed" contract at the top of this file — MemoryTier.append is
-   *   exactly that case. This said `Promise<void>` until 2026-08-02, which
-   *   made the tier that the doc names as the sync one look like the
-   *   violation.
+   * @returns {void | Promise<void>}  sync is allowed, per the async-capable
+   *   contract in this file's header — MemoryTier.append is that case.
    */
   append (key, bytes) { throw new Error('StorageTier.append: abstract') }
 
@@ -72,10 +68,9 @@ export class StorageTier {
   /**
    * Current total bytes stored in this tier.
    *
-   * The `@returns` is load-bearing: an abstract getter whose body only
-   * throws infers `void`, so every concrete `get size () { return n }` read
-   * as an override-mismatch and `Cascade`'s `sum + t.size` read as
-   * arithmetic on `void`.
+   * The `@returns` is load-bearing: a getter body that only throws infers
+   * `void`, and every concrete `get size ()` then reads as an override
+   * mismatch.
    * @returns {number}
    */
   get size () { throw new Error('StorageTier.size: abstract') }
@@ -88,15 +83,12 @@ export class StorageTier {
 
   /**
    * Lifecycle hook: warm whatever this tier caches before first use.
-   * `DiskTier.init()` walks its directory to populate the size cache;
-   * MemoryTier has nothing to warm, so the base no-op is the whole
-   * implementation for it.
+   * `DiskTier.init()` walks its directory to populate the size cache.
    *
-   * A no-op rather than `abstract` on purpose. It used to exist only on
-   * DiskTier, which made `typeof tier.init === 'function'` the caller's
-   * problem — and a caller who forgets the guard gets a DiskTier serving
-   * `size === 0` until the first append. Defined here, every tier answers
-   * `init()`, and "call it in just the right way" stops being the contract.
+   * A no-op here rather than `abstract`, so that every tier answers `init()`
+   * and callers never need `typeof tier.init === 'function'` — a caller who
+   * forgets that guard gets a DiskTier reporting `size === 0` until the
+   * first append.
    * @returns {Promise<void>}
    */
   async init () {}

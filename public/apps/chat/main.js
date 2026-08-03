@@ -273,8 +273,6 @@ async function login (e) {
     // Without going through session.subscribe (or having it tripped via
     // another tab's announce), our own bytes would sit unsynced.
     myRepo = await session.subscribe(myKey)
-    // `.local`: session.subscribe returns a Mirror, which withholds the
-    // author verbs on purpose. Narrow and throw in one statement.
     const myRecord = myRepo.local
     if (!hasAuthorSurface(myRecord)) {
       throw new Error('chat: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')

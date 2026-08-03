@@ -44,17 +44,13 @@ import { hasAuthorSurface } from './WritableStreamoRecord.js'
 const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 
 /**
- * Can this byte-store be authored *through*? Only a Mirror can — `newDraft`
- * moved off StreamoRecord on 2026-08-01 because a Draft's commit awaits the
- * Mirror's wire cursor, and nothing else has one.
+ * Can this byte-store be authored *through*? Only a Mirror can — a Draft's
+ * commit awaits the Mirror's wire cursor, and nothing else has one.
  *
  * `isAuthorable` is the wrong question on its own: a bare
  * WritableStreamoRecord answers `true` and then dies inside commitWithRetry
- * on `newDraft is not a function`. Both checks stay, in order, so the slim-
- * Record case keeps its own message.
- *
- * Same discipline as `Draft.js`'s `isAuthorable`: the check that throws is
- * the check that narrows, so the two can't drift.
+ * on `newDraft is not a function`. Both checks stay, in order, so the
+ * slim-Record case keeps its own message.
  *
  * @param {any} x
  * @returns {x is import('./Mirror.js').Mirror}
@@ -62,7 +58,6 @@ const PUBKEY_HEX_RE = /^[0-9a-f]{66}$/
 function canAuthor (x) {
   return x != null && typeof x.newDraft === 'function'
 }
-
 
 // Flat-shape convention (2026-06-04): value IS the files map. Filenames
 // are top-level keys; `value['mounts.json'].mounts` is the routing table;
@@ -74,9 +69,7 @@ function canAuthor (x) {
 export class FolderRecord {
   /**
    * @param {import('./StreamoRecord.js').StreamoRecord | import('./Mirror.js').Mirror} record
-   *   Reads work on either. **Writes need a Mirror** — see `canAuthor`
-   *   above. The registry hands out Mirrors (`_materialize` / `get`), so
-   *   the mount-following paths below are always in the Mirror case.
+   *   Reads work on either; writes need a Mirror (see `canAuthor`).
    * @param {import('./StreamoRecordRegistry.js').MirrorRegistry} [registry]
    * @param {object} [options]
    * @param {{ subscribe(pubkeyHex: string): Promise<unknown> }} [options.session]
@@ -86,8 +79,6 @@ export class FolderRecord {
    * @param {import('./Signer.js').Signer} [options.signer]
    *   root signer for cross-Record writes through `ours: true` mounts
    * @param {string} [options.signerName]
-   *   the keysFor input `signer` was attached under; child shards derive as
-   *   `signerName + '/' + mountPrefix`
    */
   constructor (record, registry, options = {}) {
     this.record = record
@@ -271,8 +262,7 @@ export class FolderRecord {
    *   mirror-disk-to-Record semantics). Default merges into existing
    *   value (preserving sibling files at the destination).
    * @param {string} [options.message]  forwarded to the commit
-   * @param {Date} [options.date]  forwarded to the commit; seed-history uses
-   *   it to replay git author dates
+   * @param {Date} [options.date]  forwarded to the commit
    * @param {{ host: string, repo: string, dataAddress: number }} [options.remoteParent]
    *   forwarded to the commit — the soft cryptographic footnote citing
    *   another author's value (see StreamoRecord's file header)

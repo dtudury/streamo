@@ -28,18 +28,13 @@ import { setLogLevel, logInfo, logDebug } from '../public/streamo/utils/logger.j
 // those rejections vanish. Log loudly and keep running — the operator
 // gets a chance to see the failure instead of debugging a silent no-op.
 process.on('unhandledRejection', (reason) => {
-  // A rejection can carry any value, which is why node types `reason` as
-  // `unknown`. Narrow with `in` rather than asserting a shape onto it: an
-  // object carrying message/stack prints exactly as before, and a string or
-  // number rejection prints itself.
+  // A rejection can carry any value, so a string or number prints itself.
   const isObj = typeof reason === 'object' && reason !== null
   const msg = isObj && 'message' in reason ? reason.message : reason
   console.error('⚠️  unhandledRejection:', msg)
   if (isObj && 'stack' in reason) console.error(reason.stack)
 })
 
-// 'utf8' matters: without an encoding readFileSync hands back a Buffer, and
-// JSON.parse's declared parameter is a string.
 const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
 
 program
@@ -717,10 +712,8 @@ if (options.eval) {
       ])
     }
 
-    // `.constructor` of an async function IS the AsyncFunction constructor,
-    // but TypeScript types every `.constructor` as bare `Function`, which has
-    // no construct signature. The assertion restates a language rule; it says
-    // nothing about this program.
+    // The cast asserts nothing about this program: TS types every
+    // `.constructor` as bare `Function`, which has no construct signature.
     const AsyncFunction = /** @type {new (...args: string[]) => (...args: any[]) => Promise<any>} */ (
       (async () => {}).constructor
     )
@@ -941,8 +934,6 @@ if (options.interactive || options.replSocket) {
     const socketServer = createServer(socket => {
       // Sockets have no columns/rows; set defaults so REPL cursor math
       // has something to work with (a proper fix forwards client size).
-      // The assertion is not a claim that a Socket has these — it's a
-      // declaration that the next two lines are about to give it them.
       const sized = /** @type {typeof socket & { columns: number, rows: number }} */ (socket)
       sized.columns = 120
       sized.rows = 40

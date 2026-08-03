@@ -634,10 +634,8 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
     announce (key, topic) { sendJson({ type: 'announce', key, topic }) },
     /**
      * Subscribe to a specific repo key. Opens the Record locally if not yet
-     * opened, sets up bidirectional wire sync, and returns the **Mirror**
-     * wrapping it — `subscribeToKey` returns whatever `registry._materialize`
-     * returns, and that has been a Mirror since Mirror-and-Draft step 4.
-     * The everyday "I want this key live" verb.
+     * opened, sets up bidirectional wire sync, and returns the Mirror
+     * wrapping it. The everyday "I want this key live" verb.
      * @returns {Promise<import('./Mirror.js').Mirror>}
      */
     subscribe (key) { return subscribeToKey(key) },
@@ -660,16 +658,14 @@ export function handleRegistryPeer (ws, registry, options = {}, label = 'registr
  *   no persistence, only routes to currently-connected interested peers.
  * @property {(key: string) => Promise<import('./Mirror.js').Mirror>} subscribe
  *   Open the Record for `key` if not yet opened, set up bidirectional wire
- *   sync, and return the **Mirror** wrapping it. The everyday "I want this
- *   key live" verb — collapses `registry._materialize` + wire setup into one
+ *   sync, and return the Mirror wrapping it. The everyday "I want this key
+ *   live" verb — collapses `registry._materialize` + wire setup into one
  *   call.
  *
  *   **Authoring goes through `.local`.** A Mirror delegates the read verbs
- *   and deliberately withholds the write ones, so `subscribe(k).attachSigner(...)`
- *   throws and `subscribe(k).defaultMessage = '…'` silently writes to a
- *   property nothing reads. This said `StreamoRecord` from Mirror-and-Draft
- *   step 4 until 2026-08-02, and it is the copy every app reads — six login
- *   paths were broken behind it.
+ *   and withholds the write ones, so `subscribe(k).attachSigner(...)` throws
+ *   and `subscribe(k).defaultMessage = '…'` silently writes to a property
+ *   nothing reads.
  */
 
 /**
@@ -983,14 +979,9 @@ export function registrySync (registry, hostPort, options = {}) {
     },
     /**
      * Subscribe to a specific repo key: open the Record locally, plumb the
-     * wire, and return the **Mirror** wrapping it. While reconnecting there is
+     * wire, and return the Mirror wrapping it. While reconnecting there is
      * no live peer — the Record still opens locally and the wire plumbing
      * replays once the connection returns.
-     *
-     * Third and last copy of this return type (the `RegistrySession` typedef
-     * and `handleRegistryPeer`'s inline object are the other two); all three
-     * said `StreamoRecord` until 2026-08-02. The body has already migrated —
-     * `repo.local._attachSession?.(...)` below only makes sense on a Mirror.
      * @returns {Promise<import('./Mirror.js').Mirror>}
      */
     async subscribe (key) {

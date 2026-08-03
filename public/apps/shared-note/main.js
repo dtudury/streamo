@@ -61,8 +61,6 @@ async function login (e) {
     onConnectionChange: c => ui.set('connected', c)
   })
   myRepo = await session.subscribe(myKey)
-  // `.local`: session.subscribe returns a Mirror, which withholds the author
-  // verbs on purpose. Narrow and throw in one statement.
   const myRecord = myRepo.local
   if (!hasAuthorSurface(myRecord)) {
     throw new Error('shared-note: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')

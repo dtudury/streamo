@@ -306,11 +306,9 @@ export class Streamo extends CodecRegistry {
     // working scratch by accident. That accidental downcast is now
     // explicit in checkout (uses _applyClone into a fresh Streamo
     // directly), so clone gets to be honest about what its name promises.
-    // `this.constructor` is the class of `this` by definition, but TypeScript
-    // types `Object.prototype.constructor` as the bare `Function`, which has
-    // no construct signature. The assertion restates a language rule and
-    // asserts nothing about this codebase — there is no invariant here that
-    // could quietly stop being true.
+    //
+    // The cast asserts nothing about this codebase: TS types every
+    // `.constructor` as bare `Function`, which has no construct signature.
     const Ctor = /** @type {typeof Streamo} */ (this.constructor)
     return this._applyClone(new Ctor({ recaller, name }), address)
   }

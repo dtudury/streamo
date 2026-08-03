@@ -392,14 +392,10 @@ function resolveRecordFileName (opt) {
  * Record at two top-level mount paths) materialize at both locations.
  *
  * @param {import('./Mirror.js').Mirror} repo
- *   **A Mirror, and its `.local` must be Writable** — fileSync commits the
- *   disk's state into the Record, and both of the things it needs to do that
- *   live on the Mirror: `isReadyToAuthor` (line ~479) and `newDraft` via
- *   `commitWithRetry` (lines ~518, ~684). Both moved off StreamoRecord on
- *   2026-08-01; this said `WritableStreamoRecord` until 2026-08-02, which is
- *   why the two reads below looked like errors and the two commits looked
- *   fine. Every caller already passes a Mirror (`StreamoServer.js:261`,
- *   `scripts/demo-mounts.js`, the test suite).
+ *   A Mirror, and its `.local` must be Writable: fileSync commits the disk's
+ *   state into the Record, and the two things it needs to do that —
+ *   `isReadyToAuthor` and `newDraft` via `commitWithRetry` — live on Mirror,
+ *   not on the record.
  * @param {string} [folder='.']
  * @param {string} [dataDir='.stream']
  * @param {object} [options]
@@ -423,8 +419,7 @@ function resolveRecordFileName (opt) {
  * @returns {Promise<import('@parcel/watcher').AsyncSubscription & {
  *   close: () => Promise<void>, drain: () => Promise<void>
  * }>}
- *   `close`/`drain` are added on top of parcel's subscription — see the
- *   return statement at the bottom of this function.
+ *   `close`/`drain` are added on top of parcel's own subscription.
  */
 export async function fileSync (repo, folder = '.', dataDir = '.stream', options = {}) {
   const { registry = null, pubkeyHex = null, recordFile: recordFileOpt = false, signer = null, signerName = null, mountsOnly = false } = options
@@ -586,13 +581,8 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
 
   // StreamoRecord → disk: fires when a new commit lands (from peer, archive, or local commit)
   //
-  // Held in a named const because `Recaller.watch` returns nothing —
-  // `unwatch` takes the function, not a disposer. `close()` used to do
-  // `const unwatch = recaller.watch(...)` and then
-  // `if (typeof unwatch === 'function') unwatch()`, which is `undefined` and
-  // so never ran: the watch survived every close. The `closed` flag kept it
-  // harmless (flushToDisk bails), so it leaked quietly rather than
-  // misbehaving — but the teardown that reads as present was not present.
+  // Named, because `Recaller.watch` returns nothing and `unwatch` takes the
+  // handler itself — `close()` needs this exact reference to undo it.
   const repoToDisk = () => {
     if (committingFromDisk) return
     const commit = repo.lastCommit

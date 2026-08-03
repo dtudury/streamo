@@ -702,9 +702,14 @@ mount(h`
         let pushRejectedMine = false
         let conflictMine = false
         let conflictOther = 0
+        // The registry iterates Mirrors — `Generator<[string, Mirror]>`, and it
+        // filters on `v instanceof Mirror` to guarantee it. `_session` lives on
+        // the record, so reading it off the Mirror is permanently `undefined`
+        // and every arm below was dead: this banner never fired for anyone.
         for (const [keyHex, repo] of registry) {
-          if (repo._session?.getPushRejected?.(repo.publicKeyHex) && keyHex === myKey) pushRejectedMine = true
-          if (repo._session?.getConflictDetected?.(repo.publicKeyHex)) {
+          const rec = repo.local
+          if (rec._session?.getPushRejected?.(repo.publicKeyHex) && keyHex === myKey) pushRejectedMine = true
+          if (rec._session?.getConflictDetected?.(repo.publicKeyHex)) {
             if (keyHex === myKey) conflictMine = true
             else conflictOther++
           }

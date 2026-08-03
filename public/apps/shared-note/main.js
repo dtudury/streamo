@@ -32,7 +32,14 @@ import { bytesToHex } from '../../streamo/utils.js'
 const recaller = new Recaller('shared-note')
 const ui = liveObject({ phase: 'login', username: null, connected: false, saving: false }, { recaller })
 
-let myRepo
+// `myRepo` is the Mirror; `myRecord` is its `.local`. Mirror delegates the
+// read verbs (`get`, `decode`) and nothing else — `update`, `attachSigner`,
+// `defaultMessage` and `recoveryStuck` live on the record. Both are
+// module-scoped because saving and the conflict UI both need the record:
+// while `myRecord` was a login-local const, `save()` and `chooseValue()`
+// called `myRepo.update(...)` (throws) and the resolve UI read
+// `myRepo.recoveryStuck` (permanently undefined, so it never appeared).
+let myRepo, myRecord
 
 async function login (e) {
   e.preventDefault()
@@ -61,7 +68,7 @@ async function login (e) {
     onConnectionChange: c => ui.set('connected', c)
   })
   myRepo = await session.subscribe(myKey)
-  const myRecord = myRepo.local
+  myRecord = myRepo.local
   if (!hasAuthorSurface(myRecord)) {
     throw new Error('shared-note: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')
   }
@@ -78,7 +85,13 @@ async function save (e) {
   const text = e.target.elements.text.value
   ui.set('saving', true)
   try {
-    await myRepo.update(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username'), at: new Date().toISOString() }))
+    // Draft, not `repo.update(...)` — removed 2026-07-17 (`b6da739`) and
+    // never migrated here, so this save path called a function that does
+    // not exist. Draft does not auto-retry: a losing race throws with
+    // `err.draftStatus === 'superseded'` instead of resyncing silently.
+    const draft = myRepo.newDraft()
+    draft.set(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username'), at: new Date().toISOString() }))
+    await draft.commit()
   } catch {
     // recoveryStuck has fired; the view re-renders to show the
     // resolve UI. No need to do anything else here.
@@ -93,7 +106,13 @@ async function chooseValue (text) {
   // UI naturally hides; if it exhausts again, the UI re-renders.
   ui.set('saving', true)
   try {
-    await myRepo.update(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username'), at: new Date().toISOString() }))
+    // Draft, not `repo.update(...)` — removed 2026-07-17 (`b6da739`) and
+    // never migrated here, so this save path called a function that does
+    // not exist. Draft does not auto-retry: a losing race throws with
+    // `err.draftStatus === 'superseded'` instead of resyncing silently.
+    const draft = myRepo.newDraft()
+    draft.set(c => ({ ...(c ?? {}), text, lastEditedBy: ui.get('username'), at: new Date().toISOString() }))
+    await draft.commit()
   } catch {
     // recoveryStuck set again; user will resolve again.
   } finally {
@@ -114,7 +133,7 @@ function loginView () {
 }
 
 function editorView () {
-  const stuck = myRepo.recoveryStuck
+  const stuck = myRecord?.recoveryStuck
   const value = myRepo.get() ?? {}
   const connected = ui.get('connected')
   const saving = ui.get('saving')

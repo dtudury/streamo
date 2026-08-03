@@ -94,7 +94,8 @@ const { h, handle }            = await import(`${LIB}/h.js`)
 const { mount }                = await import(`${LIB}/mount.js`)
 const { Recaller }             = await import(`${LIB}/utils/Recaller.js`)
 const { StreamoRecord }        = await import(`${LIB}/StreamoRecord.js`)
-const { WritableStreamoRecord }= await import(`${LIB}/WritableStreamoRecord.js`)
+const { WritableStreamoRecord, hasAuthorSurface }
+                               = await import(`${LIB}/WritableStreamoRecord.js`)
 const { StreamoRecordRegistry }= await import(`${LIB}/StreamoRecordRegistry.js`)
 const { registrySync }         = await import(`${LIB}/registrySync.js`)
 const { liveObject }           = await import(`${LIB}/LiveSource.js`)
@@ -130,7 +131,13 @@ const ui = liveObject({
 
 // Set during login; populated only when creds match urlPubkey.
 let signer = null
+// `myRepo` is the Mirror; `myRecord` is its `.local`. Reads (`get`, `decode`)
+// delegate through the Mirror, so those stay on `myRepo` — but `attachSigner`,
+// `defaultMessage` and `update` exist only on the record. Until 2026-08-03
+// login called `myRepo.attachSigner(...)` and threw before anyone reached the
+// save path, which called `myRepo.update(...)` and would have thrown too.
 let myRepo = null
+let myRecord = null
 let session = null
 
 // ── login ─────────────────────────────────────────────────────────────────
@@ -171,8 +178,12 @@ async function login (e) {
       onConnectionChange: c => ui.set('status', c ? 'connected' : 'reconnecting…')
     })
     myRepo = await session.subscribe(urlPubkey)
-    myRepo.attachSigner(signer, 'sketch')
-    myRepo.defaultMessage = `edit by ${username}`
+    myRecord = myRepo.local
+    if (!hasAuthorSurface(myRecord)) {
+      throw new Error('sketch: this Record opened read-only — it was materialized slim before you logged in. Reload after signing in.')
+    }
+    myRecord.attachSigner(signer, 'sketch')
+    myRecord.defaultMessage = `edit by ${username}`
     window.sketchRepo = myRepo
     ui.set({ deriving: false, username, phase: 'editor' })
   } catch (err) {
@@ -227,13 +238,24 @@ async function save (e) {
   const message = `${verb} ${name} via sketch app`
   ui.set({ saving: true, status: 'saving…' })
   try {
-    await myRepo.update(c => {
+    // Draft, not `repo.update(...)`: that method was removed 2026-07-17
+    // (`b6da739`) and nothing here was migrated, so this save path had been
+    // calling a function that doesn't exist. `newDraft()` is on the Mirror;
+    // `draft.set()` takes the same updater shape `update()` did.
+    //
+    // Behaviour change, same one chat-edit documented on its own migration:
+    // Draft does not auto-retry on conflict. If someone else's write wins,
+    // `commit()` throws with `err.draftStatus === 'superseded'` instead of
+    // silently retrying — surfaced in the catch below rather than hidden.
+    const draft = myRepo.newDraft()
+    draft.set(c => {
       const files = { ...(c?.files ?? {}) }
       // If renaming (selectedName ≠ draftName), drop the old key.
       if (old && old !== name) delete files[old]
       files[name] = body
       return { ...(c ?? {}), files, writtenAt: new Date().toISOString() }
-    }, { message })
+    })
+    await draft.commit({ message })
     ui.set({ selectedName: name, loadedBody: body, status: 'saved' })
   } catch (err) {
     ui.set('status', `save failed: ${err.message ?? err}`)

@@ -90,7 +90,11 @@ recaller.watch('todomvc-url-subscribe', () => {
   session.subscribe(k)
 })
 
-let myRepo, myKey  // set after login; drive the write path
+// `myRepo` is the Mirror, `myRecord` is its `.local` — the byte-store that
+// carries the author verbs. Both are module-scoped because `setTodos()` needs
+// the record: while `myRecord` was a login-local const, every write in this
+// file went to `myRepo.set(...)`, and Mirror has no `set`. Saving a todo threw.
+let myRepo, myRecord, myKey  // set after login; drive the write path
 const canWrite = () => loggedIn.get() && urlKey() === myKey
 const viewedRepo = () => {
   const k = urlKey()
@@ -131,7 +135,7 @@ async function login (e) {
     // navigate to your list. Real fix needs a registry "promote to
     // Writable" verb — tracked as 11.0.x follow-up.
     myRepo = await session.subscribe(myKey)
-    const myRecord = myRepo.local
+    myRecord = myRepo.local
     if (!hasAuthorSurface(myRecord)) {
       throw new Error('todomvc: your list opened read-only — you visited its URL before logging in, so it was materialized slim. Reload after logging in.')
     }
@@ -157,8 +161,8 @@ async function login (e) {
 const getTodos = () => viewedRepo()?.get('todos') ?? []
 const setTodos = (todos, msg) => {
   if (!canWrite()) return
-  myRepo.defaultMessage = msg
-  myRepo.set({ todos })
+  myRecord.defaultMessage = msg
+  myRecord.set({ todos })
 }
 
 function addTodo (e) {

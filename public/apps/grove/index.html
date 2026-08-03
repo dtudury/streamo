@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>grove · markdown</title>
+<style>
+  html,body{margin:0;background:#fbfbfa;color:#24242a;
+    font:16px/1.65 system-ui,-apple-system,sans-serif}
+  main{max-width:44rem;margin:0 auto;padding:3rem 1.5rem 6rem}
+  h1,h2,h3,h4{line-height:1.25;margin:2.2rem 0 .8rem;font-weight:600}
+  h1{font-size:1.9rem} h2{font-size:1.4rem} h3{font-size:1.15rem}
+  p,ul,blockquote{margin:0 0 1rem}
+  a{color:#2858a3}
+  a.wl{text-decoration:none;border-bottom:1px solid #b9cbe8}
+  a.wl:hover{background:#eaf1fb}
+  a.dangling{color:#a33;border-bottom-style:dotted}
+  code{background:#f0f0ee;padding:.12em .35em;border-radius:3px;
+    font:.88em ui-monospace,Menlo,monospace}
+  pre{background:#f6f6f4;padding:1rem;border-radius:6px;overflow-x:auto}
+  pre code{background:none;padding:0}
+  blockquote{border-left:3px solid #dcdcd6;padding-left:1rem;color:#55555e;margin-left:0}
+  hr{border:0;border-top:1px solid #e4e4de;margin:2rem 0}
+  .bar{font:.8rem ui-monospace,Menlo,monospace;color:#8a8a92;
+    padding:.6rem 1.5rem;border-bottom:1px solid #ececE6;background:#fff}
+</style>
+</head>
+<body>
+<div class="bar" id="bar">loading…</div>
+<main id="doc"></main>
+<script type="module">
+// Just show a markdown file.
+//
+// `webSync` already serves every file in a Record over plain HTTP at
+// `/streams/:key/<path>` — that is how `curl .../current.md` works. So there
+// is nothing to subscribe to and no registry to stand up: fetch the text,
+// hand it to `md()`, hand that to `mount`. The first version of this page
+// subscribed to a Record and grew a sidebar; David stopped it mid-build with
+// "I just want to see a markdown file," which was correct.
+//
+// URL shape:  grove/#<key>/<path>       e.g. #025d6af4…31/index.md
+//             grove/#<path>             uses DEFAULT_KEY
+import { h } from '../../streamo/h.js'
+import { mount } from '../../streamo/mount.js'
+import { md } from '../../streamo/md.js'
+import { Recaller } from '../../streamo/utils/Recaller.js'
+import { liveObject } from '../../streamo/LiveSource.js'
+
+const DEFAULT_KEY = '025d6af4dcdd16a923b02de2a8363163e27bfd486bd37ea6efd83a9694944ecc31'
+const recaller = new Recaller('grove')
+const state = liveObject({ src: null, note: 'loading…' }, { recaller })
+
+const parseHash = () => {
+  const raw = decodeURIComponent(location.hash.replace(/^#/, '')) || 'index.md'
+  const m = /^([0-9a-f]{66})\/(.+)$/.exec(raw)
+  return m ? { key: m[1], path: m[2] } : { key: DEFAULT_KEY, path: raw }
+}
+
+// A wikilink is an anchor carrying `data-wikilink` — the parser stops at
+// naming it, and this page decides it means "another file beside this one".
+// Resolution is by basename because the corpus writes `[[current-session]]`
+// for `current-session.md` and `[[letters/x]]` for a nested one.
+const wire = (nodes, key) => {
+  for (const n of nodes) {
+    if (!n?.tag) continue
+    const wl = (n.attrs ?? []).find(a => a?.name === 'data-wikilink')
+    if (wl) {
+      const t = wl.value.replace(/\.md$/, '')
+      n.attrs = [{ name: 'class', value: 'wl' }, { name: 'href', value: `#${key}/${t}.md` }]
+    }
+    wire(n.children ?? [], key)
+  }
+  return nodes
+}
+
+mount(h`
+  ${() => {
+    const src = state.get('src')
+    return src == null ? h`<p>${() => state.get('note')}</p>` : wire(md(src), parseHash().key)
+  }}
+`, document.getElementById('doc'), recaller)
+
+const load = async () => {
+  const { key, path } = parseHash()
+  document.getElementById('bar').textContent = `${key.slice(0, 10)}… / ${path}`
+  state.set({ src: null, note: 'loading…' })
+  try {
+    const res = await fetch(`/streams/${key}/${path}`)
+    // A 404 here is the interesting failure — it means the file isn't in the
+    // Record, which for a corpus is a fact worth seeing rather than a blank
+    // page. Say which file and which Record.
+    if (!res.ok) return state.set('note', `${res.status} — ${path} is not in ${key.slice(0, 10)}…`)
+    state.set('src', await res.text())
+  } catch (e) {
+    state.set('note', `fetch failed: ${e.message}`)
+  }
+}
+
+window.addEventListener('hashchange', load)
+load()
+</script>
+</body>
+</html>

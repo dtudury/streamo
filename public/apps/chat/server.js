@@ -8,7 +8,6 @@ import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
 import { commitWithRetry } from '../../streamo/Draft.js'
-import { buildTarotData } from '../../../scripts/tarot-data.js'
 import { PushStore, pushRoutes, notifyOnMessages } from './push.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
@@ -75,28 +74,17 @@ if (server.signer) {
   const historyKey = await server.signer.keysFor('streamo-history')
   const historyKeyHex = bytesToHex(historyKey.publicKey)
   const historyRepo = await server.registry._materialize(historyKeyHex)
-  const historyCommits = [...historyRepo.history()].length
+  // `.local`: _materialize returns a Mirror (its own JSDoc says so) and
+  // `history()` lives on StreamoRecord. Reading it off the Mirror threw
+  // "not a function" and took the whole dev server down with it.
+  const historyCommits = [...historyRepo.local.history()].length
   console.log(`[chat] history key: ${historyKeyHex} (${historyCommits} commits)`)
 
-  // The tarot demo: a non-StreamoRecord Streamo. Deterministic key from the same
-  // credentials, opened so the registry serves it like any other repo —
-  // but seeded via repo.set() WITHOUT commit() or sign(). The byte stream
-  // contains data chunks (Duples, OBJECTs, STRINGs, ARRAYs) but no
-  // commit/signature records. Surfaces the explorer's no-head case
-  // (at-view.js:104) and exercises the storage tab on real nested data.
-  // Idempotent: only seeds if byteLength is 0.
-  const tarotKey = await server.signer.keysFor('tarot')
-  const tarotKeyHex = bytesToHex(tarotKey.publicKey)
-  const tarotRepo = await server.registry._materialize(tarotKeyHex)
-  if (tarotRepo.byteLength === 0) {
-    // StreamoRecord.set() auto-commits (checkout → working.set → this.commit), which
-    // we DON'T want — we want a no-commits Streamo. Bypass the StreamoRecord
-    // override by calling Streamo's prototype set directly. This appends
-    // data chunks to the byte stream without writing a commit record.
-    Streamo.prototype.set.call(tarotRepo, buildTarotData())
-    console.log(`[chat] tarot demo seeded (no commit): ${tarotRepo.byteLength} bytes`)
-  }
-  console.log(`[chat] tarot key: ${tarotKeyHex} (${tarotRepo.byteLength} bytes, ${[...tarotRepo.history()].length} commits)`)
+  // The tarot demo block lived here until 2026-08-03. `scripts/tarot-data.js`
+  // was deleted in `ff4d1cc` for having no live *doc* reference while this file
+  // still imported it — so `npm run dev` had been dead since 08-01. It was an
+  // explorer fixture (the no-head case, at-view.js:104); recover with
+  // `git show ff4d1cc^:scripts/tarot-data.js` if that case needs covering again.
 
   // Bundled flashcards decks: each JSON in public/apps/flashcards/decks/
   // becomes a signed StreamoRecord whose author is this relay's home identity.

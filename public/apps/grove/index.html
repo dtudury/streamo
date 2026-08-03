@@ -85,11 +85,17 @@ const load = async () => {
   document.getElementById('bar').textContent = `${key.slice(0, 10)}… / ${path}`
   state.set({ src: null, note: 'loading…' })
   try {
-    const res = await fetch(`/streams/${key}/${path}`)
+      // Two sources, because there are two ways to serve this page. Under a
+    // Record (webSync) files live at /streams/<key>/<path>; under
+    // scripts/dev-static.mjs they're just files. A leading `/` or `./` in the
+    // hash means "fetch it literally" — which is how you point this at a
+    // corpus on disk without publishing anything first.
+    const url = /^\.?\//.test(path) ? path : `/streams/${key}/${path}`
+    const res = await fetch(url)
     // A 404 here is the interesting failure — it means the file isn't in the
     // Record, which for a corpus is a fact worth seeing rather than a blank
     // page. Say which file and which Record.
-    if (!res.ok) return state.set('note', `${res.status} — ${path} is not in ${key.slice(0, 10)}…`)
+    if (!res.ok) return state.set('note', `${res.status} — ${url}`)
     state.set('src', await res.text())
   } catch (e) {
     state.set('note', `fetch failed: ${e.message}`)

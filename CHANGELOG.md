@@ -13,12 +13,23 @@ delegate, authoring goes through `.local`. `StreamoRecordRegistry` is a
 public export, so this changes a public surface — hence the major, not the
 15.0.3 patch the version field carried.
 
-**Transitional and deliberate:** `mirror.get()` works and `mirror.set()`
-throws. That asymmetry is prop-7's own footgun, chosen over migrating ~59
-call sites inside the same commit that flipped the registry. It dissolves
-when Mirror-and-Draft finishes — `relayInboundStream.js` still exists and
-`_awaitChainHash` has not dissolved yet. **Anyone publishing from here is
-shipping a half-migrated API on purpose.**
+**The migration is complete.** An earlier draft of this entry described a
+half-migrated API — `mirror.get()` working while `mirror.set()` threw — as a
+deliberate transitional state. That was true when it was written and stopped
+being true the same night. **Authoring is `mirror.local.set(...)`, and that
+is the final shape rather than a waypoint.** `Mirror` deliberately does not
+delegate the write verbs; `.local` is where authoring lives.
+
+**The cursor is the only thing anyone watches.** Nothing in streamo answers
+*did it land / am I caught up / did we diverge* by interpreting the chain any
+more — all three read `remoteLength`.
+
+**Gone:** `relayInboundStream.js`, `_awaitChainHash`, `StreamoRecord.newDraft`,
+`caughtUpToRelay`, `isReadyToAuthor`, the session's `relayChainHash` cell,
+`_resyncRepo`. **Arrived:** `Mirror.awaitLanded` (landing as a byte position,
+bundling all three outcomes so a failure can't present as a hang),
+`Mirror.newDraft`, `StreamoServer.mirror`, and `isAuthorable` uniform across
+`StreamoRecord` / `WritableStreamoRecord` / `Mirror`.
 
 - `Mirror.makeReceiveStream()` — byte comparison at `remoteLength` replaces
   the chain-hash alignment check
@@ -33,8 +44,26 @@ shipping a half-migrated API on purpose.**
 - **added:** `entrypoint.test.js` — resolves every relative import
   reachable from both entry points, so the above class fails the suite
   instead of the registry.
+- **added:** `fileSync` returns a subscription with **`close()`** and
+  **`drain()`**. `close()` unwatches the repo→disk recaller watch, stops the
+  filesystem subscription, and awaits any in-flight flush; `drain()` awaits
+  the flush alone. Both are additive — existing `unsubscribe()` callers are
+  untouched. Without them a flush fired from the recaller watch could outlive
+  its owner and throw into unrelated work, which is what an intermittent
+  suite failure turned out to be. Writes into a vanished directory
+  (`ENOENT`/`ENOTDIR`/`EINVAL`) now abandon the flush quietly; every other
+  error stays loud.
+- **fix:** two inverse `.local` errors left by the registry migration —
+  `claudeSync.js` reached *through* a `.local` that a `WritableStreamoRecord`
+  doesn't have, and `chat-edit/main.js` called `attachSigner`/`defaultMessage`
+  on a `Mirror`, which delegates `get()` and nothing else. Both were runtime
+  `undefined` and neither was test-covered.
+- **types:** `public/streamo` is back to **zero** type errors (from ~55).
+  `_materialize`'s JSDoc still claimed `Promise<StreamoRecord>` after step 4
+  changed it to a `Mirror`; correcting it surfaced three real mismatches
+  rather than hiding them, fixed with type predicates rather than casts.
 
-115 commits since 15.0.2; this entry covers the load-bearing ones.
+124 commits since 15.0.2; this entry covers the load-bearing ones.
 
 ---
 

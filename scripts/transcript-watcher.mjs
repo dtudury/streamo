@@ -10,10 +10,27 @@
  * Past instances of the Engineer become summonable immediately, not
  * at session-end.
  *
- * Per-session derived pubkey: signer.keysFor('transcript/<sessionId>').
- * Record value shape: { 'transcript': [...parsed JSONL objects...] }
+ * DORMANT since 2026-06-05, and read the next paragraph before running it.
+ * In its whole life it has published exactly one session (`3fb1490e`, the
+ * nuthatch parent) — verified 2026-08-02 by deriving all 48 archived ids
+ * against streamo.dev. It stopped because commits took ~6.1s; that blocker
+ * dissolved on 2026-06-23 when smart copyFrom landed (benched 100x-1000x on
+ * this exact workload, citing this watcher as the motivating case) and
+ * nobody came back to switch it on.
+ *
+ * It also does not compose with its own inverse. `restore-session.mjs` read
+ * `record.get('transcript')`; this writes `entries-wip`, so restore exited 1
+ * against anything this produced. That script is gone, replaced by
+ * the-grove's `memory/procedure_restoring_a_session.md`.
+ *
+ * Per-session derived pubkey: signer.keysFor('engineer/<sessionId>') — see
+ * the derivation history at ensureSessionRecord.
+ * Record value shape: { 'entries-wip': [...parsed JSONL objects...] }
  * — folder-shape with one file; file's value is the structured array
  * (NOT JSON-stringified; codec handles structured + binary natively).
+ * Both of those said `transcript/` until 2026-08-03; the code has said
+ * otherwise since June, and three separate readers were misled by the
+ * header before anyone opened both halves.
  *
  * Each JSONL change re-publishes the WHOLE transcript (v0 simplicity).
  * Append-only deltas are a v0.1 optimization; for now we replace the
@@ -64,6 +81,12 @@ if (!username || !password) {
 const signer = new Signer(username, password, 100000)
 
 // ── watch dir + per-session state ────────────────────────────────────
+// Hardcoded to the streamo project dir, which is the wrong one now. Claude
+// Code writes a session's JSONL under a slug of its *working directory*, and
+// since 2026-07-30 the substrate work happens in the-grove, so those sessions
+// land in `-Users-davidtudury-Documents-repos-the-grove` and this watcher
+// would not see them even if it were running. Left hardcoded rather than
+// guessed at: which directory to mirror is a decision, not a default.
 const watchDir = join(
   homedir(),
   '.claude/projects/-Users-davidtudury-Documents-repos-streamo'
@@ -104,7 +127,11 @@ async function ensureSessionRecord (sessionId) {
   const ws = await originSync(record, pubkeyHex, 'wss://streamo.dev')
   const entry = { record, ws, recaller, pubkeyHex, subStreamName, lastSize: 0 }
   sessionState.set(sessionId, entry)
-  const entriesOnLoad = (record.get('transcript') ?? []).length
+  // Must match the key publishSession writes below. It said 'transcript'
+  // from June until 2026-08-03, so this line reported "loaded 0 entries"
+  // on every restart no matter how much was in the archive — the one log
+  // line whose whole job is telling you resume worked.
+  const entriesOnLoad = (record.get('entries-wip') ?? []).length
   console.log(`[watcher] new session: ${sessionId.slice(0, 8)}... → ${pubkeyHex} (loaded ${entriesOnLoad} entries from disk archive)`)
   return entry
 }
@@ -167,7 +194,7 @@ function scheduleSession (sessionId, delayMs = 1500) {
 
 // ── initial sweep + watch ────────────────────────────────────────────
 console.log(`[watcher] starting; watching ${watchDir}`)
-console.log(`[watcher] signing as ${username} (claude); pubkey derivation: keysFor('transcript/<sessionId>')`)
+console.log(`[watcher] signing as ${username} (claude); pubkey derivation: keysFor('engineer/<sessionId>')`)
 
 const initial = await readdir(watchDir)
 const jsonls = initial.filter(f => f.endsWith('.jsonl'))

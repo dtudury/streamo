@@ -2,6 +2,14 @@
 /**
  * @file wake-check.mjs — Stop hook watcher for a wake-inbox streamo Record.
  *
+ * NOT WIRED. Removed from the-grove's `.claude/settings.json` at David's
+ * request; grep it there and you get zero hits. The reason is in the contract
+ * below and worth reading before rewiring it: `WAKE_WINDOW_MS` is not a
+ * timeout, it is how long the Stop hook *blocks*. Set to an hour so he could
+ * wander off, it froze the end of every turn instead. The resurrection path —
+ * decouple blocking from retention — is
+ * the-grove `memory/procedure_waking_on_streamo_events.md` v4.
+ *
  * The primitive (per David 2026-07-14): "wake me on any commit to Record X."
  * Watches the Record's byteLength via Recaller.when + AbortSignal.timeout;
  * on any advance, emits the Record's current decoded value + exits 2.

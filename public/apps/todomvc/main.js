@@ -209,7 +209,10 @@ function saveEdit (e, id) {
 function startEdit (id) {
   editingId.set(id)
   requestAnimationFrame(() => {
-    const input = document.querySelector('.edit')
+    // `input.edit`, not `.edit`: the tag in the selector is what types this
+    // as an HTMLInputElement with `.value` and `.setSelectionRange`. Read off
+    // the selector, not asserted.
+    const input = document.querySelector('input.edit')
     if (input) input.setSelectionRange(input.value.length, input.value.length)
   })
 }
@@ -236,7 +239,7 @@ function TodoItem ({ todo, editable }) {
         <form onsubmit=${handle(e => saveEdit(e, todo.id))}>
           <input class="edit" name="text" value=${todo.text}
                  onblur=${handle(cancelEdit)}
-                 onkeydown=${handle(e => { if (e.key === 'Escape') cancelEdit() })}
+                 onkeydown=${handle(e => { if (e instanceof KeyboardEvent && e.key === 'Escape') cancelEdit() })}
                  autofocus>
         </form>
       ` : null}

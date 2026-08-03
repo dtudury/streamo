@@ -226,13 +226,13 @@ const css = `
 const masterInput = () => h`
   <input type="password" class="master-input"
     placeholder="master password — never leaves this browser"
-    oninput=${handle(e => { state.master = e.target.value; fire() })}/>
+    oninput=${handle(e => { if (e.target instanceof HTMLInputElement) { state.master = e.target.value; fire() } })}/>
 `
 
 const recipeRow = (recipe, idx) => h`
   <div class="recipe-row" data-key=${`recipe-${idx}`}>
     <input type="text" value=${recipe}
-      oninput=${handle(e => updateRecipe(idx, e.target.value))}/>
+      oninput=${handle(e => { if (e.target instanceof HTMLInputElement) updateRecipe(idx, e.target.value) })}/>
     <button onclick=${handle(() => removeRecipe(idx))}>×</button>
   </div>
 `

@@ -12,14 +12,45 @@
  */
 const STREAMON_API = 'http://127.0.0.1:8088/api'
 
-const el = id => document.getElementById(id)
-const $sidebar  = el('sidebar')
-const $name     = el('name-input')
-const $editor   = el('editor')
-const $save     = el('save-btn')
-const $status   = el('status')
-const $main     = el('main')
-const $loading  = el('loading')
+/**
+ * Grab a required element and prove what it is, at runtime.
+ *
+ * The obvious alternatives both lie. `getElementById` gives you
+ * `HTMLElement | null`, so `.value` and `.disabled` are type errors and the
+ * usual cure is a cast — which is an assertion that stays true in the types
+ * long after it stopped being true in `index.html`. And
+ * `querySelector('input#name-input')` looks like it should type itself off
+ * the selector, but **it doesn't**: TypeScript narrows *bare tag* selectors
+ * only, so any compound selector falls back to `Element`, which is worse than
+ * where you started. Verified 2026-08-03 — `querySelector('input')` gives
+ * `HTMLInputElement`, `querySelector('input#x')` gives `Element`.
+ *
+ * So narrow at runtime instead. `instanceof` is a real check the wrong path
+ * cannot satisfy: if the selector stops matching, or matches a different tag,
+ * this throws **naming the selector** rather than handing back something that
+ * quietly has no `.value`. The types come from the narrowing, not from an
+ * assertion, so they cannot drift away from the markup.
+ *
+ * @template {typeof Element} T
+ * @param {string} sel
+ * @param {T} Type
+ * @returns {InstanceType<T>}
+ */
+const need = (sel, Type) => {
+  const node = document.querySelector(sel)
+  if (!(node instanceof Type)) {
+    throw new Error(`notes: ${sel} is missing or is not ${Type.name}`)
+  }
+  return /** @type {InstanceType<T>} */ (node)
+}
+
+const $sidebar  = need('#sidebar',    HTMLElement)
+const $name     = need('#name-input', HTMLInputElement)
+const $editor   = need('#editor',     HTMLTextAreaElement)
+const $save     = need('#save-btn',   HTMLButtonElement)
+const $status   = need('#status',     HTMLElement)
+const $main     = need('#main',       HTMLElement)
+const $loading  = need('#loading',    HTMLElement)
 
 let state = {
   currentName: null,   // currently-loaded entry name (or null = new unsaved)

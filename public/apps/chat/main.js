@@ -43,7 +43,11 @@ const connected   = liveValue(true,  { recaller, name: 'connected' })
 // They're plain lets because they don't change after login completes —
 // the slots that read them are only created when loggedIn flips to
 // true, so closure capture is fine.
-let myKey, myName, myRepo, registry, session
+// `myRepo` is the Mirror; `myRecord` is its `.local` — the byte-store that
+// carries the author verbs. Both are kept because reads go through the Mirror
+// and writes go through the record, and conflating them is what broke every
+// write path in this file until 2026-08-02.
+let myKey, myName, myRepo, myRecord, registry, session
 // Recovery orchestration handle — set inside login(), called by the
 // banner's [Send it now] / [Discard] buttons when the user wants to
 // reconcile pushRejected or conflictDetected.
@@ -273,7 +277,14 @@ async function login (e) {
     // Without going through session.subscribe (or having it tripped via
     // another tab's announce), our own bytes would sit unsynced.
     myRepo = await session.subscribe(myKey)
-    const myRecord = myRepo.local
+    // `.local`: session.subscribe returns a Mirror, which withholds the
+    // author verbs on purpose. Narrow and throw in one statement.
+    //
+    // Module-scoped, not `const` here: `send()` and `onRecover()` both need
+    // the record, and while this was a login-local const they reached for
+    // author verbs on the Mirror instead — where `set`, `_reset`, `_session`
+    // and `defaultMessage` do not exist. That is why sending a message threw.
+    myRecord = myRepo.local
     if (!hasAuthorSurface(myRecord)) {
       throw new Error('chat: my own record opened read-only — the registry factory must return a WritableStreamoRecord for myKey')
     }
@@ -295,14 +306,17 @@ async function login (e) {
     // closure captures `session` (let — replaceable) and the connection
     // params + signer so we can stand up a fresh session from scratch.
     onRecover = async (mode) => {
-      const flag = (myRepo._session?.getPushRejected?.(myRepo.publicKeyHex) ?? null) ?? (myRepo._session?.getConflictDetected?.(myRepo.publicKeyHex) ?? null)
+      // `_session` is on the record, not the Mirror. Read through the Mirror
+      // and both arms are permanently undefined — the recovery banner's
+      // buttons would do nothing and say nothing.
+      const flag = (myRecord._session?.getPushRejected?.(myRepo.publicKeyHex) ?? null) ?? (myRecord._session?.getConflictDetected?.(myRepo.publicKeyHex) ?? null)
       let rejectedValue = null
       if (flag?.dataAddress != null) {
         try { rejectedValue = myRepo.decode(flag.dataAddress) } catch {}
       }
       // Wipe local state (bytes + flags) and tear down the old WS so the
       // fresh sync starts from a clean empty StreamoRecord.
-      myRepo._reset()
+      myRecord._reset()
       // session.close() — not session.ws.close() — so the old session
       // doesn't auto-reconnect and race the fresh one we build below.
       session.close()
@@ -330,7 +344,7 @@ async function login (e) {
       await new Promise(r => setTimeout(r, 400))
       if (mode === 'merge' && rejectedValue) {
         const currentValue = myRepo.get() ?? { name: myName, messages: [] }
-        myRepo.set(mergeChatValue(currentValue, rejectedValue))
+        myRecord.set(mergeChatValue(currentValue, rejectedValue))
       }
     }
 
@@ -379,7 +393,10 @@ async function login (e) {
     // Blur first so the username input doesn't linger as the document's
     // focused element after detach — without this, the chat's text input
     // autofocus gets blocked ("a document already has a focused element").
-    document.activeElement?.blur?.()
+    // `instanceof` rather than `?.blur?.()`: `activeElement` is an `Element`,
+    // and `blur` is an `HTMLElement` method. Same runtime behaviour, and the
+    // narrowing says which elements actually have it.
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
     loggedIn.set(true)
   } catch (err) {
     loginStatus.set(`error: ${err.message}`)
@@ -396,8 +413,8 @@ function send (e) {
   input.value = ''
   const messages = myRepo.get('messages') ?? []
   const preview = text.length > 50 ? text.slice(0, 50).trim() + '…' : text
-  myRepo.defaultMessage = `"${preview}" (web)`
-  myRepo.set({ name: myName, messages: [...messages, { text, at: new Date() }] })
+  myRecord.defaultMessage = `"${preview}" (web)`
+  myRecord.set({ name: myName, messages: [...messages, { text, at: new Date() }] })
   input.focus()
 }
 

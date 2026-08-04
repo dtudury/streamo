@@ -99,7 +99,7 @@ const NOTIFY_WINDOW_MS = 120000
  * in the past. The author is skipped via the chat pubkey stored alongside
  * each subscription.
  *
- * @param {import('../../streamo/StreamoRecordRegistry.js').StreamoRecordRegistry} registry
+ * @param {import('./StreamoRecordRegistry.js').StreamoRecordRegistry} registry
  * @param {PushStore} store
  * @param {{ publicKey: string, privateKey: string, subject: string }} vapid
  * @param {{ send?: typeof sendWebPush }} [opts]  `send` is injectable for tests

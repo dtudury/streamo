@@ -80,7 +80,15 @@ export const getAddress = () => {
   return at.toUpperCase() === 'HEAD' ? 'HEAD' : +at
 }
 
-export function go ({ keyHex, address }) {
+/**
+ * Navigate. Both fields are optional and the body has always said so — the
+ * no-key case is the registry root, which `back-registry` reaches by calling
+ * `go({})`. The signature just didn't declare it, so the one call that used
+ * the documented behaviour was the only one that failed to typecheck.
+ *
+ * @param {{ keyHex?: string | null, address?: number | 'HEAD' | null }} [target]
+ */
+export function go ({ keyHex = null, address = null } = {}) {
   if (!keyHex) return loc.set('hash', '#/')
   if (address == null || address === 'HEAD') return loc.set('hash', `#/repo/${keyHex}`)
   loc.set('hash', `#/repo/${keyHex}/at/${address}`)

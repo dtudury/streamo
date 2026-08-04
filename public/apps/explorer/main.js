@@ -281,8 +281,13 @@ document.body.addEventListener('click', e => {
   // doesn't accidentally navigate to a chunk under the pointer when the
   // user releases.
   if (isClickSuppressed()) return
+  // `e.target` is an EventTarget, which has no `closest` — and the result of
+  // `closest` is an Element, which has no `dataset`. Two narrowings, both real
+  // checks rather than assertions: a click landing on something that isn't an
+  // HTMLElement now falls through instead of throwing on `.dataset`.
+  if (!(e.target instanceof Element)) return
   const el = e.target.closest('[data-action]')
-  if (!el) return
+  if (!(el instanceof HTMLElement)) return
   switch (el.dataset.action) {
     case 'open-repo':     return go({ keyHex: el.dataset.key,    address: 'HEAD' })
     case 'open-at':       return go({ keyHex: el.dataset.keyhex, address: +el.dataset.addr })

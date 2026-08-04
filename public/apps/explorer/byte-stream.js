@@ -53,7 +53,14 @@ function buildByteStreamSection (repo, keyHex) {
         address: addr,
         start: addr - code.length + 1,
         length: code.length,
-        codecType: codec?.type || '?'
+        codecType: codec?.type || '?',
+        // Declared here, filled below for SIGNATURE chunks only. They used to
+        // be grown by assignment after construction, which left the inferred
+        // shape without them and made every later read a type error. Complete
+        // at construction is both the fix and the clearer statement of what a
+        // chunk is.
+        signedFrom: /** @type {number | null} */ (null),
+        signedTo: /** @type {number | null} */ (null)
       }
       chunks.unshift(chunk)
       addr -= code.length

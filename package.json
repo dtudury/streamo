@@ -60,6 +60,7 @@
     "backup-contexts": "bash $HOME/Documents/repos/the-grove/scripts/backup-contexts.sh",
     "typecheck": "tsc -p jsconfig.json",
     "dev": "node bin/streamo.js --env-file env/dev.env",
+    "dev:repl": "node bin/streamo.js --repl-connect /tmp/streamo-dev.sock",
     "prod": "node bin/streamo.js --env-file env/prod.env",
     "demo:relay": "node bin/streamo.js --env-file env/demo.relay.env",
     "demo:homepage": "node bin/streamo.js --env-file env/demo.homepage.env",

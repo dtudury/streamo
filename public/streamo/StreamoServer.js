@@ -232,21 +232,16 @@ export class StreamoServer {
    *     via the mount cascade when it sees the home's mounts.json
    * Absence of mounts.json is fine — nothing to pre-register.
    */
-  async preregisterOursMounts (folder) {
+  preregisterOursMounts (folder) {
     try {
       const raw = readFileSync(join(folder, 'mounts.json'), 'utf8')
       const parsed = JSON.parse(raw)
       const mounts = parsed && parsed.mounts
       if (mounts && typeof mounts === 'object') {
-        for (const [prefix, mount] of Object.entries(mounts)) {
-          if (!mount || mount.ours !== true) continue
-          let key = mount.key
-          if (typeof key !== 'string') {
-            if (!this.signer || !this.name) continue
-            const { publicKey } = await this.signer.keysFor(this.name + '/' + prefix)
-            key = bytesToHex(publicKey)
+        for (const mount of Object.values(mounts)) {
+          if (mount && mount.ours === true && typeof mount.key === 'string' && /^[0-9a-f]{66}$/.test(mount.key)) {
+            this.markWritable(mount.key)
           }
-          if (/^[0-9a-f]{66}$/.test(key)) this.markWritable(key)
         }
       }
     } catch { /* no mounts.json on disk yet, or unreadable — fine */ }
@@ -258,7 +253,7 @@ export class StreamoServer {
     }
     // Idempotent pre-register — safety for callers that reach files()
     // without going through connect() first (tests, direct callers).
-    await this.preregisterOursMounts(folder)
+    this.preregisterOursMounts(folder)
 
     // `dataDir` in options is the path-to-exclude hint for fileSync's
     // gitignore-style filter (so the on-disk archive directory doesn't

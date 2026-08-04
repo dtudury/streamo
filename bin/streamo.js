@@ -619,7 +619,7 @@ if (options.mergeFrom) {
 // server.files() will call it again as safety.
 if (options.files) {
   const folderForPreregister = typeof options.files === 'string' ? options.files : '.'
-  server.preregisterOursMounts(folderForPreregister)
+  await server.preregisterOursMounts(folderForPreregister)
 }
 
 if (options.origin) {

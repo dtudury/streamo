@@ -307,6 +307,38 @@ describe(import.meta.url, ({ test }) => {
     )
   })
 
+  test('write derives the child key for a keyless ours:true mount', async ({ assert }) => {
+    // Regression, 2026-08-04. `ours: true` with no `key` is the shape that
+    // says "we sign this, derive where it goes" — but nothing tested it and
+    // it had never run. `derivedHex !== undefined` is always true, so it fell
+    // into the mismatch throw, and then `mount.key.slice(0, 16)` raised
+    // `TypeError: Cannot read properties of undefined` while *building the
+    // error message*. That is what killed `npm run dev` against a mount table
+    // whose keys had been removed.
+    const { Signer } = await import('./Signer.js')
+    const { bytesToHex } = await import('./utils.js')
+    const recaller = new Recaller('w-keyless')
+    const signer = new Signer('test-root', 'test-pwd', 1)
+    const registry = new StreamoRecordRegistry({
+      recaller,
+      factory: async () => new WritableStreamoRecord({ recaller })
+    })
+    const parentMirror = await registry._materialize(PK_A)
+    const parent = parentMirror.local
+    const w = parent.checkout()
+    w.set({ 'mounts.json': { mounts: { 'apps/keyless/': { ours: true } } } })
+    parent.commit(w, 'seed keyless mount')
+    const folder = new FolderRecord(parentMirror, registry, { signer, signerName: 'parent' })
+
+    await folder.write('apps/keyless/f.txt', 'hi')
+
+    // It landed in the child the convention derives, not in the parent.
+    const { publicKey } = await signer.keysFor('parent/apps/keyless/')
+    const childMirror = await registry._materialize(bytesToHex(publicKey))
+    assert.equal(childMirror.get('f.txt'), 'hi')
+    assert.equal(parent.get('apps/keyless/f.txt'), undefined)
+  })
+
   test('write throws on a slim StreamoRecord (no author surface)', async ({ assert }) => {
     const { StreamoRecord } = await import('./StreamoRecord.js')
     const slim = new StreamoRecord()

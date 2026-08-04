@@ -207,11 +207,24 @@ export class FolderRecord {
       const { publicKey } = await this.signer.keysFor(childName)
       const { bytesToHex } = await import('./utils.js')
       const derivedHex = bytesToHex(publicKey)
-      if (derivedHex !== mount.key) {
+      // `key` is optional, and the two cases mean different things.
+      //
+      // PINNED — the key is a tripwire. It asserts "this shard was made by the
+      // identity you are running as," and a mismatch means you'd otherwise
+      // silently author a *parallel* tree under a different derived key and
+      // serve a divergent site with nothing to notice. Keep throwing.
+      //
+      // KEYLESS — `ours: true` already says we sign it, so the key is
+      // derivable and pinning it is redundant. Derive and use it. This path
+      // had no guard until 2026-08-04: `derivedHex !== undefined` is always
+      // true, so a keyless mount fell into the throw, and then
+      // `mount.key.slice()` crashed building the message. No test covered it;
+      // it had never run.
+      if (mount.key && derivedHex !== mount.key) {
         throw new Error(`FolderRecord.write: derived child pubkey ${derivedHex.slice(0, 16)}... doesn't match mount target ${mount.key.slice(0, 16)}... — mount '${mountPrefix}' was set up with a different naming convention than parent+slash+prefix; either fix mounts.json to match the derived pubkey or use a different child-name convention`)
       }
       // Materialize the mounted Record + attach the derived signer-name.
-      const mountedRepo = await this.registry._materialize(mount.key)
+      const mountedRepo = await this.registry._materialize(mount.key ?? derivedHex)
       const mountedLocal = mountedRepo.local
       if (!hasAuthorSurface(mountedLocal)) {
         throw new Error(`FolderRecord.write: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mount targets`)
@@ -335,10 +348,15 @@ export class FolderRecord {
       const { publicKey } = await this.signer.keysFor(childName)
       const { bytesToHex } = await import('./utils.js')
       const derivedHex = bytesToHex(publicKey)
-      if (derivedHex !== mount.key) {
+      // Same rule as `write` above: a pinned key is a tripwire and stays
+      // loud; a keyless `ours: true` mount derives its own child. Before
+      // 2026-08-04 the keyless case threw a TypeError from inside the error
+      // message it was building, which is why `npm run dev` died on a mount
+      // table with no keys in it.
+      if (mount.key && derivedHex !== mount.key) {
         throw new Error(`FolderRecord.writeMany: derived child pubkey ${derivedHex.slice(0, 16)}... doesn't match mount target ${mount.key.slice(0, 16)}... for '${mountPrefix}' — fix mounts.json to use the derived pubkey`)
       }
-      const mountedRepo = await this.registry._materialize(mount.key)
+      const mountedRepo = await this.registry._materialize(mount.key ?? derivedHex)
       const mountedLocal = mountedRepo.local
       if (!hasAuthorSurface(mountedLocal)) {
         throw new Error(`FolderRecord.writeMany: mounted Record for '${mountPrefix}' is not Writable; registry factory must return WritableStreamoRecord for ours:true mounts`)

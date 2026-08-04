@@ -495,13 +495,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
     const target = { ...mountedFiles, ...repoFiles }
     const { files: managed } = await readFolder(folder, acceptsForDisk)
-    // A downward flush may only delete paths the *Record* is upstream of.
-    // `ours: true` declares US upstream for that prefix (see the mount branch
-    // of buildOwnFilesFilter), and acceptsForCommit is exactly that test — the
-    // same pairing used for read-only territory below. Filtering by it is what
-    // stops a Record whose shards were never populated from emptying the
-    // folder it was told it doesn't own.
-    const toDelete = Object.keys(managed).filter(k => !(k in target) && !acceptsForCommit(k))
+    const toDelete = Object.keys(managed).filter(k => !(k in target))
     await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
   } else if (Object.keys(diskFiles).length > 0) {
@@ -560,7 +554,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
       // dropped from the table, its materialized files vanish from disk.
       const { files: managed } = await readFolder(folder, acceptsForDisk)
       if (!filesEqual(managed, target)) {
-        const toDelete = Object.keys(managed).filter(k => !(k in target) && !acceptsForCommit(k))
+        const toDelete = Object.keys(managed).filter(k => !(k in target))
         await writeToFolder(folder, target)
         await deleteFromFolder(folder, toDelete)
       }

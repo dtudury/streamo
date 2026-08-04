@@ -8,7 +8,7 @@ import { StreamoServer } from '../../streamo/StreamoServer.js'
 import { Streamo } from '../../streamo/Streamo.js'
 import { bytesToHex } from '../../streamo/utils.js'
 import { commitWithRetry } from '../../streamo/Draft.js'
-import { PushStore, pushRoutes, notifyOnMessages } from './push.js'
+import { PushStore, pushRoutes, notifyOnMessages } from '../../streamo/push.js'
 
 const envFile = process.argv.find((_, i) => process.argv[i - 1] === '--env-file')
 if (envFile) config({ path: envFile })

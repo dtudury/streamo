@@ -1,6 +1,6 @@
 import { describe } from '../../streamo/utils/testing.js'
 import { createPublicKey, verify } from 'crypto'
-import { encryptContent, generateVapidKeys, vapidAuthorization } from './webpush.js'
+import { encryptContent, generateVapidKeys, vapidAuthorization } from '../../streamo/webpush.js'
 
 describe(import.meta.url, ({ test }) => {
   // RFC 8291 Appendix A — the spec's own worked example. If encryptContent

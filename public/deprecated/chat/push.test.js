@@ -8,7 +8,7 @@ import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
 import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
 import { Signer } from '../../streamo/Signer.js'
 import { bytesToHex } from '../../streamo/utils.js'
-import { PushStore, notifyOnMessages } from './push.js'
+import { PushStore, notifyOnMessages } from '../../streamo/push.js'
 
 // A throwaway store path per test, cleaned up in a finally.
 let counter = 0

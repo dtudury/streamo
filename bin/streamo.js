@@ -19,7 +19,7 @@ import { outletSync } from '../public/streamo/outletSync.js'
 import { originSync } from '../public/streamo/originSync.js'
 import { s3Sync } from '../public/streamo/s3Sync.js'
 import { join } from 'path'
-import { PushStore, pushRoutes, notifyOnMessages } from '../public/apps/chat/push.js'
+import { PushStore, pushRoutes, notifyOnMessages } from '../public/streamo/push.js'
 import { setLogLevel, logInfo, logDebug } from '../public/streamo/utils/logger.js'
 
 // Surface silent failures. Fire-and-forget promise chains inside

@@ -4,10 +4,6 @@
       "key": "02b1d2ee25ef3b0d08c8d5a0432ac9b359ec2beccf46b15986a319aa134999321c",
       "ours": true
     },
-    "apps/chat/": {
-      "key": "025b250ebd1b62fd669fa951d5b04e5cffd37ebb0d0dcdbad1e56775c4bb4e574e",
-      "ours": true
-    },
     "apps/flashcards/": {
       "key": "03e15f713aa1effa09ff5558169ee49b07d01cb0e1e97c76761b0f4e785e91222b",
       "ours": true

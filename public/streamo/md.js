@@ -69,6 +69,12 @@ class Lines {
 // because their content is opaque — `` `a *b* c` `` has no emphasis in it,
 // and forgetting that is the classic markdown bug.
 
+// Annotated as tuples, not inferred. Without this TypeScript widens each row
+// to `(RegExp | ((m) => HElement))[]`, so destructuring `[re, make]` gives
+// both names the union — `re.exec` and `make(...)` both become errors even
+// though every row is well-formed. The annotation is the shape the array
+// already had; it just wasn't stated.
+/** @type {Array<[RegExp, (m: RegExpExecArray) => HElement]>} */
 const INLINE = [
   // [[wikilink]] and [[wikilink|label]] — the reason this file exists.
   // Emitted as a real anchor with a data attribute so the app can decide what

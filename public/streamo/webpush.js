@@ -36,6 +36,14 @@ const hkdf = (ikm, salt, info, len) => Buffer.from(hkdfSync('sha256', ikm, salt,
  * `salt` and `asPrivate` are normally random / ephemeral; the test
  * injects RFC 8291's fixed values to reproduce the published vector.
  *
+ * @param {Buffer} plaintext
+ * @param {Buffer} uaPublic
+ * @param {Buffer} authSecret
+ * @param {{ salt?: Buffer, asPrivate?: Buffer }} [overrides]
+ *   Test-injection seam. Declared because the `= {}` default otherwise types
+ *   as `{}`, and destructuring two names out of it is an error — the prose
+ *   above already documented both fields; nothing but the annotation was
+ *   missing.
  * @returns {Buffer} the encrypted body to POST to the push endpoint
  */
 export function encryptContent (plaintext, uaPublic, authSecret, { salt, asPrivate } = {}) {
@@ -143,7 +151,11 @@ export async function sendWebPush (subscription, payload, vapid) {
       'Content-Type': 'application/octet-stream',
       TTL: '86400'
     },
-    body
+    // A Buffer *is* a Uint8Array at runtime, but `BodyInit` doesn't accept
+    // Node's Buffer type. Converting rather than asserting: one copy of a
+    // push payload is nothing, and the alternative is a cast that would stay
+    // true in the types if `body` ever stopped being bytes.
+    body: new Uint8Array(body)
   })
   return res.status
 }

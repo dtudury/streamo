@@ -75,7 +75,10 @@ async function login (e) {
   myRecord.attachSigner(signer, 'shared-note')
   myRecord.defaultMessage = `edit by ${username}`
   // Make the repo inspectable from the devtools console.
-  window.sharedNoteRepo = myRepo
+  // Debug handle for the devtools console. `window` has no index
+  // signature, so Object.assign is how you say "this global is deliberate"
+  // rather than a typo — checked, not silenced.
+  Object.assign(window, { sharedNoteRepo: myRepo })
 
   ui.set({ phase: 'editor', username, connected: true, saving: false })
 }

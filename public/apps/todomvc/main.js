@@ -213,11 +213,18 @@ function saveEdit (e, id) {
 function startEdit (id) {
   editingId.set(id)
   requestAnimationFrame(() => {
-    // `input.edit`, not `.edit`: the tag in the selector is what types this
-    // as an HTMLInputElement with `.value` and `.setSelectionRange`. Read off
-    // the selector, not asserted.
-    const input = document.querySelector('input.edit')
-    if (input) input.setSelectionRange(input.value.length, input.value.length)
+    // `instanceof`, not a tag in the selector. A comment here used to claim
+    // `querySelector('input.edit')` reads its type off the selector string —
+    // it doesn't. TypeScript narrows *bare tag* selectors only, so any
+    // compound selector yields `Element`, which is worse than the
+    // `HTMLElement` you'd get from getElementById. Checked 2026-08-04:
+    // `querySelector('input')` → HTMLInputElement, `querySelector('input#x')`
+    // → Element. The narrowing below is a real check the wrong path can't
+    // satisfy, and it costs nothing.
+    const input = document.querySelector('.edit')
+    if (input instanceof HTMLInputElement) {
+      input.setSelectionRange(input.value.length, input.value.length)
+    }
   })
 }
 

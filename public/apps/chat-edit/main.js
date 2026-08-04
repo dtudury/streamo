@@ -156,7 +156,10 @@ async function connect (hisPubkey, signer) {
     hisRepo.local.defaultMessage = `${ui.get('username')}'s page`
   }
   uset({ phase: 'editor', status: 'connected' })
-  window.__chatEdit = { myRepo, hisRepo, ui }
+  // Debug handle for the devtools console. `window` has no index
+  // signature, so Object.assign is how you say "this global is deliberate"
+  // rather than a typo — checked, not silenced.
+  Object.assign(window, { __chatEdit: { myRepo, hisRepo, ui } })
 }
 
 // ── readers ───────────────────────────────────────────────────────────────

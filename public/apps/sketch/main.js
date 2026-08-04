@@ -184,7 +184,10 @@ async function login (e) {
     }
     myRecord.attachSigner(signer, 'sketch')
     myRecord.defaultMessage = `edit by ${username}`
-    window.sketchRepo = myRepo
+    // Debug handle for the devtools console. `window` has no index
+    // signature, so Object.assign is how you say "this global is deliberate"
+    // rather than a typo — checked, not silenced.
+    Object.assign(window, { sketchRepo: myRepo })
     ui.set({ deriving: false, username, phase: 'editor' })
   } catch (err) {
     ui.set({ deriving: false, loginError: err.message ?? String(err), status: 'idle' })

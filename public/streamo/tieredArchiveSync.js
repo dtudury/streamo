@@ -59,14 +59,26 @@ export async function tieredArchiveSync (stream, cascade, publicKeyHex) {
   // mutated between load and check, future bugs we haven't seen yet.
   // Loud crash > silent corruption.
   if (!intentionallyCompacted && stream.wireByteLength !== storedSize) {
+    // Order matters here. This message used to lead with "another process is
+    // racing," which sent a debugging session looking for a second process
+    // that didn't exist (2026-08-03). The far more common cause is this
+    // process's own previous run dying mid-append — a crash or a SIGTERM
+    // between the write starting and finishing leaves the cascade a few
+    // bytes longer than anything that can be loaded back, and then every
+    // subsequent start fails HERE rather than where the original crash was.
+    // The stale entry outlives the bug that made it and masks it.
+    const delta = storedSize - stream.wireByteLength
     throw new Error(
       `tieredArchiveSync refusing to overwrite ${publicKeyHex}: in-memory ` +
       `stream is ${stream.wireByteLength} wire-bytes after load but cascade ` +
-      `has ${storedSize}. Usually means another process is racing this one ` +
-      `on the same cascade, or in-memory state was mutated between the load ` +
-      `and this check. Investigate before retrying. (If you really need to ` +
-      `replace the cascade entry with the in-memory state, call ` +
-      `cascade.remove('${publicKeyHex}') first.)`
+      `has ${storedSize} (${delta > 0 ? `${delta} more on disk` : `${-delta} more in memory`}). ` +
+      `Most often the previous run of THIS process died mid-append — a crash ` +
+      `or a kill between starting and finishing a write — so the cascade ` +
+      `holds a partial trailing record. Check whether an earlier run crashed ` +
+      `before assuming contention; if two processes really do share this ` +
+      `data-dir, that is the other cause. Recover with ` +
+      `cascade.remove('${publicKeyHex}'), or move the .bin aside — the ` +
+      `Record re-syncs from the relay and local files.`
     )
   }
 

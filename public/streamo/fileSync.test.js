@@ -3,7 +3,7 @@ import { StreamoRecord } from './StreamoRecord.js'
 import { Mirror } from './Mirror.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { fileSync } from './fileSync.js'
-import { mkdtemp, rm, writeFile, readFile } from 'fs/promises'
+import { mkdtemp, rm, writeFile, readFile, mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -104,6 +104,49 @@ describe(import.meta.url, ({ test }) => {
       const sub = await fileSync(repoMirror, dir, dataDir)
       try {
         assert.equal(repo.get('new.html'), '<new>')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── mounts: `ours` declares direction, and a downward flush must honour it ──
+  // `ours: true` means WE are upstream for that prefix — acceptsForCommit
+  // admits it (fileSync.js:341). The repo-wins branch computes toDelete from
+  // acceptsForDisk, which admits everything, so it deletes paths it has
+  // already been told it does not own. That is the 115-file deletion of
+  // 2026-08-04, reduced.
+
+  test('ours:true mount: a repo-wins flush must not delete files it declared us upstream of', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await mkdir(join(dir, 'apps/explorer'), { recursive: true })
+      await writeFile(join(dir, 'apps/explorer/index.html'), '<explorer>')
+      await new Promise(r => setTimeout(r, 30))
+
+      // Home commits AFTER the files exist, so commitTime > diskMtime and the
+      // repo-wins branch is selected — the second-start condition.
+      const home = new WritableStreamoRecord()
+      const homeMirror = new Mirror({ publicKeyHex: KEY_A, local: home })
+      const w = home.checkout()
+      w.set({
+        'index.html': '<home>',
+        'mounts.json': { mounts: { 'apps/explorer/': { ours: true, key: KEY_B } } }
+      })
+      home.commit(w, 'seed home + mounts')
+
+      // The shard exists and is empty — what a crashed author leaves behind.
+      const emptyShard = sealedRepo(KEY_B, {})
+
+      const sub = await fileSync(homeMirror, dir, dataDir, {
+        registry: makeStubRegistry([[KEY_A, homeMirror], [KEY_B, emptyShard]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal(await readFile(join(dir, 'index.html'), 'utf8'), '<home>')
+        assert.equal(await readFile(join(dir, 'apps/explorer/index.html'), 'utf8'), '<explorer>')
       } finally {
         await sub.unsubscribe()
       }

@@ -308,8 +308,18 @@ async function collectAllMounted (repo, ownKey, registry) {
   const out = {}
   const unresolvedPrefixes = []
   for (const [prefix, mount] of Object.entries(mounts)) {
-    if (!mount || typeof mount !== 'object' || typeof mount.key !== 'string') continue
-    if (!/^[0-9a-f]{66}$/.test(mount.key)) continue
+    if (!mount || typeof mount !== 'object') continue
+    // Declared as a mount, but not resolvable from this layer: no key, or a
+    // malformed one. The keyless `ours: true` form is the shipped shape of
+    // public/mounts.json since 951c5e1 — its child key derives from
+    // `signerName + '/' + prefix`, and collectAllMounted has no signer, so it
+    // cannot address that Record at all. Unaddressable is a stronger form of
+    // "upstream has not reported" than "no chain yet," and gets the same
+    // treatment: nothing under this prefix may be deleted.
+    if (typeof mount.key !== 'string' || !/^[0-9a-f]{66}$/.test(mount.key)) {
+      unresolvedPrefixes.push(prefix)
+      continue
+    }
     const files = await collectMountedFiles(
       registry,
       mount.key,

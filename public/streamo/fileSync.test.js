@@ -214,6 +214,38 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  test('mounts: a keyless ours:true mount is unresolvable here, so its prefix is not deletable', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await mkdir(join(dir, 'apps/explorer'), { recursive: true })
+      await writeFile(join(dir, 'apps/explorer/index.html'), '<explorer>')
+      await new Promise(r => setTimeout(r, 30))
+
+      // This is the shipped shape of public/mounts.json since 951c5e1: no
+      // pinned key. collectAllMounted has no signer, so it cannot derive the
+      // child key and cannot ask that Record anything — which means it has
+      // not heard from upstream, same as a mount with no chain.
+      const a = sealedRepo(KEY_A, {
+        files: { 'index.html': '<home>' },
+        mounts: { 'apps/explorer/': { ours: true } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        registry: makeStubRegistry([[KEY_A, a]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal(
+          (await readFile(join(dir, 'apps/explorer/index.html'), 'utf8')),
+          '<explorer>'
+        )
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('mounts: a mount that resolves to an empty value still deletes its materialized files', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {

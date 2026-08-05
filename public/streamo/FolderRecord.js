@@ -64,7 +64,7 @@ function canAuthor (x) {
 // `value['streamo.json']` is the meta. Records still in the 9.0.0 nested
 // shape (value.files['<path>']) or 8.x legacy (value.mounts at top level)
 // are not read by this reader — they need re-publishing in flat shape to
-// be visible. See [[the-flatten-arc-2026-06-04]] in memory/notes/.
+// be visible. See memory/notes/2026-06-04-the-flatten-arc.md in the grove.
 
 export class FolderRecord {
   /**
@@ -88,7 +88,9 @@ export class FolderRecord {
     // The (signer, signerName) tuple drives cross-Record writes through
     // ours:true mounts. signerName is what was passed to attachSigner —
     // the keysFor input. Child shards' signer-names derive deterministically
-    // as `signerName + '/' + mountPrefix`. See [[keysFor-as-sharding-namespace]].
+    // as `signerName + '/' + mountPrefix`. See the "keysFor IS the sharding
+    // namespace" section of
+    // memory/notes/2026-06-04-late-the-one-command-deploy-landed.md.
     this.signer = options.signer ?? null
     this.signerName = options.signerName ?? null
   }

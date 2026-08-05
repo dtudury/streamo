@@ -223,10 +223,20 @@ function readRepoMounts (repo) {
  *   the full registry passes trivially.
  * @param {string} targetKey
  * @param {number|undefined} atDataAddress
+ * **Returns `null` when upstream has never spoken for this target** — no
+ * materialized record, or a record with no chain, or a pinned commit that
+ * won't decode. That is a different fact from "upstream says this is empty,"
+ * which returns `{}`, and callers that delete files must not confuse them:
+ * an empty answer is an instruction, an absent answer is not. Collapsing the
+ * two is what removed 115 files on 2026-08-04.
+ *
  * @param {Set<string>} visited
- * @returns {Promise<Object>} flat map of rel-path → value
+ * @returns {Promise<Object|null>} flat map of rel-path → value, or null if
+ *   the target never reported
  */
 async function collectMountedFiles (registry, targetKey, atDataAddress, visited) {
+  // A cycle is a resolved answer: this record is already on the walk and has
+  // nothing further to contribute. Not the same as never having reported.
   if (visited.has(targetKey)) return {}
   const inner = new Set(visited)
   inner.add(targetKey)
@@ -237,13 +247,13 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
   // (Phase C). `get` here was a footgun: cold-cache call sites would
   // silently return `undefined` and the mount would no-op without trace.
   const targetRepo = await registry._materialize(targetKey)
-  if (!targetRepo) return {}
+  if (!targetRepo) return null          // never heard from
 
   let value
   if (atDataAddress != null) {
-    try { value = targetRepo.decode(atDataAddress) } catch { return {} }
+    try { value = targetRepo.decode(atDataAddress) } catch { return null }
   } else {
-    if (!targetRepo.lastCommit) return {}
+    if (!targetRepo.lastCommit) return null   // no chain yet — silence, not emptiness
     value = targetRepo.get()
   }
   if (!value || typeof value !== 'object' || value instanceof Uint8Array) return {}
@@ -267,7 +277,10 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
         typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
         inner
       )
-      for (const [rel, v] of Object.entries(nested)) collected[prefix + rel] = v
+      // A silent nested mount contributes nothing here. Only *top-level*
+      // silence is tracked for the delete filter, because toDelete is keyed
+      // on this repo's own mount prefixes.
+      for (const [rel, v] of Object.entries(nested ?? {})) collected[prefix + rel] = v
     }
   }
 
@@ -290,9 +303,10 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
  * @param {import('./StreamoRecordRegistry.js').MirrorRegistry|null} registry
  */
 async function collectAllMounted (repo, ownKey, registry) {
-  if (!registry || !ownKey) return {}
+  if (!registry || !ownKey) return { files: {}, unresolvedPrefixes: [] }
   const mounts = readRepoMounts(repo)
   const out = {}
+  const unresolvedPrefixes = []
   for (const [prefix, mount] of Object.entries(mounts)) {
     if (!mount || typeof mount !== 'object' || typeof mount.key !== 'string') continue
     if (!/^[0-9a-f]{66}$/.test(mount.key)) continue
@@ -302,9 +316,10 @@ async function collectAllMounted (repo, ownKey, registry) {
       typeof mount.dataAddress === 'number' ? mount.dataAddress : undefined,
       new Set([ownKey])
     )
+    if (files === null) { unresolvedPrefixes.push(prefix); continue }
     for (const [rel, v] of Object.entries(files)) out[prefix + rel] = v
   }
-  return out
+  return { files: out, unresolvedPrefixes }
 }
 
 /**
@@ -492,10 +507,13 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
 
   if (lastCommit && repoFiles && diskMtime <= commitTime) {
     // StreamoRecord wins: write committed files to disk + materialize mounts.
-    const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
+    const { files: mountedFiles, unresolvedPrefixes } = await collectAllMounted(repo, pubkeyHex, registry)
     const target = { ...mountedFiles, ...repoFiles }
     const { files: managed } = await readFolder(folder, acceptsForDisk)
-    const toDelete = Object.keys(managed).filter(k => !(k in target))
+    // Never delete under a prefix whose mount never reported. Silence is not
+    // an instruction to remove anything; an empty *answer* still is.
+    const isUnreported = k => unresolvedPrefixes.some(p => k.startsWith(p))
+    const toDelete = Object.keys(managed).filter(k => !(k in target) && !isUnreported(k))
     await writeToFolder(folder, target)
     await deleteFromFolder(folder, toDelete)
   } else if (Object.keys(diskFiles).length > 0) {
@@ -547,14 +565,15 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     pendingDiskFlush = false
     try {
       const ownFiles = getRepoFiles() ?? {}
-      const mountedFiles = await collectAllMounted(repo, pubkeyHex, registry)
+      const { files: mountedFiles, unresolvedPrefixes } = await collectAllMounted(repo, pubkeyHex, registry)
       const target = { ...mountedFiles, ...ownFiles }
       // Read EVERYTHING we manage on disk (both own + mounted) so the
       // toDelete set covers removed mounts too — when a mount entry is
       // dropped from the table, its materialized files vanish from disk.
       const { files: managed } = await readFolder(folder, acceptsForDisk)
       if (!filesEqual(managed, target)) {
-        const toDelete = Object.keys(managed).filter(k => !(k in target))
+        const isUnreported = k => unresolvedPrefixes.some(p => k.startsWith(p))
+        const toDelete = Object.keys(managed).filter(k => !(k in target) && !isUnreported(k))
         await writeToFolder(folder, target)
         await deleteFromFolder(folder, toDelete)
       }
@@ -638,7 +657,7 @@ export async function fileSync (repo, folder = '.', dataDir = '.stream', options
     })
     if (candidates.length > 0) {
       ;(async () => {
-        const mounted = await collectAllMounted(repo, pubkeyHex, registry)
+        const { files: mounted } = await collectAllMounted(repo, pubkeyHex, registry)
         const realEdits = []
         for (const event of candidates) {
           const rel = relative(folder, event.path)

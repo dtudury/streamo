@@ -3,7 +3,7 @@ import { StreamoRecord } from './StreamoRecord.js'
 import { Mirror } from './Mirror.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { fileSync } from './fileSync.js'
-import { mkdtemp, rm, writeFile, readFile } from 'fs/promises'
+import { mkdtemp, rm, writeFile, readFile, mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -163,6 +163,80 @@ describe(import.meta.url, ({ test }) => {
           "import { h } from '../streamo/h.js'")
         assert.equal((await readFile(join(dir, 'streamo/h.js'), 'utf8')),
           'export const h = …')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // ── the third quadrant: disk populated AND older than the last commit ────
+  //
+  // The two branch tests above cover "disk empty, repo has files" and "disk
+  // newer than the commit." The quadrant that has never been tested is the
+  // one that deletes: disk *populated* and *older*, so the repo wins and the
+  // downward flush computes a toDelete set. On 2026-08-04 that path removed
+  // 115 files under `public/`.
+  //
+  // The pair below is deliberate. An unpopulated mount must NOT delete; a
+  // mount that resolved to an empty value MUST. Any fix that only satisfies
+  // the first (e.g. "never delete under a mount prefix") fails the second.
+
+  test('mounts: an unpopulated mount does not delete the files already at its prefix', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await mkdir(join(dir, 'apps/explorer'), { recursive: true })
+      await writeFile(join(dir, 'apps/explorer/index.html'), '<explorer>')
+      await new Promise(r => setTimeout(r, 30))
+
+      // In the registry, but no chain: upstream has never said anything
+      // about this prefix. Distinct from "upstream says it is empty."
+      const unpopulated = new Mirror({ publicKeyHex: KEY_B, local: new WritableStreamoRecord() })
+      const a = sealedRepo(KEY_A, {
+        files: { 'index.html': '<home>' },
+        mounts: { 'apps/explorer/': { key: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, unpopulated]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        assert.equal(
+          (await readFile(join(dir, 'apps/explorer/index.html'), 'utf8')),
+          '<explorer>'
+        )
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('mounts: a mount that resolves to an empty value still deletes its materialized files', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await mkdir(join(dir, 'apps/explorer'), { recursive: true })
+      await writeFile(join(dir, 'apps/explorer/stale.html'), '<stale>')
+      await new Promise(r => setTimeout(r, 30))
+
+      // Upstream HAS spoken — a real commit whose value no longer holds the
+      // file. Per the relay invariant, what comes down is correct, so this
+      // deletion must propagate.
+      const emptied = sealedRepo(KEY_B, {})
+      const a = sealedRepo(KEY_A, {
+        files: { 'index.html': '<home>' },
+        mounts: { 'apps/explorer/': { key: KEY_B } }
+      })
+      const sub = await fileSync(a, dir, dataDir, {
+        registry: makeStubRegistry([[KEY_A, a], [KEY_B, emptied]]),
+        pubkeyHex: KEY_A
+      })
+      try {
+        let stillThere = true
+        try { await readFile(join(dir, 'apps/explorer/stale.html'), 'utf8') } catch { stillThere = false }
+        assert.equal(stillThere, false)
       } finally {
         await sub.unsubscribe()
       }

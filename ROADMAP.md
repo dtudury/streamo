@@ -888,7 +888,18 @@ already planning a major bump for another reason, or one of these
 becomes the highest priority on its own. Bundling them when the
 breaking-change door is open keeps the cost amortised.
 
-### `registry.open` → retrieve-only (+ `_materialize` for internals)
+### ~~`registry.open` → retrieve-only (+ `_materialize` for internals)~~ **SHIPPED in 10.0.0**
+
+**SHIPPED in 10.0.0** — and the shipped shape went further than the
+sketch below: `open` wasn't narrowed to retrieve-only, it was *removed*.
+`registry._materialize` is the substrate-internal verb (underscore-
+prefixed on purpose) and `session.subscribe` is the client one. See
+CHANGELOG.md:1148 — *"`registry.open` retired — `_materialize` +
+`subscribe` replace it."* The code is
+`public/streamo/StreamoRecordRegistry.js` (no `open` method; the
+`onOpen`/`offOpen` callbacks are a different thing — new-repo
+notification). Three latent call sites (flashcards, todomvc, chat/cli)
+were fixed in the migration. Description below kept for the reasoning.
 
 8.1 made `session.subscribe` the canonical client verb for "get me
 the Repo for this key, with bytes flowing." But `registry.open`
@@ -913,7 +924,16 @@ calling `open` for retrieval after the cascade subscribed need no
 change; clients calling `open` to bootstrap a new repo switch to
 `subscribe`. The relay's seed step switches to `_materialize`.
 
-### `RepoRegistry` requires an explicit `recaller` arg
+### ~~`RepoRegistry` requires an explicit `recaller` arg~~ **SHIPPED in 10.0.0**
+
+**SHIPPED in 10.0.0** — CHANGELOG.md:1163, *"`new
+StreamoRecordRegistry({ recaller })` is required."* The constructor now
+takes one options object and throws `TypeError` on a missing recaller,
+with the rationale in the message
+(`public/streamo/StreamoRecordRegistry.js`, the `constructor (options
+= {})` guard). The paired dev-mode warning for cross-recaller
+`reportKeyAccess` — flagged "lower priority" below — did **not** ship
+and isn't tracked anywhere else.
 
 Currently `new RepoRegistry(undefined, { recaller })` — if you omit
 `{ recaller }`, the default factory silently creates a fresh
@@ -938,7 +958,19 @@ Bundled with the `open` redesign and the `Repo` rename because all
 three are breaking changes that benefit from sharing one major bump's
 migration window.
 
-### `repo.merge(updateFn)` — stale-state-safe writes
+### ~~`repo.merge(updateFn)` — stale-state-safe writes~~ **SHIPPED in 10.0.0 (as `repo.update`), re-based in 16.0.0**
+
+**SHIPPED in 10.0.0** under the name `repo.update(updateFn)` —
+CHANGELOG.md:1172, *"`repo.update(updateFn)` — the conflict-safe write
+primitive (MVP)."* The four-step retry loop sketched below is the one
+that shipped. Follow-ups: 11.1.0 added `recoveryStuck` for
+"auto-resolve gave up" (CHANGELOG.md:622), and the Mirror-and-Draft
+migration **removed `update()` itself on 2026-07-17** (commit
+`b6da739`, with `recoveryStuck`). The primitive lives on as
+`commitWithRetry` in `public/streamo/Draft.js` — same retry semantics,
+now sitting on Draft's `pending`/`landed`/`superseded` status rather
+than on a method of the record. See CHANGELOG.md:27 for the 16.0.0
+Gone/Arrived list.
 
 The current `repo.set(value)` requires the caller to know the
 current value first (because the new value usually merges with the
@@ -965,7 +997,16 @@ fits naturally with whatever wire-protocol enhancements ship in
 the major bump — e.g., a "caught up" signal would make merge's
 retry cheaper.
 
-### `Repo` → `StreamoRecord`
+### ~~`Repo` → `StreamoRecord`~~ **SHIPPED in 10.0.0**
+
+**SHIPPED in 10.0.0** — CHANGELOG.md:1187, *"`Repo` →
+`StreamoRecord` (the graduation)."* `RepoRegistry` →
+`StreamoRecordRegistry` and `RepoSerializer` →
+`StreamoRecordSerializer` came with it; ~50 files, mechanical, no
+back-compat shims. The files are `public/streamo/StreamoRecord.js`,
+`StreamoRecordRegistry.js`, `StreamoRecordSerializer.js`. One loose
+end: design.md §8/§9 still carry the old headers — already tracked in
+*eat your vegetables* above.
 
 The class name `Repo` is generic and bumps against git semantics —
 exactly the trap we hit in 2026-05-20 when refactoring toward git-like
@@ -991,7 +1032,19 @@ pays for all three.
 
 ---
 
-### remove the `public/*` static fallback — the site composes from Records
+### ~~remove the `public/*` static fallback — the site composes from Records~~ **SHIPPED in 9.0.0 + 9.0.1** *(step 5 still open)*
+
+**SHIPPED across 9.0.0 and 9.0.1.** Step 1 (canonical library Record,
+`streamo-library` identity, pubkey `02e771…`) and step 2 (homepage
+declares its mounts) landed in 9.0.0 — CHANGELOG.md:1268, *"Canonical
+library Record live on streamo.dev."* Step 3 (each bundled app promoted
+to its own signed Record) is 9.0.1's Phase D. Step 4 landed as 9.0.1's
+Phase E — CHANGELOG.md:1210, *"Phase E — static fallback ripped.
+`webSync.js` no longer mounts `express.static(publicDir)`."* Verified:
+`express.static` no longer appears anywhere in `public/streamo/` or
+`bin/`. **Step 5 (tighten the npm tarball) is the one piece still
+open** — `package.json`'s `files` field still ships all of `public/` —
+and it's already tracked as Phase F in *9.x — what's left* above.
 
 The relay's web server ends its middleware chain with
 `app.use(express.static(publicDir))` — when the homepage Record's
@@ -1051,7 +1104,17 @@ fresh.
 
 ---
 
-### retire `filesKey: null` — one shape for Record values
+### ~~retire `filesKey: null` — one shape for Record values~~ **SHIPPED in 9.0.0**
+
+**SHIPPED in 9.0.0** — CHANGELOG.md:1260, *"`filesKey: null` retired.
+The `filesKey` option is gone from `fileSync` and `serveFromRepo`;
+files always live at `value.files`."* The breaking-change entries are
+CHANGELOG.md:1320 (option removed) and CHANGELOG.md:1327 (`--files-key`
+CLI flag removed); `--files` now auto-enables `--record-file
+streamo.json`. All five migration steps below landed. Note the shape it
+settled on didn't stay put: the 12.x flatten arc went one further —
+**the value IS the files map**, no `value.files` nesting at all (see
+`public/streamo/fileSync.js:174`, *"No more `value.files` nesting"*).
 
 Sister issue to the static-fallback removal above, surfaced the same
 night for the same reason: it's pre-mount scaffolding the mounts
@@ -1114,7 +1177,23 @@ left from the pre-mount era.*
 
 ---
 
-### multi-device write conflict recovery *(detection landed in 8.0; UX is the open thread)*
+### ~~multi-device write conflict recovery~~ **SHIPPED through 11.1.0; re-based in 16.0.0** *(one piece deferred to the entry below)*
+
+**SHIPPED.** Detection landed in 8.0 and recovery UX v1 in 8.3
+(both already noted in the body below). Everything the "v1 NOT doing"
+list deferred has since shipped too: automatic retry arrived as
+`repo.update` in 10.0.0 (CHANGELOG.md:1172), library-side WS
+orchestration as `session._resyncRepo` in the same release, the
+"auto-resolve gave up" signal as `recoveryStuck` in 11.1.0
+(CHANGELOG.md:622) alongside `public/apps/shared-note/` as the
+canonical recovery-UX demo. **The reasoning below has been overtaken
+on one point in particular:** "recovery orchestration lives in the
+app" is no longer true — it lives in the substrate as
+`commitWithRetry` (`public/streamo/Draft.js`), and 16.0.0 replaced
+`_awaitChainHash` with `Mirror.awaitLanded` so landing/divergence is
+read off a byte position rather than interpreted from the chain
+(CHANGELOG.md:27). The only listed piece still open is
+branch-as-non-head-value, which is its own entry below.
 
 Streamo streams are byte arrays addressed by **absolute offset**. This makes a
 repo effectively single-writer: if the same keypair commits from two devices
@@ -1189,6 +1268,15 @@ revisit if reused), branch-as-non-head-value (own thread, below).
 
 ### branch-as-non-head-value *(future, deferred from recovery UX v1)*
 
+**Still pending** — `mergedFrom` appears nowhere in `public/streamo/`,
+and no CHANGELOG entry records it shipping (the one hit,
+CHANGELOG.md:1907, is 8.3.0 describing it as future work). One
+correction to the framing: the "deferred from recovery UX v1" note
+undersells how far recovery got without it — the whole recovery arc
+shipped through 11.1.0 and was re-based on Draft/`commitWithRetry` in
+16.0.0, so this is now a *nothing-lost-on-conflict* feature rather
+than a missing piece of a half-built recovery story.
+
 The most streamo-native recovery shape: save rejected commits as
 addressed-but-non-head values inside the same Repo (the *branch*
 primitive from the vocabulary — `fork` = new Repo with lineage,
@@ -1208,6 +1296,16 @@ accidental shortcut. Don't reopen this without a concrete use case the
 current design can't carry.
 
 ### repo size — practical caps and lifecycle
+
+**Still pending.** Nothing in `public/streamo/` implements a per-repo
+size cap, a refuse-above-threshold check, or the `successor` commit
+field; no CHANGELOG entry records any of it. The bands below are still
+prose. One thing has moved underneath it, though: 13.0.0's `tiers:
+StorageTier[]` (CHANGELOG.md:419) gave storage lifecycle real
+machinery — `public/streamo/StorageTier.js` is explicitly "byte-blob
+KV store per-key, with capacity + eviction" — so the *reference relay
+caps* paragraph now has an obvious place to live rather than needing
+one invented.
 
 Streamo's chunk addresses are JavaScript numbers (safe-int max ≈ 9 PB),
 so the codec doesn't impose a meaningful hard limit. The actual ceiling

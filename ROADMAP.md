@@ -1627,6 +1627,20 @@ their bytes warm.
 
 ### Service-worker relay (in-browser streamo node)
 
+**David's spec, verbatim, 2026-08-09** — recorded here because it existed only
+in a conversation until now, and the file that was supposed to embody it
+embodied the opposite:
+
+> *"I wanted a relay. is it a relay? I don't want files cached, is it caching?
+> **it should serve files from the Records and pretend to be the web server, it
+> shouldn't use the web server.**"*
+
+That last clause is the whole design and it inverts what `public/sw.js` did:
+network-first caching of what the web server returned, which makes the web
+server authoritative in a project whose premise is that the Records are. Not a
+half-built relay — a backwards one. Deleted 2026-08-09; the idea is here, where
+it survives.
+
 A streamo node that runs as a service worker inside the browser. Two
 related jobs for one piece of infrastructure:
 

@@ -54,17 +54,30 @@
  *   reframe dissolved the markdown-editor-with-suggestions model.
  */
 
-const LIB = 'https://streamo.dev/streams/028d69692fccb952e4e3f5d6e42123602daafc402d8ea34483383415a7e178f1c9'
-const { h, handle }            = await import(`${LIB}/h.js`)
-const { mount }                = await import(`${LIB}/mount.js`)
-const { Recaller }             = await import(`${LIB}/utils/Recaller.js`)
-const { StreamoRecord }        = await import(`${LIB}/StreamoRecord.js`)
-const { WritableStreamoRecord }= await import(`${LIB}/WritableStreamoRecord.js`)
-const { StreamoRecordRegistry }= await import(`${LIB}/StreamoRecordRegistry.js`)
-const { registrySync }         = await import(`${LIB}/registrySync.js`)
-const { liveObject }           = await import(`${LIB}/LiveSource.js`)
-const { Signer }               = await import(`${LIB}/Signer.js`)
-const { bytesToHex }           = await import(`${LIB}/utils.js`)
+// Ordinary relative imports, same as explorer/flashcards/grove/passgen/
+// shared-note/todomvc. These used to be ten `await import()`s against a
+// hardcoded `https://streamo.dev/streams/028d6969…` — the published library
+// Record — which made the page unopenable except against production: every
+// local load fetched ten modules over the network from prod, so a dev server
+// served the app and prod served its dependencies.
+//
+// The pin wasn't sloppiness. This app is designed to be served FROM a Record
+// at /streams/<pubkey>/chat-edit/, where `../../streamo/` resolves to
+// /streams/<pubkey>/streamo/ rather than to the library. Absolute-to-prod
+// made that path work. But the fix for "the library isn't at that path" is to
+// mount it there — which is what mounts.json is for — not to hardcode one
+// origin into the source. `apps/grove` serves from a Record and imports
+// relatively.
+import { h, handle } from '../../streamo/h.js'
+import { mount } from '../../streamo/mount.js'
+import { Recaller } from '../../streamo/utils/Recaller.js'
+import { StreamoRecord } from '../../streamo/StreamoRecord.js'
+import { WritableStreamoRecord } from '../../streamo/WritableStreamoRecord.js'
+import { StreamoRecordRegistry } from '../../streamo/StreamoRecordRegistry.js'
+import { registrySync } from '../../streamo/registrySync.js'
+import { liveObject } from '../../streamo/LiveSource.js'
+import { Signer } from '../../streamo/Signer.js'
+import { bytesToHex } from '../../streamo/utils.js'
 
 // ── pubkey-from-URL ───────────────────────────────────────────────────────
 // /streams/<my-pubkey>/chat-edit/index.html#<his-pubkey>

@@ -112,6 +112,84 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  // ── the third quadrant: disk POPULATED and older ────────────────────────
+  //
+  // The two tests above cover disk-empty (repo wins, nothing to remove) and
+  // disk-newer (disk wins, no removal branch reached). Neither one can reach
+  // the code that deletes: with an empty disk `managed` is `{}`, so `toDelete`
+  // is empty by construction no matter what the repo says.
+  //
+  // The quadrant that deletes is disk populated AND older than the last
+  // commit. That is the arm that removed 115 of 154 files from `public/`
+  // twice (see `env/dev.env`, and the revert in 7f9e6f3). It had no coverage
+  // at this layer until now — the two opposed mount tests below (:186 / :249)
+  // pin the same question one level down, at a mount prefix, and were written
+  // by e40d72f for exactly this reason: one test alone can only confirm the
+  // misunderstanding its author already had.
+  //
+  // So these two point in opposite directions on purpose. Weaken the delete
+  // and the first fails; make it greedier and the second fails.
+
+  test('repo wins and DELETES a disk file it does not have, when disk is older', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      // Files exist on disk FIRST, then a commit lands that doesn't mention
+      // one of them — which is what a relay handing us an authoritative
+      // value looks like from here.
+      await writeFile(join(dir, 'keep.html'), '<keep>')
+      await writeFile(join(dir, 'orphan.html'), '<orphan>')
+      await new Promise(r => setTimeout(r, 30))
+
+      const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const working = repo.checkout()
+      working.set({ 'keep.html': '<keep>' })
+      repo.commit(working, 'record omits orphan.html')
+
+      const sub = await fileSync(repoMirror, dir, dataDir)
+      try {
+        assert.equal(await readFile(join(dir, 'keep.html'), 'utf8'), '<keep>')
+        let orphanGone = false
+        try { await readFile(join(dir, 'orphan.html'), 'utf8') } catch { orphanGone = true }
+        assert.equal(orphanGone, true)
+        // And the deletion must not have been laundered back into the chain:
+        // the Record still says what it said.
+        assert.equal(repo.get('orphan.html'), undefined)
+      } finally {
+        await sub.close()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('disk wins and KEEPS a file the repo does not have, when disk is newer', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const working = repo.checkout()
+      working.set({ 'keep.html': '<keep>' })
+      repo.commit(working, 'record omits orphan.html')
+      await new Promise(r => setTimeout(r, 30))
+
+      // Same shape as above, only the order is reversed: the disk moved last.
+      await writeFile(join(dir, 'keep.html'), '<keep>')
+      await writeFile(join(dir, 'orphan.html'), '<orphan>')
+
+      const sub = await fileSync(repoMirror, dir, dataDir)
+      try {
+        assert.equal(await readFile(join(dir, 'orphan.html'), 'utf8'), '<orphan>')
+        // Disk won, so the orphan is now part of the Record rather than gone.
+        assert.equal(repo.get('orphan.html'), '<orphan>')
+      } finally {
+        await sub.close()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
   // ── mounts: materialization onto disk (read-only one-way) ────────────────
 
   function makeStubRegistry (entries) {

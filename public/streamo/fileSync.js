@@ -1,11 +1,15 @@
-import { subscribe } from '@parcel/watcher'
+import { readFileSync } from 'fs'
 import { mkdir, readFile, readdir, realpath, stat, unlink, writeFile } from 'fs/promises'
-import { existsSync, readFileSync } from 'fs'
 import { dirname, join, relative } from 'path'
+
 import { compile } from '@gerhobbelt/gitignore-parser'
+import { subscribe } from '@parcel/watcher'
+
 import { commitWithRetry } from './Draft.js'
 
-const ALWAYS_IGNORE = '.env\n.DS_Store\n.git\nnode_modules'
+// `*.env`, not `.env` — the latter matches only that exact filename, so
+// `david.env` and `env/secrets/claude.env` sailed straight past it.
+const ALWAYS_IGNORE = '*.env\n.DS_Store\n.git\nnode_modules'
 
 /**
  * Build a filter function from the folder's .gitignore plus hard-coded ignores.
@@ -16,7 +20,15 @@ const ALWAYS_IGNORE = '.env\n.DS_Store\n.git\nnode_modules'
  */
 function buildFilter (folder, dataDir) {
   let content = ALWAYS_IGNORE
-  try { content = readFileSync(join(folder, '.gitignore'), 'utf8') + '\n' + content } catch {}
+  try {
+    content = readFileSync(join(folder, '.gitignore'), 'utf8') + '\n' + content
+  } catch {
+    // Say it. A folder's .gitignore is where the privacy policy actually
+    // lives — streamo's own has `env/secrets/`, and nothing in ALWAYS_IGNORE
+    // knows about it. Missing and empty used to be indistinguishable here,
+    // and both meant "publish everything".
+    console.warn(`fileSync: no .gitignore in ${folder} — filtering on ALWAYS_IGNORE alone (${ALWAYS_IGNORE.split('\n').join(', ')})`)
+  }
   const gitignore = compile(content)
   // Ephemeral mode (no archive dir): filter against gitignore only.
   if (!dataDir) return rel => gitignore.accepts(rel)

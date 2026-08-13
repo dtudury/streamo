@@ -246,15 +246,8 @@ async function collectMountedFiles (registry, targetKey, atDataAddress, visited)
   // before the StreamoRecord is returned. Same shape as repoFileServer's resolver
   // (Phase C). `get` here was a footgun: cold-cache call sites would
   // silently return `undefined` and the mount would no-op without trace.
-  // **`_materialize` cannot answer "never heard from" — it manufactures.**
-  // Hand it any well-formed key and it builds a local StreamoRecord, wraps it in a
-  // Mirror, registers it and returns it. There is no falsy path and no throw
-  // for an unknown key, so a `if (!targetRepo)` guard here is dead code that
-  // reads like the case is handled. It was here until 2026-08-12.
-  //
-  // The distinction survives one line down, on `lastCommit`, because a
-  // freshly-minted Record has no chain and that fact can't be manufactured.
-  // Ask *has this Record ever spoken*, never *did I find it*.
+  // _materialize always succeeds — it mints a Record for any well-formed key.
+  // Don't guard on the handle; ask lastCommit below, which can't be minted.
   const targetRepo = await registry._materialize(targetKey)
 
   let value

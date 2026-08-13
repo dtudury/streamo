@@ -115,32 +115,9 @@ const record = await session.subscribe(WAKE_INBOX_KEY)
 // suppress it. It was never a cursor artifact — **it was the Record arriving.**
 // That is why it delivered Turnstone's lost hand-off rather than noise, and why
 // v4 was right that suppressing it would have been the mistake.
-// **`remoteLength`, not `byteLength`** — for a semantic reason, and the
-// mechanical reason this comment used to give was false.
-//
-// **Corrected 2026-08-12, measured against the live inbox.** The previous
-// version said Mirror's `byteLength` *"does not call `reportKeyAccess`, so
-// `recaller.when(() => record.byteLength > n)` subscribes to nothing: it
-// evaluates once, gets false, and waits forever"*, and cited a 2026-08-03
-// measurement of an indefinite hang. Both halves are wrong:
-//
-//   Mirror.js:128   get byteLength () { return this.local.byteLength }
-//   Streamo.js:106  this.#recaller.reportKeyAccess(this, 'length')
-//
-// The delegation lands in a reactive getter. The access is reported on
-// `local` rather than on the Mirror, and `Streamo.append` reports its
-// mutation on the same object — so both sides agree and the subscription
-// works. Run against `wss://streamo.dev`: `when(() => record.byteLength > 0)`
-// **resolved in 120ms**. The 08-03 "hang" is better explained by the two
-// instrument failures v5 already names — a `head -1` pipe interaction, and a
-// `timeout` binary that does not exist on macOS and exits 0.
-//
-// **The real reason to use `remoteLength` is that it asks the right
-// question.** It is *"the byte-length up to which the wire has confirmed"* —
-// what an inbox wants to know is what upstream has said, not how many bytes
-// happen to be local. `byteLength` would also fire on our own writes.
-// A correct conclusion resting on a wrong premise is still worth fixing,
-// because the premise is what the next reader carries away.
+// remoteLength = what upstream has confirmed. byteLength would also fire on
+// our own writes, which an inbox doesn't want. Both are reactive — if you
+// find a comment claiming byteLength isn't, it's wrong; measured 120ms.
 let cursor = 0
 let synced = false
 

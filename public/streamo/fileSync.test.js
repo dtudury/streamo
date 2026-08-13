@@ -70,6 +70,66 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  test('.jsonl on disk becomes an array of records in the repo', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(join(dir, 'log.jsonl'), '{"a":1}\n{"b":"two"}\n')
+      const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir)
+      try {
+        assert.deepEqual(repo.get('log.jsonl'), [{ a: 1 }, { b: 'two' }])
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  test('.jsonl written back from the repo is byte-identical', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const working = repo.checkout()
+      working.set({ 'log.jsonl': [{ a: 1 }, { b: 'two' }] })
+      repo.commit(working, 'seed jsonl')
+      await new Promise(r => setTimeout(r, 30))
+      const sub = await fileSync(repoMirror, dir, dataDir)
+      try {
+        const content = await readFile(join(dir, 'log.jsonl'), 'utf8')
+        assert.equal(content, '{"a":1}\n{"b":"two"}\n', 'exact bytes, including the trailing newline')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
+  // The interesting case, and it is not hypothetical: 2 of 69 real transcripts
+  // in the-grove hit it. Some records were written by a different tool as
+  // `{"a": 1}` where Claude Code writes `{"a":1}`, and JSON.stringify
+  // normalises the spaces away — so parsing would silently rewrite the file.
+  // decodeFile checks its own round-trip against encodeFile and declines.
+  test('.jsonl that cannot round-trip byte-exactly stays a string', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(join(dir, 'log.jsonl'), '{"a": 1}\n')
+      const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir)
+      try {
+        assert.equal(repo.get('log.jsonl'), '{"a": 1}\n', 'kept verbatim rather than reformatted')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
   test('repo wins when disk is empty but repo has files', async ({ assert }) => {
     const { dir, dataDir, cleanup } = await makeSandbox()
     try {

@@ -65,17 +65,21 @@ function decodeFile (rel, value) {
   if (rel.endsWith('.jsonl')) {
     try {
       const lines = value.split('\n')
-      // A trailing newline is what makes the join on the way out exact.
-      if (lines.pop() !== '') return value
+      if (lines[lines.length - 1] === '') lines.pop()
       // A blank or malformed line throws here and keeps the string.
       const records = lines.map(line => JSON.parse(line))
-      // Then *check*, against the real inverse rather than a proxy for it —
-      // the two can't drift if the test is the function itself. An earlier
-      // version reasoned that trailing-newline + parseable was proof enough;
-      // it wasn't, and 2 of 69 real transcripts said so. Both had records
-      // written by a different tool as `{"a": 1}` where Claude Code writes
-      // `{"a":1}`, and JSON.stringify normalises the spaces away.
-      if (encodeFile(rel, records) !== value) return value
+      // Check against the real inverse rather than a proxy for it — the two
+      // can't drift if the test is the function itself. An earlier version
+      // reasoned that trailing-newline + parseable was proof enough; it
+      // wasn't, and 2 of 69 real transcripts said so. Both had records written
+      // by a different tool as `{"a": 1}` where Claude Code writes `{"a":1}`,
+      // and JSON.stringify normalises the spaces away.
+      //
+      // A missing trailing newline is the one difference we accept gaining
+      // back (David, 2026-08-13: *"it's okay if we lose a trailing newline"*).
+      // Everything else has to return byte-identical.
+      const encoded = encodeFile(rel, records)
+      if (encoded !== value && encoded !== value + '\n') return value
       return records
     } catch { return value }
   }

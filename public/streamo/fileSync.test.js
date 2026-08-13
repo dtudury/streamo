@@ -108,6 +108,25 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  // The one lossy conversion we accept, at David's call 2026-08-13: a file
+  // with no trailing newline still parses, and gains one on the way back out.
+  test('.jsonl with no trailing newline still parses, and gains one back', async ({ assert }) => {
+    const { dir, dataDir, cleanup } = await makeSandbox()
+    try {
+      await writeFile(join(dir, 'log.jsonl'), '{"a":1}\n{"b":2}')
+      const repo = new WritableStreamoRecord()
+      const repoMirror = new Mirror({ publicKeyHex: 'ab'.repeat(33), local: repo })
+      const sub = await fileSync(repoMirror, dir, dataDir)
+      try {
+        assert.deepEqual(repo.get('log.jsonl'), [{ a: 1 }, { b: 2 }], 'parses despite the missing newline')
+      } finally {
+        await sub.unsubscribe()
+      }
+    } finally {
+      await cleanup()
+    }
+  })
+
   // The interesting case, and it is not hypothetical: 2 of 69 real transcripts
   // in the-grove hit it. Some records were written by a different tool as
   // `{"a": 1}` where Claude Code writes `{"a":1}`, and JSON.stringify

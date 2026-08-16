@@ -64,35 +64,13 @@ async function readEveryAcceptedFile (folder, accepts) {
   return files
 }
 
-function mountTable (value) {
+function mountsIn (value) {
   const mounts = value?.[MOUNTS]?.mounts
-  return mounts && typeof mounts === 'object' ? mounts : {}
+  return mounts && typeof mounts === 'object' ? Object.entries(mounts) : []
 }
 
-function filesUnderPrefix (prefix, value) {
-  const files = {}
-  if (!value || typeof value !== 'object' || value instanceof Uint8Array) return files
-  for (const [name, contents] of Object.entries(value)) files[prefix + name] = contents
-  return files
-}
-
-function desiredDiskContents (repo, registry) {
-  if (!repo.lastCommit) return { known: false, files: {}, notYetLoaded: [] }
-
-  const own = repo.get()
-  if (!own || typeof own !== 'object') return { known: false, files: {}, notYetLoaded: [] }
-
-  const files = { ...own }
-  const notYetLoaded = []
-
-  for (const [prefix, mount] of Object.entries(mountTable(own))) {
-    if (typeof mount?.key !== 'string') { notYetLoaded.push(prefix); continue }
-    const mounted = registry?.get(mount.key)
-    if (!mounted) { notYetLoaded.push(prefix); continue }
-    Object.assign(files, filesUnderPrefix(prefix, mounted.get()))
-  }
-
-  return { known: true, files, notYetLoaded }
+function isFileMap (value) {
+  return value && typeof value === 'object' && !(value instanceof Uint8Array)
 }
 
 export async function fileSync2 (repo, folderPath = '.', dataDir = '.streamo', options = {}) {
@@ -113,16 +91,40 @@ export async function fileSync2 (repo, folderPath = '.', dataDir = '.streamo', o
   await reloadIgnoresThenReadEverything('read everything')
 
   let reconciliations = 0
-  const reconcileDiskToRecord = () => {
+  repo.recaller.watch('fileSync2:disk-matches-record', () => {
     reconciliations++
-    const { known, files, notYetLoaded } = desiredDiskContents(repo, registry)
-    if (!known) { log('reconcile', `#${reconciliations} nothing committed yet`); return }
-    const names = Object.keys(files).sort()
-    log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${notYetLoaded.length ? ` — not yet loaded: [${notYetLoaded}]` : ''}`)
-  }
-  repo.recaller.watch('fileSync2:disk-matches-record', reconcileDiskToRecord)
 
-  const subscription = await subscribe(folder, (err, events) => {
+    if (!repo.lastCommit) {
+      log('reconcile', `#${reconciliations} nothing committed yet`)
+      return
+    }
+
+    const committed = repo.get()
+    if (!isFileMap(committed)) {
+      log('reconcile', `#${reconciliations} committed value is not a file map`)
+      return
+    }
+
+    const shouldBeOnDisk = { ...committed }
+    const notYetLoaded = []
+
+    for (const [prefix, mount] of mountsIn(committed)) {
+      const mounted = typeof mount?.key === 'string' && registry?.get(mount.key)
+      const mountedFiles = mounted && mounted.get()
+      if (!isFileMap(mountedFiles)) {
+        notYetLoaded.push(prefix)
+        continue
+      }
+      for (const [name, contents] of Object.entries(mountedFiles)) {
+        shouldBeOnDisk[prefix + name] = contents
+      }
+    }
+
+    const names = Object.keys(shouldBeOnDisk).sort()
+    log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${notYetLoaded.length ? ` — not yet loaded: [${notYetLoaded}]` : ''}`)
+  })
+
+  await subscribe(folder, (err, events) => {
     if (err) { log('disk', `watcher error: ${err.message}`); return }
     const changed = events.map(event => relative(folder, event.path))
     if (changed.includes(GITIGNORE)) {
@@ -133,12 +135,4 @@ export async function fileSync2 (repo, folderPath = '.', dataDir = '.streamo', o
   })
 
   log('setup', `watching ${folder} — logging only, nothing is written`)
-
-  return {
-    async unsubscribe () {
-      repo.recaller.unwatch(reconcileDiskToRecord)
-      await subscription.unsubscribe()
-      log('setup', 'stopped')
-    }
-  }
 }

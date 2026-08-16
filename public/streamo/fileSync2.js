@@ -98,14 +98,23 @@ export async function fileSync2 (repo, folder = '.', dataDir = '.streamo', optio
 
   // ── mechanism 2's trigger: a commit arrived ────────────────────────────
   // `lastCommit`, deliberately, not `get()`. See note 1 above.
-  let lastSeen = null
+  // `if (!commit)` is load-bearing and measured: `recaller.watch` runs its
+  // callback once at registration, before anything has synced. Locally that was
+  // fire 1 of 4; against a live relay Record it was fire 1 of 2. This is the
+  // line that makes "never reported" and "reported empty" different without a
+  // guard — trigger on the *value* instead and startup deletes the folder.
+  //
+  // There was a `if (id === lastSeen) return` here too. Measured: zero repeats
+  // in either path. It saved a comparison, not a correctness property — a
+  // duplicate write is already a no-op downstream on content-equality — so it
+  // was a false statement about the code in exchange for nothing. Deleted
+  // rather than kept, because a guard nobody can observe firing is how the old
+  // file carried `if (!targetRepo) return null // never heard from` for months.
   const onCommit = () => {
     const commit = repo.lastCommit
-    if (!commit) return                       // silence — not an empty answer
+    if (!commit) return
     const hash = commit.chainHash ?? commit.hash ?? null
     const id = hash ? String(hash).slice(0, 12) : String(commit.date?.getTime?.() ?? '?')
-    if (id === lastSeen) return
-    lastSeen = id
     log('mirror', `commit ${id}  date=${commit.date?.toISOString?.() ?? '?'}  msg=${JSON.stringify(commit.message ?? '')}`)
   }
   repo.recaller.watch('fileSync2:commit-arrived', onCommit)

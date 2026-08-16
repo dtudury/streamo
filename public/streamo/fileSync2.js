@@ -5,11 +5,12 @@ import { compile } from '@gerhobbelt/gitignore-parser'
 import { subscribe } from '@parcel/watcher'
 
 const GITIGNORE = '.gitignore'
+const MOUNTS = 'mounts.json'
 
 const OVERRIDABLE_DEFAULTS = ['*.env', '.DS_Store', '.git', 'node_modules']
 
 const stamp = () => new Date().toISOString().slice(11, 23)
-const log = (channel, message) => console.error(`[fs2 ${stamp()}] ${channel.padEnd(6)} ${message}`)
+const log = (channel, message) => console.error(`[fs2 ${stamp()}] ${channel.padEnd(7)} ${message}`)
 
 async function resolvedFolder (folder) {
   await mkdir(folder, { recursive: true })
@@ -63,29 +64,63 @@ async function readEveryAcceptedFile (folder, accepts) {
   return files
 }
 
+function mountTable (value) {
+  const mounts = value?.[MOUNTS]?.mounts
+  return mounts && typeof mounts === 'object' ? mounts : {}
+}
+
+function filesUnderPrefix (prefix, value) {
+  const files = {}
+  if (!value || typeof value !== 'object' || value instanceof Uint8Array) return files
+  for (const [name, contents] of Object.entries(value)) files[prefix + name] = contents
+  return files
+}
+
+function desiredDiskContents (repo, registry) {
+  if (!repo.lastCommit) return { known: false, files: {}, notYetLoaded: [] }
+
+  const own = repo.get()
+  if (!own || typeof own !== 'object') return { known: false, files: {}, notYetLoaded: [] }
+
+  const files = { ...own }
+  const notYetLoaded = []
+
+  for (const [prefix, mount] of Object.entries(mountTable(own))) {
+    if (typeof mount?.key !== 'string') { notYetLoaded.push(prefix); continue }
+    const mounted = registry?.get(mount.key)
+    if (!mounted) { notYetLoaded.push(prefix); continue }
+    Object.assign(files, filesUnderPrefix(prefix, mounted.get()))
+  }
+
+  return { known: true, files, notYetLoaded }
+}
+
 export async function fileSync2 (repo, folderPath = '.', dataDir = '.streamo', options = {}) {
+  const { registry = null } = options
   const folder = await resolvedFolder(folderPath)
   const streamoOwned = await streamoOwnedPaths(folder, dataDir)
 
   let accepts = null
-  let snapshot = null
+  let onDisk = null
 
   const reloadIgnoresThenReadEverything = async reason => {
     const gitignoreRules = await readGitignoreRules(folder)
     accepts = buildAccepts(gitignoreRules, streamoOwned)
-    snapshot = await readEveryAcceptedFile(folder, accepts)
-    log('read', `${reason} — ${Object.keys(snapshot).length} files, ${gitignoreRules ? `${GITIGNORE} has ${gitignoreRules.length} lines` : `no ${GITIGNORE}`}, streamo owns [${streamoOwned}]`)
+    onDisk = await readEveryAcceptedFile(folder, accepts)
+    log('disk', `${reason} — ${Object.keys(onDisk).length} files, ${gitignoreRules ? `${GITIGNORE}: ${gitignoreRules.length} lines` : `no ${GITIGNORE}`}, streamo owns [${streamoOwned}]`)
   }
 
-  await reloadIgnoresThenReadEverything('initial')
+  await reloadIgnoresThenReadEverything('read everything')
 
-  const onCommitArrived = () => {
-    const commit = repo.lastCommit
-    if (!commit) return
-    const id = String(commit.chainHash ?? commit.date?.getTime?.() ?? '?').slice(0, 12)
-    log('mirror', `commit ${id} ${JSON.stringify(commit.message ?? '')}`)
+  let reconciliations = 0
+  const reconcileDiskToRecord = () => {
+    reconciliations++
+    const { known, files, notYetLoaded } = desiredDiskContents(repo, registry)
+    if (!known) { log('reconcile', `#${reconciliations} nothing committed yet`); return }
+    const names = Object.keys(files).sort()
+    log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${notYetLoaded.length ? ` — not yet loaded: [${notYetLoaded}]` : ''}`)
   }
-  repo.recaller.watch('fileSync2:commit-arrived', onCommitArrived)
+  repo.recaller.watch('fileSync2:disk-matches-record', reconcileDiskToRecord)
 
   const subscription = await subscribe(folder, (err, events) => {
     if (err) { log('disk', `watcher error: ${err.message}`); return }
@@ -94,16 +129,14 @@ export async function fileSync2 (repo, folderPath = '.', dataDir = '.streamo', o
       reloadIgnoresThenReadEverything(`${GITIGNORE} changed`)
       return
     }
-    for (const rel of changed) {
-      if (accepts(rel)) log('disk', rel)
-    }
+    for (const rel of changed) if (accepts(rel)) log('disk', rel)
   })
 
   log('setup', `watching ${folder} — logging only, nothing is written`)
 
   return {
     async unsubscribe () {
-      repo.recaller.unwatch(onCommitArrived)
+      repo.recaller.unwatch(reconcileDiskToRecord)
       await subscription.unsubscribe()
       log('setup', 'stopped')
     }

@@ -4,6 +4,8 @@ import { join, relative } from 'path'
 import { compile } from '@gerhobbelt/gitignore-parser'
 import { subscribe } from '@parcel/watcher'
 
+import { isPlainObject } from './codecs.js'
+
 const GITIGNORE = '.gitignore'
 const MOUNTS = 'mounts.json'
 const OVERRIDABLE_DEFAULTS = ['*.env', '.DS_Store', '.git', 'node_modules']
@@ -11,7 +13,12 @@ const OVERRIDABLE_DEFAULTS = ['*.env', '.DS_Store', '.git', 'node_modules']
 const log = (channel, message) =>
   console.error(`[fs2 ${new Date().toISOString().slice(11, 23)}] ${channel.padEnd(7)} ${message}`)
 
-const isFileMap = value => value && typeof value === 'object' && !(value instanceof Uint8Array)
+const describe = value =>
+  value === undefined ? 'undefined'
+    : value === null ? 'null'
+      : value instanceof Uint8Array ? `a ${value.length}-byte Uint8Array`
+        : Array.isArray(value) ? `an array of ${value.length}`
+          : `a ${typeof value}`.replace('a o', 'an o')
 
 export async function fileSync2 (repo, folderPath = '.', options = {}) {
   const { registry = null, ignore = () => false } = options
@@ -57,18 +64,30 @@ export async function fileSync2 (repo, folderPath = '.', options = {}) {
       return
     }
     const committed = repo.get()
-    if (!isFileMap(committed)) {
-      log('reconcile', `#${reconciliations} committed value is not a file map`)
+    if (!isPlainObject(committed)) {
+      log('FAULT', `#${reconciliations} committed value is ${describe(committed)}, not a file map — refusing to reconcile disk against it`)
       return
     }
 
     const shouldBeOnDisk = { ...committed }
     const notYetLoaded = []
     for (const [prefix, mount] of Object.entries(committed[MOUNTS]?.mounts ?? {})) {
-      const mounted = typeof mount?.key === 'string' && registry?.get(mount.key)
-      const mountedFiles = mounted && mounted.get()
-      if (!isFileMap(mountedFiles)) {
+      if (typeof mount?.key !== 'string') {
+        log('FAULT', `#${reconciliations} mount ${prefix} has no key (${describe(mount)})`)
+        continue
+      }
+      const mounted = registry?.get(mount.key)
+      if (!mounted) {
         notYetLoaded.push(prefix)
+        continue
+      }
+      const mountedFiles = mounted.get()
+      if (mountedFiles === undefined) {
+        notYetLoaded.push(prefix)
+        continue
+      }
+      if (!isPlainObject(mountedFiles)) {
+        log('FAULT', `#${reconciliations} mount ${prefix} committed ${describe(mountedFiles)}, not a file map`)
         continue
       }
       for (const [name, contents] of Object.entries(mountedFiles)) shouldBeOnDisk[prefix + name] = contents

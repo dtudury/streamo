@@ -258,6 +258,13 @@ function getPartAddress (r, part) {
  *
  * @returns {Object} map of codec name → codec definition
  */
+export const isPlainObject = value =>
+  !!value &&
+  typeof value === 'object' &&
+  !Array.isArray(value) &&
+  !(value instanceof Uint8Array) &&
+  !(value instanceof Date)
+
 export function makeCodecs () {
   // ── Codec definitions ────────────────────────────────────────────────────
 
@@ -456,8 +463,7 @@ export function makeCodecs () {
     // information is lost on round-trip in both cases; the decoded value is a
     // plain {}.
     encode (r, v) {
-      if (!v || typeof v !== 'object' || Array.isArray(v)) return
-      if (v instanceof Uint8Array || v instanceof Date) return
+      if (!isPlainObject(v)) return
       if (Object.keys(v).length === 0) return new Uint8Array([EMPTY_OBJECT.baseFooter])
     },
     decode: () => ({})
@@ -466,7 +472,7 @@ export function makeCodecs () {
   const OBJECT = {
     partReaders: [inlineOrAddress],
     encode (r, v, asRefs) {
-      if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).length === 0) return
+      if (!isPlainObject(v) || Object.keys(v).length === 0) return
       const duples = Object.entries(v).map(([k, val]) => new Duple([k, val]))
       const tree = duples.length === 1 ? duples[0] : new Duple(duples)
       return encodeMultipart(r, [tree], OBJECT, asRefs)

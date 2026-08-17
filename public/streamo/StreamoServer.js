@@ -9,7 +9,6 @@ import { DiskTier } from './StorageTier.js'
 import { Cascade } from './Cascade.js'
 import { tieredArchiveSync } from './tieredArchiveSync.js'
 import { fileSync } from './fileSync.js'
-import { fileSync2 } from './fileSync2.js'
 import { originSync } from './originSync.js'
 import { outletSync } from './outletSync.js'
 import { registrySync } from './registrySync.js'
@@ -274,9 +273,6 @@ export class StreamoServer {
       signer:     options.signer     ?? this.signer,
       signerName: options.signerName ?? this.name,
       ...options
-    }
-    if (process.env.STREAMO_FS2) {
-      return fileSync2(this.mirror, folder, opts)
     }
     return fileSync(this.mirror, folder, options.dataDir, opts)
   }

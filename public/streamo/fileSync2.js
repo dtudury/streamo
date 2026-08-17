@@ -2,7 +2,7 @@ import { mkdir, readFile, readdir, realpath, stat } from 'fs/promises'
 import { join, relative } from 'path'
 
 import { compile } from '@gerhobbelt/gitignore-parser'
-import { subscribe } from '@parcel/watcher'
+import { subscribe as watchFolder } from '@parcel/watcher'
 
 import { isPlainObject } from './codecs.js'
 
@@ -20,11 +20,12 @@ const describe = value =>
         : Array.isArray(value) ? `an array of ${value.length}`
           : `a ${typeof value}`.replace('a o', 'an o')
 
-export async function fileSync2 (repo, folderPath = '.', options = {}) {
-  const { registry = null, ignore = () => false } = options
-
+export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderPath = '.', ignore = () => false }) {
   await mkdir(folderPath, { recursive: true })
   const folder = await realpath(folderPath)
+
+  const root = await subscribe(rootKey)
+  const asked = new Set([rootKey])
 
   let accepts = null
   let onDisk = null
@@ -56,34 +57,39 @@ export async function fileSync2 (repo, folderPath = '.', options = {}) {
   await reloadIgnoresThenReadEverything('read everything')
 
   let reconciliations = 0
-  repo.recaller.watch('fileSync2:disk-matches-record', () => {
+  registry.recaller.watch('fileSync2:disk-matches-record', () => {
     reconciliations++
 
-    if (!repo.lastCommit) {
-      log('reconcile', `#${reconciliations} nothing committed yet`)
+    const committed = root.get()
+    if (committed === undefined) {
+      log('reconcile', `#${reconciliations} root has not reported yet`)
       return
     }
-    const committed = repo.get()
     if (!isPlainObject(committed)) {
-      log('FAULT', `#${reconciliations} committed value is ${describe(committed)}, not a file map — refusing to reconcile disk against it`)
+      log('FAULT', `#${reconciliations} root committed ${describe(committed)}, not a file map`)
       return
     }
 
     const shouldBeOnDisk = { ...committed }
-    const notYetLoaded = []
+    const waitingFor = []
+
     for (const [prefix, mount] of Object.entries(committed[MOUNTS]?.mounts ?? {})) {
       if (typeof mount?.key !== 'string') {
         log('FAULT', `#${reconciliations} mount ${prefix} has no key (${describe(mount)})`)
         continue
       }
-      const mounted = registry?.get(mount.key)
+      const mounted = registry.get(mount.key)
       if (!mounted) {
-        notYetLoaded.push(prefix)
+        waitingFor.push(prefix)
+        if (!asked.has(mount.key)) {
+          asked.add(mount.key)
+          subscribe(mount.key).catch(err => log('FAULT', `subscribe ${prefix} failed: ${err.message}`))
+        }
         continue
       }
       const mountedFiles = mounted.get()
       if (mountedFiles === undefined) {
-        notYetLoaded.push(prefix)
+        waitingFor.push(prefix)
         continue
       }
       if (!isPlainObject(mountedFiles)) {
@@ -94,10 +100,10 @@ export async function fileSync2 (repo, folderPath = '.', options = {}) {
     }
 
     const names = Object.keys(shouldBeOnDisk).sort()
-    log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${notYetLoaded.length ? ` — not yet loaded: [${notYetLoaded}]` : ''}`)
+    log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${waitingFor.length ? ` — waiting for [${waitingFor}]` : ''}`)
   })
 
-  await subscribe(folder, (err, events) => {
+  await watchFolder(folder, (err, events) => {
     if (err) { log('disk', `watcher error: ${err.message}`); return }
     const changed = events.map(event => relative(folder, event.path))
     if (changed.includes(GITIGNORE)) {
@@ -107,5 +113,5 @@ export async function fileSync2 (repo, folderPath = '.', options = {}) {
     for (const rel of changed) if (accepts(rel)) log('disk', rel)
   })
 
-  log('setup', `watching ${folder} — logging only, nothing is written`)
+  log('setup', `watching ${folder} for ${rootKey.slice(0, 12)}… — logging only, nothing is written`)
 }

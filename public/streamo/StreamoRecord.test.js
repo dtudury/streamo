@@ -1,4 +1,5 @@
 import { describe } from './utils/testing.js'
+import { Recaller } from './utils/Recaller.js'
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 
@@ -377,4 +378,36 @@ describe(import.meta.url, ({ test }) => {
   // recoveryStuck tests removed 2026-07-17 — the field was update()'s
   // "auto-recover gave up" signal; both retired with update() itself.
   // Draft's status transitions (superseded/failed) are the new signal.
+
+  // The path key registered by `get(...args)` does not narrow anything today,
+  // and nothing in the suite has ever asked whether it does. `Streamo.get`
+  // reports access on BOTH 'length' and JSON.stringify(args), `lastCommit`
+  // reports 'length' too, and every append fires 'length' — so the coarse
+  // subscription swamps the fine one. Pinning the real behaviour so that if
+  // anyone ever makes the precision work, this fails and they find out here.
+  test('a watcher reading one path wakes on a commit that touched a different path', async ({ assert }) => {
+    const recaller = new Recaller('overfire')
+    const repo = new WritableStreamoRecord({ recaller })
+    let working = repo.checkout()
+    working.set({ a: 'A', b: 'B' })
+    repo.commit(working, 'seed')
+
+    let readsA = 0
+    let readsLastCommit = 0
+    let readsRefs = 0
+    recaller.watch('reads a', () => { readsA++; repo.get('a') })
+    recaller.watch('reads lastCommit', () => { readsLastCommit++; repo.lastCommit })
+    recaller.watch('reads refs', () => { readsRefs++; repo.getRefs() })
+    assert.equal(readsA, 1, 'watch runs its body once on registration')
+
+    working = repo.checkout()
+    working.set({ a: 'A', b: 'CHANGED' })
+    repo.commit(working, 'touch b only')
+    // reportKeyMutation queues; the recaller flushes on a later tick.
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    assert.equal(readsA, 2, "reader of 'a' woke for a commit that only changed 'b'")
+    assert.equal(readsLastCommit, 2, 'a bare lastCommit reader woke the same number of times')
+    assert.equal(readsRefs, 2, 'getRefs() woke the same number of times as get()')
+  })
 })

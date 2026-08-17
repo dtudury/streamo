@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { readFileSync } from 'fs'
-import { dirname, isAbsolute, resolve } from 'path'
+import { dirname, isAbsolute, relative, resolve } from 'path'
 import { Option, program } from 'commander'
 import { config } from 'dotenv'
 import { question } from 'readline-sync'
@@ -787,7 +787,14 @@ if (options.files) {
   const recordFile = options.recordFile !== undefined
     ? options.recordFile
     : 'streamo.json'
-  await server.files(folder, { recordFile, dataDir: options.dataDir, mountsOnly: !!options.mountsOnly })
+  const archive = options.dataDir
+    ? relative(resolve(folder), resolve(folder, options.dataDir))
+    : null
+  const ignore = archive && !archive.startsWith('..')
+    ? rel => rel === archive || rel.startsWith(archive + '/')
+    : () => false
+
+  await server.files(folder, { recordFile, dataDir: options.dataDir, mountsOnly: !!options.mountsOnly, ignore })
   const recordFileNote = recordFile
     ? ` (recordFile: ${recordFile === true ? 'streamo.json' : recordFile})`
     : ''

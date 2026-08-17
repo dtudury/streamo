@@ -275,11 +275,8 @@ export class StreamoServer {
       signerName: options.signerName ?? this.name,
       ...options
     }
-    // STREAMO_FS2=1 swaps in the rewrite-in-progress. It only watches and
-    // logs today, so the folder is left alone entirely — which is the point:
-    // we want to see both event streams before deciding what to do with them.
     if (process.env.STREAMO_FS2) {
-      return fileSync2(this.mirror, folder, options.dataDir, opts)
+      return fileSync2(this.mirror, folder, opts)
     }
     return fileSync(this.mirror, folder, options.dataDir, opts)
   }

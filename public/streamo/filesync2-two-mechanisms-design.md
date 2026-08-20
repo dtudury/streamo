@@ -97,3 +97,50 @@ negated; the caller holding the registry and root key.
 
 Not built: **mechanism 1 entirely** (disk → draft → commit), the shared disk
 gate, the conflicts store, and every write. `fileSync2` still writes nothing.
+
+## Added 2026-08-20 by Dunnock, who held the original conversation
+
+The rendering above is accurate — checked line by line against what I hold.
+Three things that argue *for* one-reconciler-per-Record and are not in it, and
+two flags on code I wrote.
+
+**It fixes a real bug, not just a shape.** The reconciler at `473f49c` is **one
+level deep**. A mounted Record with its own `mounts.json` has its nested files
+silently dropped — `fileSync.js` handles this by recursing with a `visited` set
+(`collectMountedFiles`, line 327) and `fileSync.test.js` covers both `A→B→C` and
+`A→B→A`. Per-reconciler makes **the recursion the topology instead of an
+algorithm**: each child reads its own mounts table and spawns its own children.
+**Cycle detection is still required** — `A→B→A` spawns forever otherwise, and
+that test exists to be kept.
+
+**It contains a blast radius that is currently unbounded.** A single malformed
+`.json` anywhere in the tree makes `encodeFile` throw *inside* `writeToFolder`'s
+loop; `flushToDisk` catches and abandons **the entire flush**. Every other file
+the Record wanted on disk goes unwritten and `deleteFromFolder` never runs —
+symptom is one line on stderr. Verified 2026-08-17 against `fileSync.js`. Only
+`recordFile` has a grace case (line 577); every other `.json` gets the full
+stop. Per-reconciler bounds that to one Record's folder.
+
+**`getRefs()` pays off more, not less.** Measured: a watcher reading `get('a')`,
+one reading `lastCommit`, and one reading `getRefs()` fire **identically** —
+1, 2, 3 — including on a commit that touched only `b`. Same reactivity, one
+fewer decode. Under N reconcilers each reading their own Record, that multiplies
+by N. Related and worth knowing before trusting any "fine-grained" claim: path
+precision has been **dead since 2026-04-27** (`turtb 6857f82`), which added
+`reportKeyAccess(this, 'length')` to `get` while deleting the comment saying not
+to. Pinned in `StreamoRecord.test.js` at `473f49c`.
+
+**Flag: the `asked` Set is mine and probably should not survive.** I added it so
+a mount is not re-subscribed each reconciliation, but `subscribe` is documented
+idempotent — so it buys nothing and it is exactly the *did-I-already-handle-this*
+bookkeeping a level-triggered reconciler should not need. Same instinct as the
+`id === lastSeen` guard David had me delete at `265f3c8`.
+
+**Flag: `registry.recaller` is an assumption I never checked.** The watch
+registers on the registry's recaller rather than the Record's. Same object in
+every path I looked at — but `StreamoRecordRegistry`'s constructor doc says it
+began *throwing* on a missing recaller precisely because mismatched ones produce
+silently stale slots, "no error, no log, just huh why isn't this updating."
+
+**And one count:** "the other 482 in the suite" was right at 502; `473f49c` —
+cited above — made it 503. Counts rot; this file is four days old.

@@ -4,6 +4,7 @@ import { join, relative } from 'path'
 import { compile } from '@gerhobbelt/gitignore-parser'
 import { subscribe as watchFolder } from '@parcel/watcher'
 
+import { commitWithRetry } from './Draft.js'
 import { isPlainObject } from './codecs.js'
 import { decodeBytes, decodeFile, filesEqual } from './fileCodec.js'
 
@@ -21,7 +22,7 @@ const describe = value =>
         : Array.isArray(value) ? `an array of ${value.length}`
           : `a ${typeof value}`.replace('a o', 'an o')
 
-export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderPath = '.', ignore = () => false }) {
+export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderPath = '.', ignore = () => false, signer = null, signerName = null }) {
   await mkdir(folderPath, { recursive: true })
   const folder = await realpath(folderPath)
 
@@ -86,36 +87,57 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
     return ours
   }
 
-  let proposals = 0
-  const proposeCommit = reason => {
-    proposals++
-    const ours = ownFilesOnDisk()
-    const committed = root.lastCommit ? root.get() : undefined
+  let sends = 0
+  let inFlight = Promise.resolve()
 
-    if (committed !== undefined && !isPlainObject(committed)) {
-      log('FAULT', `#${proposals} root committed ${describe(committed)}, not a file map`)
-      return
-    }
-    if (committed !== undefined && filesEqual(ours, committed)) {
-      log('propose', `#${proposals} ${reason} — disk matches the record, nothing to send`)
-      return
-    }
+  const sendDraft = reason => {
+    inFlight = inFlight.then(async () => {
+      sends++
+      const ours = ownFilesOnDisk()
+      const committed = root.lastCommit ? root.get() : undefined
 
-    const from = committed ?? {}
-    const added = Object.keys(ours).filter(rel => !(rel in from)).sort()
-    const removed = Object.keys(from).filter(rel => !(rel in ours)).sort()
-    const changed = Object.keys(ours)
-      .filter(rel => rel in from && !filesEqual({ [rel]: ours[rel] }, { [rel]: from[rel] })).sort()
+      if (committed !== undefined && !isPlainObject(committed)) {
+        log('FAULT', `#${sends} root committed ${describe(committed)}, not a file map`)
+        return
+      }
+      if (committed !== undefined && filesEqual(ours, committed)) {
+        log('send', `#${sends} ${reason} — disk matches the record, nothing to send`)
+        return
+      }
 
-    const parts = []
-    if (added.length) parts.push(`+${added.length} [${added}]`)
-    if (changed.length) parts.push(`~${changed.length} [${changed}]`)
-    if (removed.length) parts.push(`-${removed.length} [${removed}]`)
-    log('propose', `#${proposals} ${reason} — would commit ${parts.join(' ') || '(no difference)'}${committed === undefined ? '  (record has never reported)' : ''}`)
+      const from = committed ?? {}
+      const added = Object.keys(ours).filter(rel => !(rel in from)).sort()
+      const removed = Object.keys(from).filter(rel => !(rel in ours)).sort()
+      const changed = Object.keys(ours)
+        .filter(rel => rel in from && !filesEqual({ [rel]: ours[rel] }, { [rel]: from[rel] })).sort()
+
+      const parts = []
+      if (added.length) parts.push(`+${added.length} [${added}]`)
+      if (changed.length) parts.push(`~${changed.length} [${changed}]`)
+      if (removed.length) parts.push(`-${removed.length} [${removed}]`)
+      const summary = `${parts.join(' ') || '(no difference)'}${committed === undefined ? '  (record has never reported)' : ''}`
+
+      if (typeof root.newDraft !== 'function' || root.isAuthorable === false) {
+        log('send', `#${sends} ${reason} — ${summary}, but this record is not authorable here`)
+        return
+      }
+
+      try {
+        const { attempts } = await commitWithRetry(root, () => ours, {
+          message: `fileSync2: ${reason}`,
+          signer,
+          signerName
+        })
+        log('send', `#${sends} ${reason} — committed ${summary}${attempts > 1 ? ` (${attempts} attempts)` : ''}`)
+      } catch (err) {
+        log('FAULT', `#${sends} ${reason} — commit failed after ${err.attempts ?? '?'} attempts: ${err.message}`)
+      }
+    })
+    return inFlight
   }
 
   await reloadIgnoresThenReadEverything('read everything')
-  proposeCommit('after the complete read')
+  await sendDraft('after the complete read')
 
   let reconciliations = 0
   registry.recaller.watch('fileSync2:disk-matches-record', () => {
@@ -169,7 +191,7 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
     const changed = events.map(event => relative(folder, event.path))
     if (changed.includes(GITIGNORE)) {
       await reloadIgnoresThenReadEverything(`${GITIGNORE} changed`)
-      proposeCommit(`${GITIGNORE} changed`)
+      await sendDraft(`${GITIGNORE} changed`)
       return
     }
     const accepted = changed.filter(rel => accepts(rel))
@@ -183,8 +205,8 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
       touched++
       log('disk', `${value === GONE ? 'gone' : 'read'} ${rel}`)
     }
-    if (touched) proposeCommit(`${touched} disk change${touched > 1 ? 's' : ''}`)
+    if (touched) await sendDraft(`${touched} disk change${touched > 1 ? 's' : ''}`)
   })
 
-  log('setup', `watching ${folder} for ${rootKey.slice(0, 12)}… — logging only, nothing is written`)
+  log('setup', `watching ${folder} for ${rootKey.slice(0, 12)}… — mechanism 1 live: disk changes are committed. nothing is written to disk`)
 }

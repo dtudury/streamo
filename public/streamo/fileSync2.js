@@ -1,17 +1,18 @@
-import { mkdir, readFile, readdir, realpath, stat } from 'fs/promises'
+import { mkdir, readFile, readdir, realpath } from 'fs/promises'
 import { join, relative } from 'path'
 
 import { compile } from '@gerhobbelt/gitignore-parser'
 import { subscribe as watchFolder } from '@parcel/watcher'
 
 import { isPlainObject } from './codecs.js'
+import { decodeBytes, decodeFile, filesEqual } from './fileCodec.js'
 
 const GITIGNORE = '.gitignore'
 const MOUNTS = 'mounts.json'
 const OVERRIDABLE_DEFAULTS = ['*.env', '.DS_Store', '.git', 'node_modules']
 
 const log = (channel, message) =>
-  console.error(`[fs2 ${new Date().toISOString().slice(11, 23)}] ${channel.padEnd(7)} ${message}`)
+  console.error(`[fs2 ${new Date().toISOString().slice(11, 23)}] ${channel.padEnd(9)} ${message}`)
 
 const describe = value =>
   value === undefined ? 'undefined'
@@ -30,6 +31,19 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
   let accepts = null
   let onDisk = null
 
+  const GONE = Symbol('gone')
+  const NOT_A_FILE = Symbol('not a file')
+
+  const readOne = async rel => {
+    try {
+      return decodeFile(rel, decodeBytes(await readFile(join(folder, rel))))
+    } catch (err) {
+      if (err?.code === 'ENOENT' || err?.code === 'ENOTDIR') return GONE
+      if (err?.code === 'EISDIR') return NOT_A_FILE
+      throw err
+    }
+  }
+
   const reloadIgnoresThenReadEverything = async reason => {
     let gitignoreRules = null
     try {
@@ -46,7 +60,10 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
         const rel = relative(folder, abs)
         if (!accepts(rel)) continue
         if (entry.isDirectory()) await walk(abs)
-        else if (entry.isFile()) onDisk[rel] = (await stat(abs)).size
+        else if (entry.isFile()) {
+          const value = await readOne(rel)
+          if (value !== GONE && value !== NOT_A_FILE) onDisk[rel] = value
+        }
       }
     }
     await walk(folder)
@@ -54,7 +71,51 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
     log('disk', `${reason} — ${Object.keys(onDisk).length} files, ${gitignoreRules ? `${GITIGNORE}: ${gitignoreRules.length} lines` : `no ${GITIGNORE}`}`)
   }
 
+  const mountPrefixes = () => {
+    const mounts = onDisk?.[MOUNTS]
+    return isPlainObject(mounts?.mounts) ? Object.keys(mounts.mounts) : []
+  }
+
+  const ownFilesOnDisk = () => {
+    const prefixes = mountPrefixes()
+    const ours = {}
+    for (const [rel, value] of Object.entries(onDisk)) {
+      if (prefixes.some(prefix => rel.startsWith(prefix))) continue
+      ours[rel] = value
+    }
+    return ours
+  }
+
+  let proposals = 0
+  const proposeCommit = reason => {
+    proposals++
+    const ours = ownFilesOnDisk()
+    const committed = root.lastCommit ? root.get() : undefined
+
+    if (committed !== undefined && !isPlainObject(committed)) {
+      log('FAULT', `#${proposals} root committed ${describe(committed)}, not a file map`)
+      return
+    }
+    if (committed !== undefined && filesEqual(ours, committed)) {
+      log('propose', `#${proposals} ${reason} — disk matches the record, nothing to send`)
+      return
+    }
+
+    const from = committed ?? {}
+    const added = Object.keys(ours).filter(rel => !(rel in from)).sort()
+    const removed = Object.keys(from).filter(rel => !(rel in ours)).sort()
+    const changed = Object.keys(ours)
+      .filter(rel => rel in from && !filesEqual({ [rel]: ours[rel] }, { [rel]: from[rel] })).sort()
+
+    const parts = []
+    if (added.length) parts.push(`+${added.length} [${added}]`)
+    if (changed.length) parts.push(`~${changed.length} [${changed}]`)
+    if (removed.length) parts.push(`-${removed.length} [${removed}]`)
+    log('propose', `#${proposals} ${reason} — would commit ${parts.join(' ') || '(no difference)'}${committed === undefined ? '  (record has never reported)' : ''}`)
+  }
+
   await reloadIgnoresThenReadEverything('read everything')
+  proposeCommit('after the complete read')
 
   let reconciliations = 0
   registry.recaller.watch('fileSync2:disk-matches-record', () => {
@@ -103,14 +164,26 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
     log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${waitingFor.length ? ` — waiting for [${waitingFor}]` : ''}`)
   })
 
-  await watchFolder(folder, (err, events) => {
+  await watchFolder(folder, async (err, events) => {
     if (err) { log('disk', `watcher error: ${err.message}`); return }
     const changed = events.map(event => relative(folder, event.path))
     if (changed.includes(GITIGNORE)) {
-      reloadIgnoresThenReadEverything(`${GITIGNORE} changed`)
+      await reloadIgnoresThenReadEverything(`${GITIGNORE} changed`)
+      proposeCommit(`${GITIGNORE} changed`)
       return
     }
-    for (const rel of changed) if (accepts(rel)) log('disk', rel)
+    const accepted = changed.filter(rel => accepts(rel))
+    if (!accepted.length) return
+    let touched = 0
+    for (const rel of accepted) {
+      const value = await readOne(rel)
+      if (value === NOT_A_FILE) continue
+      if (value === GONE) delete onDisk[rel]
+      else onDisk[rel] = value
+      touched++
+      log('disk', `${value === GONE ? 'gone' : 'read'} ${rel}`)
+    }
+    if (touched) proposeCommit(`${touched} disk change${touched > 1 ? 's' : ''}`)
   })
 
   log('setup', `watching ${folder} for ${rootKey.slice(0, 12)}… — logging only, nothing is written`)

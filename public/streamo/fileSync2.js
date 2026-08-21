@@ -186,7 +186,7 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
     log('reconcile', `#${reconciliations} disk should hold ${names.length} [${names}]${waitingFor.length ? ` — waiting for [${waitingFor}]` : ''}`)
   })
 
-  await watchFolder(folder, async (err, events) => {
+  const watcher = await watchFolder(folder, async (err, events) => {
     if (err) { log('disk', `watcher error: ${err.message}`); return }
     const changed = events.map(event => relative(folder, event.path))
     if (changed.includes(GITIGNORE)) {
@@ -209,4 +209,10 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
   })
 
   log('setup', `watching ${folder} for ${rootKey.slice(0, 12)}… — mechanism 1 live: disk changes are committed. nothing is written to disk`)
+
+  return {
+    folder,
+    settled: () => inFlight,
+    unsubscribe: () => watcher.unsubscribe()
+  }
 }

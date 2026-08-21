@@ -77,18 +77,25 @@ export function encodeFile (rel, value) {
     // decodeFile hands back the raw string for any .jsonl it can't round-trip
     // exactly, so a string here is that file coming home unchanged — not a
     // contract violation. Throwing on it would make the read path capable of
-    // manufacturing a write-path error, which is the `.json` asymmetry below.
+    // manufacturing a write-path error. `.json` carried exactly that
+    // asymmetry until 2026-08-20 and now follows this rule too.
     if (typeof value === 'string' || value instanceof Uint8Array) return value
-    throw new Error(`fileSync.encodeFile: ${rel} is a .jsonl path but value is ${typeDesc}; .jsonl slots require an array of records`)
+    throw new Error(`encodeFile: ${rel} is a .jsonl path but value is ${typeDesc}; .jsonl slots require an array of records`)
   }
   if (isJsonPath) {
-    if (value == null || typeof value !== 'object' || value instanceof Uint8Array) {
-      throw new Error(`fileSync.encodeFile: ${rel} is a .json path but value is ${typeDesc}; .json slots require an object or array`)
+    // Same rule as .jsonl above: decodeFile hands back the raw string for a
+    // .json it could not parse, so a string here is that file coming home
+    // unchanged. Throwing on it let the read path manufacture a write-path
+    // error — and because writeToFolder throws mid-loop, one half-typed
+    // .json anywhere in the tree aborted the entire flush.
+    if (typeof value === 'string' || value instanceof Uint8Array) return value
+    if (value == null || typeof value !== 'object') {
+      throw new Error(`encodeFile: ${rel} is a .json path but value is ${typeDesc}; .json slots require an object, an array, or the raw text`)
     }
     return JSON.stringify(value, null, 2) + '\n'
   }
   if (typeof value === 'string' || value instanceof Uint8Array) return value
-  throw new Error(`fileSync.encodeFile: ${rel} requires a string or Uint8Array value; got ${typeDesc}`)
+  throw new Error(`encodeFile: ${rel} requires a string or Uint8Array value; got ${typeDesc}`)
 }
 
 /**

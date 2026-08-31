@@ -1,5 +1,6 @@
 import { describe } from './utils/testing.js'
 import { Recaller } from './utils/Recaller.js'
+import { Signer } from './Signer.js'
 import { Hub } from './Hub.js'
 
 const K1 = '11'.repeat(33)
@@ -43,5 +44,53 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(mirror.local, hub.get(K1))
     assert.equal(mirror.publicKeyHex, K1)
     assert.equal(mirror, hub._materialize(K1), 'cached, so a second subscribe gets the same one')
+  })
+
+  test('watching canon does not wake on a draft, and watching a draft does not wake on canon', async ({ assert }) => {
+    const recaller = new Recaller('hub-slots')
+    const hub = new Hub({ recaller })
+    const signer = new Signer('user', 'pass', 1000)
+
+    let readsCanon = 0
+    let readsDraft = 0
+    let readsCurrent = 0
+    recaller.watch('canon', () => { hub.get(K1); readsCanon++ })
+    recaller.watch('draft', () => { hub.draftFor(K1); readsDraft++ })
+    recaller.watch('current', () => { hub.current(K1); readsCurrent++ })
+    await settle()
+
+    hub.want(K1)
+    await settle()
+    const [canon, draft, current] = [readsCanon, readsDraft, readsCurrent]
+
+    hub.checkout(K1, signer, 'home')
+    await settle()
+    assert.equal(readsCanon, canon, 'a Sync writing canon to disk does not wake because someone edited locally')
+    assert.equal(readsDraft, draft + 1, 'the draft watcher does')
+    assert.equal(readsCurrent, current + 1, 'and so does current, by composition')
+
+    hub.discard(K1)
+    await settle()
+    assert.equal(readsCanon, canon, 'still not canon business')
+    assert.equal(readsDraft, draft + 2)
+    assert.equal(readsCurrent, current + 2)
+  })
+
+  test('a draft needs a signer, shares canon history, and current prefers it', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-draft') })
+    const signer = new Signer('user', 'pass', 1000)
+    const canon = hub.want(K1)
+
+    let threw = null
+    try { hub.checkout(K1, null) } catch (error) { threw = error }
+    assert.ok(threw, 'authoring is can-you-sign, asked at checkout')
+
+    const draft = hub.checkout(K1, signer, 'home')
+    assert.equal(draft.isAuthorable, true)
+    assert.equal(canon.isAuthorable, false, 'and canon still cannot author')
+    assert.equal(hub.current(K1), draft, 'current prefers the draft')
+    assert.equal(hub.checkout(K1, signer, 'home'), draft, 'checkout twice is the same draft')
+    hub.discard(K1)
+    assert.equal(hub.current(K1), canon, 'and falls back to canon once discarded')
   })
 })

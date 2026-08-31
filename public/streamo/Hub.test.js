@@ -93,4 +93,47 @@ describe(import.meta.url, ({ test }) => {
     hub.discard(K1)
     assert.equal(hub.current(K1), canon, 'and falls back to canon once discarded')
   })
+
+  test('upstream is installed by the wiring, and installing it wakes the Syncs', async ({ assert }) => {
+    const recaller = new Recaller('hub-upstream')
+    const hub = new Hub({ recaller })
+    const folder = { name: 'a fileSync' }
+
+    let iAmUpstream = null
+    let runs = 0
+    recaller.watch('a-sync', () => { iAmUpstream = hub.upstream === folder; runs++ })
+    await settle()
+    assert.equal(iAmUpstream, false, 'a Sync that is not upstream yet does nothing this run')
+    const before = runs
+
+    hub.upstream = folder
+    await settle()
+    assert.equal(runs, before + 1, 'installing upstream is a mutation, so the Sync re-runs')
+    assert.equal(iAmUpstream, true, 'and finds it is the one — no two-phase start, no race')
+  })
+
+  test('only upstream can write canon, and there is only one of it', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-receive') })
+    const folder = { name: 'a fileSync' }
+    const socket = { name: 'a registrySync' }
+
+    let threw = null
+    try { hub.receive(K1, folder) } catch (error) { threw = error }
+    assert.ok(threw, 'nothing writes canon before an upstream is installed')
+
+    hub.upstream = folder
+    assert.equal(hub.receive(K1, folder), hub.get(K1), 'upstream gets canon to append into')
+
+    threw = null
+    try { hub.receive(K1, socket) } catch (error) { threw = error }
+    assert.ok(threw, 'and a different Sync still cannot')
+
+    threw = null
+    try { hub.upstream = socket } catch (error) { threw = error }
+    assert.ok(threw, 'installing a second upstream is the wiring error, so it is loud')
+
+    hub.upstream = null
+    hub.upstream = socket
+    assert.equal(hub.upstream, socket, 'released first, then reinstalled, is fine')
+  })
 })

@@ -3,15 +3,37 @@ import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 
 const KEYS = Symbol('the keys this hub holds')
+const UPSTREAM = Symbol('where canon comes from')
 
 export class Hub {
   #mirrors = new Map()
   #drafts = new Map()
+  #upstream = null
 
-  constructor ({ recaller, upstream = null } = {}) {
+  constructor ({ recaller } = {}) {
     if (!recaller) throw new TypeError('Hub: recaller is required')
     this.recaller = recaller
-    this.upstream = upstream
+  }
+
+  get upstream () {
+    this.recaller.reportKeyAccess(this, UPSTREAM)
+    return this.#upstream
+  }
+
+  set upstream (sync) {
+    if (sync && this.#upstream && sync !== this.#upstream) {
+      throw new Error('Hub: a key has one direction that canon arrives from; release the current upstream first')
+    }
+    if (sync === this.#upstream) return
+    this.#upstream = sync
+    this.recaller.reportKeyMutation(this, UPSTREAM)
+  }
+
+  receive (key, sync) {
+    if (!sync || sync !== this.#upstream) {
+      throw new Error('Hub.receive: only the upstream Sync may write canon')
+    }
+    return this.want(key)
   }
 
   * keys () {

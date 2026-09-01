@@ -14,27 +14,32 @@ describe(import.meta.url, ({ test }) => {
 
     let readsK1 = 0
     let countsKeys = 0
-    recaller.watch('reads-K1', () => { hub.getMirror(K1); readsK1++ })
+    // hasMirror, not getMirror: a watcher that *gets* would create the key on
+    // its own first run, and there would be no appearance left to observe.
+    recaller.watch('reads-K1', () => { hub.hasMirror(K1); readsK1++ })
     recaller.watch('counts-keys', () => { [...hub.keys()].length; countsKeys++ })
     await settle()
 
-    hub.want(K1)
+    hub.getMirror(K1)
     await settle()
     const [k1, keys] = [readsK1, countsKeys]
 
-    hub.want(K2)
+    hub.getMirror(K2)
     await settle()
     assert.equal(readsK1, k1, 'K2 appearing is not the business of a view reading K1')
     assert.equal(countsKeys, keys + 1, 'but it is membership, so the counter wakes')
   })
 
-  test('want is a command, not an accessor — canon comes out of getMirror', async ({ assert }) => {
-    const hub = new Hub({ recaller: new Recaller('hub-want') })
-    assert.equal(hub.getMirror(K1), undefined, 'undefined means not yet, and asking does not create')
-    assert.equal(hub.want(K1), undefined, 'declaring interest hands back nothing to write into')
+  test('hasMirror asks, getMirror asks and wants, and the three states stay apart', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-lazy') })
+    assert.equal(hub.hasMirror(K1), false, 'nobody has ever wanted this')
+    assert.equal(hub.hasMirror(K1), false, 'and asking does not make it so')
+
     const canon = hub.getMirror(K1)
-    assert.equal(canon.isAuthorable, false, 'and canon cannot author regardless')
-    assert.equal(hub.getMirror(K1), canon, 'wanting twice is the same record')
+    assert.equal(hub.hasMirror(K1), true, 'reading it is wanting it')
+    assert.equal(canon.lastCommit, null, 'wanted, and nothing has arrived — a different state from never asked')
+    assert.equal(canon.isAuthorable, false, 'canon cannot author')
+    assert.equal(hub.getMirror(K1), canon, 'and getting it again is the same record')
   })
 
   test('canon and draft are separate subjects, so watching one does not watch the other', async ({ assert }) => {
@@ -48,7 +53,7 @@ describe(import.meta.url, ({ test }) => {
     let readsDraft = 0
     recaller.watch('canon', () => { hub.getMirror(K1); readsCanon++ })
     recaller.watch('draft', () => { hub.getDraft(K1); readsDraft++ })
-    hub.want(K1)
+    hub.getMirror(K1)
     await settle()
     const [canon, draft] = [readsCanon, readsDraft]
 
@@ -68,7 +73,6 @@ describe(import.meta.url, ({ test }) => {
     const signer = new Signer('user', 'pass', 1000)
     const upstream = { name: 'a fileSync' }
     hub.upstream = upstream
-    hub.want(K1)
     const canon = hub.getMirror(K1)
 
     let threw = null

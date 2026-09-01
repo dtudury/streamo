@@ -34,9 +34,21 @@ export class Hub {
     yield * this.#mirrors.keys()
   }
 
+  hasMirror (key) {
+    this.recaller.reportKeyAccess(this, key)
+    return this.#mirrors.has(key)
+  }
+
   getMirror (key) {
     this.recaller.reportKeyAccess(this, key)
-    return this.#mirrors.get(key)?.mirror
+    let entry = this.#mirrors.get(key)
+    if (!entry) {
+      entry = { mirror: new StreamoRecord({ recaller: this.recaller }), compat: null }
+      this.#mirrors.set(key, entry)
+      this.recaller.reportKeyMutation(this, KEYS)
+      this.recaller.reportKeyMutation(this, key)
+    }
+    return entry.mirror
   }
 
   getDraft (key) {
@@ -48,19 +60,11 @@ export class Hub {
     return this.getDraft(key) ?? this.getMirror(key)
   }
 
-  want (key) {
-    if (this.#mirrors.has(key)) return
-    this.#mirrors.set(key, { mirror: new StreamoRecord({ recaller: this.recaller }), compat: null })
-    this.recaller.reportKeyMutation(this, KEYS)
-    this.recaller.reportKeyMutation(this, key)
-  }
-
   checkout (key, signer, signerName) {
     if (!signer) throw new TypeError('Hub.checkout: a draft needs a signer — that is what makes it authorable')
     const existing = this.#drafts.get(key)
     if (existing) return existing
-    this.want(key)
-    const mirror = this.#mirrors.get(key).mirror
+    const mirror = this.getMirror(key)
     const draft = new WritableStreamoRecord({ recaller: this.recaller })
     draft.copyFrom(mirror, mirror.lastCommit?.dataAddress ?? -1)
     draft.attachSigner(signer, signerName)
@@ -73,13 +77,13 @@ export class Hub {
     if (!sync || sync !== this.#upstream) {
       throw new Error('Hub.receive: only the upstream Sync may write canon')
     }
-    this.want(key)
+    const mirror = this.getMirror(key)
     if (this.#drafts.delete(key)) this.recaller.reportKeyMutation(this.#drafts, key)
-    return this.#mirrors.get(key).mirror
+    return mirror
   }
 
   _materialize (key) {
-    this.want(key)
+    this.getMirror(key)
     const entry = this.#mirrors.get(key)
     entry.compat ??= new Mirror({ publicKeyHex: key, local: entry.mirror, recaller: this.recaller })
     return entry.compat

@@ -14,7 +14,7 @@ describe(import.meta.url, ({ test }) => {
 
     let readsK1 = 0
     let countsKeys = 0
-    recaller.watch('reads-K1', () => { hub.get(K1); readsK1++ })
+    recaller.watch('reads-K1', () => { hub.getMirror(K1); readsK1++ })
     recaller.watch('counts-keys', () => { [...hub.keys()].length; countsKeys++ })
     await settle()
 
@@ -28,58 +28,48 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(countsKeys, keys + 1, 'but it is membership, so the counter wakes')
   })
 
-  test('want is synchronous, and is the only thing that creates a slot', async ({ assert }) => {
+  test('want is a command, not an accessor — canon comes out of getMirror', async ({ assert }) => {
     const hub = new Hub({ recaller: new Recaller('hub-want') })
-    assert.equal(hub.get(K1), undefined, 'get does not create — undefined means not yet')
-    const record = hub.want(K1)
-    assert.equal(record, hub.get(K1), 'want returns the record it made')
-    assert.equal(record, hub.want(K1), 'and asking twice is the same record')
-    assert.equal(record.isAuthorable, false, 'canon is a plain record and cannot invent a commit')
-    assert.equal(typeof record.then, 'undefined', 'no promise: nothing here is async')
+    assert.equal(hub.getMirror(K1), undefined, 'undefined means not yet, and asking does not create')
+    assert.equal(hub.want(K1), undefined, 'declaring interest hands back nothing to write into')
+    const canon = hub.getMirror(K1)
+    assert.equal(canon.isAuthorable, false, 'and canon cannot author regardless')
+    assert.equal(hub.getMirror(K1), canon, 'wanting twice is the same record')
   })
 
-  test('_materialize hands the socket syncs a Mirror over the same record', async ({ assert }) => {
-    const hub = new Hub({ recaller: new Recaller('hub-compat') })
-    const mirror = hub._materialize(K1)
-    assert.equal(mirror.local, hub.get(K1))
-    assert.equal(mirror.publicKeyHex, K1)
-    assert.equal(mirror, hub._materialize(K1), 'cached, so a second subscribe gets the same one')
-  })
-
-  test('watching canon does not wake on a draft, and watching a draft does not wake on canon', async ({ assert }) => {
+  test('canon and draft are separate subjects, so watching one does not watch the other', async ({ assert }) => {
     const recaller = new Recaller('hub-slots')
     const hub = new Hub({ recaller })
     const signer = new Signer('user', 'pass', 1000)
+    const upstream = { name: 'a fileSync' }
+    hub.upstream = upstream
 
     let readsCanon = 0
     let readsDraft = 0
-    let readsCurrent = 0
-    recaller.watch('canon', () => { hub.get(K1); readsCanon++ })
-    recaller.watch('draft', () => { hub.draftFor(K1); readsDraft++ })
-    recaller.watch('current', () => { hub.current(K1); readsCurrent++ })
-    await settle()
-
+    recaller.watch('canon', () => { hub.getMirror(K1); readsCanon++ })
+    recaller.watch('draft', () => { hub.getDraft(K1); readsDraft++ })
     hub.want(K1)
     await settle()
-    const [canon, draft, current] = [readsCanon, readsDraft, readsCurrent]
+    const [canon, draft] = [readsCanon, readsDraft]
 
     hub.checkout(K1, signer, 'home')
     await settle()
     assert.equal(readsCanon, canon, 'a Sync writing canon to disk does not wake because someone edited locally')
     assert.equal(readsDraft, draft + 1, 'the draft watcher does')
-    assert.equal(readsCurrent, current + 1, 'and so does current, by composition')
 
-    hub.discard(K1)
+    hub.receive(K1, upstream)
     await settle()
-    assert.equal(readsCanon, canon, 'still not canon business')
-    assert.equal(readsDraft, draft + 2)
-    assert.equal(readsCurrent, current + 2)
+    assert.equal(readsDraft, draft + 2, 'and canon moving drops the draft, which the draft watcher sees')
+    assert.equal(hub.getDraft(K1), null)
   })
 
-  test('a draft needs a signer, shares canon history, and current prefers it', async ({ assert }) => {
+  test('a draft needs a signer, shares canon history, and getCurrent prefers it', async ({ assert }) => {
     const hub = new Hub({ recaller: new Recaller('hub-draft') })
     const signer = new Signer('user', 'pass', 1000)
-    const canon = hub.want(K1)
+    const upstream = { name: 'a fileSync' }
+    hub.upstream = upstream
+    hub.want(K1)
+    const canon = hub.getMirror(K1)
 
     let threw = null
     try { hub.checkout(K1, null) } catch (error) { threw = error }
@@ -87,11 +77,12 @@ describe(import.meta.url, ({ test }) => {
 
     const draft = hub.checkout(K1, signer, 'home')
     assert.equal(draft.isAuthorable, true)
-    assert.equal(canon.isAuthorable, false, 'and canon still cannot author')
-    assert.equal(hub.current(K1), draft, 'current prefers the draft')
+    assert.equal(canon.isAuthorable, false, 'and canon still cannot')
+    assert.equal(hub.getCurrent(K1), draft, 'getCurrent prefers the draft')
     assert.equal(hub.checkout(K1, signer, 'home'), draft, 'checkout twice is the same draft')
-    hub.discard(K1)
-    assert.equal(hub.current(K1), canon, 'and falls back to canon once discarded')
+
+    hub.receive(K1, upstream)
+    assert.equal(hub.getCurrent(K1), canon, 'canon moving retires the draft, so getCurrent falls back')
   })
 
   test('upstream is installed by the wiring, and installing it wakes the Syncs', async ({ assert }) => {
@@ -122,11 +113,11 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(threw, 'nothing writes canon before an upstream is installed')
 
     hub.upstream = folder
-    assert.equal(hub.receive(K1, folder), hub.get(K1), 'upstream gets canon to append into')
+    assert.equal(hub.receive(K1, folder), hub.getMirror(K1), 'upstream gets canon to append into')
 
     threw = null
     try { hub.receive(K1, socket) } catch (error) { threw = error }
-    assert.ok(threw, 'and a different Sync still cannot')
+    assert.ok(threw, 'and a different Sync cannot')
 
     threw = null
     try { hub.upstream = socket } catch (error) { threw = error }
@@ -135,5 +126,13 @@ describe(import.meta.url, ({ test }) => {
     hub.upstream = null
     hub.upstream = socket
     assert.equal(hub.upstream, socket, 'released first, then reinstalled, is fine')
+  })
+
+  test('_materialize hands the socket syncs a Mirror over the same record', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-compat') })
+    const mirror = hub._materialize(K1)
+    assert.equal(mirror.local, hub.getMirror(K1))
+    assert.equal(mirror.publicKeyHex, K1)
+    assert.equal(mirror, hub._materialize(K1), 'cached, so a second subscribe gets the same one')
   })
 })

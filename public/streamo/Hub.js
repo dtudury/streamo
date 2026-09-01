@@ -22,18 +22,11 @@ export class Hub {
 
   set upstream (sync) {
     if (sync && this.#upstream && sync !== this.#upstream) {
-      throw new Error('Hub: a key has one direction that canon arrives from; release the current upstream first')
+      throw new Error('Hub: canon arrives from one direction; release the current upstream first')
     }
     if (sync === this.#upstream) return
     this.#upstream = sync
     this.recaller.reportKeyMutation(this, UPSTREAM)
-  }
-
-  receive (key, sync) {
-    if (!sync || sync !== this.#upstream) {
-      throw new Error('Hub.receive: only the upstream Sync may write canon')
-    }
-    return this.want(key)
   }
 
   * keys () {
@@ -41,36 +34,33 @@ export class Hub {
     yield * this.#mirrors.keys()
   }
 
-  get (key) {
+  getMirror (key) {
     this.recaller.reportKeyAccess(this, key)
     return this.#mirrors.get(key)?.mirror
   }
 
-  draftFor (key) {
+  getDraft (key) {
     this.recaller.reportKeyAccess(this.#drafts, key)
     return this.#drafts.get(key) ?? null
   }
 
-  current (key) {
-    return this.draftFor(key) ?? this.get(key)
+  getCurrent (key) {
+    return this.getDraft(key) ?? this.getMirror(key)
   }
 
   want (key) {
-    let entry = this.#mirrors.get(key)
-    if (!entry) {
-      entry = { mirror: new StreamoRecord({ recaller: this.recaller }), compat: null }
-      this.#mirrors.set(key, entry)
-      this.recaller.reportKeyMutation(this, KEYS)
-      this.recaller.reportKeyMutation(this, key)
-    }
-    return entry.mirror
+    if (this.#mirrors.has(key)) return
+    this.#mirrors.set(key, { mirror: new StreamoRecord({ recaller: this.recaller }), compat: null })
+    this.recaller.reportKeyMutation(this, KEYS)
+    this.recaller.reportKeyMutation(this, key)
   }
 
   checkout (key, signer, signerName) {
     if (!signer) throw new TypeError('Hub.checkout: a draft needs a signer — that is what makes it authorable')
     const existing = this.#drafts.get(key)
     if (existing) return existing
-    const mirror = this.want(key)
+    this.want(key)
+    const mirror = this.#mirrors.get(key).mirror
     const draft = new WritableStreamoRecord({ recaller: this.recaller })
     draft.copyFrom(mirror, mirror.lastCommit?.dataAddress ?? -1)
     draft.attachSigner(signer, signerName)
@@ -79,10 +69,13 @@ export class Hub {
     return draft
   }
 
-  discard (key) {
-    if (!this.#drafts.delete(key)) return false
-    this.recaller.reportKeyMutation(this.#drafts, key)
-    return true
+  receive (key, sync) {
+    if (!sync || sync !== this.#upstream) {
+      throw new Error('Hub.receive: only the upstream Sync may write canon')
+    }
+    this.want(key)
+    if (this.#drafts.delete(key)) this.recaller.reportKeyMutation(this.#drafts, key)
+    return this.#mirrors.get(key).mirror
   }
 
   _materialize (key) {

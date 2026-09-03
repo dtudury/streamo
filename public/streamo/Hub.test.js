@@ -47,7 +47,7 @@ describe(import.meta.url, ({ test }) => {
     const hub = new Hub({ recaller })
     const signer = new Signer('user', 'pass', 1000)
     const upstream = { name: 'a fileSync' }
-    hub.upstream = upstream
+    const receiveInto = hub.installUpstream(upstream)
 
     let readsCanon = 0
     let readsDraft = 0
@@ -62,7 +62,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(readsCanon, canon, 'a Sync writing canon to disk does not wake because someone edited locally')
     assert.equal(readsDraft, draft + 1, 'the draft watcher does')
 
-    hub.receive(K1, upstream)
+    receiveInto(K1)
     await settle()
     assert.equal(readsDraft, draft + 2, 'and canon moving drops the draft, which the draft watcher sees')
     assert.equal(hub.getDraft(K1), null)
@@ -72,7 +72,7 @@ describe(import.meta.url, ({ test }) => {
     const hub = new Hub({ recaller: new Recaller('hub-draft') })
     const signer = new Signer('user', 'pass', 1000)
     const upstream = { name: 'a fileSync' }
-    hub.upstream = upstream
+    const receiveInto = hub.installUpstream(upstream)
     const canon = hub.getMirror(K1)
 
     let threw = null
@@ -85,7 +85,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(hub.getCurrent(K1), draft, 'getCurrent prefers the draft')
     assert.equal(hub.checkout(K1, signer, 'home'), draft, 'checkout twice is the same draft')
 
-    hub.receive(K1, upstream)
+    receiveInto(K1)
     assert.equal(hub.getCurrent(K1), canon, 'canon moving retires the draft, so getCurrent falls back')
   })
 
@@ -101,35 +101,34 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(iAmUpstream, false, 'a Sync that is not upstream yet does nothing this run')
     const before = runs
 
-    hub.upstream = folder
+    hub.installUpstream(folder)
     await settle()
     assert.equal(runs, before + 1, 'installing upstream is a mutation, so the Sync re-runs')
     assert.equal(iAmUpstream, true, 'and finds it is the one — no two-phase start, no race')
   })
 
-  test('only upstream can write canon, and there is only one of it', async ({ assert }) => {
-    const hub = new Hub({ recaller: new Recaller('hub-receive') })
+  test('writing canon is a capability, not a permission check', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-capability') })
     const folder = { name: 'a fileSync' }
     const socket = { name: 'a registrySync' }
 
+    assert.equal(typeof hub.receive, 'undefined', 'there is no door to knock on')
+    const receiveInto = hub.installUpstream(folder)
+    assert.equal(receiveInto(K1), hub.getMirror(K1), 'the capability is the only way in')
+
     let threw = null
-    try { hub.receive(K1, folder) } catch (error) { threw = error }
-    assert.ok(threw, 'nothing writes canon before an upstream is installed')
-
-    hub.upstream = folder
-    assert.equal(hub.receive(K1, folder), hub.getMirror(K1), 'upstream gets canon to append into')
-
-    threw = null
-    try { hub.receive(K1, socket) } catch (error) { threw = error }
-    assert.ok(threw, 'and a different Sync cannot')
-
-    threw = null
-    try { hub.upstream = socket } catch (error) { threw = error }
+    try { hub.installUpstream(socket) } catch (error) { threw = error }
     assert.ok(threw, 'installing a second upstream is the wiring error, so it is loud')
 
-    hub.upstream = null
-    hub.upstream = socket
-    assert.equal(hub.upstream, socket, 'released first, then reinstalled, is fine')
+    assert.equal(hub.releaseUpstream(socket), false, 'only the holder can release it')
+    assert.equal(hub.releaseUpstream(folder), true)
+
+    threw = null
+    try { receiveInto(K2) } catch (error) { threw = error }
+    assert.ok(threw, 'and a released capability goes dead rather than lingering')
+
+    const second = hub.installUpstream(socket)
+    assert.equal(second(K2), hub.getMirror(K2), 'released first, then reinstalled, is fine')
   })
 
   test('_materialize hands the socket syncs a Mirror over the same record', async ({ assert }) => {

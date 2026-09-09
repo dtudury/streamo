@@ -7,6 +7,7 @@ const KEYS = Symbol('the keys this hub holds')
 export class Hub {
   #mirrors = new Map()
   #drafts = new Map()
+  #compat = new Map()
 
   constructor ({ recaller } = {}) {
     if (!recaller) throw new TypeError('Hub: recaller is required')
@@ -25,14 +26,14 @@ export class Hub {
 
   getMirror (key) {
     this.recaller.reportKeyAccess(this, key)
-    let entry = this.#mirrors.get(key)
-    if (!entry) {
-      entry = { mirror: new StreamoRecord({ recaller: this.recaller }), compat: null }
-      this.#mirrors.set(key, entry)
+    let mirror = this.#mirrors.get(key)
+    if (!mirror) {
+      mirror = new StreamoRecord({ recaller: this.recaller })
+      this.#mirrors.set(key, mirror)
       this.recaller.reportKeyMutation(this, KEYS)
       this.recaller.reportKeyMutation(this, key)
     }
-    return entry.mirror
+    return mirror
   }
 
   getDraft (key) {
@@ -58,9 +59,12 @@ export class Hub {
   }
 
   _materialize (key) {
-    this.getMirror(key)
-    const entry = this.#mirrors.get(key)
-    entry.compat ??= new Mirror({ publicKeyHex: key, local: entry.mirror, recaller: this.recaller })
-    return entry.compat
+    const local = this.getMirror(key)
+    let compat = this.#compat.get(key)
+    if (!compat) {
+      compat = new Mirror({ publicKeyHex: key, local, recaller: this.recaller })
+      this.#compat.set(key, compat)
+    }
+    return compat
   }
 }

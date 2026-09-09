@@ -84,4 +84,13 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(mirror.publicKeyHex, K1)
     assert.equal(mirror, hub._materialize(K1), 'cached, so a second subscribe gets the same one')
   })
+
+  test('the compat Mirror is cached because a Mirror holds wire state', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-compat-state') })
+    const compat = hub._materialize(K1)
+    compat.remoteLength = 208
+    assert.equal(hub._materialize(K1).remoteLength, 208,
+      'a fresh Mirror per call would reset the wire cursor and lose divergence')
+    assert.equal(hub._materialize(K1), compat, 'so identity has to be stable')
+  })
 })

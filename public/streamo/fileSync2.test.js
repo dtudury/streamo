@@ -4,30 +4,33 @@ import { join } from 'path'
 
 import { describe } from './utils/testing.js'
 import { Recaller } from './utils/Recaller.js'
-import { StreamoRecordRegistry } from './StreamoRecordRegistry.js'
-import { WritableStreamoRecord } from './WritableStreamoRecord.js'
-import { StreamoRecord } from './StreamoRecord.js'
+import { Signer } from './Signer.js'
+import { Hub } from './Hub.js'
 import { fileSync2 } from './fileSync2.js'
 
 const ROOT = 'aa'.repeat(33)
 const CHILD = 'cd'.repeat(33)
 
-async function sandbox (records = {}) {
+async function sandbox ({ canSign = true } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'fs2-test-'))
-  const recaller = new Recaller('fs2-test')
-  const root = records.root ?? new WritableStreamoRecord({ recaller })
-  const child = records.child ?? new WritableStreamoRecord({ recaller })
-  const registry = new StreamoRecordRegistry({
-    recaller,
-    factory: async key => (key === CHILD ? child : root)
-  })
+  const hub = new Hub({ recaller: new Recaller('fs2-test') })
+  const signer = canSign ? new Signer('user', 'pass', 1000) : null
   const start = () => fileSync2({
-    registry,
-    subscribe: key => registry._materialize(key),
+    hub,
     rootKey: ROOT,
-    folder: dir
+    folder: dir,
+    signer,
+    signerName: 'home',
+    upstream: true
   })
-  return { dir, root, child, registry, start, cleanup: () => rm(dir, { recursive: true, force: true }) }
+  return {
+    dir,
+    hub,
+    root: hub.getMirror(ROOT),
+    child: hub.getMirror(CHILD),
+    start,
+    cleanup: () => rm(dir, { recursive: true, force: true })
+  }
 }
 
 // The parcel watcher batches; a change needs a beat to arrive and a beat to
@@ -109,10 +112,8 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('a record we cannot author does not throw and does not commit', async ({ assert }) => {
-    const recaller = new Recaller('fs2-readonly')
-    const readOnly = new StreamoRecord({ recaller })
-    const { dir, start, cleanup } = await sandbox({ root: readOnly })
+  test('with nothing that can sign, it does not throw and does not commit', async ({ assert }) => {
+    const { dir, root: readOnly, start, cleanup } = await sandbox({ canSign: false })
     await writeFile(join(dir, 'readme.md'), '# hello\n')
     const sync = await start()
     try {

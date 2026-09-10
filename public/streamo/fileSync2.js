@@ -4,7 +4,6 @@ import { join, relative } from 'path'
 import { compile } from '@gerhobbelt/gitignore-parser'
 import { subscribe as watchFolder } from '@parcel/watcher'
 
-import { commitWithRetry } from './Draft.js'
 import { isPlainObject } from './codecs.js'
 import { decodeBytes, decodeFile, filesEqual } from './fileCodec.js'
 
@@ -22,12 +21,11 @@ const describe = value =>
         : Array.isArray(value) ? `an array of ${value.length}`
           : `a ${typeof value}`.replace('a o', 'an o')
 
-export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderPath = '.', ignore = () => false, signer = null, signerName = null }) {
+export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignore = () => false, signer = null, signerName = null, upstream = false }) {
   await mkdir(folderPath, { recursive: true })
   const folder = await realpath(folderPath)
 
-  const root = await subscribe(rootKey)
-  const asked = new Set([rootKey])
+  const root = hub.getMirror(rootKey)
 
   let accepts = null
   let onDisk = null
@@ -87,6 +85,21 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
     return ours
   }
 
+  const landIntoCanon = async draft => {
+    const reader = draft.makeReadableStream({ fromOffset: root.byteLength }).getReader()
+    const writer = root.makeWritableStream().getWriter()
+    try {
+      while (root.byteLength < draft.byteLength) {
+        const { value, done } = await reader.read()
+        if (done) break
+        await writer.write(value)
+      }
+    } finally {
+      writer.releaseLock()
+      reader.cancel().catch(() => {})
+    }
+  }
+
   let sends = 0
   let inFlight = Promise.resolve()
 
@@ -117,20 +130,20 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
       if (removed.length) parts.push(`-${removed.length} [${removed}]`)
       const summary = `${parts.join(' ') || '(no difference)'}${committed === undefined ? '  (record has never reported)' : ''}`
 
-      if (typeof root.newDraft !== 'function' || root.isAuthorable === false) {
-        log('send', `#${sends} ${reason} — ${summary}, but this record is not authorable here`)
+      if (!signer) {
+        log('send', `#${sends} ${reason} — ${summary}, but nothing here can sign`)
         return
       }
 
-      try {
-        const { attempts } = await commitWithRetry(root, () => ours, {
-          message: `fileSync2: ${reason}`,
-          signer,
-          signerName
-        })
-        log('send', `#${sends} ${reason} — committed ${summary}${attempts > 1 ? ` (${attempts} attempts)` : ''}`)
-      } catch (err) {
-        log('FAULT', `#${sends} ${reason} — commit failed after ${err.attempts ?? '?'} attempts: ${err.message}`)
+      const draft = hub.checkout(rootKey, signer, signerName)
+      const working = draft.checkout()
+      working.set(ours)
+      draft.commit(working, `fileSync2: ${reason}`)
+      log('send', `#${sends} ${reason} — committed ${summary}`)
+
+      if (upstream) {
+        await landIntoCanon(draft)
+        log('send', `#${sends} ${reason} — landed at ${root.byteLength}B of canon`)
       }
     })
     return inFlight
@@ -140,7 +153,7 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
   await sendDraft('after the complete read')
 
   let reconciliations = 0
-  registry.recaller.watch('fileSync2:disk-matches-record', () => {
+  hub.recaller.watch('fileSync2:disk-matches-record', () => {
     reconciliations++
 
     const committed = root.get()
@@ -161,16 +174,8 @@ export async function fileSync2 ({ registry, subscribe, rootKey, folder: folderP
         log('FAULT', `#${reconciliations} mount ${prefix} has no key (${describe(mount)})`)
         continue
       }
-      const mounted = registry.get(mount.key)
-      if (!mounted) {
-        waitingFor.push(prefix)
-        if (!asked.has(mount.key)) {
-          asked.add(mount.key)
-          subscribe(mount.key).catch(err => log('FAULT', `subscribe ${prefix} failed: ${err.message}`))
-        }
-        continue
-      }
-      const mountedFiles = mounted.get()
+      const mounted = hub.getMirror(mount.key)
+      const mountedFiles = mounted.lastCommit ? mounted.get() : undefined
       if (mountedFiles === undefined) {
         waitingFor.push(prefix)
         continue

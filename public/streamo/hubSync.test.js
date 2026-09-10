@@ -1,3 +1,7 @@
+import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+
 import { describe } from './utils/testing.js'
 import { Recaller } from './utils/Recaller.js'
 import { Signer } from './Signer.js'
@@ -73,5 +77,41 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(canon.byteLength > 0, 'the top has canon')
     assert.equal(upstream.hub.getMirror(key).byteLength, 0, 'the client has none of it')
     assert.equal(upstream.hub.getMirror(key).lastCommit, null, 'wanted, never reported')
+  })
+
+  test('a file edited on disk reaches another Hub across the connection', async ({ assert }) => {
+    const { fileSync2 } = await import('./fileSync2.js')
+    const signer = new Signer('user', 'pass', 1000)
+    const key = bytesToHex((await signer.keysFor('home')).publicKey)
+    const dir = await mkdtemp(join(tmpdir(), 'hubsync-e2e-'))
+    await writeFile(join(dir, 'readme.md'), '# hello from the folder\n')
+
+    const hubA = new Hub({ recaller: new Recaller('A') })
+    const folder = await fileSync2({ hub: hubA, rootKey: key, folder: dir, signer, signerName: 'home', upstream: true })
+    try {
+      await settle()
+      const [serverEnd, clientEnd] = loopback()
+      // eslint-disable-next-line no-new
+      new Downstream({ hub: hubA, connection: serverEnd })
+      const client = new Upstream({ recaller: new Recaller('B'), connection: clientEnd })
+      client.hub.getMirror(key)
+      await settle()
+
+      assert.deepEqual(client.hub.getMirror(key).get(), { 'readme.md': '# hello from the folder\n' },
+        'the folder arrived in a Hub that has never seen a filesystem')
+
+      await writeFile(join(dir, 'readme.md'), '# edited on disk\n')
+      await new Promise(resolve => setTimeout(resolve, 700))
+      await folder.settled()
+      await settle()
+
+      assert.deepEqual(client.hub.getMirror(key).get(), { 'readme.md': '# edited on disk\n' },
+        'and an edit follows it across, live')
+      assert.deepEqual(hubA.getMirror(key).get(), client.hub.getMirror(key).get())
+      assert.notEqual(hubA.getMirror(key), client.hub.getMirror(key), 'two Hubs, two records')
+    } finally {
+      await folder.unsubscribe()
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

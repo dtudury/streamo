@@ -1,4 +1,5 @@
-import { hexToBytes } from './utils.js'
+import { makeVerifiedWritableStream } from './StreamoRecordSerializer.js'
+import { hexToBytes, bytesToHex } from './utils.js'
 
 const KEY_BYTES = 33
 
@@ -6,6 +7,7 @@ export class Downstream {
   #hub
   #connection
   #serving = new Set()
+  #proposals = new Map()
 
   constructor ({ hub, connection }) {
     if (!hub) throw new TypeError('Downstream: hub is required')
@@ -14,9 +16,12 @@ export class Downstream {
     this.#connection = connection
 
     connection.on('message', data => {
-      if (typeof data !== 'string') return
-      const message = JSON.parse(data)
-      if (message.type === 'want') this.#serve(message.key)
+      if (typeof data === 'string') {
+        const message = JSON.parse(data)
+        if (message.type === 'want') this.#serve(message.key)
+        return
+      }
+      this.#receiveProposal(data)
     })
   }
 
@@ -35,6 +40,21 @@ export class Downstream {
         try { this.#connection.send(frame) } catch { break }
       }
     })()
+  }
+
+  #receiveProposal (data) {
+    const key = bytesToHex(data.slice(0, KEY_BYTES))
+    const payload = data.slice(KEY_BYTES)
+    if (!payload.length) return
+    let writer = this.#proposals.get(key)
+    if (!writer) {
+      writer = makeVerifiedWritableStream(this.#hub.getMirror(key), hexToBytes(key)).getWriter()
+      this.#proposals.set(key, writer)
+    }
+    writer.write(payload).catch(() => {
+      this.#proposals.delete(key)
+      this.#connection.close()
+    })
   }
 
   close () { this.#connection.close() }

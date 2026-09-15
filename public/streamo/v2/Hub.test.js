@@ -1,6 +1,6 @@
-import { describe } from './utils/testing.js'
-import { Recaller } from './utils/Recaller.js'
-import { Signer } from './Signer.js'
+import { describe } from '../utils/testing.js'
+import { Recaller } from '../utils/Recaller.js'
+import { Signer } from '../Signer.js'
 import { Hub } from './Hub.js'
 
 const K1 = '11'.repeat(33)

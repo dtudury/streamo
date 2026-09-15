@@ -1,6 +1,6 @@
-import { Mirror } from './Mirror.js'
-import { StreamoRecord } from './StreamoRecord.js'
-import { WritableStreamoRecord } from './WritableStreamoRecord.js'
+import { Mirror } from '../Mirror.js'
+import { StreamoRecord } from '../StreamoRecord.js'
+import { WritableStreamoRecord } from '../WritableStreamoRecord.js'
 
 const KEYS = Symbol('the keys this hub holds')
 

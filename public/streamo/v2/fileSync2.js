@@ -4,8 +4,8 @@ import { join, relative } from 'path'
 import { compile } from '@gerhobbelt/gitignore-parser'
 import { subscribe as watchFolder } from '@parcel/watcher'
 
-import { isPlainObject } from './codecs.js'
-import { decodeBytes, decodeFile, filesEqual } from './fileCodec.js'
+import { isPlainObject } from '../codecs.js'
+import { decodeBytes, decodeFile, filesEqual } from '../fileCodec.js'
 
 const GITIGNORE = '.gitignore'
 const MOUNTS = 'mounts.json'

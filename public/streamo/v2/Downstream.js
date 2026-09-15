@@ -1,5 +1,5 @@
-import { makeVerifiedWritableStream } from './StreamoRecordSerializer.js'
-import { hexToBytes, bytesToHex } from './utils.js'
+import { makeVerifiedWritableStream } from './verifiedWritableStream.js'
+import { hexToBytes, bytesToHex } from '../utils.js'
 
 const KEY_BYTES = 33
 

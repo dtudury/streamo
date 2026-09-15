@@ -2,9 +2,9 @@ import { mkdtemp, rm, writeFile, unlink, mkdir } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-import { describe } from './utils/testing.js'
-import { Recaller } from './utils/Recaller.js'
-import { Signer } from './Signer.js'
+import { describe } from '../utils/testing.js'
+import { Recaller } from '../utils/Recaller.js'
+import { Signer } from '../Signer.js'
 import { Hub } from './Hub.js'
 import { fileSync2 } from './fileSync2.js'
 

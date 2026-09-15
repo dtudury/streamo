@@ -2,14 +2,14 @@ import { mkdtemp, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
-import { describe } from './utils/testing.js'
-import { Recaller } from './utils/Recaller.js'
-import { Signer } from './Signer.js'
+import { describe } from '../utils/testing.js'
+import { Recaller } from '../utils/Recaller.js'
+import { Signer } from '../Signer.js'
 import { Hub } from './Hub.js'
 import { Upstream } from './Upstream.js'
 import { Downstream } from './Downstream.js'
 import { loopback } from './loopback.js'
-import { bytesToHex } from './utils.js'
+import { bytesToHex } from '../utils.js'
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 200))
 

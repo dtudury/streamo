@@ -1,5 +1,5 @@
 import { Hub } from './Hub.js'
-import { hexToBytes, bytesToHex } from './utils.js'
+import { hexToBytes, bytesToHex } from '../utils.js'
 
 const KEY_BYTES = 33
 

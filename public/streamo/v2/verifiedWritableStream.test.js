@@ -1,10 +1,10 @@
-import { describe } from './utils/testing.js'
-import { Recaller } from './utils/Recaller.js'
-import { Signer } from './Signer.js'
+import { describe } from '../utils/testing.js'
+import { Recaller } from '../utils/Recaller.js'
+import { Signer } from '../Signer.js'
 import { Hub } from './Hub.js'
-import { StreamoRecord } from './StreamoRecord.js'
-import { makeVerifiedWritableStream } from './StreamoRecordSerializer.js'
-import { bytesToHex } from './utils.js'
+import { StreamoRecord } from '../StreamoRecord.js'
+import { makeVerifiedWritableStream } from './verifiedWritableStream.js'
+import { bytesToHex } from '../utils.js'
 
 async function signedFrames (files) {
   const signer = new Signer('user', 'pass', 1000)

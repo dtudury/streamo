@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+import { start as startRepl } from 'node:repl'
 import { parseArgs } from 'node:util'
 
 import { WebSocketServer } from 'ws'
@@ -12,7 +15,8 @@ import { fileSync2 } from '../public/streamo/v2/fileSync2.js'
 import { wsConnection } from '../public/streamo/v2/wsConnection.js'
 
 const UPSTREAM_KINDS = ['folder']
-const DOWNSTREAM_KINDS = ['listen']
+const DOWNSTREAM_KINDS = ['listen', 'repl']
+const NEEDS_VALUE = ['folder', 'listen']
 
 const fail = message => {
   console.error(`streamo2: ${message}`)
@@ -21,10 +25,11 @@ const fail = message => {
 
 const kindAndValue = (arg, known) => {
   const colon = arg.indexOf(':')
-  if (colon < 1) fail(`expected kind:value, got "${arg}"`)
-  const kind = arg.slice(0, colon)
+  const kind = colon === -1 ? arg : arg.slice(0, colon)
+  const value = colon === -1 ? '' : arg.slice(colon + 1)
   if (!known.includes(kind)) fail(`unknown kind "${kind}" in "${arg}" (known: ${known.join(', ')})`)
-  return { kind, value: arg.slice(colon + 1) }
+  if (NEEDS_VALUE.includes(kind) && !value) fail(`"${kind}" needs a value, like ${kind}:${kind === 'listen' ? '1024' : './path'}`)
+  return { kind, value }
 }
 
 const { values } = parseArgs({
@@ -39,6 +44,7 @@ const upstreams = values.upstream ?? []
 if (upstreams.length !== 1) fail(`needs exactly one --upstream, got ${upstreams.length}`)
 const upstream = kindAndValue(upstreams[0], UPSTREAM_KINDS)
 const downstreams = (values.downstream ?? []).map(arg => kindAndValue(arg, DOWNSTREAM_KINDS))
+if (downstreams.filter(d => d.kind === 'repl').length > 1) fail('at most one repl downstream — there is only one stdin')
 
 if (values['env-file']) process.loadEnvFile(values['env-file'])
 const { STREAMO_NAME: name, STREAMO_USERNAME: username, STREAMO_PASSWORD: password, STREAMO_KEY_ITERATIONS: iterations = '100000' } = process.env
@@ -64,3 +70,19 @@ for (const downstream of downstreams) {
 console.log(`streamo2: ${rootKey}`)
 console.log(`streamo2:   upstream   ${upstreams[0]}`)
 for (const arg of values.downstream ?? []) console.log(`streamo2:   downstream ${arg}`)
+
+const repl = downstreams.find(d => d.kind === 'repl')
+if (repl) {
+  const history = repl.value || join(homedir(), '.node_repl_history')
+  const server = startRepl({ prompt: 'streamo2> ', breakEvalOnSigint: true })
+  server.setupHistory(history, err => { if (err) console.error(`streamo2: repl history: ${err.message}`) })
+  Object.assign(server.context, {
+    hub,
+    key: rootKey,
+    name,
+    signer,
+    get: (...path) => hub.getMirror(rootKey).get(...path),
+    keys: () => [...hub.keys()]
+  })
+  server.on('exit', () => process.exit(0))
+}

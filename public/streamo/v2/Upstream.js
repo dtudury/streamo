@@ -2,12 +2,41 @@ import { Hub } from './Hub.js'
 import { hexToBytes, bytesToHex } from '../utils.js'
 
 const KEY_BYTES = 33
+const LENGTH_PREFIX = 4
+
+const chunkCount = record => (record.wireByteLength - record.byteLength) / LENGTH_PREFIX
+
+function chunksAfter (record, afterAddress) {
+  chunkCount(record)
+  const fresh = []
+  let address = record.byteLength - 1
+  while (address > afterAddress) {
+    const chunk = record.resolve(address)
+    fresh.unshift({ address, chunk })
+    address -= chunk.length
+  }
+  return fresh
+}
+
+function framed (key, chunks) {
+  const size = chunks.reduce((total, { chunk }) => total + LENGTH_PREFIX + chunk.length, 0)
+  const frame = new Uint8Array(KEY_BYTES + size)
+  frame.set(hexToBytes(key), 0)
+  const view = new DataView(frame.buffer)
+  let at = KEY_BYTES
+  for (const { chunk } of chunks) {
+    view.setUint32(at, chunk.length, true)
+    frame.set(chunk, at + LENGTH_PREFIX)
+    at += LENGTH_PREFIX + chunk.length
+  }
+  return frame
+}
 
 export class Upstream {
   #connection
   #writers = new Map()
   #asked = new Set()
-  #pumping = new Set()
+  #sentThrough = new Map()
 
   constructor ({ recaller, connection }) {
     if (!recaller) throw new TypeError('Upstream: recaller is required')
@@ -27,9 +56,13 @@ export class Upstream {
 
     recaller.watch('upstream:send-what-we-have-drafted', () => {
       for (const key of this.hub.keys()) {
-        if (!this.hub.getDraft(key) || this.#pumping.has(key)) continue
-        this.#pumping.add(key)
-        this.#pump(key)
+        const draft = this.hub.getDraft(key)
+        if (!draft) continue
+        const sentThrough = this.#sentThrough.get(key) ?? this.hub.getMirror(key).byteLength - 1
+        const fresh = chunksAfter(draft, sentThrough)
+        if (!fresh.length) continue
+        this.#sentThrough.set(key, fresh[fresh.length - 1].address)
+        this.#connection.send(framed(key, fresh))
       }
     })
   }
@@ -49,20 +82,6 @@ export class Upstream {
       this.#writers.set(key, writer)
     }
     return writer
-  }
-
-  async #pump (key) {
-    const draft = this.hub.getDraft(key)
-    const keyBytes = hexToBytes(key)
-    const reader = draft.makeReadableStream({ fromOffset: this.hub.getMirror(key).byteLength }).getReader()
-    while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      const frame = new Uint8Array(KEY_BYTES + value.length)
-      frame.set(keyBytes, 0)
-      frame.set(value, KEY_BYTES)
-      try { this.#connection.send(frame) } catch { break }
-    }
   }
 
   close () { this.#connection.close() }

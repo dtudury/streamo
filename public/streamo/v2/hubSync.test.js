@@ -154,4 +154,32 @@ describe(import.meta.url, ({ test }) => {
       'both ends end up on the same chain')
     client.close()
   })
+
+  test('sending a draft upward is one batched frame, and canon own chunks are not resent', async ({ assert }) => {
+    const { hub: top, key, canon } = await aTopHubHolding({ 'readme.md': 'from the top\n' })
+    const [topEnd, clientEnd] = loopback()
+    const sent = []
+    const send = clientEnd.send.bind(clientEnd)
+    clientEnd.send = data => { if (typeof data !== 'string') sent.push(data); send(data) }
+    // eslint-disable-next-line no-new
+    new Downstream({ hub: top, connection: topEnd })
+    const clientRecaller = new Recaller('client')
+    const client = new Upstream({ recaller: clientRecaller, connection: clientEnd })
+    const signer = new Signer('user', 'pass', 1000)
+
+    client.hub.getMirror(key)
+    await clientRecaller.when(() => client.hub.getMirror(key).lastCommit !== null)
+    assert.equal(sent.length, 0, 'nothing goes up before there is a draft')
+
+    const draft = client.hub.checkout(key, signer, 'home')
+    const working = draft.checkout()
+    working.set({ ...draft.get(), 'from-below.md': 'authored downstream\n' })
+    draft.commit(working, 'authored downstream')
+    await waitFor(() => Object.keys(canon.get() ?? {}).includes('from-below.md'), 'the commit reaching canon')
+
+    const payload = sent.reduce((total, frame) => total + frame.length - 33, 0)
+    assert.ok(sent.length <= 2, `one frame per change, not one per chunk (was ${sent.length})`)
+    assert.ok(payload < draft.byteLength, 'only the new chunks travelled, not the whole draft')
+    client.close()
+  })
 })

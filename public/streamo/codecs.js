@@ -159,6 +159,26 @@ const literalReaders = range(5).map(width => (r, code) => ({
   getDecoded: () => code.slice(-width)
 }))
 
+// Opaque payload: the chunk ends with [payload][length][footer], where the
+// footer option says how many little-endian length bytes precede it. The
+// payload is never decomposed — that is the point of the codec.
+const opaqueReaders = range(3).map(lengthBytes => (r, code) => {
+  const width = lengthBytes + 1
+  const lengthAt = code.length - width
+  let length = 0
+  for (let i = lengthBytes; i >= 0; i--) length = (length << 8) | code[lengthAt + i]
+  return {
+    type: `opaque(${lengthBytes + 1})`,
+    width: width + length,
+    // new Uint8Array(...) rather than .slice(): when the record was loaded
+    // from disk its chunks are Node Buffers, and Buffer.prototype.slice is an
+    // alias for subarray — a VIEW. Handing FLOAT64/DATE a view into the whole
+    // archive file breaks them, since they do new Float64Array(buf, byteOffset)
+    // and that offset must be a multiple of 8.
+    getDecoded: () => new Uint8Array(code.subarray(code.length - width - length, code.length - width))
+  }
+})
+
 const uint7Readers = range(128).map(n => () => ({
   type: `uint7(${n})`,
   width: 0,
@@ -306,7 +326,11 @@ export function makeCodecs () {
   const UINT8ARRAY = {
     partReaders: [inlineOrAddress],
     encode (r, v) {
-      if (v instanceof Uint8Array && v.length > 4) {
+      // OPAQUE (registered at the end of this list) handles >4 bytes now.
+      // encode() tries codecs in registration order, so this guard is how a
+      // later codec gets a chance. decode is unaffected — it dispatches by
+      // footer, so chunks written before OPAQUE existed still read back here.
+      if (false && v instanceof Uint8Array && v.length > 4) {
         const words = []
         for (let i = 0; i < v.length; i += 4) words.push(v.slice(i, Math.min(i + 4, v.length)))
         return encodeMultipart(r, [new Duple(words)], UINT8ARRAY)
@@ -503,6 +527,31 @@ export function makeCodecs () {
     }
   }
 
+  /**
+   * Arbitrary-length Uint8Array (>4 bytes) stored as ONE chunk: the bytes
+   * verbatim, a little-endian length, and a footer whose option says how wide
+   * that length is (1, 2 or 3 bytes → up to 16MB).
+   *
+   * The Duple-tree path in UINT8ARRAY above walks bytes to 4-byte leaves,
+   * which is right when the bytes share structure with other values and wrong
+   * when they are noise: a 4096-byte payload became 1013 chunks and grew 20%.
+   * Commits from another Record are exactly that kind of noise.
+   */
+  const OPAQUE = {
+    partReaders: [opaqueReaders],
+    encode (r, v) {
+      if (!(v instanceof Uint8Array) || v.length <= 4) return
+      const lengthBytes = v.length < 0x100 ? 1 : v.length < 0x10000 ? 2 : 3
+      if (v.length >= 0x1000000) throw new Error(`OPAQUE: ${v.length} bytes exceeds the 3-byte length (16MB)`)
+      const out = new Uint8Array(v.length + lengthBytes + 1)
+      out.set(v)
+      for (let i = 0; i < lengthBytes; i++) out[v.length + i] = (v.length >> (8 * i)) & 0xff
+      out[out.length - 1] = OPAQUE.baseFooter + (lengthBytes - 1)
+      return out
+    },
+    decode (r, code) { return decodeParts(r, code)[0].getDecoded() }
+  }
+
   // Empty-Uint8Array codec is appended at the END of the registration list so
   // it doesn't shift the footer values of existing codecs — chunks created
   // before this codec was added still decode correctly.
@@ -511,5 +560,5 @@ export function makeCodecs () {
     decode: () => new Uint8Array(0)
   }
 
-  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, BOXED, EMPTY_UINT8ARRAY }
+  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, BOXED, EMPTY_UINT8ARRAY, OPAQUE }
 }

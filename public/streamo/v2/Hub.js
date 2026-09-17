@@ -51,7 +51,7 @@ export class Hub {
     if (existing) return existing
     const mirror = this.getMirror(key)
     const draft = new WritableStreamoRecord({ recaller: this.recaller })
-    draft.copyFrom(mirror, mirror.lastCommit?.dataAddress ?? -1)
+    if (mirror.byteLength) mirror._applyClone(draft, mirror.byteLength - 1)
     draft.attachSigner(signer, signerName)
     this.#drafts.set(key, draft)
     this.recaller.reportKeyMutation(this.#drafts, key)

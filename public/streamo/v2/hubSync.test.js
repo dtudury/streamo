@@ -13,14 +13,26 @@ import { bytesToHex } from '../utils.js'
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 200))
 
+async function waitFor (predicate, what, timeout = 5000) {
+  const started = Date.now()
+  while (!predicate()) {
+    if (Date.now() - started > timeout) throw new Error(`timed out waiting for ${what}`)
+    await new Promise(resolve => setTimeout(resolve, 25))
+  }
+}
+
 async function aTopHubHolding (files) {
   const signer = new Signer('user', 'pass', 1000)
   const key = bytesToHex((await signer.keysFor('home')).publicKey)
-  const hub = new Hub({ recaller: new Recaller('top') })
+  const recaller = new Recaller('top')
+  const hub = new Hub({ recaller })
   const draft = hub.checkout(key, signer, 'home')
   const working = draft.checkout()
   working.set(files)
   draft.commit(working, 'seed')
+  // Signing is scheduled, not immediate. Piping before it lands seeds canon
+  // with an unsigned chain, and every commit built on that is rejected later.
+  await recaller.when(() => draft.byteLength > 0 && draft.signedLength === draft.byteLength)
 
   const canon = hub.getMirror(key)
   const reader = draft.makeReadableStream({ fromOffset: 0 }).getReader()
@@ -113,5 +125,33 @@ describe(import.meta.url, ({ test }) => {
       await folder.unsubscribe()
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  test('a commit authored downstream reaches canon, and comes back', async ({ assert }) => {
+    const { hub: top, key, canon } = await aTopHubHolding({ 'readme.md': 'from the top\n' })
+    const [topEnd, clientEnd] = loopback()
+    // eslint-disable-next-line no-new
+    new Downstream({ hub: top, connection: topEnd })
+    const clientRecaller = new Recaller('client')
+    const client = new Upstream({ recaller: clientRecaller, connection: clientEnd })
+    const signer = new Signer('user', 'pass', 1000)
+
+    client.hub.getMirror(key)
+    await clientRecaller.when(() => client.hub.getMirror(key).lastCommit !== null)
+    assert.deepEqual(client.hub.getMirror(key).get(), { 'readme.md': 'from the top\n' })
+
+    const draft = client.hub.checkout(key, signer, 'home')
+    const working = draft.checkout()
+    working.set({ ...draft.get(), 'from-below.md': 'authored downstream\n' })
+    draft.commit(working, 'authored downstream')
+
+    const topSees = () => Object.keys(canon.get() ?? {})
+    await waitFor(() => topSees().includes('from-below.md'), 'the commit reaching canon')
+    assert.deepEqual(canon.get(), { 'readme.md': 'from the top\n', 'from-below.md': 'authored downstream\n' })
+
+    await waitFor(() => Object.keys(client.hub.getMirror(key).get() ?? {}).includes('from-below.md'), 'canon coming back')
+    assert.deepEqual(client.hub.getMirror(key).committedChainHash, canon.committedChainHash,
+      'both ends end up on the same chain')
+    client.close()
   })
 })

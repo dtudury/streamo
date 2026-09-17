@@ -43,8 +43,8 @@ export class Downstream {
   }
 
   #receiveProposal (data) {
-    const key = bytesToHex(data.slice(0, KEY_BYTES))
-    const payload = data.slice(KEY_BYTES)
+    const key = bytesToHex(data.subarray(0, KEY_BYTES))
+    const payload = data.subarray(KEY_BYTES)
     if (!payload.length) return
     let writer = this.#proposals.get(key)
     if (!writer) {

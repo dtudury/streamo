@@ -93,4 +93,53 @@ describe(import.meta.url, ({ test }) => {
       'a fresh Mirror per call would reset the wire cursor and lose divergence')
     assert.equal(hub._materialize(K1), compat, 'so identity has to be stable')
   })
+
+  test('a draft continues canon chain instead of forking it', async ({ assert }) => {
+    const signer = new Signer('user', 'pass', 1000)
+
+    // Canon as it arrives from anywhere but our own draft: author in one hub,
+    // land it, then carry the bytes into a second hub the way a socket does.
+    const authoring = new Recaller('authoring')
+    const source = new Hub({ recaller: authoring })
+    const seed = source.checkout(K1, signer, 'home')
+    const working = seed.checkout()
+    working.set({ 'readme.md': 'canon\n' })
+    seed.commit(working, 'seed')
+    await authoring.when(() => seed.byteLength > 0 && seed.signedLength === seed.byteLength)
+    const sourceCanon = source.getMirror(K1)
+    const reader = seed.makeReadableStream({ fromOffset: 0 }).getReader()
+    const writer = sourceCanon.makeWritableStream().getWriter()
+    while (sourceCanon.byteLength < seed.byteLength) {
+      const { value, done } = await reader.read()
+      if (done) break
+      await writer.write(value)
+    }
+    writer.releaseLock()
+    reader.cancel().catch(() => {})
+
+    const following = new Recaller('following')
+    const hub = new Hub({ recaller: following })
+    const canon = hub.getMirror(K1)
+    const wireReader = sourceCanon.makeReadableStream({ fromOffset: 0 }).getReader()
+    const wireWriter = canon.makeWritableStream().getWriter()
+    while (canon.byteLength < sourceCanon.byteLength) {
+      const { value, done } = await wireReader.read()
+      if (done) break
+      await wireWriter.write(value)
+    }
+    wireWriter.releaseLock()
+    wireReader.cancel().catch(() => {})
+
+    const draft = hub.checkout(K1, signer, 'home')
+    assert.deepEqual(draft.committedChainHash, canon.committedChainHash, 'the draft is on canon chain, not a new one')
+    assert.equal(draft.byteLength, canon.byteLength)
+    assert.deepEqual(draft.get(), { 'readme.md': 'canon\n' }, 'and it can read the value it inherited')
+    assert.equal(draft.resolve(canon.lastCommit.dataAddress), canon.resolve(canon.lastCommit.dataAddress),
+      'seeded by clone, so the chunks are shared rather than copied')
+
+    const next = draft.checkout()
+    next.set({ ...draft.get(), 'added.md': 'later\n' })
+    draft.commit(next, 'second')
+    assert.ok(draft.lastCommit.parent >= 0, 'a commit on it extends the chain rather than starting one')
+  })
 })

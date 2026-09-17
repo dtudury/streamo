@@ -7,6 +7,7 @@ export class Upstream {
   #connection
   #writers = new Map()
   #asked = new Set()
+  #pumping = new Set()
 
   constructor ({ recaller, connection }) {
     if (!recaller) throw new TypeError('Upstream: recaller is required')
@@ -23,12 +24,20 @@ export class Upstream {
         connection.send(JSON.stringify({ type: 'want', key }))
       }
     })
+
+    recaller.watch('upstream:send-what-we-have-drafted', () => {
+      for (const key of this.hub.keys()) {
+        if (!this.hub.getDraft(key) || this.#pumping.has(key)) continue
+        this.#pumping.add(key)
+        this.#pump(key)
+      }
+    })
   }
 
   #receive (data) {
     if (typeof data === 'string') return
-    const key = bytesToHex(data.slice(0, KEY_BYTES))
-    const chunk = data.slice(KEY_BYTES)
+    const key = bytesToHex(data.subarray(0, KEY_BYTES))
+    const chunk = data.subarray(KEY_BYTES)
     if (!chunk.length) return
     this.#writerFor(key).write(chunk)
   }
@@ -40,6 +49,20 @@ export class Upstream {
       this.#writers.set(key, writer)
     }
     return writer
+  }
+
+  async #pump (key) {
+    const draft = this.hub.getDraft(key)
+    const keyBytes = hexToBytes(key)
+    const reader = draft.makeReadableStream({ fromOffset: this.hub.getMirror(key).byteLength }).getReader()
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      const frame = new Uint8Array(KEY_BYTES + value.length)
+      frame.set(keyBytes, 0)
+      frame.set(value, KEY_BYTES)
+      try { this.#connection.send(frame) } catch { break }
+    }
   }
 
   close () { this.#connection.close() }

@@ -80,6 +80,7 @@
  * without paying for them yet.**
  */
 import { numberToVar, varToNumber, range } from './utils.js'
+import { Opaque } from './Opaque.js'
 import { Signature } from './Signature.js'
 
 /**
@@ -162,20 +163,22 @@ const literalReaders = range(5).map(width => (r, code) => ({
 // Opaque payload: the chunk ends with [payload][length][footer], where the
 // footer option says how many little-endian length bytes precede it. The
 // payload is never decomposed — that is the point of the codec.
-const opaqueReaders = range(3).map(lengthBytes => (r, code) => {
-  const width = lengthBytes + 1
-  const lengthAt = code.length - width
-  let length = 0
-  for (let i = lengthBytes; i >= 0; i--) length = (length << 8) | code[lengthAt + i]
+// [payload][length][footer] — the length is little-endian and minimal-width,
+// the same encoding addressReaders uses for addresses, so option 0..3 means a
+// 1..4-byte length.
+const opaqueReaders = range(4).map(index => (r, code) => {
+  const lengthWidth = index + 1
+  const lengthAt = code.length - lengthWidth
+  const length = varToNumber(code.subarray(lengthAt, code.length))
   return {
-    type: `opaque(${lengthBytes + 1})`,
-    width: width + length,
-    // new Uint8Array(...) rather than .slice(): when the record was loaded
-    // from disk its chunks are Node Buffers, and Buffer.prototype.slice is an
-    // alias for subarray — a VIEW. Handing FLOAT64/DATE a view into the whole
-    // archive file breaks them, since they do new Float64Array(buf, byteOffset)
-    // and that offset must be a multiple of 8.
-    getDecoded: () => new Uint8Array(code.subarray(code.length - width - length, code.length - width))
+    type: `opaque(${lengthWidth})`,
+    width: lengthWidth + length,
+    // new Uint8Array(...) rather than .slice(): chunks loaded from disk are
+    // Node Buffers, and Buffer.prototype.slice is an alias for subarray — a
+    // VIEW. Handing FLOAT64/DATE a view into the whole archive file breaks
+    // them, since they do new Float64Array(buf, byteOffset) and that offset
+    // must be a multiple of 8.
+    getDecoded: () => new Uint8Array(code.subarray(lengthAt - length, lengthAt))
   }
 })
 
@@ -186,6 +189,18 @@ const uint7Readers = range(128).map(n => () => ({
 }))
 
 // ── Shared helpers ─────────────────────────────────────────────────────────
+
+/**
+ * Lay out `[...parts][footer]` — every chunk in this file ends that way, and
+ * four codecs used to spell it out by hand.
+ */
+function withFooter (parts, footer) {
+  const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0) + 1)
+  let at = 0
+  for (const part of parts) { out.set(part, at); at += part.length }
+  out[out.length - 1] = footer
+  return out
+}
 
 /**
  * Ensure `code` is stored and return [partBytes, optionIndex].
@@ -219,11 +234,7 @@ function encodeMultipart (r, values, codec, asRefs) {
     base *= codec.partReaders[i].length
     parts.unshift(part)
   }
-  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0) + 1)
-  let pos = 0
-  for (const p of parts) { out.set(p, pos); pos += p.length }
-  out[pos] = footer
-  return out
+  return withFooter(parts, footer)
 }
 
 function decodeParts (r, code) {
@@ -283,7 +294,8 @@ export const isPlainObject = value =>
   typeof value === 'object' &&
   !Array.isArray(value) &&
   !(value instanceof Uint8Array) &&
-  !(value instanceof Date)
+  !(value instanceof Date) &&
+  !(value instanceof Opaque)
 
 export function makeCodecs () {
   // ── Codec definitions ────────────────────────────────────────────────────
@@ -313,10 +325,7 @@ export function makeCodecs () {
     partReaders: [literalReaders],
     encode (r, v) {
       if (v instanceof Uint8Array && v.length >= 1 && v.length <= 4) {
-        const out = new Uint8Array(v.length + 1)
-        out.set(v)
-        out[v.length] = WORD.baseFooter + v.length
-        return out
+        return withFooter([v], WORD.baseFooter + v.length)
       }
     },
     decode (r, code) { return decodeParts(r, code)[0].getDecoded() }
@@ -326,11 +335,7 @@ export function makeCodecs () {
   const UINT8ARRAY = {
     partReaders: [inlineOrAddress],
     encode (r, v) {
-      // OPAQUE (registered at the end of this list) handles >4 bytes now.
-      // encode() tries codecs in registration order, so this guard is how a
-      // later codec gets a chance. decode is unaffected — it dispatches by
-      // footer, so chunks written before OPAQUE existed still read back here.
-      if (false && v instanceof Uint8Array && v.length > 4) {
+      if (v instanceof Uint8Array && v.length > 4) {
         const words = []
         for (let i = 0; i < v.length; i += 4) words.push(v.slice(i, Math.min(i + 4, v.length)))
         return encodeMultipart(r, [new Duple(words)], UINT8ARRAY)
@@ -411,11 +416,7 @@ export function makeCodecs () {
     getWidth: () => 97,
     encode (r, v) {
       if (v instanceof Signature) {
-        const out = new Uint8Array(97)
-        out.set(v.chainHash, 0)
-        out.set(v.compactRawBytes, 32)
-        out[96] = SIGNATURE.baseFooter
-        return out
+        return withFooter([v.chainHash, v.compactRawBytes], SIGNATURE.baseFooter)
       }
     },
     decode (r, code) {
@@ -517,10 +518,7 @@ export function makeCodecs () {
     encode: () => undefined, // not directly encodable; use _encode
     _encode (r, encodedValue) {
       const [part, option] = inlineOrAddressPart(r, encodedValue)
-      const out = new Uint8Array(part.length + 1)
-      out.set(part)
-      out[part.length] = BOXED.baseFooter + option
-      return out
+      return withFooter([part], BOXED.baseFooter + option)
     },
     decode (r, code, asRefs) {
       return decodeParts(r, code)[0].getDecoded(asRefs)
@@ -540,16 +538,16 @@ export function makeCodecs () {
   const OPAQUE = {
     partReaders: [opaqueReaders],
     encode (r, v) {
-      if (!(v instanceof Uint8Array) || v.length <= 4) return
-      const lengthBytes = v.length < 0x100 ? 1 : v.length < 0x10000 ? 2 : 3
-      if (v.length >= 0x1000000) throw new Error(`OPAQUE: ${v.length} bytes exceeds the 3-byte length (16MB)`)
-      const out = new Uint8Array(v.length + lengthBytes + 1)
-      out.set(v)
-      for (let i = 0; i < lengthBytes; i++) out[v.length + i] = (v.length >> (8 * i)) & 0xff
-      out[out.length - 1] = OPAQUE.baseFooter + (lengthBytes - 1)
-      return out
+      if (!(v instanceof Opaque)) return
+      // Guard on the length itself, not on numberToVar's output: numberToVar
+      // uses >>> and truncates at 32 bits, so 2**32 comes back as a ONE-byte
+      // zero. V8 will happily allocate an array that big, so without this the
+      // chunk would encode a length of 0 and corrupt silently.
+      if (v.value.length >= 0x100000000) throw new Error(`Opaque: ${v.value.length} bytes exceeds the 4-byte length a footer option can say`)
+      const length = numberToVar(v.value.length)
+      return withFooter([v.value, length], OPAQUE.baseFooter + length.length - 1)
     },
-    decode (r, code) { return decodeParts(r, code)[0].getDecoded() }
+    decode (r, code) { return new Opaque(decodeParts(r, code)[0].getDecoded()) }
   }
 
   // Empty-Uint8Array codec is appended at the END of the registration list so

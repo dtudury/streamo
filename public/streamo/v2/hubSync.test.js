@@ -9,7 +9,7 @@ import { Hub } from './Hub.js'
 import { Upstream } from './Upstream.js'
 import { Downstream } from './Downstream.js'
 import { loopback } from './loopback.js'
-import { bytesToHex } from '../utils.js'
+import { bytesToHex, hexToBytes } from '../utils.js'
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 200))
 
@@ -21,8 +21,8 @@ async function waitFor (predicate, what, timeout = 5000) {
   }
 }
 
-async function aTopHubHolding (files) {
-  const signer = new Signer('user', 'pass', 1000)
+async function aTopHubHolding (files, withSigner) {
+  const signer = withSigner ?? new Signer('user', 'pass', 1000)
   const key = bytesToHex((await signer.keysFor('home')).publicKey)
   const recaller = new Recaller('top')
   const hub = new Hub({ recaller })
@@ -180,6 +180,42 @@ describe(import.meta.url, ({ test }) => {
     const payload = sent.reduce((total, frame) => total + frame.length - 33, 0)
     assert.ok(sent.length <= 2, `one frame per change, not one per chunk (was ${sent.length})`)
     assert.ok(payload < draft.byteLength, 'only the new chunks travelled, not the whole draft')
+    client.close()
+  })
+
+  test('canon arriving from above is refused unless it is signed by the key it claims', async ({ assert }) => {
+    // The down-direction mirror of downstream.test.js's forgery test. Mutation
+    // showed Upstream's verified writer was undefended: swapping it for a plain
+    // writer broke nothing, so this pins it. A relay that hands us bytes signed
+    // by somebody else must not become our canon.
+    const stranger = new Signer('someone', 'else', 1000)
+    const { canon: strangerCanon } = await aTopHubHolding({ 'lie.md': 'not yours\n' }, stranger)
+
+    const victimKey = bytesToHex((await new Signer('user', 'pass', 1000).keysFor('home')).publicKey)
+    const [serverEnd, clientEnd] = loopback()
+    const clientRecaller = new Recaller('client')
+    const client = new Upstream({ recaller: clientRecaller, connection: clientEnd })
+    client.hub.getMirror(victimKey)
+
+    // serve the stranger's chain, but labelled with the victim's key
+    const keyBytes = hexToBytes(victimKey)
+    const reader = strangerCanon.makeReadableStream({ fromOffset: 0 }).getReader()
+    serverEnd.on('message', () => {})
+    for (let i = 0; i < 40; i++) {
+      const { value, done } = await reader.read()
+      if (done) break
+      const frame = new Uint8Array(33 + value.length)
+      frame.set(keyBytes, 0)
+      frame.set(value, 33)
+      serverEnd.send(frame)
+      if (strangerCanon.byteLength && value.length) break
+    }
+    reader.cancel().catch(() => {})
+    await settle()
+
+    assert.equal(client.hub.getMirror(victimKey).byteLength, 0,
+      'bytes signed by the wrong key never become canon')
+    assert.equal(client.hub.getMirror(victimKey).lastCommit, null)
     client.close()
   })
 })

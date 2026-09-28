@@ -6,6 +6,8 @@ import { subscribe as watchFolder } from '@parcel/watcher'
 
 import { isPlainObject } from '../codecs.js'
 import { decodeBytes, decodeFile, filesEqual } from '../fileCodec.js'
+import { hexToBytes } from '../utils.js'
+import { makeVerifiedWritableStream } from './verifiedWritableStream.js'
 
 const GITIGNORE = '.gitignore'
 const MOUNTS = 'mounts.json'
@@ -96,8 +98,14 @@ export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignor
   }
 
   const landIntoCanon = async draft => {
+    // Wait for the signature before piping. commit() appends the commit chunks
+    // now and the SIG a tick later, so landing immediately put UNSIGNED bytes
+    // into canon — which nothing noticed while canon accepted anything. The
+    // verified writer below cannot accept a batch with no SIG, so it would
+    // simply buffer forever instead.
+    await hub.recaller.when(() => draft.byteLength > 0 && draft.signedLength === draft.byteLength)
     const reader = draft.makeReadableStream({ fromOffset: root.byteLength }).getReader()
-    const writer = root.makeWritableStream().getWriter()
+    const writer = makeVerifiedWritableStream(root, hexToBytes(rootKey)).getWriter()
     try {
       while (root.byteLength < draft.byteLength) {
         const { value, done } = await reader.read()

@@ -5,16 +5,21 @@ import { join } from 'path'
 import { describe } from '../utils/testing.js'
 import { Recaller } from '../utils/Recaller.js'
 import { Signer } from '../Signer.js'
+import { bytesToHex } from '../utils.js'
 import { Hub } from './Hub.js'
 import { fileSync2 } from './fileSync2.js'
 
-const ROOT = 'aa'.repeat(33)
-const CHILD = 'cd'.repeat(33)
+// Derived, not invented: the Record's identity IS its pubkey, so a made-up ROOT
+// means canon signed by a key nobody holds. It passed only while nothing
+// verified; now that landIntoCanon uses the verified writer, it cannot.
+const SIGNER = new Signer('user', 'pass', 1000)
+const ROOT = bytesToHex((await SIGNER.keysFor('home')).publicKey)
+const CHILD = bytesToHex((await SIGNER.keysFor('home/child/')).publicKey)
 
 async function sandbox ({ canSign = true } = {}) {
   const dir = await mkdtemp(join(tmpdir(), 'fs2-test-'))
   const hub = new Hub({ recaller: new Recaller('fs2-test') })
-  const signer = canSign ? new Signer('user', 'pass', 1000) : null
+  const signer = canSign ? SIGNER : null
   const start = () => fileSync2({
     hub,
     rootKey: ROOT,

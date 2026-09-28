@@ -1,4 +1,5 @@
 import { Hub } from './Hub.js'
+import { makeVerifiedWritableStream } from './verifiedWritableStream.js'
 import { hexToBytes, bytesToHex } from '../utils.js'
 
 const KEY_BYTES = 33
@@ -72,13 +73,20 @@ export class Upstream {
     const key = bytesToHex(data.subarray(0, KEY_BYTES))
     const chunk = data.subarray(KEY_BYTES)
     if (!chunk.length) return
-    this.#writerFor(key).write(chunk)
+    this.#writerFor(key).write(chunk).catch(error => {
+      // Until canon was verified a writer could never reject, so this path had
+      // no handler and a forged frame took the process down as an unhandled
+      // rejection. Refusing is the point; dying silently is not.
+      console.error(`Upstream: refused canon for ${key.slice(0, 8)}… — ${error.message}`)
+      this.#writers.delete(key)
+      this.#connection.close()
+    })
   }
 
   #writerFor (key) {
     let writer = this.#writers.get(key)
     if (!writer) {
-      writer = this.hub.getMirror(key).makeWritableStream().getWriter()
+      writer = makeVerifiedWritableStream(this.hub.getMirror(key), hexToBytes(key)).getWriter()
       this.#writers.set(key, writer)
     }
     return writer

@@ -13,7 +13,6 @@ import { FolderRecord } from '../public/streamo/FolderRecord.js'
 import { MemoryTier, DiskTier } from '../public/streamo/StorageTier.js'
 import { archiveSync } from '../public/streamo/archiveSync.js'
 import { fileSync } from '../public/streamo/fileSync.js'
-import { fileSync2 } from '../public/streamo/v2/fileSync2.js'
 import { identity } from '../public/streamo/identity.js'
 import { dispatch } from '../public/streamo/dispatch.js'
 import { outletSync } from '../public/streamo/outletSync.js'
@@ -795,18 +794,7 @@ if (options.files) {
     ? rel => rel === archive || rel.startsWith(archive + '/')
     : () => false
 
-  if (process.env.STREAMO_FS2) {
-    const feed = feedSessions[0] ?? null
-    await fileSync2({
-      registry: server.registry,
-      subscribe: key => feed ? feed.subscribe(key) : server.registry._materialize(key),
-      rootKey: server.publicKeyHex,
-      folder,
-      ignore
-    })
-  } else {
-    await server.files(folder, { recordFile, dataDir: options.dataDir, mountsOnly: !!options.mountsOnly, ignore })
-  }
+  await server.files(folder, { recordFile, dataDir: options.dataDir, mountsOnly: !!options.mountsOnly, ignore })
   const recordFileNote = recordFile
     ? ` (recordFile: ${recordFile === true ? 'streamo.json' : recordFile})`
     : ''

@@ -21,6 +21,16 @@ const describe = value =>
         : Array.isArray(value) ? `an array of ${value.length}`
           : `a ${typeof value}`.replace('a o', 'an o')
 
+/**
+ * @param {object} options
+ * @param {import('./Hub.js').Hub} options.hub
+ * @param {string} options.rootKey
+ * @param {string} [options.folder]
+ * @param {(rel: string) => boolean} [options.ignore]
+ * @param {import('../Signer.js').Signer|null} [options.signer]
+ * @param {string|null} [options.signerName]
+ * @param {boolean} [options.upstream]  this folder is where canon comes from
+ */
 export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignore = () => false, signer = null, signerName = null, upstream = false }) {
   await mkdir(folderPath, { recursive: true })
   const folder = await realpath(folderPath)

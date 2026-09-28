@@ -9,7 +9,8 @@ export class Hub {
   #drafts = new Map()
   #compat = new Map()
 
-  constructor ({ recaller } = {}) {
+  /** @param {{ recaller: import('../utils/Recaller.js').Recaller }} options */
+  constructor ({ recaller }) {
     if (!recaller) throw new TypeError('Hub: recaller is required')
     this.recaller = recaller
   }

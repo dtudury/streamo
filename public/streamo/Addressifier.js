@@ -20,8 +20,17 @@ import { ContentMap } from './ContentMap.js'
  * followed by the chunk bytes).
  */
 export class Addressifier {
-  /** @type {Array.<{uint8Array: Uint8Array, offset: number}>} */
-  #chunks = []
+  /**
+   * The chunk store. Everything a reader cares about — length, paths,
+   * values — is derived from it, so it is what reactivity is reported
+   * against rather than the wrapper holding it. Two objects sharing this
+   * array are two windows on one store and wake together; `_applyClone`
+   * slices, so a copy gets its own array and diverges.
+   *
+   * Underscore, not #, precisely so subclasses can report against it.
+   * @type {Array.<{uint8Array: Uint8Array, offset: number}>}
+   */
+  _chunks = []
   #contentMap = new ContentMap()
 
   #resolveNext
@@ -29,28 +38,12 @@ export class Addressifier {
   // close() flips this to true and wakes any readable streams that
   // are blocked on #nextChunk. Once closed, append() throws and all
   // readable streams emit `done: true` after draining whatever's in
-  // `#chunks`. One-way; there's no reopen.
+  // `_chunks`. One-way; there's no reopen.
   #closed = false
 
-  /**
-   * The object every byte-derived change is reported against.
-   *
-   * Everything a reader cares about — length, paths, values — is derived
-   * from #chunks, so #chunks is what reactivity hangs on rather than the
-   * wrapper holding it. Two records sharing this array are two windows on
-   * one store and wake together; `_applyClone` slices, so a clone gets its
-   * own array and diverges. That is the whole difference between a view and
-   * a copy, and it costs no class.
-   *
-   * NOT for state that belongs to the wrapper — `hasRelay` is about the
-   * wire and `locallyAuthoredOffset` is "purely a property of the writer".
-   * Those stay on `this`, so a view does not inherit them.
-   */
-  get _recallerSubject () { return this.#chunks }
-
   get byteLength () {
-    if (!this.#chunks.length) return 0
-    const last = this.#chunks[this.#chunks.length - 1]
+    if (!this._chunks.length) return 0
+    const last = this._chunks[this._chunks.length - 1]
     return last.offset + last.uint8Array.length
   }
 
@@ -62,7 +55,7 @@ export class Addressifier {
    * (chunk offsets, fromOffset, signedLength), which are content-only.
    */
   get wireByteLength () {
-    return this.byteLength + 4 * this.#chunks.length
+    return this.byteLength + 4 * this._chunks.length
   }
 
   /**
@@ -94,7 +87,7 @@ export class Addressifier {
     if (this.#closed) throw new Error('cannot append to a closed Addressifier')
     if (!code.length) throw new Error('chunk must not be empty')
     if (this.#contentMap.get(code) !== undefined) throw new Error('chunk already exists')
-    this.#chunks.push({ uint8Array: code, offset: this.byteLength })
+    this._chunks.push({ uint8Array: code, offset: this.byteLength })
     const address = this.byteLength - 1
     this.#contentMap.set(code, address)
     const prev = this.#resolveNext
@@ -105,7 +98,7 @@ export class Addressifier {
 
   /**
    * Signal end-of-stream. Any open `makeReadableStream` readers drain
-   * whatever's already in `#chunks` and then emit `done: true`. Future
+   * whatever's already in `_chunks` and then emit `done: true`. Future
    * `append()` calls throw. Idempotent.
    *
    * The intended use is "I'm done with this streamo — drain the pipe
@@ -132,11 +125,11 @@ export class Addressifier {
    * use only when no live readers exist (e.g. before an archiveSync write loop).
    */
   _reset () {
-    // Cleared in place rather than reassigned: #chunks IS the recaller
+    // Cleared in place rather than reassigned: _chunks IS the recaller
     // subject, so a fresh array would silently detach every view that
     // shares this store. The doc above says "no live readers" — this
     // makes violating it visible instead of quiet.
-    this.#chunks.length = 0
+    this._chunks.length = 0
     this.#contentMap = new ContentMap()
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
   }
@@ -164,7 +157,7 @@ export class Addressifier {
    * @template {Addressifier} T @param {T} target @returns {T}
    */
   _applyView (target) {
-    target.#chunks = this.#chunks
+    target._chunks = this._chunks
     target.#contentMap = this.#contentMap
     return target
   }
@@ -180,7 +173,7 @@ export class Addressifier {
    */
   _applyClone (target, address) {
     const idx = this.#indexAt(address, false)
-    target.#chunks = this.#chunks.slice(0, idx + 1)
+    target._chunks = this._chunks.slice(0, idx + 1)
     target.#contentMap = this.#contentMap.clone(address)
     return target
   }
@@ -196,7 +189,7 @@ export class Addressifier {
    */
   slice (start = 0, end = this.byteLength) {
     const parts = []
-    for (const { uint8Array, offset } of this.#chunks) {
+    for (const { uint8Array, offset } of this._chunks) {
       const chunkEnd = offset + uint8Array.length
       if (chunkEnd <= start || offset >= end) continue
       parts.push(uint8Array.slice(Math.max(0, start - offset), Math.min(uint8Array.length, end - offset)))
@@ -248,19 +241,19 @@ export class Addressifier {
     // fixed-format 97-byte chunks and signedLength always lands on a chunk
     // boundary, so this is exact when called with `fromOffset = signedLength`.
     let index = 0
-    while (index < self.#chunks.length && self.#chunks[index].offset < fromOffset) index++
+    while (index < self._chunks.length && self._chunks[index].offset < fromOffset) index++
     return new ReadableStream({
       async start (controller) {
         while (true) {
-          while (index < self.#chunks.length) {
+          while (index < self._chunks.length) {
             // Plan a batch: collect chunks until we'd exceed maxBatch.
             // Always include at least one chunk per frame so a chunk
             // larger than maxBatch still ships (rare; would only happen
             // if a user encoded a single value bigger than 256KB).
             const start = index
             let total = 0
-            while (index < self.#chunks.length) {
-              const len = self.#chunks[index].uint8Array.length
+            while (index < self._chunks.length) {
+              const len = self._chunks[index].uint8Array.length
               if (index > start && total + 4 + len > maxBatch) break
               total += 4 + len
               index++
@@ -269,7 +262,7 @@ export class Addressifier {
             const view = new DataView(frame.buffer)
             let pos = 0
             for (let i = start; i < index; i++) {
-              const { uint8Array } = self.#chunks[i]
+              const { uint8Array } = self._chunks[i]
               view.setUint32(pos, uint8Array.length, true)
               pos += 4
               frame.set(uint8Array, pos)
@@ -283,7 +276,7 @@ export class Addressifier {
           await self.#nextChunk
           // close() also wakes the await above; re-check after wake so
           // we exit promptly when close was the wake reason.
-          if (self.#closed && index >= self.#chunks.length) { controller.close(); return }
+          if (self.#closed && index >= self._chunks.length) { controller.close(); return }
         }
       }
     })
@@ -339,7 +332,7 @@ export class Addressifier {
   }
 
   #indexAt (byteIndex, strict = true) {
-    const chunks = this.#chunks
+    const chunks = this._chunks
     if (!chunks.length) return -1
     let lo = 0
     let hi = chunks.length - 1
@@ -362,6 +355,6 @@ export class Addressifier {
 
   #chunkAt (byteIndex, strict = true) {
     const idx = this.#indexAt(byteIndex, strict)
-    return idx >= 0 ? this.#chunks[idx] : undefined
+    return idx >= 0 ? this._chunks[idx] : undefined
   }
 }

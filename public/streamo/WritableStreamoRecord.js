@@ -227,7 +227,7 @@ export class WritableStreamoRecord extends StreamoRecord {
     const result = this.commit(working, this.defaultMessage)
     const newDataAddress = this.lastCommit?.dataAddress
     for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
-      this.recaller.reportKeyMutation(this._recallerSubject, JSON.stringify(changed))
+      this.recaller.reportKeyMutation(this._chunks, JSON.stringify(changed))
     }
     return result
   }
@@ -242,7 +242,7 @@ export class WritableStreamoRecord extends StreamoRecord {
     const result = this.commit(working, this.defaultMessage)
     const newDataAddress = this.lastCommit?.dataAddress
     for (const changed of changedPaths(this, prevDataAddress, newDataAddress)) {
-      this.recaller.reportKeyMutation(this._recallerSubject, JSON.stringify(changed))
+      this.recaller.reportKeyMutation(this._chunks, JSON.stringify(changed))
     }
     return result
   }

@@ -162,7 +162,7 @@ describe(import.meta.url, ({ test }) => {
     // the byte stream it receives.
     const relayRegistry = newRegistry()
     const relayStream = (await relayRegistry._materialize(await ensureKey())).local
-    await originSync(relayStream, KEY, `localhost:${serverPort}`)
+    const relayUpstreamWs = await originSync(relayStream, KEY, `localhost:${serverPort}`)
     const relayWss = outletSync(relayRegistry, 0)
     await new Promise(resolve => relayWss.on('listening', resolve))
     const relayPort = relayWss.address().port
@@ -183,6 +183,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(serverStream.get('hello'), 'from-client', 'relay forwarded client data to server')
 
     clientWs.close()
+    relayUpstreamWs.close()
     for (const c of relayWss.clients) c.terminate()
     relayWss.close()
     for (const c of serverWss.clients) c.terminate()

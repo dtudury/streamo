@@ -103,7 +103,7 @@ export class Streamo extends CodecRegistry {
   get recaller () { return this.#recaller }
 
   get byteLength () {
-    this.#recaller.reportKeyAccess(this, 'length')
+    this.#recaller.reportKeyAccess(this._chunks, 'length')
     return super.byteLength
   }
 
@@ -117,7 +117,7 @@ export class Streamo extends CodecRegistry {
   append (code) {
     const address = super.append(code)
     this.#valueAddress = address
-    this.#recaller.reportKeyMutation(this, 'length')
+    this.#recaller.reportKeyMutation(this._chunks, 'length')
     return address
   }
 
@@ -141,8 +141,8 @@ export class Streamo extends CodecRegistry {
       address = this.valueAddress
       // 'length': re-run when external bytes arrive (append() fires 'length').
       // path string: re-run when set() mutates this specific path via changedPaths.
-      this.#recaller.reportKeyAccess(this, 'length')
-      this.#recaller.reportKeyAccess(this, JSON.stringify(args))
+      this.#recaller.reportKeyAccess(this._chunks, 'length')
+      this.#recaller.reportKeyAccess(this._chunks, JSON.stringify(args))
     }
     if (address < 0) return undefined
     // Lazy descent — only decode the chunks the path touches. See
@@ -221,7 +221,7 @@ export class Streamo extends CodecRegistry {
 
     this.#valueAddress = newAddress
     for (const changed of changedPaths(this, prevAddress, newAddress)) {
-      this.#recaller.reportKeyMutation(this, JSON.stringify(changed))
+      this.#recaller.reportKeyMutation(this._chunks, JSON.stringify(changed))
     }
     return newAddress
   }
@@ -287,7 +287,7 @@ export class Streamo extends CodecRegistry {
     const newAddress = childAddr
     this.#valueAddress = newAddress
     for (const changed of changedPaths(this, prevAddress, newAddress)) {
-      this.#recaller.reportKeyMutation(this, JSON.stringify(changed))
+      this.#recaller.reportKeyMutation(this._chunks, JSON.stringify(changed))
     }
     return newAddress
   }

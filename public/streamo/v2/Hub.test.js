@@ -73,8 +73,32 @@ describe(import.meta.url, ({ test }) => {
     const draft = hub.checkout(K1, signer, 'home')
     assert.equal(draft.isAuthorable, true)
     assert.equal(canon.isAuthorable, false, 'and canon still cannot')
-    assert.equal(hub.getCurrent(K1), draft, 'getCurrent prefers the draft')
     assert.equal(hub.checkout(K1, signer, 'home'), draft, 'checkout twice is the same draft')
+
+    // getCurrent hands back a READER now, not the pen. It used to assert
+    // identity with the draft; that was the old contract.
+    const view = hub.getCurrent(K1)
+    assert.notEqual(view, draft, 'getCurrent is a view, not the writable draft')
+    assert.equal(view.isAuthorable, false, 'and it cannot author')
+    assert.equal(hub.getCurrent(K1), view, 'the view is stable, so identity comparisons hold')
+
+    draft.set({ edited: 'after checkout' })
+    assert.equal(view.get('edited'), 'after checkout', 'the view tracks the draft it windows')
+  })
+
+  test('a second signer is refused the pen, and can still read', async ({ assert }) => {
+    const hub = new Hub({ recaller: new Recaller('hub-two-signers') })
+    const mine = new Signer('user', 'pass', 1000)
+    const theirs = new Signer('other', 'pass', 1000)
+
+    const draft = hub.checkout(K1, mine, 'home')
+    assert.equal(hub.checkout(K1, mine, 'home'), draft, 'the same author may check out again — canon can be slow')
+
+    let threw = null
+    try { hub.checkout(K1, theirs, 'elsewhere') } catch (error) { threw = error }
+    assert.ok(threw, 'a different signer is refused rather than handed someone else\'s pen')
+    assert.ok(/getDraft/.test(threw.message), 'and the refusal names what to use instead')
+    assert.equal(hub.getDraft(K1).isAuthorable, false, 'reading never needed the pen')
   })
 
   test('_materialize hands the socket syncs a Mirror over the same record', async ({ assert }) => {

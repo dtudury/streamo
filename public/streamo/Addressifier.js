@@ -151,15 +151,6 @@ export class Addressifier {
   }
 
   /**
-   * Copy internal store state (chunks + content map) into `target` up to
-   * `address`. Called by subclass clone() methods so they can pass a
-   * subclass instance as `target`.
-   * @template {Addressifier} T
-   * @param {T} target
-   * @param {number} address
-   * @returns {T}
-   */
-  /**
    * Point `target` at THIS store rather than a copy of it — a view.
    *
    * The one line that distinguishes a view from a clone: `_applyClone`
@@ -178,6 +169,15 @@ export class Addressifier {
     return target
   }
 
+  /**
+   * Copy internal store state (chunks + content map) into `target` up to
+   * `address`. Called by subclass clone() methods so they can pass a
+   * subclass instance as `target`.
+   * @template {Addressifier} T
+   * @param {T} target
+   * @param {number} address
+   * @returns {T}
+   */
   _applyClone (target, address) {
     const idx = this.#indexAt(address, false)
     target.#chunks = this.#chunks.slice(0, idx + 1)

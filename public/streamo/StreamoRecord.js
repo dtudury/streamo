@@ -158,7 +158,7 @@ export class StreamoRecord extends Streamo {
    * @returns {{ message: string, date: Date, dataAddress: number, parent: number|undefined, remoteParent?: { host: string, repo: string, dataAddress: number } }|null}
    */
   get lastCommit () {
-    this.recaller.reportKeyAccess(this, 'length')
+    this.recaller.reportKeyAccess(this._recallerSubject, 'length')
     const address = this.valueAddress
     if (address < 0) return null
     // Defensive decode: during origin-sync's initial replay, the recaller
@@ -187,7 +187,7 @@ export class StreamoRecord extends Streamo {
     if (typeof args[0] === 'number') return super.get(...args)
     const commit = this.lastCommit  // registers 'length' dependency
     if (!commit) return super.get(...args)
-    this.recaller.reportKeyAccess(this, JSON.stringify(args))
+    this.recaller.reportKeyAccess(this._recallerSubject, JSON.stringify(args))
     return this.decodeAt(commit.dataAddress, ...args)
   }
 

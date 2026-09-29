@@ -32,6 +32,22 @@ export class Addressifier {
   // `#chunks`. One-way; there's no reopen.
   #closed = false
 
+  /**
+   * The object every byte-derived change is reported against.
+   *
+   * Everything a reader cares about — length, paths, values — is derived
+   * from #chunks, so #chunks is what reactivity hangs on rather than the
+   * wrapper holding it. Two records sharing this array are two windows on
+   * one store and wake together; `_applyClone` slices, so a clone gets its
+   * own array and diverges. That is the whole difference between a view and
+   * a copy, and it costs no class.
+   *
+   * NOT for state that belongs to the wrapper — `hasRelay` is about the
+   * wire and `locallyAuthoredOffset` is "purely a property of the writer".
+   * Those stay on `this`, so a view does not inherit them.
+   */
+  get _recallerSubject () { return this.#chunks }
+
   get byteLength () {
     if (!this.#chunks.length) return 0
     const last = this.#chunks[this.#chunks.length - 1]
@@ -116,7 +132,11 @@ export class Addressifier {
    * use only when no live readers exist (e.g. before an archiveSync write loop).
    */
   _reset () {
-    this.#chunks = []
+    // Cleared in place rather than reassigned: #chunks IS the recaller
+    // subject, so a fresh array would silently detach every view that
+    // shares this store. The doc above says "no live readers" — this
+    // makes violating it visible instead of quiet.
+    this.#chunks.length = 0
     this.#contentMap = new ContentMap()
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
   }
@@ -139,6 +159,25 @@ export class Addressifier {
    * @param {number} address
    * @returns {T}
    */
+  /**
+   * Point `target` at THIS store rather than a copy of it — a view.
+   *
+   * The one line that distinguishes a view from a clone: `_applyClone`
+   * slices, so the copy gets its own array and diverges; this assigns, so
+   * both objects share one array and therefore one recaller subject, and a
+   * watcher on either wakes for appends to the other. Give the target a
+   * non-writable class and you have a read-only window with no new type.
+   *
+   * Not shared: the readable-stream wakeup (#nextChunk). Recaller
+   * reactivity follows; `makeReadableStream` on a view will not.
+   * @template {Addressifier} T @param {T} target @returns {T}
+   */
+  _applyView (target) {
+    target.#chunks = this.#chunks
+    target.#contentMap = this.#contentMap
+    return target
+  }
+
   _applyClone (target, address) {
     const idx = this.#indexAt(address, false)
     target.#chunks = this.#chunks.slice(0, idx + 1)

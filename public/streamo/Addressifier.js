@@ -157,8 +157,18 @@ export class Addressifier {
    * @template {Addressifier} T @param {T} target @returns {T}
    */
   _applyView (target) {
+    if (typeof (/** @type {any} */ (target)).attachSigner === 'function') {
+      throw new TypeError('_applyView: a view is a reader — two writers on one store is what checkout refuses')
+    }
     target._chunks = this._chunks
-    target.#contentMap = this.#contentMap
+    // NOT shared, and this is the whole subtlety: #contentMap is write-side
+    // dedup (every addressOf call site is `?? append` or a guard before one),
+    // so a reader never consults it — while _reset REPLACES it, which a view
+    // cannot see. Sharing it produced a window whose addressOf answered with
+    // an address its own store could not resolve: yes, then crash. A fresh
+    // empty map makes addressOf return undefined, which is the honest answer
+    // for something that cannot write.
+    target.#contentMap = new ContentMap()
     return target
   }
 

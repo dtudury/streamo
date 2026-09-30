@@ -2,6 +2,8 @@ import { describe } from '../utils/testing.js'
 import { Recaller } from '../utils/Recaller.js'
 import { Signer } from '../Signer.js'
 import { Hub } from './Hub.js'
+import { Streamo } from '../Streamo.js'
+import { WritableStreamoRecord } from '../WritableStreamoRecord.js'
 
 const K1 = '11'.repeat(33)
 const K2 = '22'.repeat(33)
@@ -165,5 +167,35 @@ describe(import.meta.url, ({ test }) => {
     next.set({ ...draft.get(), 'added.md': 'later\n' })
     draft.commit(next, 'second')
     assert.ok(draft.lastCommit.parent >= 0, 'a commit on it extends the chain rather than starting one')
+  })
+
+  test('a view shares the store but not the write-side dedup, so _reset cannot strand it', async ({ assert }) => {
+    const recaller = new Recaller('view-dedup')
+    const origin = new Streamo({ recaller })
+    origin.set({ hello: 'world' })
+    const view = origin._applyView(new Streamo({ recaller }))
+
+    const code = origin.resolve(origin.byteLength - 1)
+    const address = origin.addressOf(code)
+    assert.ok(address !== undefined, 'the origin dedups, because it writes')
+    assert.equal(view.addressOf(code), undefined, 'the view does not, because it cannot')
+
+    // Sharing #contentMap made this the failure: after _reset the view's
+    // addressOf still answered with an address its own (shared, cleared)
+    // store could no longer resolve — yes, then crash.
+    origin._reset()
+    assert.equal(view.addressOf(code), undefined, 'and still does not after a reset')
+    assert.equal(view._chunks.length, 0, 'the cleared store is visible through the window')
+  })
+
+  test('_applyView refuses a target that can author', async ({ assert }) => {
+    const recaller = new Recaller('view-refuses')
+    const origin = new Streamo({ recaller })
+    origin.set({ hello: 'world' })
+
+    let threw = null
+    try { origin._applyView(new WritableStreamoRecord({ recaller })) } catch (error) { threw = error }
+    assert.ok(threw, 'two writers on one store is what checkout already refuses')
+    assert.ok(/reader/.test(threw.message), 'and the refusal says what a view is')
   })
 })

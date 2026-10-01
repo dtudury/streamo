@@ -333,7 +333,13 @@ export class Addressifier {
           // long after the frame's other chunks were discarded. Cost:
           // O(chunk_length) memcopy per chunk. See
           // docs/EXPLORATION-wire-mirror-split.md §"Garbage collection".
-          const code = buf.slice(bufOffset + 4, bufOffset + 4 + len)
+          // new Uint8Array(view) rather than buf.slice(): slice copies on a
+          // Uint8Array and ALIASES subarray on a Node Buffer, and `buf = incoming`
+          // above means buf is whatever the caller handed us. archiveSync feeds
+          // readFile() output directly, so every chunk loaded from disk was a
+          // view into one allocation — measured 40 chunks, 1 backing buffer —
+          // which is precisely the pinning the comment below describes as fixed.
+          const code = new Uint8Array(buf.subarray(bufOffset + 4, bufOffset + 4 + len))
           if (self.addressOf(code) === undefined) self.append(code)
           bufOffset += 4 + len
         }

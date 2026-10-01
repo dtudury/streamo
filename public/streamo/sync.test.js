@@ -183,7 +183,7 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(serverStream.get('hello'), 'from-client', 'relay forwarded client data to server')
 
     clientWs.close()
-    relayUpstreamWs.close()
+    relayUpstreamWs.terminate()
     for (const c of relayWss.clients) c.terminate()
     relayWss.close()
     for (const c of serverWss.clients) c.terminate()

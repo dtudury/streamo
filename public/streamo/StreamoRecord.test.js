@@ -2,6 +2,7 @@ import { describe } from './utils/testing.js'
 import { Recaller } from './utils/Recaller.js'
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
+import { Signer } from './Signer.js'
 
 describe(import.meta.url, ({ test }) => {
   test('commit stores message, date, and a reference to the data', ({ assert }) => {
@@ -409,5 +410,45 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(readsA, 2, "reader of 'a' woke for a commit that only changed 'b'")
     assert.equal(readsLastCommit, 2, 'a bare lastCommit reader woke the same number of times')
     assert.equal(readsRefs, 2, 'getRefs() woke the same number of times as get()')
+  })
+
+  test('commitBatchesFrom cuts at signatures, skips what canon has, and omits an unsigned tail', async ({ assert }) => {
+    const recaller = new Recaller('batches')
+    const signer = new Signer('user', 'pass', 1000)
+    const repo = new WritableStreamoRecord({ recaller })
+    repo.attachSigner(signer, 'home')
+
+    const commit = async value => {
+      const working = repo.checkout()
+      working.set(value)
+      repo.commit(working, 'c')
+      await recaller.when(() => repo.byteLength > 0 && repo.signedLength === repo.byteLength)
+    }
+
+    await commit({ a: 1 })
+    const afterFirst = repo.byteLength
+    await commit({ a: 1, b: 2 })
+
+    const all = repo.commitBatchesFrom(0)
+    assert.equal(all.length, 2, 'one batch per signed commit')
+    for (const { chunks, sig } of all) {
+      assert.ok(chunks.length > 0, 'a batch carries its data chunks')
+      assert.equal(repo.footerToCodec[sig.at(-1)]?.type, 'SIGNATURE', 'and its sig is a SIGNATURE chunk')
+      assert.ok(chunks.every(c => repo.footerToCodec[c.at(-1)]?.type !== 'SIGNATURE'), 'with no SIG among them')
+    }
+
+    assert.equal(repo.commitBatchesFrom(afterFirst).length, 1,
+      'an offset skips batches canon already holds — this is what landIntoCanon passes')
+    assert.equal(repo.commitBatchesFrom(repo.byteLength).length, 0, 'caught up means nothing to submit')
+
+    // An unsigned tail is NOT submittable: submit() would read a data chunk as
+    // the sig and reject it as malformed. landIntoCanon avoids the state by
+    // awaiting the signature, so this is the only place the rule is observable.
+    const working = repo.checkout()
+    working.set({ a: 1, b: 2, c: 3 })
+    repo.commit(working, 'unsigned for now')
+    assert.ok(repo.signedLength < repo.byteLength, 'the SIG has not landed yet')
+    assert.equal(repo.commitBatchesFrom(afterFirst).length, 1,
+      'the half-written commit is omitted rather than offered without a signature')
   })
 })

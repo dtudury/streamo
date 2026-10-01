@@ -102,6 +102,40 @@ export class StreamoRecord extends Streamo {
 
 
   /**
+   * The signed commit batches at or after `offset`, in order, each shaped
+   * the way `StreamoRecordSerializer.submit` wants: `{ chunks, sig }`.
+   *
+   * This is the author side of what `ConnectionAccumulator` does for the
+   * wire. The accumulator exists to turn length-prefixed BYTES into these
+   * batches; an author already holds the chunks, so it needs the batching
+   * and not the framing. Going through the wire adapter in-process meant
+   * serializing a Record and parsing it straight back — on a small mixed
+   * record the 4-byte prefixes alone are 136% of the content.
+   *
+   * A trailing run of chunks with no SIG after them is deliberately
+   * omitted: unsigned bytes are not a submittable commit, and `submit`
+   * would reject them as malformed. Callers that must not race a pending
+   * signature await `signedLength === byteLength` first.
+   *
+   * @param {number} [offset=0]  skip chunks starting before this byte
+   * @returns {Array<{ chunks: Uint8Array[], sig: Uint8Array }>}
+   */
+  commitBatchesFrom (offset = 0) {
+    const batches = []
+    let chunks = []
+    for (const { uint8Array, offset: at } of this._chunks) {
+      if (at < offset) continue
+      if (this.footerToCodec[uint8Array.at(-1)]?.type === 'SIGNATURE') {
+        batches.push({ chunks, sig: uint8Array })
+        chunks = []
+      } else {
+        chunks.push(uint8Array)
+      }
+    }
+    return batches
+  }
+
+  /**
    * Walk back from the tail to the most recent SIGNATURE chunk. Returns
    * its starting address (the byte at which it begins), or -1 if there
    * is no SIG in the store. SIGs are fixed-format 97-byte chunks; the

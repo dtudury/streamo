@@ -7,7 +7,7 @@ import { subscribe as watchFolder } from '@parcel/watcher'
 import { isPlainObject } from '../codecs.js'
 import { decodeBytes, decodeFile, filesEqual } from '../fileCodec.js'
 import { hexToBytes } from '../utils.js'
-import { makeVerifiedWritableStream } from './verifiedWritableStream.js'
+import { StreamoRecordSerializer } from '../StreamoRecordSerializer.js'
 
 const GITIGNORE = '.gitignore'
 const MOUNTS = 'mounts.json'
@@ -38,6 +38,9 @@ export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignor
   const folder = await realpath(folderPath)
 
   const root = hub.getMirror(rootKey)
+  // One serializer per record, not per batch: it holds the promise chain that
+  // serializes concurrent submissions against one chain head.
+  const canonSerializer = new StreamoRecordSerializer(root, hexToBytes(rootKey))
 
   let accepts = null
   let onDisk = null
@@ -104,17 +107,15 @@ export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignor
     // verified writer below cannot accept a batch with no SIG, so it would
     // simply buffer forever instead.
     await hub.recaller.when(() => draft.byteLength > 0 && draft.signedLength === draft.byteLength)
-    const reader = draft.makeReadableStream({ fromOffset: root.byteLength }).getReader()
-    const writer = makeVerifiedWritableStream(root, hexToBytes(rootKey)).getWriter()
-    try {
-      while (root.byteLength < draft.byteLength) {
-        const { value, done } = await reader.read()
-        if (done) break
-        await writer.write(value)
-      }
-    } finally {
-      writer.releaseLock()
-      reader.cancel().catch(() => {})
+    // Submitted directly rather than piped through makeVerifiedWritableStream.
+    // That wrapper is WritableStream -> ConnectionAccumulator -> serializer, and
+    // the accumulator's whole job is parsing length-prefixed bytes off a wire.
+    // There is no wire here: draft and canon are two objects in one heap, so
+    // this serialized a Record and parsed it straight back. Same three checks
+    // (shape, chain, crypto) — submit() takes { chunks, sig } and always did.
+    for (const batch of draft.commitBatchesFrom(root.byteLength)) {
+      const result = await canonSerializer.submit(batch)
+      if (!result.accepted) throw new Error(`landIntoCanon: canon refused a batch (${result.reason})`)
     }
   }
 

@@ -23,6 +23,7 @@
 import repl from 'node:repl'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { dirname, join } from 'node:path'
+import { homedir } from 'node:os'
 
 const V2 = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'streamo', 'v2') + '/'
 const CORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'streamo') + '/'
@@ -112,11 +113,18 @@ export function show (p) {
 // block on stdin, which is exactly what it did the first time I tried.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const r = repl.start({ prompt: 'streamo2 > ' })
+  // Persisted across restarts, and deliberately outside the repo so it never
+  // shows up in git status. Override with STREAMO2_REPL_HISTORY.
+  const historyPath = process.env.STREAMO2_REPL_HISTORY ?? join(homedir(), '.streamo2_repl_history')
+  r.setupHistory(historyPath, error => {
+    if (error) console.error('repl history unavailable:', error.message)
+  })
   Object.assign(r.context, { pair, author, want, show, settle, key, signer, keys, Recaller, Signer })
   console.log(`
     pair()  -> { server, client, upstream, downstream, key, signer }   reloads v2 on every call
     want(p)                          client asks for the key — nothing crosses until it does
     author(p, { 'a.md': 'hi' })      client authors; the wire carries it up
     settle()  show(p)                                 key is pre-derived
+    history: ${historyPath}
   `)
 }

@@ -11,7 +11,7 @@
 // you are running the new code without leaving the repl.
 //
 //   > const p = await pair()
-//   > await seed(p, { 'readme.md': 'hello\n' })   // author canon on the server
+//   > author(p, { 'readme.md': 'hello\n' })     // client authors; the wire carries it
 //   > await settle()
 //   > show(p)
 //   > p.client.getMirror(p.key).get()
@@ -29,7 +29,6 @@ const CORE = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'stre
 
 const { Recaller } = await import(CORE + 'utils/Recaller.js')
 const { Signer } = await import(CORE + 'Signer.js')
-const { StreamoRecordSerializer } = await import(CORE + 'StreamoRecordSerializer.js')
 const { bytesToHex } = await import(CORE + 'utils.js')
 
 const signer = new Signer('user', 'pass', 1000)
@@ -61,22 +60,6 @@ export async function pair ({ fresh = true } = {}) {
   return { server, client: upstream.hub, downstream, upstream, key, signer, serverRecaller }
 }
 
-/** Author a value as canon on the server side, the way an upstream fileSync would. */
-export async function seed (p, value, message = 'repl') {
-  const canon = p.server.getMirror(key)
-  const draft = p.server.checkout(key, signer, 'home')
-  const working = draft.checkout()
-  working.set(value)
-  draft.commit(working, message)
-  await p.serverRecaller.when(() => draft.byteLength > 0 && draft.signedLength === draft.byteLength)
-  const serializer = new StreamoRecordSerializer(canon, keys.publicKey)
-  for (const batch of draft.commitBatchesFrom(canon.byteLength)) {
-    const result = await serializer.submit(batch)
-    if (!result.accepted) throw new Error(`seed: canon refused a batch (${result.reason})`)
-  }
-  return canon
-}
-
 /**
  * Author from the CLIENT, which is the likely direction — the client has the
  * logged-in user making edits; the server holds canon.
@@ -85,8 +68,10 @@ export async function seed (p, value, message = 'repl') {
  * client commits to a draft and Upstream's watch carries it up, Downstream
  * receives it as a proposal, and the verified writer refuses to accept a batch
  * with no SIG yet — so sending early is harmless and it lands when the
- * signature arrives. Compare seed(), which is 6 more lines precisely because
- * it skips the wire and has to promote the draft itself.
+ * signature arrives. A server-side version of this needs six more lines —
+ * wait for the SIG, build a serializer, submit each batch — precisely because
+ * it skips the wire and has to promote the draft itself. That promotion is
+ * landIntoCanon in v2/fileSync2.js, and it is the only copy that should exist.
  */
 export function author (p, value, message = 'from the client') {
   const draft = p.client.checkout(key, signer, 'home')
@@ -127,10 +112,9 @@ export function show (p) {
 // block on stdin, which is exactly what it did the first time I tried.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const r = repl.start({ prompt: 'streamo2 > ' })
-  Object.assign(r.context, { pair, seed, author, want, show, settle, key, signer, keys, Recaller, Signer })
+  Object.assign(r.context, { pair, author, want, show, settle, key, signer, keys, Recaller, Signer })
   console.log(`
     pair()  -> { server, client, upstream, downstream, key, signer }   reloads v2 on every call
-    seed(p, { 'file.md': 'text' })   author canon on the server
     want(p)                          client asks for the key — nothing crosses until it does
     author(p, { 'a.md': 'hi' })      client authors; the wire carries it up
     settle()  show(p)                                 key is pre-derived

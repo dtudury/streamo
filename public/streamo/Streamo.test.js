@@ -1,4 +1,5 @@
 import { describe } from './utils/testing.js'
+import { Opaque } from './Opaque.js'
 import { Streamo, changedPaths } from './Streamo.js'
 import { StreamoRecord } from './StreamoRecord.js'
 import { WritableStreamoRecord } from './WritableStreamoRecord.js'
@@ -313,8 +314,28 @@ describe(import.meta.url, ({ test }) => {
     // undefined` and yields rather than mutating. Mutation is removed
     // from the call graph by construction, not by caller discipline.
 
+    // THE PAD IS LOAD-BEARING, and without it this test asserted nothing for
+    // months. inlineOrAddressPart (codecs.js) inlines a part when
+    // `code.length <= numberToVar(nextAddr).length` — so in a small store,
+    // where an address costs ONE byte, only one-byte codes inline. And a
+    // one-byte code takes getPartAddress's `-(code[0] + 1)` virtual-address
+    // path and returns before the `if (!r.append)` check is ever reached.
+    // The branch this test exists to protect is UNREACHABLE in a small store.
+    //
+    // Pad past ~16K and addresses cost 2-3 bytes, so small multi-byte codes
+    // inline instead — a one- or two-element Uint8Array, a single-character
+    // string — and the walk below finally reaches the guard.
     const author = new Streamo()
-    author.set({ a: 1, b: 'hi', c: [1, 2, 3], d: new Uint8Array([42]) })
+    // TWO set() calls, and that is load-bearing. inlineOrAddressPart computes
+    // `nextAddr` from the store size AT THE MOMENT THAT PART IS ENCODED, so
+    // inside one set() the small values are encoded before the pad, while
+    // addresses still cost one byte, and they get addressed instead of inlined.
+    // Pad first, then add the candidates against an already-large store.
+    author.set({ pad: new Opaque(new Uint8Array(1 << 16)), a: 1, b: 'hi', c: [1, 2, 3], d: new Uint8Array([42]) })
+    // Byte values chosen NOT to collide with anything already here:
+    // inlineOrAddressPart only inlines when `existingAddr === undefined`, so
+    // dedup beats inlining and [7] or 'a' would reuse a chunk [1,2,3] made.
+    author.set({ ...author.get(), inline1: new Uint8Array([211]), inline2: new Uint8Array([212, 213]), inlineStr: 'q' })
     const expectedLen = author.byteLength
 
     // Receive author's bytes raw via makeWritableStream — so the peer's
@@ -345,6 +366,17 @@ describe(import.meta.url, ({ test }) => {
     }
     walk(peer.valueAddress)
     assert.equal(peer.byteLength, before, 'asRefs walk must not change byteLength on the peer')
+
+    // ASSERT THE PRECONDITION, not just the outcome. Without this the test can
+    // silently stop reaching the guard — which is exactly how it spent months
+    // passing while `#readOnlyR` could have been given an `append` with no
+    // test failing. A part with no address is getPartAddress returning
+    // undefined, which is the guard firing and the only proof we were there.
+    const inlineRefs = ['inline1', 'inline2', 'inlineStr'].map(k => peer.getRefs(k))
+    assert.ok(inlineRefs.some(r => r === undefined),
+      `expected at least one multi-byte inline part with no address — got ${JSON.stringify(inlineRefs)}. ` +
+      'If these are all addressed, the pad is no longer making addresses wide enough and this test is a no-op again.')
+    assert.equal(peer.byteLength, before, 'and reading those refs did not append either')
   })
 
   test('sign commits to the full chain — every appended byte covered', async ({ assert }) => {

@@ -204,18 +204,27 @@ function withFooter (parts, footer) {
 
 /**
  * Ensure `code` is stored and return [partBytes, optionIndex].
- * Option 0: inline (just the raw bytes).
  * Options 1-4: 1-4-byte little-endian address.
+ *
+ * Option 0 means inline — the part's raw bytes in the parent chunk. Encode no
+ * longer produces it. Decode still reads it, but not as a compatibility
+ * obligation: David, 2026-10-05 — "if we need to support existing Records then
+ * we'll use an old version of streamo." So the inline decode path, option 0,
+ * getPartAddress's r.append branch and #readOnlyR's whole reason to exist are
+ * all now removable rather than load-bearing.
  *
  * Read-only contexts pass an `r` without `append`; in that case this
  * function never gets called from a decode path (it's encode-only).
+ *
+ * @param {{ addressOf: function, append?: function, byteLength: number }} r
+ * @param {Uint8Array} code
+ * @returns {[Uint8Array, number]}
  */
 function inlineOrAddressPart (r, code) {
   const existingAddr = r.addressOf(code)
-  const nextAddr = Math.max(0, r.byteLength + code.length - 1)
-  if (existingAddr === undefined && code.length <= numberToVar(nextAddr).length) {
-    return [code, 0]
-  }
+  // Inlining disabled on the encode side 2026-10-05 — it saved 0.27% of bytes
+  // and cost a refs type that could not express its own result. Measurements
+  // and the dropped branch are in the commit. Nothing produces inline parts now.
   const addr = existingAddr ?? r.append(code)
   const addrBytes = numberToVar(addr)
   return [addrBytes, addrBytes.length] // option = 1..4

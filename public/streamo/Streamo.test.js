@@ -367,15 +367,19 @@ describe(import.meta.url, ({ test }) => {
     walk(peer.valueAddress)
     assert.equal(peer.byteLength, before, 'asRefs walk must not change byteLength on the peer')
 
-    // ASSERT THE PRECONDITION, not just the outcome. Without this the test can
-    // silently stop reaching the guard — which is exactly how it spent months
-    // passing while `#readOnlyR` could have been given an `append` with no
-    // test failing. A part with no address is getPartAddress returning
-    // undefined, which is the guard firing and the only proof we were there.
+    // POLICY ASSERTION, flipped 2026-10-05 when encode-side inlining was
+    // disabled. This used to require at least one part with no address, to
+    // prove the walk reached getPartAddress's `if (!r.append)` guard. Encode
+    // no longer produces inline parts at all, so that precondition is now
+    // unsatisfiable — and the same three values are the sensitive ones, so
+    // they are kept as a tripwire pointing the other way: if inlining comes
+    // back, these stop being addressed and this fails.
+    //
+    // The guard is not load-bearing any more either — old Records get read by
+    // an old streamo rather than by a compatibility path here.
     const inlineRefs = ['inline1', 'inline2', 'inlineStr'].map(k => peer.getRefs(k))
-    assert.ok(inlineRefs.some(r => r === undefined),
-      `expected at least one multi-byte inline part with no address — got ${JSON.stringify(inlineRefs)}. ` +
-      'If these are all addressed, the pad is no longer making addresses wide enough and this test is a no-op again.')
+    assert.ok(inlineRefs.every(r => typeof r === 'number'),
+      `encode-side inlining is disabled, so every part should be addressed — got ${JSON.stringify(inlineRefs)}`)
     assert.equal(peer.byteLength, before, 'and reading those refs did not append either')
   })
 

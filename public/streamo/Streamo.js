@@ -115,7 +115,29 @@ export class Streamo extends CodecRegistry {
    * @returns {number}
    */
   append (code) {
-    const address = super.append(code)
+    return this.publish(super.append(code))
+  }
+
+  /**
+   * Declare an ALREADY-STORED address as this record's newest value, and
+   * notify watchers. `append` is this plus the store.
+   *
+   * This exists because `encode` appends and returns an address without
+   * declaring anything — storing bytes and declaring the current value are
+   * two jobs, and `set` wants only the first (it manages valueAddress itself
+   * and emits path-level mutations instead of a blunt 'length'). An author
+   * that encodes a commit or a signature directly wants both, so it calls
+   * this with what encode returned.
+   *
+   * Before 2026-10-06 this was reached by accident: `encode` handed back an
+   * unmaterialized Variable and `variable.materialize(r)` called `r.append`,
+   * so passing the record as `r` quietly routed through the reactive append.
+   * Omitting it left watchers silent — which is how that got caught.
+   *
+   * @param {number} address
+   * @returns {number}
+   */
+  publish (address) {
     this.#valueAddress = address
     this.#recaller.reportKeyMutation(this._chunks, 'length')
     return address
@@ -181,11 +203,10 @@ export class Streamo extends CodecRegistry {
         for (let i = path.length - 1; i >= 0; i--) obj = { [path[i]]: obj }
         encodedValue = obj
       }
-      // encode returns a Variable; bypass Streamo.append so 'length' is
-      // not fired — changedPaths will emit the right path-level mutations.
-      const variable = this.encode(encodedValue)
-      const bytes = variable.isInline ? variable.bytes : variable.resolve(this)
-      newAddress = this.addressOf(bytes) ?? super.append(bytes)
+      // encode appends and hands back the address. It does not go through
+      // Streamo.append, so 'length' is not fired — changedPaths emits the
+      // right path-level mutations below.
+      newAddress = this.encode(encodedValue)
     } else {
       // Path update: navigate via asRefs(materialize=true) to avoid decoding
       // untouched subtrees, then rebuild the changed path bottom-up, reusing
@@ -199,20 +220,16 @@ export class Streamo extends CodecRegistry {
       }
       levels.push({ refs: this.asRefs(addr, true), key: path[path.length - 1] })
 
-      // Encode the new leaf value — bypass Streamo.append so 'length'
-      // is not fired (changedPaths handles path-level mutations).
-      const leafV = this.encode(value)
-      const leafBytes = leafV.isInline ? leafV.bytes : leafV.resolve(this)
-      let childAddr = this.addressOf(leafBytes) ?? super.append(leafBytes)
+      // Encode the new leaf value. encode appends without going through
+      // Streamo.append, so 'length' is not fired here either.
+      let childAddr = this.encode(value)
 
       // Rebuild from leaf to root, reusing unchanged siblings by address
       for (let i = levels.length - 1; i >= 0; i--) {
         const { refs, key } = levels[i]
         const newRefs = Array.isArray(refs) ? [...refs] : { ...refs }
         newRefs[Array.isArray(refs) ? +key : key] = childAddr
-        const rebuiltV = this.encode(newRefs, true)
-        const rebuiltBytes = rebuiltV.isInline ? rebuiltV.bytes : rebuiltV.resolve(this)
-        childAddr = this.addressOf(rebuiltBytes) ?? super.append(rebuiltBytes)
+        childAddr = this.encode(newRefs, true)
       }
       // After the walk-up, childAddr is the address of the new root —
       // possibly an existing address if everything deduplicated.
@@ -276,9 +293,7 @@ export class Streamo extends CodecRegistry {
       const { refs, key } = levels[i]
       const newRefs = Array.isArray(refs) ? [...refs] : { ...refs }
       newRefs[Array.isArray(refs) ? +key : key] = childAddr
-      const rebuiltV = this.encode(newRefs, true)
-      const rebuiltBytes = rebuiltV.isInline ? rebuiltV.bytes : rebuiltV.resolve(this)
-      childAddr = this.addressOf(rebuiltBytes) ?? super.append(rebuiltBytes)
+      childAddr = this.encode(newRefs, true)
     }
 
     // childAddr is the address of the new root — possibly an existing

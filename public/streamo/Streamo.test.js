@@ -36,9 +36,9 @@ describe(import.meta.url, ({ test }) => {
 
   test('deduplication: same value always gets the same address', ({ assert }) => {
     const s = new Streamo()
-    const a1 = s.encode(42).materialize(s).address
-    s.encode({ x: 42 }).materialize(s).address
-    const code42 = s.encode(42).resolve(s)
+    const a1 = s.encode(42)
+    s.encode({ x: 42 })
+    const code42 = s.resolve(s.encode(42))
     assert.equal(s.addressOf(code42), a1, 'second encode of 42 reuses the existing address')
   })
 
@@ -100,7 +100,7 @@ describe(import.meta.url, ({ test }) => {
 
   test('asRefs returns addresses for object values and names', ({ assert }) => {
     const s = new Streamo()
-    const code = s.encode({ a: 1 }).resolve(s)
+    const code = s.resolve(s.encode({ a: 1 }))
 
     // asRefs=true: values become addresses, names stay as strings
     const withTrue = s.decode(code, true)
@@ -155,7 +155,7 @@ describe(import.meta.url, ({ test }) => {
     s.set({ a: 1, b: 'hello' })
     const addr = s.byteLength - 1
     const refs = s.asRefs(addr)
-    const code = s.encode(refs, true).resolve(s)
+    const code = s.resolve(s.encode(refs, true))
     assert.deepEqual(s.decode(code), { a: 1, b: 'hello' })
   })
 
@@ -164,7 +164,7 @@ describe(import.meta.url, ({ test }) => {
     s.set([10, 20, 30])
     const addr = s.byteLength - 1
     const refs = s.asRefs(addr)
-    const code = s.encode(refs, true).resolve(s)
+    const code = s.resolve(s.encode(refs, true))
     assert.deepEqual(s.decode(code), [10, 20, 30])
   })
 
@@ -173,7 +173,7 @@ describe(import.meta.url, ({ test }) => {
     s.set('hello')
     const addr = s.byteLength - 1
     const refs = s.asRefs(addr)  // returns addr itself for non-objects
-    const code = s.encode(refs, true).resolve(s)  // resolves addr → string code
+    const code = s.resolve(s.encode(refs, true))  // resolves addr → string code
     assert.equal(s.decode(code), 'hello')
   })
 

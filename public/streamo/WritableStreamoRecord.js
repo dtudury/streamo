@@ -107,9 +107,9 @@ async function fetchSnapshot (input) {
 }
 
 export class WritableStreamoRecord extends StreamoRecord {
-  #signer      = null
-  #signerName  = null
-  #signing     = false
+  #signer = null
+  #signerName = null
+  #signing = false
   #signPending = false
 
   // (#recoveryStuck removed 2026-07-17 with update() — Draft's status
@@ -176,7 +176,7 @@ export class WritableStreamoRecord extends StreamoRecord {
    * @param {string} name  stream name passed to signer.keysFor()
    */
   attachSigner (signer, name) {
-    this.#signer     = signer
+    this.#signer = signer
     this.#signerName = name
   }
 
@@ -298,10 +298,10 @@ export class WritableStreamoRecord extends StreamoRecord {
     // genuinely-new chunks that working appended via its set(...).
     const sharedThrough = this.lastCommit?.dataAddress ?? -1
     const copied = this.copyFrom(workingStreamo, workingStreamo.valueAddress, sharedThrough)
-    const dataAddress = copied.isAddressed ? copied.address : copied.materialize(this).address
+    const dataAddress = copied
     const record = { message, date, dataAddress, parent }
     if (remoteParent !== undefined) record.remoteParent = remoteParent
-    const result = this.encode(record).materialize(this).address
+    const result = this.publish(this.encode(record))
     this._markAuthoredAtOffset(authoredFrom)
     this.#scheduleSign()
     return result
@@ -396,7 +396,7 @@ export class WritableStreamoRecord extends StreamoRecord {
     // first byte the SIG covers. If a commit just bumped the mark to
     // this same `before` offset, this call is a no-op (idempotent).
     this._markAuthoredAtOffset(before)
-    this.encode(sig).materialize(this)
+    this.publish(this.encode(sig))
     return sig
   }
 
@@ -410,8 +410,6 @@ export class WritableStreamoRecord extends StreamoRecord {
   // (via Mirror.newDraft) or the commitWithRetry helper for the old
   // retry-loop semantics. See EXPLORATION-sync-model.md for the
   // Mirror-and-Draft design + migration path.
-
-
 
   /** @override Writable by definition — this is the class split's point. */
   get isAuthorable () { return true }

@@ -193,6 +193,16 @@ function withFooter (parts, footer) {
 }
 
 /**
+ * A part referring to an address we already hold.
+ * @param {number} address
+ * @returns {[Uint8Array, number]}
+ */
+function partFromAddress (address) {
+  const addrBytes = numberToVar(address)
+  return [addrBytes, addrBytes.length - 1] // option 0..3 for a 1..4-byte address
+}
+
+/**
  * Ensure `code` is stored and return [partBytes, optionIndex].
  * Option 0-3 is a 1..4-byte little-endian address.
  *
@@ -210,9 +220,7 @@ function withFooter (parts, footer) {
  * @returns {[Uint8Array, number]}
  */
 function addressPart (r, code) {
-  const addr = r.addressOf(code) ?? r.append(code)
-  const addrBytes = numberToVar(addr)
-  return [addrBytes, addrBytes.length - 1] // option = 0..3 for a 1..4-byte address
+  return partFromAddress(r.addressOf(code) ?? r.append(code))
 }
 
 function encodeMultipart (r, values, codec, asRefs) {
@@ -221,9 +229,7 @@ function encodeMultipart (r, values, codec, asRefs) {
   let base = 1
   let footer = codec.baseFooter
   for (let i = values.length - 1; i >= 0; i--) {
-    const variable = r.encode(values[i], asRefs)
-    const childCode = variable.isInline ? variable.bytes : variable.resolve(r)
-    const [part, option] = addressPart(r, childCode)
+    const [part, option] = partFromAddress(r.encode(values[i], asRefs))
     footer += base * option
     base *= codec.partReaders[i].length
     parts.unshift(part)

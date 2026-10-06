@@ -131,8 +131,8 @@ export class Mirror {
   get committedChainHash () { return this.local.committedChainHash }
   get (...args) { return this.local.get(...args) }
   // Spelled out, not `...args`: a spread has no tuple to check against.
-  decode (codeOrAddressOrVariable, asRefs = false) {
-    return this.local.decode(codeOrAddressOrVariable, asRefs)
+  decode (codeOrAddress, asRefs = false) {
+    return this.local.decode(codeOrAddress, asRefs)
   }
   slice (start, end) { return this.local.slice(start, end) }
   makeReadableStream (options) { return this.local.makeReadableStream(options) }

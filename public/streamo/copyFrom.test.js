@@ -1,7 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CodecRegistry } from './CodecRegistry.js'
-import { Variable } from './Variable.js'
 
 // Bit-identical-output invariant: copyFrom into a clean registry must produce
 // bytes byte-for-byte identical to a fresh encode in that registry. Without
@@ -13,14 +12,10 @@ function assertCopyFromBitIdentical (value) {
   const r2Expected = new CodecRegistry()
   const r2Actual = new CodecRegistry()
 
-  const expectedAddr = r2Expected.encode(value).materialize(r2Expected).address
+  const expectedAddr = r2Expected.encode(value)
   const expectedBytes = r2Expected.resolve(expectedAddr)
 
-  const r1Addr = r1.encode(value).materialize(r1).address
-  const r1Bytes = r1.resolve(r1Addr)
-  const sourceV = Variable.addressed(r1.footerToCodec[r1Bytes.at(-1)], r1Addr)
-  const copied = r2Actual.copyFrom(r1, sourceV, -1)
-  const actualAddr = copied.isAddressed ? copied.address : copied.materialize(r2Actual).address
+  const actualAddr = r2Actual.copyFrom(r1, r1.encode(value), -1)
   const actualBytes = r2Actual.resolve(actualAddr)
 
   assert.deepEqual(actualBytes, expectedBytes, 'copyFrom should be bit-identical to fresh encode')
@@ -150,8 +145,8 @@ test('copyFrom bit-identical: JSONL-line-shaped object', () => {
   })
 })
 
-// ─── Sharing semantics: sharedThrough should return Variable as-is ──────
-test('copyFrom: shared region returns Variable unchanged (no copy work)', () => {
+// ─── Sharing semantics: sharedThrough returns the address as-is ─────────
+test('copyFrom: shared region returns the address unchanged (no copy work)', () => {
   const r1 = new CodecRegistry()
   const r2 = new CodecRegistry()
   // Make r2 share a prefix of r1's bytes (same values encoded in same order
@@ -159,13 +154,10 @@ test('copyFrom: shared region returns Variable unchanged (no copy work)', () => 
   const sharedValues = ['first', 'second', 'third']
   let lastSharedAddr
   for (const v of sharedValues) {
-    r1.encode(v).materialize(r1)
-    lastSharedAddr = r2.encode(v).materialize(r2).address
+    r1.encode(v)
+    lastSharedAddr = r2.encode(v)
   }
-  // Now copy a Variable pointing into the shared region.
-  const code = r1.resolve(lastSharedAddr)
-  const v = Variable.addressed(r1.footerToCodec[code.at(-1)], lastSharedAddr)
-  const result = r1.copyFrom(r2, v, lastSharedAddr)
-  assert.equal(result.isAddressed, true)
-  assert.equal(result.address, lastSharedAddr)
+  // Now copy an address pointing into the shared region.
+  const result = r1.copyFrom(r2, lastSharedAddr, lastSharedAddr)
+  assert.equal(result, lastSharedAddr)
 })

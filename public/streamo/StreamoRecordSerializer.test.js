@@ -333,10 +333,15 @@ describe(import.meta.url, ({ test }) => {
     const emptyChainHash = new Uint8Array(sha(combined))
     const compactRawBytes = await signer.sign('empty', emptyChainHash)
 
-    // Encode the Signature into a wire chunk using the relay's codec.
-    const relay = new WritableStreamoRecord()
+    // Encode the Signature into a wire chunk. encode appends as of 2026-10-06,
+    // so this uses a scratch record and leaves the relay empty — the assertion
+    // below is that ONLY the SIG lands in the relay, via submit. A SIGNATURE
+    // chunk is 97 self-contained bytes with no addresses in it, so bytes
+    // encoded in a scratch record are valid verbatim in the relay.
     const { Signature } = await import('./Signature.js')
-    const sigCode = relay.encode(new Signature(emptyChainHash, compactRawBytes)).resolve(relay)
+    const scratch = new WritableStreamoRecord()
+    const sigCode = scratch.resolve(scratch.encode(new Signature(emptyChainHash, compactRawBytes)))
+    const relay = new WritableStreamoRecord()
 
     const serializer = new StreamoRecordSerializer(relay, publicKey)
     const result = await serializer.submit({ chunks: [], sig: sigCode })

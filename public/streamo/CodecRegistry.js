@@ -12,7 +12,6 @@
  */
 import { Addressifier } from './Addressifier.js'
 import { makeCodecs } from './codecs.js'
-import { Variable } from './Variable.js'
 import { numberToVar, varToNumber } from './utils.js'
 
 /**
@@ -54,39 +53,29 @@ export class CodecRegistry extends Addressifier {
   get byteLength () { return super.byteLength }
 
   /**
-   * Decode any JS value from a code (Uint8Array), an address (number), or a
-   * Variable.
-   * @param {Uint8Array|number|import('./Variable.js').Variable} codeOrAddressOrVariable
+   * Decode any JS value from a code (Uint8Array) or an address (number).
+   * @param {Uint8Array|number} codeOrAddress
    * @param {boolean|boolean[]} [asRefs=false]
    * @returns {any}
    */
-  decode (codeOrAddressOrVariable, asRefs = false) {
-    return this.#decodeWith(this.#r, codeOrAddressOrVariable, asRefs)
+  decode (codeOrAddress, asRefs = false) {
+    return this.#decodeWith(this.#r, codeOrAddress, asRefs)
   }
 
-  #decodeWith (r, codeOrAddressOrVariable, asRefs) {
-    let code
-    if (codeOrAddressOrVariable instanceof Variable) {
-      code = codeOrAddressOrVariable.resolve(r)
-    } else if (typeof codeOrAddressOrVariable === 'number') {
-      code = this.resolve(codeOrAddressOrVariable)
-    } else {
-      code = codeOrAddressOrVariable
-    }
-    if (!(code instanceof Uint8Array)) throw new Error('expected Uint8Array, address, or Variable')
+  #decodeWith (r, codeOrAddress, asRefs) {
+    const code = typeof codeOrAddress === 'number' ? this.resolve(codeOrAddress) : codeOrAddress
+    if (!(code instanceof Uint8Array)) throw new Error('expected a Uint8Array or an address')
     const codec = this.footerToCodec[code.at(-1)]
     return codec.decode(r, code, asRefs)
   }
 
   encode (value, asRefs) {
-    if (asRefs && typeof value === 'number') {
-      const bytes = this.resolve(value)
-      return Variable.addressed(this.footerToCodec[bytes.at(-1)], value)
-    }
+    // An address under asRefs is already the encoding of that value.
+    if (asRefs && typeof value === 'number') return value
     for (const name in this.#codecs) {
       const codec = this.#codecs[name]
       const code = codec.encode?.(this.#r, value, asRefs)
-      if (code) return Variable.inline(this.footerToCodec[code.at(-1)], code)
+      if (code) return this.#appendSubcode(code)
     }
     throw new Error(`no codec for value: ${value}`)
   }
@@ -98,16 +87,14 @@ export class CodecRegistry extends Addressifier {
    * @returns {Uint8Array}
    */
   encodeVariable (value) {
-    const variable = this.encode(value)
-    const bytes = variable.isInline ? variable.bytes : variable.resolve(this.#r)
-    return this.#codecs.BOXED._encode(this.#r, bytes)
+    return this.#codecs.BOXED._encode(this.#r, this.resolve(this.encode(value)))
   }
 
   // Mirror of compose. WORD/UINT7 have literal-data parts that aren't
   // child references — flagged via `hasLiteralParts` so callers know
   // decompose alone can't recompose the chunk.
-  decompose (variable) {
-    const chunkBytes = variable.resolve(this.#r)
+  decompose (address) {
+    const chunkBytes = this.resolve(address)
     const footer = chunkBytes.at(-1)
     const codec = this.footerToCodec[footer]
     if (!codec?.partReaders?.length) return { codec, children: [] }
@@ -123,9 +110,7 @@ export class CodecRegistry extends Addressifier {
       const part = reader(this.#r, chunkBytes.subarray(0, end))
       end -= part.width
       if (part.address !== undefined) {
-        const childBytes = this.resolve(part.address)
-        const childCodec = this.footerToCodec[childBytes.at(-1)]
-        children.unshift(Variable.addressed(childCodec, part.address))
+        children.unshift(part.address)
       } else {
         // Literal-data part — embedded bytes, not a child reference
         hasLiteralParts = true
@@ -139,7 +124,7 @@ export class CodecRegistry extends Addressifier {
   compose (codec, children) {
     if (!codec.partReaders?.length) {
       if (children.length !== 0) throw new Error('codec has no parts; expected empty children')
-      return Variable.inline(codec, new Uint8Array([codec.baseFooter]))
+      return this.#appendSubcode(new Uint8Array([codec.baseFooter]))
     }
     if (children.length !== codec.partReaders.length) {
       throw new Error(`compose: codec wants ${codec.partReaders.length} children, got ${children.length}`)
@@ -149,17 +134,11 @@ export class CodecRegistry extends Addressifier {
     const parts = []
     for (let i = children.length - 1; i >= 0; i--) {
       const child = children[i]
-      let partBytes, option
-      if (child.isAddressed) {
-        partBytes = numberToVar(child.address)
-        option = partBytes.length - 1 // option 0..3 → a 1..4-byte address
-      } else if (child.isInline) {
-        // There is no inline part option as of 2026-10-06 — a part is always
-        // an address. An unstored child has nothing to point at yet.
-        throw new Error('compose: child Variable is inline; materialize it first — every part is addressed')
-      } else {
-        throw new Error('compose: child Variable has neither bytes nor address')
+      if (typeof child !== 'number') {
+        throw new Error(`compose: child ${i} must be an address, got ${typeof child}`)
       }
+      const partBytes = numberToVar(child)
+      const option = partBytes.length - 1 // option 0..3 → a 1..4-byte address
       footer += base * option
       base *= codec.partReaders[i].length
       parts.unshift(partBytes)
@@ -168,7 +147,7 @@ export class CodecRegistry extends Addressifier {
     let pos = 0
     for (const p of parts) { out.set(p, pos); pos += p.length }
     out[pos] = footer
-    return Variable.inline(codec, out)
+    return this.#appendSubcode(out)
   }
 
   /**
@@ -258,32 +237,19 @@ export class CodecRegistry extends Addressifier {
   //   2. inline          → decode + re-encode in this's state
   //   3. addressed/new   → dedup-or-recurse; recursion: decompose, copyFrom each child, compose, materialize
   // Leaf-data chunks (WORD, UINT7) bail to decode + re-encode — decompose can't surface their literal bytes as children.
-  copyFrom (source, sourceOrAddress, sharedThrough = -1) {
-    let sourceVariable
-    if (typeof sourceOrAddress === 'number') {
-      const sourceBytes = source.resolve(sourceOrAddress)
-      const codec = source.footerToCodec[sourceBytes.at(-1)]
-      sourceVariable = Variable.addressed(codec, sourceOrAddress)
-    } else if (sourceOrAddress instanceof Variable) {
-      sourceVariable = sourceOrAddress
-    } else {
-      throw new Error('copyFrom: expected number or Variable')
+  copyFrom (source, sourceAddress, sharedThrough = -1) {
+    if (typeof sourceAddress !== 'number') {
+      throw new Error('copyFrom: expected an address')
     }
-
-    if (sourceVariable.isAddressed && sourceVariable.address <= sharedThrough) {
-      return sourceVariable
-    }
-    if (sourceVariable.isInline) {
-      const value = source.decode(sourceVariable.bytes)
-      return this.encode(value).materialize(this)
-    }
+    // Inside the shared ancestry the address means the same thing in both
+    // Records, so it carries over untouched.
+    if (sourceAddress <= sharedThrough) return sourceAddress
     // Cannot dedup by addressOf(sourceBytes) — those bytes carry SOURCE-side
     // internal addresses that may collide with this-side chunks of different
     // content. Real dedup happens in the final materialize.
-    const { codec, children, hasLiteralParts } = source.decompose(sourceVariable)
+    const { codec, children, hasLiteralParts } = source.decompose(sourceAddress)
     if (hasLiteralParts) {
-      const value = source.decode(sourceVariable.address)
-      return this.encode(value).materialize(this)
+      return this.encode(source.decode(sourceAddress))
     }
     // Walk children in REVERSE to match encodeMultipart's order: child
     // encoding order determines child addresses, which determine varint
@@ -293,7 +259,7 @@ export class CodecRegistry extends Addressifier {
     for (let i = children.length - 1; i >= 0; i--) {
       newChildren[i] = this.copyFrom(source, children[i], sharedThrough)
     }
-    return this.compose(codec, newChildren).materialize(this.#r)
+    return this.compose(codec, newChildren)
   }
 
   /**
@@ -301,12 +267,8 @@ export class CodecRegistry extends Addressifier {
    * (back-to-front, footer-determined widths) and appending each
    * independently. Returns the address of the outermost subcode.
    *
-   * Throws on Variable — use `variable.materialize(r)`.
    */
   append (code) {
-    if (code instanceof Variable) {
-      throw new Error('cannot append a Variable directly; use variable.materialize(r)')
-    }
     const subcodes = []
     let rest = code
     while (rest.length) {

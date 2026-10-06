@@ -8,13 +8,11 @@
  * { encode, decode, partReaders } object.
  *
  * The `r` (registry interface) is passed to every codec method and
- * helper as a leading argument — never captured in closure. That lets
- * the same codec object serve both write contexts (where r.append
- * materializes inline parts as addressable chunks) and read-only
- * contexts (where r.append is undefined, and helpers return undefined
- * rather than mutate). CodecRegistry constructs both flavors of r and
- * dispatches the right one per entry point; mutation-impossibility is
- * a property of which r you pass, not a flag you flip.
+ * helper as a leading argument — never captured in closure, so one codec
+ * object serves every context. There were two flavours of `r` until
+ * 2026-10-05, one without `append`, because getPartAddress would
+ * materialize an inline part while answering a read. Encode no longer
+ * produces inline parts, so there is nothing to materialize and one `r`.
  *
  * See design.md §3.
  *
@@ -210,8 +208,7 @@ function withFooter (parts, footer) {
  * longer produces it. Decode still reads it, but not as a compatibility
  * obligation: David, 2026-10-05 — "if we need to support existing Records then
  * we'll use an old version of streamo." So the inline decode path, option 0,
- * getPartAddress's r.append branch and #readOnlyR's whole reason to exist are
- * all now removable rather than load-bearing.
+ * getPartAddress and the second flavour of r are gone as of 2026-10-05.
  *
  * Read-only contexts pass an `r` without `append`; in that case this
  * function never gets called from a decode path (it's encode-only).

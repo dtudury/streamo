@@ -177,11 +177,11 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(s.decode(code), 'hello')
   })
 
-  test('get(...path) descends lazily — agrees with full-decode walk, including inline children + array indices + nested primitives', ({ assert }) => {
+  test('get(...path) descends lazily — agrees with full-decode walk across mixed shapes, array indices + nested primitives', ({ assert }) => {
     const s = new Streamo()
     // A shape that exercises:
     //   - Large addressed children (files map with sizable values)
-    //   - Small inline children (mounts entry — forces the inline-fallback branch)
+    //   - Small children (mounts entry)
     //   - Arrays of mixed primitives + objects (journalists)
     //   - Nested primitives reached via path (UINT7 / strings / booleans)
     const value = {
@@ -196,7 +196,7 @@ describe(import.meta.url, ({ test }) => {
     }
     s.set(value)
     // For every path the existing get used to walk, the new lazy get must
-    // return the same JS value. Whole tree, deep file leaf, inline mount
+    // return the same JS value. Whole tree, deep file leaf, small mount
     // leaf, array index, nested object inside array, primitive at depth.
     const paths = [
       [],
@@ -294,37 +294,39 @@ describe(import.meta.url, ({ test }) => {
       `expected items.2 (the changed index); got: ${JSON.stringify(paths)}`)
   })
 
-  test('asRefs cannot mutate the streamo (math-impossible by construction)', async ({ assert }) => {
-    // Earlier versions of asRefs would silently call r.append for inline
-    // multi-byte children that didn't have their own chunk address yet —
-    // a write triggered by a read. CodecRegistry now dispatches asRefs
-    // through a separate `#readOnlyR` interface that has no `append`;
-    // getPartAddress in codecs.js checks `if (!r.append) return
-    // undefined` and yields rather than mutating. Mutation is removed
-    // from the call graph by construction, not by caller discipline.
-
-    // THE PAD IS LOAD-BEARING, and without it this test asserted nothing for
-    // months. inlineOrAddressPart (codecs.js) inlines a part when
-    // `code.length <= numberToVar(nextAddr).length` — so in a small store,
-    // where an address costs ONE byte, only one-byte codes inline. And a
-    // one-byte code takes getPartAddress's `-(code[0] + 1)` virtual-address
-    // path and returns before the `if (!r.append)` check is ever reached.
-    // The branch this test exists to protect is UNREACHABLE in a small store.
+  test('asRefs cannot mutate the streamo (nothing to materialize by construction)', async ({ assert }) => {
+    // asRefs hands back an address for every child, so it never has to store
+    // anything in order to answer. That is the property under test.
     //
-    // Pad past ~16K and addresses cost 2-3 bytes, so small multi-byte codes
-    // inline instead — a one- or two-element Uint8Array, a single-character
-    // string — and the walk below finally reaches the guard.
+    // The history explains the shape of the test. asRefs used to call r.append
+    // for inline multi-byte children with no chunk address yet — a write
+    // triggered by a read. The fix then was a second `r` without `append`, so
+    // the call graph could not reach a store mutation. The fix now is that
+    // there are no inline parts: every part is an address, so there is nothing
+    // left to materialize. Both the read-only `r` and the inline part option
+    // are gone (2026-10-05/06).
+    //
+    // THE PAD no longer changes which path is taken — nothing inlines at any
+    // store size — but it stays, for a different reason: past ~16K an address
+    // costs 2-3 bytes, so the parts below encode as option 1-2 instead of
+    // option 0. It is the only coverage we have of multi-byte part addresses.
+    //
+    // It was load-bearing once, and that is the lesson worth keeping: without
+    // it, this test asserted nothing for months. A part inlined only when its
+    // code was no longer than an address, so in a small store (1-byte
+    // addresses) only 1-byte codes inlined — and those took a virtual-address
+    // path that returned before the guard the test existed to protect. Three
+    // preconditions had to hold at once to reach it.
     const author = new Streamo()
-    // TWO set() calls, and that is load-bearing. inlineOrAddressPart computes
-    // `nextAddr` from the store size AT THE MOMENT THAT PART IS ENCODED, so
-    // inside one set() the small values are encoded before the pad, while
-    // addresses still cost one byte, and they get addressed instead of inlined.
-    // Pad first, then add the candidates against an already-large store.
+    // TWO set() calls, still deliberate: a part's address width comes from the
+    // store size at the moment that part is encoded, so inside a single set()
+    // the small values would be encoded before the pad, while addresses still
+    // cost one byte. Pad first, then add the candidates against a large store.
     author.set({ pad: new Opaque(new Uint8Array(1 << 16)), a: 1, b: 'hi', c: [1, 2, 3], d: new Uint8Array([42]) })
-    // Byte values chosen NOT to collide with anything already here:
-    // inlineOrAddressPart only inlines when `existingAddr === undefined`, so
-    // dedup beats inlining and [7] or 'a' would reuse a chunk [1,2,3] made.
-    author.set({ ...author.get(), inline1: new Uint8Array([211]), inline2: new Uint8Array([212, 213]), inlineStr: 'q' })
+    // Byte values chosen NOT to collide with anything already here, so dedup
+    // doesn't hand back an existing chunk's address: [7] or 'a' would reuse a
+    // chunk that [1, 2, 3] already made.
+    author.set({ ...author.get(), small1: new Uint8Array([211]), small2: new Uint8Array([212, 213]), smallStr: 'q' })
     const expectedLen = author.byteLength
 
     // Receive author's bytes raw via makeWritableStream — so the peer's
@@ -357,18 +359,15 @@ describe(import.meta.url, ({ test }) => {
     assert.equal(peer.byteLength, before, 'asRefs walk must not change byteLength on the peer')
 
     // POLICY ASSERTION, flipped 2026-10-05 when encode-side inlining was
-    // disabled. This used to require at least one part with no address, to
-    // prove the walk reached getPartAddress's `if (!r.append)` guard. Encode
-    // no longer produces inline parts at all, so that precondition is now
-    // unsatisfiable — and the same three values are the sensitive ones, so
-    // they are kept as a tripwire pointing the other way: if inlining comes
-    // back, these stop being addressed and this fails.
-    //
-    // The guard is not load-bearing any more either — old Records get read by
-    // an old streamo rather than by a compatibility path here.
-    const inlineRefs = ['inline1', 'inline2', 'inlineStr'].map(k => peer.getRefs(k))
-    assert.ok(inlineRefs.every(r => typeof r === 'number'),
-      `encode-side inlining is disabled, so every part should be addressed — got ${JSON.stringify(inlineRefs)}`)
+    // disabled and kept when the inline part option was removed entirely.
+    // It used to require at least one part with NO address, to prove the walk
+    // reached the read-only guard. That precondition is unsatisfiable now, so
+    // the same three sensitive values are kept as a tripwire pointing the
+    // other way: if an inline part option ever comes back, these stop being
+    // addressed and this fails.
+    const smallRefs = ['small1', 'small2', 'smallStr'].map(k => peer.getRefs(k))
+    assert.ok(smallRefs.every(r => typeof r === 'number'),
+      `every part is addressed — got ${JSON.stringify(smallRefs)}`)
     assert.equal(peer.byteLength, before, 'and reading those refs did not append either')
   })
 

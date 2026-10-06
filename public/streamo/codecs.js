@@ -10,9 +10,9 @@
  * The `r` (registry interface) is passed to every codec method and
  * helper as a leading argument — never captured in closure, so one codec
  * object serves every context. There were two flavours of `r` until
- * 2026-10-05, one without `append`, because getPartAddress would
- * materialize an inline part while answering a read. Encode no longer
- * produces inline parts, so there is nothing to materialize and one `r`.
+ * 2026-10-05, one without `append`, because answering a read could have to
+ * materialize an inline part. Parts are always addressed now, so there is
+ * nothing to materialize and one `r`.
  *
  * See design.md §3.
  *
@@ -25,13 +25,16 @@
  * `baseFooter` sequentially in the order codecs appear in this file's
  * `makeCodecs()` return.
  *
- * Currently allocated: ~201 of 256 footers (UINT7 alone claims 128 —
+ * Currently allocated: 190 of 256 footers (UINT7 alone claims 128 —
  * one footer per integer value 0–127, so any int 0–127 round-trips in
- * a single byte). DUPLE claims 25 (a 5×5 product of inline-or-address
- * options on its two parts). The 4 single-byte primitives + the
- * fixed-shape SIGNATURE + the empty-collection codecs each claim one.
+ * a single byte). DUPLE claims 16 (a 4×4 product of address options on
+ * its two parts). WORD claims 5 — it is the one codec whose part is a
+ * literal, where option 0 means a zero-byte literal rather than an
+ * address. The 4 single-byte primitives + the fixed-shape SIGNATURE +
+ * the empty-collection codecs each claim one.
  *
- * **~55 footers are free.** New codecs added at the end of
+ * **66 footers are free** — 16 of them freed on 2026-10-06 by dropping
+ * the inline part option. New codecs added at the end of
  * `makeCodecs()` get the next contiguous range without touching any
  * existing footer assignment — old data stays readable forever.
  *
@@ -126,17 +129,9 @@ class Duple {
 // getDecoded }`. Readers close over their `r` so getCode/getDecoded recurse
 // through the same registry context.
 
-const inlineReader = [(r, code) => {
-  const codec = r.footerToCodec[code.at(-1)]
-  const width = codec.getWidth(code)
-  return {
-    type: `inline(${width})`,
-    width,
-    getCode: () => code.slice(-width),
-    getDecoded: asRefs => r.decode(code.slice(-width), asRefs)
-  }
-}]
-
+// A part is always an address. Option 0-3 selects a 1..4-byte little-endian
+// address; there is no inline option, so a part's bytes always live in their
+// own chunk.
 const addressReaders = range(4).map(i => (r, code) => {
   const width = i + 1
   const address = varToNumber(code.slice(-width))
@@ -148,9 +143,6 @@ const addressReaders = range(4).map(i => (r, code) => {
     getDecoded: asRefs => r.decode(r.resolve(address), asRefs)
   }
 })
-
-// 5 options: option 0 = inline, 1-4 = 1..4-byte address.
-const inlineOrAddress = [...inlineReader, ...addressReaders]
 
 const literalReaders = range(5).map(width => (r, code) => ({
   type: `literal(${width})`,
@@ -202,29 +194,25 @@ function withFooter (parts, footer) {
 
 /**
  * Ensure `code` is stored and return [partBytes, optionIndex].
- * Options 1-4: 1-4-byte little-endian address.
+ * Option 0-3 is a 1..4-byte little-endian address.
  *
- * Option 0 means inline — the part's raw bytes in the parent chunk. Encode no
- * longer produces it. Decode still reads it, but not as a compatibility
- * obligation: David, 2026-10-05 — "if we need to support existing Records then
- * we'll use an old version of streamo." So the inline decode path, option 0,
- * getPartAddress and the second flavour of r are gone as of 2026-10-05.
+ * There used to be an option 0 meaning "inline" — the part's raw bytes sitting
+ * in the parent chunk. It saved 0.27% of bytes and cost a refs type that could
+ * not express its own result, a second flavour of `r` without `append`, and a
+ * special case in every consumer. David, 2026-10-05: "everything is encoded
+ * into an address of the Record. nothing is magic, nothing is special, this is
+ * worth giving up a tiny filesize savings" — and on the records already on
+ * disk, "if we need to support existing Records then we'll use an old version
+ * of streamo."
  *
- * Read-only contexts pass an `r` without `append`; in that case this
- * function never gets called from a decode path (it's encode-only).
- *
- * @param {{ addressOf: function, append?: function, byteLength: number }} r
+ * @param {{ addressOf: function, append: function, byteLength: number }} r
  * @param {Uint8Array} code
  * @returns {[Uint8Array, number]}
  */
-function inlineOrAddressPart (r, code) {
-  const existingAddr = r.addressOf(code)
-  // Inlining disabled on the encode side 2026-10-05 — it saved 0.27% of bytes
-  // and cost a refs type that could not express its own result. Measurements
-  // and the dropped branch are in the commit. Nothing produces inline parts now.
-  const addr = existingAddr ?? r.append(code)
+function addressPart (r, code) {
+  const addr = r.addressOf(code) ?? r.append(code)
   const addrBytes = numberToVar(addr)
-  return [addrBytes, addrBytes.length] // option = 1..4
+  return [addrBytes, addrBytes.length - 1] // option = 0..3 for a 1..4-byte address
 }
 
 function encodeMultipart (r, values, codec, asRefs) {
@@ -235,7 +223,7 @@ function encodeMultipart (r, values, codec, asRefs) {
   for (let i = values.length - 1; i >= 0; i--) {
     const variable = r.encode(values[i], asRefs)
     const childCode = variable.isInline ? variable.bytes : variable.resolve(r)
-    const [part, option] = inlineOrAddressPart(r, childCode)
+    const [part, option] = addressPart(r, childCode)
     footer += base * option
     base *= codec.partReaders[i].length
     parts.unshift(part)
@@ -259,18 +247,6 @@ function decodeParts (r, code) {
     parts.unshift(part)
   }
   return parts
-}
-
-// Stable address of a single-part value (needed for DUPLE decode with asRefs).
-//
-// For inline multi-byte parts that aren't independently stored, the only
-// way to "give back an address" is to materialize them as a separate chunk —
-// i.e. mutate. That's appropriate in write contexts (Streamo.set). In a
-// read-only context the caller passes an `r` without `append`, and we
-// return undefined so the caller (asRefs's caller, e.g. the explorer)
-// sees an undefined child address and renders it as inline.
-function getPartAddress (part) {
-  return part.address
 }
 
 /**
@@ -333,7 +309,7 @@ export function makeCodecs () {
 
   /** Arbitrary-length Uint8Array (>4 bytes), stored via Duple tree of WORDs */
   const UINT8ARRAY = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode (r, v) {
       if (v instanceof Uint8Array && v.length > 4) {
         const words = []
@@ -359,7 +335,7 @@ export function makeCodecs () {
   }
 
   const STRING = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode (r, v) {
       if (typeof v === 'string' && v !== '') {
         const bytes = new TextEncoder().encode(v)
@@ -381,7 +357,7 @@ export function makeCodecs () {
   }
 
   const FLOAT64 = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode (r, v) {
       if (typeof v === 'number') {
         return encodeMultipart(r, [new Uint8Array(new Float64Array([v]).buffer)], FLOAT64)
@@ -394,7 +370,7 @@ export function makeCodecs () {
   }
 
   const DATE = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode (r, v) {
       if (v instanceof Date) {
         return encodeMultipart(r, [new Uint8Array(new Float64Array([v.getTime()]).buffer)], DATE)
@@ -426,7 +402,7 @@ export function makeCodecs () {
 
   /** Internal balanced binary tree node. Never exposed to callers. */
   const DUPLE = {
-    partReaders: [inlineOrAddress, inlineOrAddress],
+    partReaders: [addressReaders, addressReaders],
     encode (r, v, asRefs) {
       if (v instanceof Duple) return encodeMultipart(r, v.v, DUPLE, asRefs)
     },
@@ -441,16 +417,16 @@ export function makeCodecs () {
         const nameIsRef = asRefs === 'all' || (Array.isArray(asRefs) && asRefs[1])
         const valueIsRef = asRefs === 'all' || asRefs === true || (Array.isArray(asRefs) && asRefs[0])
         return new Duple([
-          nameIsRef ? getPartAddress(parts[0]) : parts[0].getDecoded(false),
-          valueIsRef ? getPartAddress(parts[1]) : parts[1].getDecoded(false)
+          nameIsRef ? parts[0].address : parts[0].getDecoded(false),
+          valueIsRef ? parts[1].address : parts[1].getDecoded(false)
         ])
       }
       // Non-leaf: at least one child is itself a Duple subtree.
       // With 'all', recurse into sub-duples and take the address of any leaf.
       if (asRefs === 'all') {
         return new Duple([
-          leftIsDuple ? parts[0].getDecoded('all') : getPartAddress(parts[0]),
-          rightIsDuple ? parts[1].getDecoded('all') : getPartAddress(parts[1])
+          leftIsDuple ? parts[0].getDecoded('all') : parts[0].address,
+          rightIsDuple ? parts[1].getDecoded('all') : parts[1].address
         ])
       }
       return new Duple([parts[0].getDecoded(asRefs), parts[1].getDecoded(asRefs)])
@@ -463,7 +439,7 @@ export function makeCodecs () {
   }
 
   const ARRAY = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode (r, v, asRefs) {
       if (!Array.isArray(v) || v.length === 0) return
       if (v.length > 1 && Object.keys(v).length === v.length) {
@@ -495,7 +471,7 @@ export function makeCodecs () {
   }
 
   const OBJECT = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode (r, v, asRefs) {
       if (!isPlainObject(v) || Object.keys(v).length === 0) return
       const duples = Object.entries(v).map(([k, val]) => new Duple([k, val]))
@@ -514,10 +490,10 @@ export function makeCodecs () {
    * store a changing top-level value.
    */
   const BOXED = {
-    partReaders: [inlineOrAddress],
+    partReaders: [addressReaders],
     encode: () => undefined, // not directly encodable; use _encode
     _encode (r, encodedValue) {
-      const [part, option] = inlineOrAddressPart(r, encodedValue)
+      const [part, option] = addressPart(r, encodedValue)
       return withFooter([part], BOXED.baseFooter + option)
     },
     decode (r, code, asRefs) {

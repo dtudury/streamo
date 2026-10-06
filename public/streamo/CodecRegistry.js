@@ -4,9 +4,9 @@
  * Resolves bytes ↔ JS values via a registered codec table; chunks identify
  * their codec by their last byte (the footer). There is one `r`
  * (registry interface), passed to every codec method. There used to be
- * two — a read-only flavour with no `append` — because getPartAddress
- * would materialize an inline part during a read. Nothing is inline any
- * more, so nothing reads its way into a write and the flavour has no job.
+ * two — a read-only flavour with no `append` — because answering a read
+ * could have to materialize an inline part. Every part is an address now,
+ * so nothing reads its way into a write and the flavour has no job.
  *
  * See design.md §3–4.
  */
@@ -126,10 +126,6 @@ export class CodecRegistry extends Addressifier {
         const childBytes = this.resolve(part.address)
         const childCodec = this.footerToCodec[childBytes.at(-1)]
         children.unshift(Variable.addressed(childCodec, part.address))
-      } else if (part.getCode) {
-        const childBytes = part.getCode()
-        const childCodec = this.footerToCodec[childBytes.at(-1)]
-        children.unshift(Variable.inline(childCodec, childBytes))
       } else {
         // Literal-data part — embedded bytes, not a child reference
         hasLiteralParts = true
@@ -154,12 +150,13 @@ export class CodecRegistry extends Addressifier {
     for (let i = children.length - 1; i >= 0; i--) {
       const child = children[i]
       let partBytes, option
-      if (child.isInline) {
-        partBytes = child.bytes
-        option = 0
-      } else if (child.isAddressed) {
+      if (child.isAddressed) {
         partBytes = numberToVar(child.address)
-        option = partBytes.length
+        option = partBytes.length - 1 // option 0..3 → a 1..4-byte address
+      } else if (child.isInline) {
+        // There is no inline part option as of 2026-10-06 — a part is always
+        // an address. An unstored child has nothing to point at yet.
+        throw new Error('compose: child Variable is inline; materialize it first — every part is addressed')
       } else {
         throw new Error('compose: child Variable has neither bytes nor address')
       }
@@ -278,7 +275,7 @@ export class CodecRegistry extends Addressifier {
     }
     if (sourceVariable.isInline) {
       const value = source.decode(sourceVariable.bytes)
-      return this.encode(value)
+      return this.encode(value).materialize(this)
     }
     // Cannot dedup by addressOf(sourceBytes) — those bytes carry SOURCE-side
     // internal addresses that may collide with this-side chunks of different

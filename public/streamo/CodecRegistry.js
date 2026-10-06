@@ -23,11 +23,6 @@ import { numberToVar, varToNumber } from './utils.js'
  * Multi-part codecs multiply their option counts to produce a footer range
  * (mixed-radix offset from baseFooter).
  *
- * Negative addresses encode single-byte primitive values without appending:
- *   address = -(footer + 1)   →   footer = -address - 1
- * So UNDEFINED, NULL, FALSE, TRUE, and every UINT7 value are addressable
- * without touching the store.
- *
  * Codecs are built by makeCodecs() in codecs.js and wired in here. Each
  * codec's encode/decode takes `r` as a leading argument; this class
  * builds two `r` flavors and dispatches the right one per entry point.
@@ -57,17 +52,6 @@ export class CodecRegistry extends Addressifier {
 
   // Re-expose byteLength so subclasses can override it
   get byteLength () { return super.byteLength }
-
-  /**
-   * Resolve an address to its Uint8Array.
-   * Negative addresses map to single-byte codes: -(footer+1) → [footer].
-   * @param {number} address
-   * @returns {Uint8Array}
-   */
-  resolve (address) {
-    if (address < 0) return new Uint8Array([-address - 1])
-    return super.resolve(address)
-  }
 
   /**
    * Decode any JS value from a code (Uint8Array), an address (number), or a
@@ -246,31 +230,13 @@ export class CodecRegistry extends Addressifier {
   decodeAt (address, ...path) {
     try {
       for (let i = 0; i < path.length; i++) {
-        if (address < 0) return undefined // primitive — can't descend
         const refs = this.asRefs(address)
         if (refs === address) return undefined // non-composite at this level
         const key = path[i]
         if (!(key in refs)) return undefined
-        const next = refs[key]
-        if (next === undefined) {
-          // Inline child: asRefs returned undefined because the bytes live
-          // inside the parent chunk, no separate slot. Full-decode at this
-          // level and walk the rest in JS.
-          let value = this.decode(address)
-          for (let j = i; j < path.length; j++) {
-            if (value == null) return undefined
-            value = value[path[j]]
-          }
-          return value
-        }
-        address = next
+        address = refs[key]
       }
       // Path consumed. Decode the leaf.
-      if (address < 0) {
-        // Negative address encodes a single-byte primitive — recover the
-        // original byte and decode it as a one-byte chunk.
-        return this.decode(new Uint8Array([-address - 1]))
-      }
       return this.decode(address)
     } catch (err) {
       // Defensive: during origin-sync's initial replay, the recaller fires
@@ -295,14 +261,9 @@ export class CodecRegistry extends Addressifier {
   //   2. inline          → decode + re-encode in this's state
   //   3. addressed/new   → dedup-or-recurse; recursion: decompose, copyFrom each child, compose, materialize
   // Leaf-data chunks (WORD, UINT7) bail to decode + re-encode — decompose can't surface their literal bytes as children.
-  // Negative-address primitives are universal across registries.
   copyFrom (source, sourceOrAddress, sharedThrough = -1) {
     let sourceVariable
     if (typeof sourceOrAddress === 'number') {
-      if (sourceOrAddress < 0) {
-        const byte = -sourceOrAddress - 1
-        return Variable.addressed(source.footerToCodec[byte], sourceOrAddress)
-      }
       const sourceBytes = source.resolve(sourceOrAddress)
       const codec = source.footerToCodec[sourceBytes.at(-1)]
       sourceVariable = Variable.addressed(codec, sourceOrAddress)

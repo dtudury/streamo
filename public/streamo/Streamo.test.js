@@ -34,17 +34,6 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('negative addresses for single-byte primitives', ({ assert }) => {
-    const s = new Streamo()
-    for (const v of [undefined, null, false, true, 0, 1, 127]) {
-      const code = s.encode(v).resolve(s)
-      assert.equal(code.length, 1, `${String(v)} encodes to 1 byte`)
-      const addr = -(code[0] + 1)
-      assert.ok(addr < 0, `${String(v)} has a negative address`)
-      assert.deepEqual(s.decode(addr), v, `negative address resolves back to ${String(v)}`)
-    }
-  })
-
   test('deduplication: same value always gets the same address', ({ assert }) => {
     const s = new Streamo()
     const a1 = s.encode(42).materialize(s).address

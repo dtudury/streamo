@@ -60,7 +60,7 @@ export class Addressifier {
 
   /**
    * Returns the Uint8Array whose last byte is at `address`.
-   * For negative addresses, the caller (CodecRegistry) must override.
+   * Every address is a real offset into the store — there are no exceptions.
    * @param {number} address
    * @returns {Uint8Array}
    */

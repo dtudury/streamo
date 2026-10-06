@@ -272,14 +272,8 @@ function decodeParts (r, code) {
 // read-only context the caller passes an `r` without `append`, and we
 // return undefined so the caller (asRefs's caller, e.g. the explorer)
 // sees an undefined child address and renders it as inline.
-function getPartAddress (r, part) {
-  if (part.address !== undefined) return part.address
-  const code = part.getCode()
-  if (code.length === 1) return -(code[0] + 1) // negative address for single-byte primitives
-  const existing = r.addressOf(code)
-  if (existing !== undefined) return existing
-  if (!r.append) return undefined
-  return r.append(code)
+function getPartAddress (part) {
+  return part.address
 }
 
 /**
@@ -450,16 +444,16 @@ export function makeCodecs () {
         const nameIsRef = asRefs === 'all' || (Array.isArray(asRefs) && asRefs[1])
         const valueIsRef = asRefs === 'all' || asRefs === true || (Array.isArray(asRefs) && asRefs[0])
         return new Duple([
-          nameIsRef ? getPartAddress(r, parts[0]) : parts[0].getDecoded(false),
-          valueIsRef ? getPartAddress(r, parts[1]) : parts[1].getDecoded(false)
+          nameIsRef ? getPartAddress(parts[0]) : parts[0].getDecoded(false),
+          valueIsRef ? getPartAddress(parts[1]) : parts[1].getDecoded(false)
         ])
       }
       // Non-leaf: at least one child is itself a Duple subtree.
       // With 'all', recurse into sub-duples and take the address of any leaf.
       if (asRefs === 'all') {
         return new Duple([
-          leftIsDuple ? parts[0].getDecoded('all') : getPartAddress(r, parts[0]),
-          rightIsDuple ? parts[1].getDecoded('all') : getPartAddress(r, parts[1])
+          leftIsDuple ? parts[0].getDecoded('all') : getPartAddress(parts[0]),
+          rightIsDuple ? parts[1].getDecoded('all') : getPartAddress(parts[1])
         ])
       }
       return new Duple([parts[0].getDecoded(asRefs), parts[1].getDecoded(asRefs)])

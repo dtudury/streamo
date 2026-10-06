@@ -69,6 +69,17 @@ export class Addressifier {
   }
 
   /**
+   * EXPERIMENT 2026-10-06 (David): let CodecRegistry index a subcode at a
+   * computed address without appending it as its own chunk.
+   * @param {Uint8Array} code
+   * @param {number} address
+   * @returns {void}
+   */
+  _index (code, address) {
+    this.#contentMap.set(code, address)
+  }
+
+  /**
    * Look up the address of a previously appended chunk.
    * @param {Uint8Array} code
    * @returns {number|undefined}
@@ -86,10 +97,14 @@ export class Addressifier {
   append (code) {
     if (this.#closed) throw new Error('cannot append to a closed Addressifier')
     if (!code.length) throw new Error('chunk must not be empty')
-    if (this.#contentMap.get(code) !== undefined) throw new Error('chunk already exists')
+    // EXPERIMENT 2026-10-06: the duplicate check moved up to
+    // CodecRegistry.append, which is where the subcodes are already split out.
+    // Addressifier does not care about duplicated values being appended.
     this._chunks.push({ uint8Array: code, offset: this.byteLength })
     const address = this.byteLength - 1
-    this.#contentMap.set(code, address)
+    // EXPERIMENT 2026-10-06: indexing moved up to CodecRegistry, which splits
+    // the code into subcodes and knows each one's address. Addressifier is a
+    // byte store: it pushes bytes and reports where they landed.
     const prev = this.#resolveNext
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
     prev(code)
@@ -340,7 +355,10 @@ export class Addressifier {
           // view into one allocation — measured 40 chunks, 1 backing buffer —
           // which is precisely the pinning the comment below describes as fixed.
           const code = new Uint8Array(buf.subarray(bufOffset + 4, bufOffset + 4 + len))
-          if (self.addressOf(code) === undefined) self.append(code)
+          // EXPERIMENT 2026-10-06: append every framed chunk. Skipping one
+          // whose bytes we happen to hold elsewhere makes byteLength diverge
+          // from the author's, and byteLength is what signatures commit to.
+          self.append(code)
           bufOffset += 4 + len
         }
       }

@@ -257,6 +257,18 @@ export class Addressifier {
    * `maxBatch` caps the bytes per batched frame so very large repos don't
    * land as one huge WS message — 256KB is a sensible default for WS hops.
    *
+   * **Produces on demand.** One frame per `pull`, which is the consumer
+   * saying it has room; `#nextChunk` is `append`/`close` saying there is
+   * something to send. Those two events are the whole mechanism.
+   *
+   * Until 2026-10-06 the loop lived in `start`, whose promise therefore never
+   * settled, so `pull` was never called and `desiredSize` never read — the
+   * producer enqueued every ready frame regardless of demand. Measured on a
+   * 32,007-chunk store: 2 frames / 270KB sat in the queue before a single
+   * read. `maxBatch` caps one frame, not the depth of the queue, so a fast
+   * store on a slow socket grew memory without bound — and the relay never
+   * closes these streams.
+   *
    * @param {{ fromOffset?: number, maxBatch?: number }} [options]
    * @returns {ReadableStream}
    */
@@ -268,41 +280,39 @@ export class Addressifier {
     let index = 0
     while (index < self._chunks.length && self._chunks[index].offset < fromOffset) index++
     return new ReadableStream({
-      async start (controller) {
-        while (true) {
-          while (index < self._chunks.length) {
-            // Plan a batch: collect chunks until we'd exceed maxBatch.
-            // Always include at least one chunk per frame so a chunk
-            // larger than maxBatch still ships (rare; would only happen
-            // if a user encoded a single value bigger than 256KB).
-            const start = index
-            let total = 0
-            while (index < self._chunks.length) {
-              const len = self._chunks[index].uint8Array.length
-              if (index > start && total + 4 + len > maxBatch) break
-              total += 4 + len
-              index++
-            }
-            const frame = new Uint8Array(total)
-            const view = new DataView(frame.buffer)
-            let pos = 0
-            for (let i = start; i < index; i++) {
-              const { uint8Array } = self._chunks[i]
-              view.setUint32(pos, uint8Array.length, true)
-              pos += 4
-              frame.set(uint8Array, pos)
-              pos += uint8Array.length
-            }
-            controller.enqueue(frame)
-          }
-          // close() check after the drain loop so any chunks added
-          // before close are still delivered before we signal done.
+      async pull (controller) {
+        // Nothing ready: wait for append() or close() to wake us. The close
+        // check comes first so chunks appended before close are still
+        // delivered, and again after the wake so close exits promptly.
+        while (index >= self._chunks.length) {
           if (self.#closed) { controller.close(); return }
           await self.#nextChunk
-          // close() also wakes the await above; re-check after wake so
-          // we exit promptly when close was the wake reason.
           if (self.#closed && index >= self._chunks.length) { controller.close(); return }
         }
+        // Plan ONE batch: collect chunks until we'd exceed maxBatch. Always
+        // include at least one chunk per frame so a chunk larger than
+        // maxBatch still ships (rare; would only happen if a user encoded a
+        // single value bigger than 256KB). One frame per pull is the
+        // backpressure — whatever is still ready waits for the next one.
+        const start = index
+        let total = 0
+        while (index < self._chunks.length) {
+          const len = self._chunks[index].uint8Array.length
+          if (index > start && total + 4 + len > maxBatch) break
+          total += 4 + len
+          index++
+        }
+        const frame = new Uint8Array(total)
+        const view = new DataView(frame.buffer)
+        let pos = 0
+        for (let i = start; i < index; i++) {
+          const { uint8Array } = self._chunks[i]
+          view.setUint32(pos, uint8Array.length, true)
+          pos += 4
+          frame.set(uint8Array, pos)
+          pos += uint8Array.length
+        }
+        controller.enqueue(frame)
       }
     })
   }

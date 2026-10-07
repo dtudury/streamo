@@ -460,6 +460,8 @@ export function makeCodecs () {
     partReaders: [addressReaders],
     encode (r, v, asRefs) {
       if (!Array.isArray(v) || v.length === 0) return
+      // A dense single-element array is SINGLE_ARRAY's, registered at the end.
+      if (v.length === 1 && Object.keys(v).length === 1) return
       if (v.length > 1 && Object.keys(v).length === v.length) {
         return encodeMultipart(r, [new Duple(v)], ARRAY, asRefs)
       }
@@ -560,5 +562,38 @@ export function makeCodecs () {
     decode: () => new Uint8Array(0)
   }
 
-  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, EMPTY_UINT8ARRAY, OPAQUE }
+  /**
+   * A dense one-element array. Also appended at the END of the registration
+   * list, so no existing footer shifts.
+   *
+   * A Duple is a PAIR — `new Duple([x])` throws "Duple requires at least 2
+   * items" — so one element has nothing to pair with, and ARRAY used to fall
+   * back to the sparse representation ({...v, length}) for it. That cost 34
+   * bytes and 14 chunks for `[7]` against 7 bytes and 4 for `[7, 8]`, because
+   * the object has to store the strings "length" and "0" and the WORDs holding
+   * their bytes. It also routed the commonest array shape through the sparse
+   * path, where asRefs 'all' addressed a NAME and corrupted the record on a
+   * path write (fixed 2026-10-07, see ARRAY.decode).
+   *
+   * Pointing ARRAY's part straight at the element is not an option: the footer
+   * would not say whether that part is a tree of the elements or the single
+   * element itself, and `[[1, 2]]` makes those two readings differ. A distinct
+   * footer IS that distinction, which is the whole job of this codec.
+   */
+  const SINGLE_ARRAY = {
+    partReaders: [addressReaders],
+    encode (r, v, asRefs) {
+      if (!Array.isArray(v) || v.length !== 1 || Object.keys(v).length !== 1) return
+      return encodeMultipart(r, [v[0]], SINGLE_ARRAY, asRefs)
+    },
+    decode (r, code, asRefs) {
+      const part = decodeParts(r, code)[0]
+      // asRefs wants the element's ADDRESS, not its decoded value. No special
+      // mode needed — there is one part and it is always an address.
+      if (asRefs === true || asRefs === 'all') return [part.address]
+      return [part.getDecoded(asRefs)]
+    }
+  }
+
+  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, EMPTY_UINT8ARRAY, OPAQUE, SINGLE_ARRAY }
 }

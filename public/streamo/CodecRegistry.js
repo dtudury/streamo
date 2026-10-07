@@ -101,8 +101,11 @@ export class CodecRegistry extends Addressifier {
   asRefs (address) {
     const code = this.resolve(address)
     const { type } = this.footerToCodec[code.at(-1)]
+    // The composites. A codec added here must be added to this list, or
+    // asRefs quietly reports it as a leaf and hands back its own address —
+    // which is how SINGLE_ARRAY first went wrong on 2026-10-07.
     if (type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
-        type === 'ARRAY' || type === 'EMPTY_ARRAY') {
+        type === 'ARRAY' || type === 'EMPTY_ARRAY' || type === 'SINGLE_ARRAY') {
       return this.#decodeWith(this.#r, address, true)
     }
     return address

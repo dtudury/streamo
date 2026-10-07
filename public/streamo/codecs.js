@@ -239,7 +239,17 @@ function encodeMultipart (r, values, codec, asRefs) {
   return withFooter(parts, footer)
 }
 
-function decodeParts (r, code) {
+/**
+ * Read a chunk's parts. The footer names the codec and, as a mixed-radix
+ * offset from its baseFooter, which reader each part uses. A part is either
+ * an address (a reference to another chunk) or literal data embedded in this
+ * chunk. Exported 2026-10-07 because CodecRegistry.copyFrom needs the same
+ * walk — it had its own copy of this loop, line for line.
+ * @param {any} r
+ * @param {Uint8Array} code
+ * @returns {Array<{ type: string, width: number, address?: number, getCode?: function, getDecoded: function }>}
+ */
+export function decodeParts (r, code) {
   const footer = code.at(-1)
   const codec = r.footerToCodec[footer]
   if (!codec?.partReaders?.length) return []

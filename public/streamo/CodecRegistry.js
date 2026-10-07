@@ -11,7 +11,7 @@
  * See design.md §3–4.
  */
 import { Addressifier } from './Addressifier.js'
-import { makeCodecs } from './codecs.js'
+import { makeCodecs, decodeParts } from './codecs.js'
 import { numberToVar, varToNumber } from './utils.js'
 
 /**
@@ -78,66 +78,6 @@ export class CodecRegistry extends Addressifier {
       if (code) return this.#appendSubcode(code)
     }
     throw new Error(`no codec for value: ${value}`)
-  }
-
-  // Mirror of compose. WORD/UINT7 have literal-data parts that aren't
-  // child references — flagged via `hasLiteralParts` so callers know
-  // decompose alone can't recompose the chunk.
-  decompose (address) {
-    const chunkBytes = this.resolve(address)
-    const footer = chunkBytes.at(-1)
-    const codec = this.footerToCodec[footer]
-    if (!codec?.partReaders?.length) return { codec, children: [] }
-
-    const children = []
-    let option = footer - codec.baseFooter
-    let end = -1
-    let hasLiteralParts = false
-    for (let i = codec.partReaders.length - 1; i >= 0; i--) {
-      const opts = codec.partReaders[i]
-      const reader = opts[option % opts.length]
-      option = Math.floor(option / opts.length)
-      const part = reader(this.#r, chunkBytes.subarray(0, end))
-      end -= part.width
-      if (part.address !== undefined) {
-        children.unshift(part.address)
-      } else {
-        // Literal-data part — embedded bytes, not a child reference
-        hasLiteralParts = true
-      }
-    }
-    return { codec, children, hasLiteralParts }
-  }
-
-  // Assemble a chunk from children whose inline/addressed state is
-  // already decided. Returns inline; caller opts into materialize.
-  compose (codec, children) {
-    if (!codec.partReaders?.length) {
-      if (children.length !== 0) throw new Error('codec has no parts; expected empty children')
-      return this.#appendSubcode(new Uint8Array([codec.baseFooter]))
-    }
-    if (children.length !== codec.partReaders.length) {
-      throw new Error(`compose: codec wants ${codec.partReaders.length} children, got ${children.length}`)
-    }
-    let footer = codec.baseFooter
-    let base = 1
-    const parts = []
-    for (let i = children.length - 1; i >= 0; i--) {
-      const child = children[i]
-      if (typeof child !== 'number') {
-        throw new Error(`compose: child ${i} must be an address, got ${typeof child}`)
-      }
-      const partBytes = numberToVar(child)
-      const option = partBytes.length - 1 // option 0..3 → a 1..4-byte address
-      footer += base * option
-      base *= codec.partReaders[i].length
-      parts.unshift(partBytes)
-    }
-    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0) + 1)
-    let pos = 0
-    for (const p of parts) { out.set(p, pos); pos += p.length }
-    out[pos] = footer
-    return this.#appendSubcode(out)
   }
 
   /**
@@ -218,34 +158,78 @@ export class CodecRegistry extends Addressifier {
     }
   }
 
-  // Three branches:
-  //   1. shared region   → addressed && address ≤ sharedThrough; return as-is
-  //   2. inline          → decode + re-encode in this's state
-  //   3. addressed/new   → dedup-or-recurse; recursion: decompose, copyFrom each child, compose, materialize
-  // Leaf-data chunks (WORD, UINT7) bail to decode + re-encode — decompose can't surface their literal bytes as children.
+  /**
+   * Copy the value at `sourceAddress` out of `source` into this registry, and
+   * return its address here. Bit-identical to encoding the same value fresh,
+   * which is what makes the result canonical and dedup-able.
+   *
+   * Descends the CHUNK GRAPH, not the decoded value. Each chunk's parts are
+   * read with `decodeParts`; a part is either an address (recurse into it) or
+   * literal data embedded in this chunk (WORD/UINT7/OPAQUE payloads), which
+   * cannot be copied piecewise.
+   *
+   * `asRefs` is the wrong instrument here, and it is worth saying why because
+   * it looks right: it returns SEMANTIC children, so a DUPLE tree comes back
+   * flattened and re-encoding rebuilds the tree in a different order than the
+   * one that produced it. Tried 2026-10-07 — 91 of 107 bit-identity cases,
+   * failing at N=1 and at every 2^k+1 above 32, where the tree is most
+   * lopsided.
+   *
+   * `sharedThrough` is the last address this registry and `source` are known
+   * to agree on. At or below it an address means the same thing in both, so it
+   * carries over untouched and whole unchanged subtrees cost nothing — which
+   * is the entire point of copyFrom over decode-then-re-encode.
+   *
+   * @param {CodecRegistry} source
+   * @param {number} sourceAddress
+   * @param {number} [sharedThrough=-1]
+   * @returns {number} the address in THIS registry
+   */
   copyFrom (source, sourceAddress, sharedThrough = -1) {
     if (typeof sourceAddress !== 'number') {
       throw new Error('copyFrom: expected an address')
     }
-    // Inside the shared ancestry the address means the same thing in both
-    // Records, so it carries over untouched.
     if (sourceAddress <= sharedThrough) return sourceAddress
-    // Cannot dedup by addressOf(sourceBytes) — those bytes carry SOURCE-side
-    // internal addresses that may collide with this-side chunks of different
-    // content. Real dedup happens in the final materialize.
-    const { codec, children, hasLiteralParts } = source.decompose(sourceAddress)
-    if (hasLiteralParts) {
+
+    const bytes = source.resolve(sourceAddress)
+    const codec = source.footerToCodec[bytes.at(-1)]
+    const parts = decodeParts(source.#r, bytes)
+
+    // Nothing to descend into, or a part that is not a reference: decode the
+    // value and re-encode it in this registry's state. Cannot dedup by
+    // addressOf(bytes) first — those bytes carry SOURCE-side addresses, which
+    // may collide with this-side chunks of different content.
+    if (!parts.length || parts.some(part => part.address === undefined)) {
       return this.encode(source.decode(sourceAddress))
     }
-    // Walk children in REVERSE to match encodeMultipart's order: child
-    // encoding order determines child addresses, which determine varint
-    // widths in the parent's encoding, which determine bit-identity with
-    // fresh encode.
-    const newChildren = new Array(children.length)
-    for (let i = children.length - 1; i >= 0; i--) {
-      newChildren[i] = this.copyFrom(source, children[i], sharedThrough)
+
+    // Copy children in REVERSE: that is the order encodeMultipart appends
+    // them, their order sets their addresses, their addresses set the varint
+    // widths in this chunk, and those widths are what bit-identity means.
+    const copied = new Array(parts.length)
+    for (let i = parts.length - 1; i >= 0; i--) {
+      copied[i] = this.copyFrom(source, parts[i].address, sharedThrough)
     }
-    return this.compose(codec, newChildren)
+
+    // Rebuild this chunk pointing at the copies. The footer is a mixed-radix
+    // offset from baseFooter over each part's option index, exactly as
+    // encodeMultipart builds it. Codec tables are identical across registries
+    // — makeCodecs() runs in the same order everywhere — so the source's
+    // baseFooter and part-option counts are this registry's too.
+    let footer = codec.baseFooter
+    let base = 1
+    const partBytes = new Array(parts.length)
+    for (let i = parts.length - 1; i >= 0; i--) {
+      const addrBytes = numberToVar(copied[i])
+      partBytes[i] = addrBytes
+      footer += base * (addrBytes.length - 1) // option 0..3 → a 1..4-byte address
+      base *= codec.partReaders[i].length
+    }
+    const out = new Uint8Array(partBytes.reduce((n, p) => n + p.length, 0) + 1)
+    let pos = 0
+    for (const p of partBytes) { out.set(p, pos); pos += p.length }
+    out[pos] = footer
+    return this.#appendSubcode(out)
   }
 
   /**

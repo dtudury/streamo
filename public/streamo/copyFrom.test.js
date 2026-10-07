@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { CodecRegistry } from './CodecRegistry.js'
+import { decodeParts } from './codecs.js'
 
 // Bit-identical-output invariant: copyFrom into a clean registry must produce
 // bytes byte-for-byte identical to a fresh encode in that registry. Without
@@ -160,4 +161,66 @@ test('copyFrom: shared region returns the address unchanged (no copy work)', () 
   // Now copy an address pointing into the shared region.
   const result = r1.copyFrom(r2, lastSharedAddr, lastSharedAddr)
   assert.equal(result, lastSharedAddr)
+})
+
+// ─── The chunk graph copyFrom descends ──────────────────────────────────────
+// Moved here 2026-10-07 when compose/decompose were folded into copyFrom.
+// compose.test.js tested them directly; what survives is the behaviour.
+
+// decodeParts needs the registry interface the codecs are given; the parts of
+// interest (addresses) only use footerToCodec, resolve and decode.
+const partsOf = (r, value) => decodeParts(
+  { footerToCodec: r.footerToCodec, resolve: a => r.resolve(a), decode: (c, x) => r.decode(c, x) },
+  r.resolve(r.encode(value))
+)
+
+test('every part of a composite is an address — the premise copyFrom descends on', () => {
+  const r = new CodecRegistry()
+  for (const value of [{ a: 1, b: 2 }, [1, 2, 3], 'long enough string to be stored', new Date(0)]) {
+    const parts = partsOf(r, value)
+    assert.ok(parts.length > 0, `${JSON.stringify(value)} has parts to check`)
+    for (const [i, part] of parts.entries()) {
+      assert.equal(typeof part.address, 'number',
+        `${JSON.stringify(value)} part ${i} is an address, not embedded data (${part.type})`)
+    }
+  }
+})
+
+test('a leaf-data chunk has a part that is NOT an address — so copyFrom re-encodes it', () => {
+  const r = new CodecRegistry()
+  // WORD carries its bytes as a literal part. copyFrom cannot copy that
+  // piecewise, which is exactly why it falls back to decode + re-encode.
+  const parts = partsOf(r, new Uint8Array([1, 2, 3]))
+  assert.ok(parts.some(part => part.address === undefined),
+    `a 3-byte Uint8Array should have embedded data, got ${parts.map(p => p.type).join(', ')}`)
+})
+
+test('copyFrom: inside the shared region the address carries over untouched', () => {
+  const r = new CodecRegistry()
+  const addr = r.encode('shared content')
+  assert.equal(r.copyFrom(r, addr, addr), addr, 'sharedThrough = addr, so no work')
+})
+
+test('copyFrom: same content already here under a different address — dedups to ours', () => {
+  const r1 = new CodecRegistry()
+  const r2 = new CodecRegistry()
+  r2.encode('padding so the addresses differ between the two')
+  const r2Addr = r2.encode('duplicate content')
+  const r1Addr = r1.encode('duplicate content')
+  assert.notEqual(r1Addr, r2Addr, 'sanity: the two registries disagree on the address')
+  assert.equal(r2.copyFrom(r1, r1Addr, -1), r2Addr)
+})
+
+test('copyFrom: addressed-new — recurses, rebuilds the parent, and decodes equal', () => {
+  const r1 = new CodecRegistry()
+  const r2 = new CodecRegistry()
+  const value = { x: 'hello world long string', y: 42 }
+  const result = r2.copyFrom(r1, r1.encode(value), -1)
+  assert.equal(typeof result, 'number')
+  assert.deepEqual(r2.decode(result), value)
+})
+
+test('copyFrom rejects anything but an address', () => {
+  const r = new CodecRegistry()
+  assert.throws(() => r.copyFrom(r, new Uint8Array([1]), -1), /expected an address/)
 })

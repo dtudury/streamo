@@ -266,16 +266,15 @@ export class CodecRegistry extends Addressifier {
     // EXPERIMENT 2026-10-06 (David): the split already happens here, so the
     // duplicate check belongs here too. Index each subcode at the address it
     // WILL have, then hand the whole code to super.append as one chunk.
-    let offset = this.byteLength
+    let last = -1
     for (const sub of subcodes) {
-      offset += sub.length
       if (this.addressOf(sub) !== undefined) {
-        throw new Error(`chunk already exists (subcode ending at ${offset - 1})`)
+        throw new Error(`chunk already exists (subcode ending at ${this.byteLength + sub.length - 1})`)
       }
-      this._index(sub, offset - 1)
+      last = super.append(sub)
+      this._index(sub, last)
     }
-    super.append(code)
-    return this.byteLength - 1
+    return last
   }
 
   // Internal append used by codecs (single chunk, no splitting)

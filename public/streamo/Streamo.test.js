@@ -28,8 +28,7 @@ describe(import.meta.url, ({ test }) => {
       new Signature(new Uint8Array(32), new Uint8Array(64))
     ]
     for (const value of values) {
-      const code = s.encodeVariable(value)
-      const decoded = s.decode(code)
+      const decoded = s.decode(s.encode(value))
       assert.deepEqual(decoded, value, `round-trips ${Object.prototype.toString.call(value)}`)
     }
   })

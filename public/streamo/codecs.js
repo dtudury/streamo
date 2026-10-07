@@ -25,7 +25,7 @@
  * `baseFooter` sequentially in the order codecs appear in this file's
  * `makeCodecs()` return.
  *
- * Currently allocated: 190 of 256 footers (UINT7 alone claims 128 —
+ * Currently allocated: 186 of 256 footers (UINT7 alone claims 128 —
  * one footer per integer value 0–127, so any int 0–127 round-trips in
  * a single byte). DUPLE claims 16 (a 4×4 product of address options on
  * its two parts). WORD claims 5 — it is the one codec whose part is a
@@ -33,8 +33,10 @@
  * address. The 4 single-byte primitives + the fixed-shape SIGNATURE +
  * the empty-collection codecs each claim one.
  *
- * **66 footers are free** — 16 of them freed on 2026-10-06 by dropping
- * the inline part option. New codecs added at the end of
+ * **70 footers are free** — 20 of them freed on 2026-10-06: 16 by dropping
+ * the inline part option, and 4 more with BOXED, whose whole job was to give
+ * a value "a first-class address rather than inline". Every value has one
+ * now, so it had nothing left to do. New codecs added at the end of
  * `makeCodecs()` get the next contiguous range without touching any
  * existing footer assignment — old data stays readable forever.
  *
@@ -491,23 +493,6 @@ export function makeCodecs () {
   }
 
   /**
-   * A boxed value — wraps any encoded value so it can be stored as a
-   * first-class address rather than inline. Used by Stream.set() to
-   * store a changing top-level value.
-   */
-  const BOXED = {
-    partReaders: [addressReaders],
-    encode: () => undefined, // not directly encodable; use _encode
-    _encode (r, encodedValue) {
-      const [part, option] = addressPart(r, encodedValue)
-      return withFooter([part], BOXED.baseFooter + option)
-    },
-    decode (r, code, asRefs) {
-      return decodeParts(r, code)[0].getDecoded(asRefs)
-    }
-  }
-
-  /**
    * Arbitrary-length Uint8Array (>4 bytes) stored as ONE chunk: the bytes
    * verbatim, a little-endian length, and a footer whose option says how wide
    * that length is (1, 2 or 3 bytes → up to 16MB).
@@ -540,5 +525,5 @@ export function makeCodecs () {
     decode: () => new Uint8Array(0)
   }
 
-  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, BOXED, EMPTY_UINT8ARRAY, OPAQUE }
+  return { UNDEFINED, NULL, FALSE, TRUE, WORD, UINT8ARRAY, EMPTY_STRING, STRING, UINT7, FLOAT64, DATE, SIGNATURE, DUPLE, EMPTY_ARRAY, ARRAY, EMPTY_OBJECT, OBJECT, EMPTY_UINT8ARRAY, OPAQUE }
 }

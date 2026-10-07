@@ -20,10 +20,10 @@ import { describe } from './utils/testing.js'
 import { Streamo } from './Streamo.js'
 
 describe(import.meta.url, ({ test }) => {
-  // ── Helper: round-trip via encodeVariable + decode ────────────────────────
+  // ── Helper: round-trip via encode + decode ────────────────────────────────
   const rt = (value) => {
     const s = new Streamo()
-    return s.decode(s.encodeVariable(value))
+    return s.decode(s.encode(value))
   }
 
   // ── Regression: bugs that used to throw "no codec for value" ──────────────
@@ -71,10 +71,9 @@ describe(import.meta.url, ({ test }) => {
     // Same content, different key order = different bytes = different addresses.
     // Dedup is by bytes, not semantics. This is intrinsic to the design.
     const s = new Streamo()
-    const a = s.encodeVariable({ x: 1, y: 2 })
-    const b = s.encodeVariable({ y: 2, x: 1 })
-    const same = a.length === b.length && a.every((v, i) => v === b[i])
-    assert.ok(!same, 'different key orders produce different bytes (pinned as deliberate)')
+    const a = s.encode({ x: 1, y: 2 })
+    const b = s.encode({ y: 2, x: 1 })
+    assert.notEqual(a, b, 'different key orders produce different bytes, so different addresses (pinned as deliberate)')
   })
 
   // ── Boundary tests: the cliff edges between codecs ────────────────────────
@@ -151,17 +150,18 @@ describe(import.meta.url, ({ test }) => {
 
   test('identical strings dedup to the same address', ({ assert }) => {
     const s = new Streamo()
-    const a = s.encodeVariable('hello, world — repeated')
-    const b = s.encodeVariable('hello, world — repeated')
-    // VARIABLE wrappers may differ at the top level, but the inner string
-    // chunk should be at the same address. We test indirectly: total
-    // byteLength after the second encode shouldn't grow by the full string
-    // length again.
-    const beforeSecond = s.byteLength
-    s.append(a)
-    const afterFirst = s.byteLength
-    // (b was constructed but not appended — we'd be re-appending duplicates.)
-    // Instead: append a string twice via a fresh streamo and observe.
+    // This used to be indirect: encodeVariable wrapped the value in a BOXED
+    // chunk, so two encodes of the same string differed at the top level and
+    // the test had to infer dedup from byteLength in a second store. encode
+    // returns an address as of 2026-10-06, so it can say what it means.
+    const a = s.encode('hello, world — repeated')
+    const b = s.encode('hello, world — repeated')
+    assert.equal(a, b, 'the second encode hands back the first address')
+    const beforeThird = s.byteLength
+    s.encode('hello, world — repeated')
+    assert.equal(s.byteLength, beforeThird, 'and stores nothing new')
+
+    // The same property through set(), which rebuilds a root around it.
     const s2 = new Streamo()
     s2.set('hello, world — this is long enough to need a separate chunk')
     const len1 = s2.byteLength

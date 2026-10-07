@@ -214,11 +214,11 @@ export class Streamo extends CodecRegistry {
       const levels = []
       let addr = baseAddress
       for (let i = 0; i < path.length - 1; i++) {
-        const refs = this.asRefs(addr, true)
+        const refs = this.asRefs(addr)
         levels.push({ refs, key: path[i] })
         addr = Array.isArray(refs) ? refs[+path[i]] : refs[path[i]]
       }
-      levels.push({ refs: this.asRefs(addr, true), key: path[path.length - 1] })
+      levels.push({ refs: this.asRefs(addr), key: path[path.length - 1] })
 
       // Encode the new leaf value. encode appends without going through
       // Streamo.append, so 'length' is not fired here either.
@@ -283,11 +283,11 @@ export class Streamo extends CodecRegistry {
     const levels = []
     let addr = baseAddress
     for (let i = 0; i < path.length - 1; i++) {
-      const refs = this.asRefs(addr, true)
+      const refs = this.asRefs(addr)
       levels.push({ refs, key: path[i] })
       addr = Array.isArray(refs) ? refs[+path[i]] : refs[path[i]]
     }
-    levels.push({ refs: this.asRefs(addr, true), key: path[path.length - 1] })
+    levels.push({ refs: this.asRefs(addr), key: path[path.length - 1] })
 
     for (let i = levels.length - 1; i >= 0; i--) {
       const { refs, key } = levels[i]

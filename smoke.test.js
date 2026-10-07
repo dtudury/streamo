@@ -99,15 +99,15 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
-  test('set() with a path works when root is VARIABLE-encoded (old server data)', ({ assert }) => {
-    // Old server archives encoded the root value as VARIABLE (a boxed address).
-    // asRefs() previously returned the VARIABLE address number rather than the
-    // inner object's refs, causing refs['toggle'] === undefined → crash.
+  test('set() with a 2-level path reads and writes through nested objects', ({ assert }) => {
+    // This was a compatibility regression for old server archives whose root
+    // was a BOXED ("VARIABLE") address: asRefs returned that address rather
+    // than the inner object's refs, so refs['toggle'] was undefined and set()
+    // crashed. BOXED was deleted 2026-10-06 — "if we need to support existing
+    // Records then we'll use an old version of streamo" — so the root is plain
+    // here and what survives is the nested-path behaviour, worth its own test.
     const stream = new Streamo()
-    // encodeVariable to simulate old-style encoded root
-    const rootCode = stream.encodeVariable({ toggle: { value: false, label: 'enabled' }, counter: { value: 0 } })
-    stream.append(rootCode)
-    // get() should see through VARIABLE
+    stream.set({ toggle: { value: false, label: 'enabled' }, counter: { value: 0 } })
     assert.equal(stream.get('toggle', 'value'), false)
     // set() with a 2-level path must not crash
     stream.set('toggle', 'value', true)

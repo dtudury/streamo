@@ -80,16 +80,6 @@ export class CodecRegistry extends Addressifier {
     throw new Error(`no codec for value: ${value}`)
   }
 
-  /**
-   * Encode a value as a BOXED (boxed address) so that changing the
-   * top-level value is representable as a new append.
-   * @param {any} value
-   * @returns {Uint8Array}
-   */
-  encodeVariable (value) {
-    return this.#codecs.BOXED._encode(this.#r, this.resolve(this.encode(value)))
-  }
-
   // Mirror of compose. WORD/UINT7 have literal-data parts that aren't
   // child references — flagged via `hasLiteralParts` so callers know
   // decompose alone can't recompose the chunk.
@@ -159,25 +149,21 @@ export class CodecRegistry extends Addressifier {
    *
    * Useful for structural comparison without fully deserialising large trees.
    *
+   * Every part is an address, so this never has to store anything to answer.
+   * It took a `materialize` flag until 2026-10-06: an inline child had no
+   * separate address, and the only way to hand one back was to append it
+   * mid-read. With inline parts gone both arms of that branch had become the
+   * same expression, so the flag was deciding nothing.
+   *
    * @param {number} address
    * @returns {Object|Array|number}
    */
-  // Default (materialize=false): inline children come back as `undefined`
-  // (no separate address; bytes live in the parent chunk). The readOnly
-  // R sees no `append`, so mutation is unreachable by control flow.
-  //
-  // materialize=true: inline children get appended to this and surface as
-  // real addresses. Used by Streamo.set/setRefs during write-side path
-  // traversal, where the mutation is part of the same write op anyway.
-  asRefs (address, materialize = false) {
+  asRefs (address) {
     const code = this.resolve(address)
     const { type } = this.footerToCodec[code.at(-1)]
-    if (type === 'BOXED' ||
-        type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
-        type === 'ARRAY'  || type === 'EMPTY_ARRAY') {
-      return materialize
-        ? this.#decodeWith(this.#r, address, true)
-        : this.#decodeWith(this.#r, address, true)
+    if (type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
+        type === 'ARRAY' || type === 'EMPTY_ARRAY') {
+      return this.#decodeWith(this.#r, address, true)
     }
     return address
   }

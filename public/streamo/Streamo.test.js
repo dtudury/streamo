@@ -33,6 +33,48 @@ describe(import.meta.url, ({ test }) => {
     }
   })
 
+  test('single-element and sparse arrays survive asRefs, get(path) and set(path)', ({ assert }) => {
+    // REGRESSION, found 2026-10-07 and present since at least 6652913.
+    // ARRAY has two representations: a dense multi-element array is a Duple
+    // tree of VALUES, where asRefs 'all' (an address for both Duple slots) is
+    // right. A single-element or sparse array is encoded as an OBJECT
+    // ({...v, length}), where a Duple's slot 0 is a NAME — so 'all' handed
+    // back the ADDRESS OF THE NAME STRING, and ARRAY.decode's
+    // Object.assign([], inner) read that address as an index.
+    //
+    // asRefs([7]) came back as { addr("length"): addr(1), addr("0"): addr(7) }
+    // coerced to an array of length 24. get('list','0') was undefined, and
+    // set('list','0',42) wrote that shape back as the record:
+    //   {"list":[42,null, ...45 entries... ],"other":"x"}
+    // Full get() was always correct, so only path reads and writes bit — which
+    // is what kept it quiet.
+    const s = new Streamo()
+    s.set({ list: [7], other: 'x' })
+
+    const refs = s.getRefs('list')
+    assert.equal(refs.length, 1, `refs for a 1-element array has one entry, got ${JSON.stringify(refs)}`)
+    assert.equal(typeof refs[0], 'number', 'and that entry is an address')
+    assert.equal(s.decode(refs[0]), 7, 'which resolves to the element')
+
+    assert.equal(s.get('list', '0'), 7, 'get(path) reaches into a 1-element array')
+
+    s.set('list', '0', 42)
+    assert.deepEqual(s.get(), { list: [42], other: 'x' }, 'set(path) does not reshape the record')
+
+    // Sparse arrays take the same representation, so they take the same path.
+    const sp = new Streamo()
+    sp.set({ list: [1, undefined, 3] })
+    assert.equal(sp.get('list', '2'), 3, 'get(path) into a sparse array')
+    sp.set('list', '0', 9)
+    assert.deepEqual(sp.get('list'), [9, undefined, 3], 'set(path) preserves the holes and the length')
+
+    // And growing a 1-element array past its representation boundary.
+    const g = new Streamo()
+    g.set({ list: [7] })
+    g.set('list', '1', 8)
+    assert.deepEqual(g.get('list'), [7, 8], '1-element array grows into the dense representation')
+  })
+
   test('deduplication: same value always gets the same address', ({ assert }) => {
     const s = new Streamo()
     const a1 = s.encode(42)

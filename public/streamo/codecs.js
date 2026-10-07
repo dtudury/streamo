@@ -463,14 +463,39 @@ export function makeCodecs () {
       if (v.length > 1 && Object.keys(v).length === v.length) {
         return encodeMultipart(r, [new Duple(v)], ARRAY, asRefs)
       }
-      // sparse or single-element array: encode as object with length key
-      const obj = Object.assign({}, v, { length: v.length })
+      // Sparse or single-element array: encode as an object with a length key.
+      // Under asRefs every value in that object is an ADDRESS, and `length`
+      // is one of its values — so it has to be the address of the number, not
+      // the number. Passing it raw made the count get read as an address.
+      const length = asRefs ? r.encode(v.length) : v.length
+      const obj = Object.assign({}, v, { length })
       return encodeMultipart(r, [obj], ARRAY, asRefs)
     },
     decode (r, code, asRefs) {
-      // 'all' mode: return an address for every element rather than decoded values
-      const inner = decodeParts(r, code)[0].getDecoded(asRefs === true ? 'all' : asRefs)
+      // Two representations, and they need different asRefs treatment.
+      //
+      // Dense multi-element arrays are a Duple tree of VALUES, so 'all' — an
+      // address for both slots — is exactly right.
+      //
+      // A single-element or sparse array is the OBJECT above ({...v, length}),
+      // where a Duple's slot 0 is a NAME. 'all' returns the address of the
+      // name string, and Object.assign reads that address as an index: before
+      // 2026-10-07, asRefs([7]) came back as a 24-long sparse array keyed by
+      // addr("0") and addr("length"). get(path) then returned undefined and
+      // set(path) wrote that shape back, corrupting the record.
+      const part = decodeParts(r, code)[0]
+      const inner = part.getDecoded(asRefs === true ? 'all' : asRefs)
       if (inner instanceof Duple) return inner.flat()
+      if (asRefs === true) {
+        // Names as strings, values as addresses. `length` is metadata rather
+        // than an element, so it is decoded rather than handed back as one.
+        const named = part.getDecoded(true)
+        const out = new Array(r.decode(named.length))
+        for (const [k, v] of Object.entries(named)) {
+          if (k !== 'length') out[Number(k)] = v
+        }
+        return out
+      }
       return Object.assign([], inner)
     }
   }

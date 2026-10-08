@@ -26,13 +26,18 @@ function unresolvedFrom (entry) {
   return missing
 }
 
+// Caught a third one on 2026-10-08: deleting v1 removed bin/streamo.js while
+// this test still named it, and index.js still re-exported fifteen deleted
+// modules. The suite failed before anything shipped — which is the whole
+// point of this file.
+//
 // Regression, twice over: 15.0.0 deleted ContextRecord.js and left
 // bin/streamo.js importing it — the binary threw on startup. 15.0.2 fixed
 // bin/ and missed index.js, so `import '@dtudury/streamo'` threw for every
 // consumer of the published package until 2026-08-01. Same bug, consecutive
 // releases, caught by nothing: npm test imported neither entry point, and
 // `npm run typecheck` flagged it while being run by no one.
-for (const entry of ['index.js', 'bin/streamo.js']) {
+for (const entry of ['index.js', 'bin/streamo2.js']) {
   test(`${entry} — every relative import resolves`, () => {
     const missing = unresolvedFrom(entry)
     assert.deepStrictEqual(missing, [],

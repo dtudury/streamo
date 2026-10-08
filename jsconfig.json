@@ -1,7 +1,14 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "types": [
+      "node"
+    ],
     "module": "node16",
     "moduleResolution": "node16",
     "allowJs": true,
@@ -14,8 +21,12 @@
     "ignoreDeprecations": "6.0",
     "baseUrl": ".",
     "paths": {
-      "@dtudury/streamo": ["./index.js"],
-      "@dtudury/streamo/*": ["./public/streamo/*"]
+      "@dtudury/streamo": [
+        "./index.js"
+      ],
+      "@dtudury/streamo/*": [
+        "./public/streamo/*"
+      ]
     }
   },
   "include": [

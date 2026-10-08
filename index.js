@@ -1,36 +1,28 @@
-// Public API. Most users want named imports from here:
+// Public API.
 //
-//   import { StreamoRecord, Signer, registrySync } from '@dtudury/streamo'
+//   import { StreamoRecord, Signer, Hub } from '@dtudury/streamo'
 //
-// For advanced/internal use, subpath imports also work:
+// Subpath imports also work:
 //
 //   import { Recaller } from '@dtudury/streamo/utils/Recaller.js'
 //
-// StreamoComponent is intentionally NOT re-exported here: it extends
-// HTMLElement at module-load time and cannot be imported in Node. Browser
-// consumers should subpath-import it directly:
-//
-//   import { StreamoComponent, defineComponent } from '@dtudury/streamo/StreamoComponent.js'
+// v1 — the registry/sync/serving layer and the h/mount app framework — was
+// deleted on 2026-10-08. It is preserved in full on the `v1-archive` branch
+// and the `v1-complete` tag. Nothing here re-exports it.
 
 export { Streamo, changedPaths } from './public/streamo/Streamo.js'
 export { StreamoRecord } from './public/streamo/StreamoRecord.js'
 export { WritableStreamoRecord } from './public/streamo/WritableStreamoRecord.js'
 export { Signer, verifySignature } from './public/streamo/Signer.js'
 export { Signature } from './public/streamo/Signature.js'
-export { StreamoRecordRegistry } from './public/streamo/StreamoRecordRegistry.js'
-export { registrySync, handleRegistryPeer } from './public/streamo/registrySync.js'
-export { archiveSync } from './public/streamo/archiveSync.js'
-export { fileSync } from './public/streamo/fileSync.js'
-export { originSync } from './public/streamo/originSync.js'
-export { outletSync, attachStreamSync } from './public/streamo/outletSync.js'
-export { s3Sync } from './public/streamo/s3Sync.js'
-export { stateFileSync } from './public/streamo/stateFileSync.js'
-export { webSync } from './public/streamo/webSync.js'
-export { StreamoServer } from './public/streamo/StreamoServer.js'
-export { h, handle, memo, HElement, HText } from './public/streamo/h.js'
-export { mount, dismount } from './public/streamo/mount.js'
+export { Opaque } from './public/streamo/Opaque.js'
+export { StreamoRecordSerializer } from './public/streamo/StreamoRecordSerializer.js'
 export { Recaller } from './public/streamo/utils/Recaller.js'
-export { liveObject, liveValue, isLiveSource } from './public/streamo/LiveSource.js'
 export { bytesToHex, hexToBytes } from './public/streamo/utils.js'
-export { identity } from './public/streamo/identity.js'
-export { dispatch } from './public/streamo/dispatch.js'
+export { h, handle, memo, HElement, HText } from './public/streamo/h.js'
+
+// v2
+export { Hub } from './public/streamo/v2/Hub.js'
+export { Upstream } from './public/streamo/v2/Upstream.js'
+export { Downstream } from './public/streamo/v2/Downstream.js'
+export { loopback } from './public/streamo/v2/loopback.js'

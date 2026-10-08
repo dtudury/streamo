@@ -49,17 +49,6 @@ import { Streamo } from './Streamo.js'
 import { verifySignature } from './Signer.js'
 
 /**
- * Anything you can read a chain out of: a StreamoRecord, or a Mirror
- * delegating to one. Mirror forwards the read verbs and deliberately
- * withholds the write ones, so this union is a real distinction rather
- * than a convenience.
- *
- * Type-only import — no runtime edge from StreamoRecord to Mirror.
- *
- * @typedef {StreamoRecord | import('./Mirror.js').Mirror} ReadableRecord
- */
-
-/**
  * A Streamo whose values are commit records.
  *
  * Every byte on the chain is either a COMMIT, a child chunk referenced

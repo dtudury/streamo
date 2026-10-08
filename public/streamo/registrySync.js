@@ -80,7 +80,7 @@ const RECONNECT_RESET_MS = 30000
 /**
  * @typedef {Object} RegistrySyncOptions
  *
- * @property {(keyHex: string, repo: import('./StreamoRecord.js').ReadableRecord, subscribe: (keyHex: string) => void) => void} [follow]
+ * @property {(keyHex: string, repo: import('./Mirror.js').ReadableRecord, subscribe: (keyHex: string) => void) => void} [follow]
  *   Called reactively whenever a synced repository's value changes.  Use this
  *   to extract repository keys embedded in the data and call `subscribe(key)`
  *   on each one.  The registry will then sync that repo too, and `follow` will

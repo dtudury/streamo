@@ -21,6 +21,22 @@ import { WritableStreamoRecord } from './WritableStreamoRecord.js'
 import { arraysEqual } from './utils.js'
 import { Draft } from './Draft.js'
 
+/**
+ * Anything you can read a chain out of: a StreamoRecord, or a Mirror
+ * delegating to one. Mirror forwards the read verbs and deliberately
+ * withholds the write ones, so this union is a real distinction rather
+ * than a convenience.
+ *
+ * Lived in StreamoRecord.js until 2026-10-08, where it was the ONLY
+ * reference from the core codec/record files into this layer — and a
+ * type-only one at that. It still dragged Mirror, and through it Draft,
+ * into v2's dependency closure: 700 lines pulled in by one annotation.
+ * It belongs here, with the two files that use it (registrySync,
+ * repoFileServer), all of which this layer owns.
+ *
+ * @typedef {import('./StreamoRecord.js').StreamoRecord | Mirror} ReadableRecord
+ */
+
 export class Mirror {
   /** @type {string} hex-encoded public key of the mirrored Record. */
   publicKeyHex

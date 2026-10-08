@@ -1,4 +1,3 @@
-import { Mirror } from '../Mirror.js'
 import { StreamoRecord } from '../StreamoRecord.js'
 import { WritableStreamoRecord } from '../WritableStreamoRecord.js'
 
@@ -7,7 +6,6 @@ const KEYS = Symbol('the keys this hub holds')
 export class Hub {
   #mirrors = new Map()
   #drafts = new Map()
-  #compat = new Map()
   #draftViews = new Map()
   #draftSigners = new Map()
 
@@ -86,15 +84,5 @@ export class Hub {
     this.#draftSigners.set(key, signerName)
     this.recaller.reportKeyMutation(this.#drafts, key)
     return draft
-  }
-
-  _materialize (key) {
-    const local = this.getMirror(key)
-    let compat = this.#compat.get(key)
-    if (!compat) {
-      compat = new Mirror({ publicKeyHex: key, local, recaller: this.recaller })
-      this.#compat.set(key, compat)
-    }
-    return compat
   }
 }

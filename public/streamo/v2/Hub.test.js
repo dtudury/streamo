@@ -60,7 +60,6 @@ describe(import.meta.url, ({ test }) => {
     await settle()
     assert.equal(readsCanon, canon, 'a Sync writing canon to disk does not wake because someone edited locally')
     assert.equal(readsDraft, draft + 1, 'the draft watcher does')
-
   })
 
   test('a draft needs a signer, shares canon history, and getCurrent prefers it', async ({ assert }) => {
@@ -101,23 +100,6 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(threw, 'a different signer is refused rather than handed someone else\'s pen')
     assert.ok(/getDraft/.test(threw.message), 'and the refusal names what to use instead')
     assert.equal(hub.getDraft(K1).isAuthorable, false, 'reading never needed the pen')
-  })
-
-  test('_materialize hands the socket syncs a Mirror over the same record', async ({ assert }) => {
-    const hub = new Hub({ recaller: new Recaller('hub-compat') })
-    const mirror = hub._materialize(K1)
-    assert.equal(mirror.local, hub.getMirror(K1))
-    assert.equal(mirror.publicKeyHex, K1)
-    assert.equal(mirror, hub._materialize(K1), 'cached, so a second subscribe gets the same one')
-  })
-
-  test('the compat Mirror is cached because a Mirror holds wire state', async ({ assert }) => {
-    const hub = new Hub({ recaller: new Recaller('hub-compat-state') })
-    const compat = hub._materialize(K1)
-    compat.remoteLength = 208
-    assert.equal(hub._materialize(K1).remoteLength, 208,
-      'a fresh Mirror per call would reset the wire cursor and lose divergence')
-    assert.equal(hub._materialize(K1), compat, 'so identity has to be stable')
   })
 
   test('a draft continues canon chain instead of forking it', async ({ assert }) => {

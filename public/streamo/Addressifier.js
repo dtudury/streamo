@@ -1,33 +1,10 @@
 /**
  * @file Addressifier — append-only content-addressable byte store.
- *
- * The byte-level foundation. Knows nothing about types or values; just
- * appends Uint8Array chunks and indexes them by content. Higher layers
- * (CodecRegistry, Streamo, StreamoRecord, registrySync) build on this.
- *
- * See design.md §1.
  */
 import { ContentMap } from './ContentMap.js'
 
-/**
- * Append-only, content-addressable byte store.
- *
- * Each appended Uint8Array gets an address equal to the index of its last byte.
- * Duplicate content is rejected: the same bytes always live at the same address.
- *
- * The store exposes ReadableStream / WritableStream for network sync — the wire
- * format is a sequence of length-prefixed chunks (4-byte little-endian length
- * followed by the chunk bytes).
- */
 export class Addressifier {
   /**
-   * The chunk store. Everything a reader cares about — length, paths,
-   * values — is derived from it, so it is what reactivity is reported
-   * against rather than the wrapper holding it. Two objects sharing this
-   * array are two windows on one store and wake together; `_applyClone`
-   * slices, so a copy gets its own array and diverges.
-   *
-   * Underscore, not #, precisely so subclasses can report against it.
    * @type {Array.<{uint8Array: Uint8Array, offset: number}>}
    */
   _chunks = []
@@ -35,10 +12,6 @@ export class Addressifier {
 
   #resolveNext
   #nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
-  // close() flips this to true and wakes any readable streams that
-  // are blocked on #nextChunk. Once closed, append() throws and all
-  // readable streams emit `done: true` after draining whatever's in
-  // `_chunks`. One-way; there's no reopen.
   #closed = false
 
   get byteLength () {
@@ -47,20 +20,11 @@ export class Addressifier {
     return last.offset + last.uint8Array.length
   }
 
-  /**
-   * On-disk / on-the-wire byte size — `byteLength` plus the 4-byte
-   * length prefix that wraps each chunk in the wire format. Use this
-   * (not `byteLength`) when comparing in-memory state to a file size
-   * or a written-byte counter; use `byteLength` for chain positions
-   * (chunk offsets, fromOffset, signedLength), which are content-only.
-   */
   get wireByteLength () {
     return this.byteLength + 4 * this._chunks.length
   }
 
   /**
-   * Returns the Uint8Array whose last byte is at `address`.
-   * Every address is a real offset into the store — there are no exceptions.
    * @param {number} address
    * @returns {Uint8Array}
    */
@@ -69,8 +33,6 @@ export class Addressifier {
   }
 
   /**
-   * EXPERIMENT 2026-10-06 (David): let CodecRegistry index a subcode at a
-   * computed address without appending it as its own chunk.
    * @param {Uint8Array} code
    * @param {number} address
    * @returns {void}
@@ -80,7 +42,6 @@ export class Addressifier {
   }
 
   /**
-   * Look up the address of a previously appended chunk.
    * @param {Uint8Array} code
    * @returns {number|undefined}
    */
@@ -89,39 +50,20 @@ export class Addressifier {
   }
 
   /**
-   * Append a new chunk to the store. Returns its address.
-   * Throws if the chunk is empty or already present.
    * @param {Uint8Array} code
    * @returns {number}
    */
   append (code) {
     if (this.#closed) throw new Error('cannot append to a closed Addressifier')
     if (!code.length) throw new Error('chunk must not be empty')
-    // EXPERIMENT 2026-10-06: the duplicate check moved up to
-    // CodecRegistry.append, which is where the subcodes are already split out.
-    // Addressifier does not care about duplicated values being appended.
     this._chunks.push({ uint8Array: code, offset: this.byteLength })
     const address = this.byteLength - 1
-    // EXPERIMENT 2026-10-06: indexing moved up to CodecRegistry, which splits
-    // the code into subcodes and knows each one's address. Addressifier is a
-    // byte store: it pushes bytes and reports where they landed.
     const prev = this.#resolveNext
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
     prev(code)
     return address
   }
 
-  /**
-   * Signal end-of-stream. Any open `makeReadableStream` readers drain
-   * whatever's already in `_chunks` and then emit `done: true`. Future
-   * `append()` calls throw. Idempotent.
-   *
-   * The intended use is "I'm done with this streamo — drain the pipe
-   * and let me exit cleanly." For long-lived consumers (the relay)
-   * close() is never called; the readable streams stay open forever.
-   * For one-shot scripts (`seed-history`), close() is how they tell
-   * archiveSync's writer loop to wrap up before `process.exit()`.
-   */
   close () {
     if (this.#closed) return
     this.#closed = true
@@ -134,23 +76,18 @@ export class Addressifier {
     return this.#closed
   }
 
-  /**
-   * Clear all stored chunks and reset the store to empty.
-   * Any readers waiting on future chunks will never resolve after this call;
-   * use only when no live readers exist (e.g. before an archiveSync write loop).
-   */
   _reset () {
-    // Cleared in place rather than reassigned: _chunks IS the recaller
-    // subject, so a fresh array would silently detach every view that
-    // shares this store. The doc above says "no live readers" — this
-    // makes violating it visible instead of quiet.
+    // In place, not reassigned: _applyView hands this exact array to its
+    // views, and it is the recaller's subject.
     this._chunks.length = 0
     this.#contentMap = new ContentMap()
+    // Does not resolve the old #nextChunk, so a parked reader never wakes,
+    // and does not clear #closed, so a closed store stays closed. Both are
+    // bugs as of 2026-10-08, found by quizzing a reader on this file.
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
   }
 
   /**
-   * Clone this store up to (and including) `address`.
    * @param {number} address
    * @returns {Addressifier}
    */
@@ -159,16 +96,6 @@ export class Addressifier {
   }
 
   /**
-   * Point `target` at THIS store rather than a copy of it — a view.
-   *
-   * The one line that distinguishes a view from a clone: `_applyClone`
-   * slices, so the copy gets its own array and diverges; this assigns, so
-   * both objects share one array and therefore one recaller subject, and a
-   * watcher on either wakes for appends to the other. Give the target a
-   * non-writable class and you have a read-only window with no new type.
-   *
-   * Not shared: the readable-stream wakeup (#nextChunk). Recaller
-   * reactivity follows; `makeReadableStream` on a view will not.
    * @template {Addressifier} T @param {T} target @returns {T}
    */
   _applyView (target) {
@@ -176,21 +103,14 @@ export class Addressifier {
       throw new TypeError('_applyView: a view is a reader — two writers on one store is what checkout refuses')
     }
     target._chunks = this._chunks
-    // NOT shared, and this is the whole subtlety: #contentMap is write-side
-    // dedup (every addressOf call site is `?? append` or a guard before one),
-    // so a reader never consults it — while _reset REPLACES it, which a view
-    // cannot see. Sharing it produced a window whose addressOf answered with
-    // an address its own store could not resolve: yes, then crash. A fresh
-    // empty map makes addressOf return undefined, which is the honest answer
-    // for something that cannot write.
+    // A fresh map, not this one: _reset REPLACES #contentMap, which a view
+    // cannot see, so a shared map answers addressOf with addresses its own
+    // store can no longer resolve.
     target.#contentMap = new ContentMap()
     return target
   }
 
   /**
-   * Copy internal store state (chunks + content map) into `target` up to
-   * `address`. Called by subclass clone() methods so they can pass a
-   * subclass instance as `target`.
    * @template {Addressifier} T
    * @param {T} target
    * @param {number} address
@@ -204,13 +124,9 @@ export class Addressifier {
   }
 
   /**
-   * Extract a byte range as a single Uint8Array.
    * @param {number} [start=0]
    * @param {number} [end=this.byteLength]
    * @returns {Uint8Array<ArrayBuffer>}  narrower than `Uint8Array` on
-   *   purpose: both return paths below allocate, so this can never be a view
-   *   onto a SharedArrayBuffer — which is what `utils.sha256` needs, since
-   *   WebCrypto's `digest` rejects possibly-shared views.
    */
   slice (start = 0, end = this.byteLength) {
     const parts = []
@@ -227,7 +143,6 @@ export class Addressifier {
   }
 
   /**
-   * Return a byte at a specific index (not address — just a raw byte position).
    * @param {number} byteIndex
    * @returns {number|undefined}
    */
@@ -238,62 +153,22 @@ export class Addressifier {
   }
 
   /**
-   * ReadableStream that emits chunks at or after `fromOffset`, then waits
-   * for new ones. Wire format: 4-byte LE length prefix followed by chunk
-   * bytes. **All chunks currently ready are bundled into one batched frame**
-   * (capped at `maxBatch` bytes) — Streamo fragments structured values into
-   * many tiny chunks (often ~2 bytes each after dedup), and one-WS-message-
-   * per-chunk would explode the event loop on the receiving side. The
-   * downstream parser handles multi-chunk frames transparently (it reads
-   * `[length][bytes]` in a loop).
-   *
-   * `fromOffset` lets the wire skip bytes the receiver already has — e.g.
-   * a client reconnecting carries its `repo.signedLength` in the subscribe
-   * message, the server validates the handshake, then starts emitting
-   * from there. If `fromOffset` is past the end, the stream waits for new
-   * chunks past that position (rare; valid only if the receiver claims
-   * to be ahead, which the subscribe handshake usually rejects).
-   *
-   * `maxBatch` caps the bytes per batched frame so very large repos don't
-   * land as one huge WS message — 256KB is a sensible default for WS hops.
-   *
-   * **Produces on demand.** One frame per `pull`, which is the consumer
-   * saying it has room; `#nextChunk` is `append`/`close` saying there is
-   * something to send. Those two events are the whole mechanism.
-   *
-   * Until 2026-10-06 the loop lived in `start`, whose promise therefore never
-   * settled, so `pull` was never called and `desiredSize` never read — the
-   * producer enqueued every ready frame regardless of demand. Measured on a
-   * 32,007-chunk store: 2 frames / 270KB sat in the queue before a single
-   * read. `maxBatch` caps one frame, not the depth of the queue, so a fast
-   * store on a slow socket grew memory without bound — and the relay never
-   * closes these streams.
-   *
    * @param {{ fromOffset?: number, maxBatch?: number }} [options]
    * @returns {ReadableStream}
    */
   makeReadableStream ({ fromOffset = 0, maxBatch = 256 * 1024 } = {}) {
     const self = this
-    // Linear scan to find the first chunk at or past fromOffset. SIGs are
-    // fixed-format 97-byte chunks and signedLength always lands on a chunk
-    // boundary, so this is exact when called with `fromOffset = signedLength`.
     let index = 0
     while (index < self._chunks.length && self._chunks[index].offset < fromOffset) index++
     return new ReadableStream({
+      // pull, not start: start's promise would never settle, and draining
+      // eagerly loses backpressure — measured 80 frames / 20MB queued.
       async pull (controller) {
-        // Nothing ready: wait for append() or close() to wake us. The close
-        // check comes first so chunks appended before close are still
-        // delivered, and again after the wake so close exits promptly.
         while (index >= self._chunks.length) {
           if (self.#closed) { controller.close(); return }
           await self.#nextChunk
           if (self.#closed && index >= self._chunks.length) { controller.close(); return }
         }
-        // Plan ONE batch: collect chunks until we'd exceed maxBatch. Always
-        // include at least one chunk per frame so a chunk larger than
-        // maxBatch still ships (rare; would only happen if a user encoded a
-        // single value bigger than 256KB). One frame per pull is the
-        // backpressure — whatever is still ready waits for the next one.
         const start = index
         let total = 0
         while (index < self._chunks.length) {
@@ -318,12 +193,6 @@ export class Addressifier {
   }
 
   /**
-   * WritableStream that accepts the wire format and calls append() for each chunk.
-   *
-   * Resilient by design: duplicate chunks are silently skipped (they are already
-   * stored at the same address). Frames with implausible lengths are rejected so
-   * a single corrupt byte cannot stall the stream indefinitely.
-   *
    * @param {number} [maxFrameSize=64*1024*1024]  reject frames larger than this
    * @returns {WritableStream}
    */
@@ -333,10 +202,6 @@ export class Addressifier {
     let bufOffset = 0
     return new WritableStream({
       write (incoming) {
-        // Compact leftover + incoming into a fresh buf, reset offset.
-        // The bufOffset pattern (rather than shifting `buf = buf.slice(rest)`
-        // per chunk) avoids O(N²) parsing — inner loop advances bufOffset in
-        // O(1) instead of copying the tail per chunk.
         const leftover = buf.length - bufOffset
         if (leftover === 0) buf = incoming
         else {
@@ -352,22 +217,9 @@ export class Addressifier {
           if (len === 0) throw new Error('malformed frame: zero-length chunk')
           if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
           if (buf.length - bufOffset < 4 + len) break
-          // slice() (a copy) rather than subarray() (a view) — each
-          // extracted chunk gets its own independent memory. Otherwise
-          // a small long-lived chunk would pin the whole incoming buffer
-          // long after the frame's other chunks were discarded. Cost:
-          // O(chunk_length) memcopy per chunk. See
-          // docs/EXPLORATION-wire-mirror-split.md §"Garbage collection".
-          // new Uint8Array(view) rather than buf.slice(): slice copies on a
-          // Uint8Array and ALIASES subarray on a Node Buffer, and `buf = incoming`
-          // above means buf is whatever the caller handed us. archiveSync feeds
-          // readFile() output directly, so every chunk loaded from disk was a
-          // view into one allocation — measured 40 chunks, 1 backing buffer —
-          // which is precisely the pinning the comment below describes as fixed.
+          // Copy, not a view: Buffer#slice ALIASES rather than copies, and
+          // `buf` may be the caller's recycled stream buffer.
           const code = new Uint8Array(buf.subarray(bufOffset + 4, bufOffset + 4 + len))
-          // EXPERIMENT 2026-10-06: append every framed chunk. Skipping one
-          // whose bytes we happen to hold elsewhere makes byteLength diverge
-          // from the author's, and byteLength is what signatures commit to.
           self.append(code)
           bufOffset += 4 + len
         }

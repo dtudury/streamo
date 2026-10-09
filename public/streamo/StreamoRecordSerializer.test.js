@@ -352,7 +352,7 @@ describe(import.meta.url, ({ test }) => {
   // ── stress: many writers, mixed valid/invalid, verify invariants ────────
   //
   // The three semantic boundaries (David, this session):
-  //   • Throw everything away  — operator-explicit (`_reset()`); not exercised here.
+  //   • Throw everything away  — no longer expressible; _reset was deleted 2026-10-08.
   //   • Shrink back to known-good  — a rejected push leaves the local Record
   //     with orphaned bytes; the relay's state stays at its last-accepted top.
   //     Tests below verify the relay never shrinks past or corrupts beyond

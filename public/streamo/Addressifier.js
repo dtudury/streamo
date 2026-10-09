@@ -53,12 +53,6 @@ export class Addressifier {
     return this.#closed
   }
 
-  _reset () {
-    this._chunks.length = 0
-    this.#contentMap = new ContentMap()
-    this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
-  }
-
   clone (address) {
     return this._applyClone(new Addressifier(), address)
   }

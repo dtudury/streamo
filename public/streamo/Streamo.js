@@ -159,8 +159,4 @@ export class Streamo extends CodecRegistry {
     return super.byteLength - 1
   }
 
-  _reset () {
-    super._reset()
-    this.#valueAddress = -1
-  }
 }

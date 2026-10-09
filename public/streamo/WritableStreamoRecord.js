@@ -216,9 +216,4 @@ export class WritableStreamoRecord extends StreamoRecord {
 
   get isAuthorable () { return true }
 
-  _reset () {
-    super._reset()
-    this.#locallyAuthoredOffset = Infinity
-    this.recaller.reportKeyMutation(this, 'locallyAuthoredOffset')
-  }
 }

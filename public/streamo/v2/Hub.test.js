@@ -151,7 +151,7 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(draft.lastCommit.parent >= 0, 'a commit on it extends the chain rather than starting one')
   })
 
-  test('a view shares the store but not the write-side dedup, so _reset cannot strand it', async ({ assert }) => {
+  test('a view shares the store but not the write-side dedup', async ({ assert }) => {
     const recaller = new Recaller('view-dedup')
     const origin = new Streamo({ recaller })
     origin.set({ hello: 'world' })
@@ -162,12 +162,9 @@ describe(import.meta.url, ({ test }) => {
     assert.ok(address !== undefined, 'the origin dedups, because it writes')
     assert.equal(view.addressOf(code), undefined, 'the view does not, because it cannot')
 
-    // Sharing #contentMap made this the failure: after _reset the view's
-    // addressOf still answered with an address its own (shared, cleared)
-    // store could no longer resolve — yes, then crash.
-    origin._reset()
-    assert.equal(view.addressOf(code), undefined, 'and still does not after a reset')
-    assert.equal(view._chunks.length, 0, 'the cleared store is visible through the window')
+    origin.set({ hello: 'world', more: 'appended' })
+    assert.equal(view.addressOf(code), undefined, 'and still does not after the origin writes again')
+    assert.equal(view._chunks.length, origin._chunks.length, 'while the appends are visible through the window')
   })
 
   test('_applyView refuses a target that can author', async ({ assert }) => {

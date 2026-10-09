@@ -31,7 +31,6 @@ export class Addressifier {
     append(code: Uint8Array): number;
     close(): void;
     get isClosed(): boolean;
-    _reset(): void;
     /**
      * @param {number} address
      * @returns {Addressifier}

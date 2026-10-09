@@ -141,8 +141,4 @@ export class StreamoRecord extends Streamo {
 
   get isAuthorable () { return false }
 
-  _reset () {
-    super._reset()
-  }
-
 }

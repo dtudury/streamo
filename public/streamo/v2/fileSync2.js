@@ -23,23 +23,12 @@ const describe = value =>
         : Array.isArray(value) ? `an array of ${value.length}`
           : `a ${typeof value}`.replace('a o', 'an o')
 
-/**
- * @param {object} options
- * @param {import('./Hub.js').Hub} options.hub
- * @param {string} options.rootKey
- * @param {string} [options.folder]
- * @param {(rel: string) => boolean} [options.ignore]
- * @param {import('../Signer.js').Signer|null} [options.signer]
- * @param {string|null} [options.signerName]
- * @param {boolean} [options.upstream]  this folder is where canon comes from
- */
+/** @param {{ hub: any, rootKey: string, folder?: string, ignore?: (rel: string) => boolean, signer?: any, signerName?: string|null, upstream?: boolean }} options */
 export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignore = () => false, signer = null, signerName = null, upstream = false }) {
   await mkdir(folderPath, { recursive: true })
   const folder = await realpath(folderPath)
 
   const root = hub.getMirror(rootKey)
-  // One serializer per record, not per batch: it holds the promise chain that
-  // serializes concurrent submissions against one chain head.
   const canonSerializer = new StreamoRecordSerializer(root, hexToBytes(rootKey))
 
   let accepts = null
@@ -101,18 +90,7 @@ export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignor
   }
 
   const landIntoCanon = async draft => {
-    // Wait for the signature before piping. commit() appends the commit chunks
-    // now and the SIG a tick later, so landing immediately put UNSIGNED bytes
-    // into canon — which nothing noticed while canon accepted anything. The
-    // verified writer below cannot accept a batch with no SIG, so it would
-    // simply buffer forever instead.
     await hub.recaller.when(() => draft.byteLength > 0 && draft.signedLength === draft.byteLength)
-    // Submitted directly rather than piped through makeVerifiedWritableStream.
-    // That wrapper is WritableStream -> ConnectionAccumulator -> serializer, and
-    // the accumulator's whole job is parsing length-prefixed bytes off a wire.
-    // There is no wire here: draft and canon are two objects in one heap, so
-    // this serialized a Record and parsed it straight back. Same three checks
-    // (shape, chain, crypto) — submit() takes { chunks, sig } and always did.
     for (const batch of draft.commitBatchesFrom(root.byteLength)) {
       const result = await canonSerializer.submit(batch)
       if (!result.accepted) throw new Error(`landIntoCanon: canon refused a batch (${result.reason})`)

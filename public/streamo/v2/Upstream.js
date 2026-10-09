@@ -74,9 +74,6 @@ export class Upstream {
     const chunk = data.subarray(KEY_BYTES)
     if (!chunk.length) return
     this.#writerFor(key).write(chunk).catch(error => {
-      // Until canon was verified a writer could never reject, so this path had
-      // no handler and a forged frame took the process down as an unhandled
-      // rejection. Refusing is the point; dying silently is not.
       console.error(`Upstream: refused canon for ${key.slice(0, 8)}… — ${error.message}`)
       this.#writers.delete(key)
       this.#connection.close()

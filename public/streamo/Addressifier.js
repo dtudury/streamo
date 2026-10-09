@@ -1,12 +1,6 @@
-/**
- * @file Addressifier — append-only content-addressable byte store.
- */
 import { ContentMap } from './ContentMap.js'
 
 export class Addressifier {
-  /**
-   * @type {Array.<{uint8Array: Uint8Array, offset: number}>}
-   */
   _chunks = []
   #contentMap = new ContentMap()
 
@@ -24,35 +18,18 @@ export class Addressifier {
     return this.byteLength + 4 * this._chunks.length
   }
 
-  /**
-   * @param {number} address
-   * @returns {Uint8Array}
-   */
   resolve (address) {
     return this.#chunkAt(address).uint8Array
   }
 
-  /**
-   * @param {Uint8Array} code
-   * @param {number} address
-   * @returns {void}
-   */
   _index (code, address) {
     this.#contentMap.set(code, address)
   }
 
-  /**
-   * @param {Uint8Array} code
-   * @returns {number|undefined}
-   */
   addressOf (code) {
     return this.#contentMap.get(code)
   }
 
-  /**
-   * @param {Uint8Array} code
-   * @returns {number}
-   */
   append (code) {
     if (this.#closed) throw new Error('cannot append to a closed Addressifier')
     if (!code.length) throw new Error('chunk must not be empty')
@@ -77,45 +54,24 @@ export class Addressifier {
   }
 
   _reset () {
-    // In place, not reassigned: _applyView hands this exact array to its
-    // views, and it is the recaller's subject.
     this._chunks.length = 0
     this.#contentMap = new ContentMap()
-    // Does not resolve the old #nextChunk, so a parked reader never wakes,
-    // and does not clear #closed, so a closed store stays closed. Both are
-    // bugs as of 2026-10-08, found by quizzing a reader on this file.
     this.#nextChunk = new Promise(resolve => { this.#resolveNext = resolve })
   }
 
-  /**
-   * @param {number} address
-   * @returns {Addressifier}
-   */
   clone (address) {
     return this._applyClone(new Addressifier(), address)
   }
 
-  /**
-   * @template {Addressifier} T @param {T} target @returns {T}
-   */
   _applyView (target) {
     if (typeof (/** @type {any} */ (target)).attachSigner === 'function') {
       throw new TypeError('_applyView: a view is a reader — two writers on one store is what checkout refuses')
     }
     target._chunks = this._chunks
-    // A fresh map, not this one: _reset REPLACES #contentMap, which a view
-    // cannot see, so a shared map answers addressOf with addresses its own
-    // store can no longer resolve.
     target.#contentMap = new ContentMap()
     return target
   }
 
-  /**
-   * @template {Addressifier} T
-   * @param {T} target
-   * @param {number} address
-   * @returns {T}
-   */
   _applyClone (target, address) {
     const idx = this.#indexAt(address, false)
     target._chunks = this._chunks.slice(0, idx + 1)
@@ -123,11 +79,6 @@ export class Addressifier {
     return target
   }
 
-  /**
-   * @param {number} [start=0]
-   * @param {number} [end=this.byteLength]
-   * @returns {Uint8Array<ArrayBuffer>}  narrower than `Uint8Array` on
-   */
   slice (start = 0, end = this.byteLength) {
     const parts = []
     for (const { uint8Array, offset } of this._chunks) {
@@ -142,27 +93,17 @@ export class Addressifier {
     return out
   }
 
-  /**
-   * @param {number} byteIndex
-   * @returns {number|undefined}
-   */
   byteAt (byteIndex) {
     const chunk = this.#chunkAt(byteIndex, false)
     if (!chunk) return undefined
     return chunk.uint8Array[byteIndex - chunk.offset]
   }
 
-  /**
-   * @param {{ fromOffset?: number, maxBatch?: number }} [options]
-   * @returns {ReadableStream}
-   */
   makeReadableStream ({ fromOffset = 0, maxBatch = 256 * 1024 } = {}) {
     const self = this
     let index = 0
     while (index < self._chunks.length && self._chunks[index].offset < fromOffset) index++
     return new ReadableStream({
-      // pull, not start: start's promise would never settle, and draining
-      // eagerly loses backpressure — measured 80 frames / 20MB queued.
       async pull (controller) {
         while (index >= self._chunks.length) {
           if (self.#closed) { controller.close(); return }
@@ -192,10 +133,6 @@ export class Addressifier {
     })
   }
 
-  /**
-   * @param {number} [maxFrameSize=64*1024*1024]  reject frames larger than this
-   * @returns {WritableStream}
-   */
   makeWritableStream (maxFrameSize = 64 * 1024 * 1024) {
     const self = this
     let buf = new Uint8Array(0)
@@ -217,8 +154,6 @@ export class Addressifier {
           if (len === 0) throw new Error('malformed frame: zero-length chunk')
           if (len > maxFrameSize) throw new Error(`malformed frame: length ${len} exceeds ${maxFrameSize}`)
           if (buf.length - bufOffset < 4 + len) break
-          // Copy, not a view: Buffer#slice ALIASES rather than copies, and
-          // `buf` may be the caller's recycled stream buffer.
           const code = new Uint8Array(buf.subarray(bufOffset + 4, bufOffset + 4 + len))
           self.append(code)
           bufOffset += 4 + len

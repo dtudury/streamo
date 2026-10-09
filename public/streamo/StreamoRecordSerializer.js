@@ -1,64 +1,18 @@
-/**
- * @file StreamoRecordSerializer — the chain authority for a repo at the relay layer.
- *
- * At the relay there is *one* serializer per repo, shared across every
- * client that's connected to that repo's key. Clients accumulate their
- * pushes into batches (chunks + a covering SIG); they submit batches to
- * the serializer, which processes them sequentially against the repo's
- * current `committedChainHash`. Acceptance extends the top; rejection
- * is reported back to the submitter.
- *
- * "What goes up: goes up until it reaches the top" — this class is the
- * top. The asymmetry matters: clients receiving bytes from the relay
- * trust them (they came from the top, they're correct). Clients pushing
- * upward go through the serializer's gate.
- *
- * Pending = simple. A submit waits for the previous submit's promise
- * before running. JS's event loop serializes; no separate queue object,
- * no early-rejection state. If two clients submit racing batches, both
- * get processed in arrival order; the second one (chained off the now-
- * stale top) gets rejected with `chain-mismatch`. Slow on contention,
- * simple to reason about.
- */
 import { Signature } from './Signature.js'
 import { verifySignature } from './Signer.js'
 
-// chain-hash helpers moved to utils.js on 2026-07-24 (previously
-// duplicated with WritableStreamoRecord.js — the validator and signer
-// need to compute the same chain-hash or they silently disagree; a
-// single source of truth eliminates that failure mode).
 import { arraysEqual, chainHashOf } from './utils.js'
 
 export class StreamoRecordSerializer {
-  /** @param {import('./StreamoRecord.js').StreamoRecord} repo
-   *  @param {Uint8Array} publicKey  the repo's signer pubkey */
   constructor (repo, publicKey) {
     this.repo = repo
     this.publicKey = publicKey
-    // The promise chain that serializes incoming submissions. Every
-    // submit() awaits this before running, then replaces it with its own
-    // promise. JS single-threaded event-loop does the rest. Typed as
-    // Promise<any> so each .then().catch() chain reassignment carries
-    // whatever shape the previous submit returned without conflict.
     /** @type {Promise<any>} */
     this._lock = Promise.resolve()
   }
 
-  /**
-   * Submit a batch (chunks + covering SIG) for atomic chain extension.
-   * Resolves with `{ accepted: true }` on success, or
-   * `{ accepted: false, reason }` on rejection. Reasons:
-   *   - 'chain-mismatch'        — sig.chainHash doesn't extend the top
-   *   - 'verification-failed'   — sig.compactRawBytes didn't crypto-verify
-   *   - 'malformed'             — sig chunk wasn't a SIGNATURE codec, or
-   *                               batch otherwise didn't parse
-   *
-   * @param {{ chunks: Uint8Array[], sig: Uint8Array }} batch
-   * @returns {Promise<{ accepted: boolean, reason?: string }>}
-   */
   submit (batch) {
     const next = this._lock.then(() => this._tryApply(batch))
-    // Don't let a rejection in _tryApply break the chain for future submits.
     this._lock = next.catch(() => {})
     return next
   }
@@ -79,8 +33,6 @@ export class StreamoRecordSerializer {
       return { accepted: false, reason: 'malformed' }
     }
 
-    // Hash all batch bytes (every chunk, regardless of alreadyHave —
-    // the chain commits to the bytes, not the storage decision).
     const newBytesLen = chunks.reduce((sum, c) => sum + c.length, 0)
     const newBytes = new Uint8Array(newBytesLen)
     let pos = 0
@@ -95,7 +47,6 @@ export class StreamoRecordSerializer {
       return { accepted: false, reason: 'verification-failed' }
     }
 
-    // Atomic apply: append chunks (skip alreadyHave) then the SIG.
     for (const c of chunks) {
       if (this.repo.addressOf(c) === undefined) this.repo.append(c)
     }
@@ -104,20 +55,8 @@ export class StreamoRecordSerializer {
   }
 }
 
-/**
- * Per-(connection, repo) batch accumulator. Parses length-prefixed wire
- * frames into chunks; accumulates until a SIGNATURE chunk arrives; submits
- * the completed batch (chunks + sig) to the repo's serializer.
- *
- * Used at the relay only. Each WS connection has its own accumulator per
- * subscribed repo; all of those accumulators feed the same serializer for
- * a given repo.
- */
 export class ConnectionAccumulator {
-  /** @param {StreamoRecordSerializer} serializer
-   *  @param {(result: { accepted: boolean, reason?: string }) => void} onBatchResult
-   *    callback invoked with the serializer's result after each batch submit;
-   *    use it to send accept/reject control messages back to the connection. */
+  /** @param {any} serializer @param {(result: { accepted: boolean, reason?: string }) => void} [onBatchResult] */
   constructor (serializer, onBatchResult = () => {}) {
     this.serializer = serializer
     this.onBatchResult = onBatchResult
@@ -129,12 +68,6 @@ export class ConnectionAccumulator {
   }
 
   async write (incoming) {
-    // Compact leftover + incoming into a fresh buf, reset offset. Hot
-    // loop uses subarray (a view, not a copy) so each chunk extraction
-    // is O(1) — the previous `buf = buf.slice(rest)` pattern was O(N)
-    // per chunk, O(N²) per batched frame. With 8.4's 256KB batched
-    // frames containing ~17K chunks each, that quadratic blocked the
-    // event loop for multiple seconds per WS push.
     const leftover = this.buf.length - this.bufOffset
     if (leftover === 0) this.buf = incoming
     else {
@@ -155,11 +88,6 @@ export class ConnectionAccumulator {
 
       const codec = this.repo.footerToCodec[code.at(-1)]
       if (codec?.type === 'SIGNATURE') {
-        // Batch complete. If the SIG is already in the repo's content map,
-        // this is an echo (the connecting peer is replaying bytes we
-        // already accepted) — skip submission, drop the staged chunks,
-        // don't fire the result callback. The serializer's queue stays
-        // unburdened, and no spurious reject ever leaves the relay.
         if (this.repo.addressOf(code) !== undefined) {
           this.chunks = []
           continue

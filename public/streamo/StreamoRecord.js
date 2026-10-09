@@ -1,114 +1,14 @@
-/**
- * @file StreamoRecord — a Streamo whose bytes interpret as a signed chain.
- *
- * **The read-only definitional minimum.** A Streamo is identity-blind: a
- * codec mapping values to/from bytes. A StreamoRecord wraps a Streamo
- * with the chain-interpretation lens that says "the trailing SIGNATURE
- * chunks anchor the rest as a single signed log." It exposes:
- *
- *   - **Chain reads**: `lastCommit`, `committedChainHash`, `signedLength`,
- *     `valueAddress` (walks past trailing SIGs to land on the commit),
- *     `get` / `getRefs` (lazy descent off the last commit's dataAddress),
- *     `files`, `history`, `verify`.
- *   - **Wire-state cells** (`hasRelay`, `caughtUpToRelay`, `isReadyToAuthor`):
- *     reactive properties surfaced for any consumer that subscribes to
- *     this Record over a wire — apps, the explorer, the relay's own
- *     bookkeeping. Per-connection state (`relayChainHash`,
- *     `relaySubscribedAtOffset`, `conflictDetected`, `pushRejected`) lives
- *     on the RegistrySession — see registrySync.js. Mirror-and-Draft item 6.
- *   - **Relay-inbound writer** via `makeRelayInboundStream`: trust+append
- *     for bytes streamed from an authoritative relay, with chain-hash
- *     alignment to catch the push-in-flight race.
- *
- * **What it intentionally does NOT have:** the author surface — no
- * `set`, no `commit`, no `attachSigner`, no `sign`. Those live on
- * [`WritableStreamoRecord`](./WritableStreamoRecord.js), which extends
- * this class. The type-level split is load-bearing: a slim StreamoRecord
- * is an observer by construction, so the `registrySync.subscribe`
- * outbound guard knows it can never push (dissolving the watch.js
- * corruption-fight footgun at the type level — see CHANGELOG 11.0).
- *
- * **`remoteParent`** cites another author's value at a specific content
- * address — `{ host, repo, dataAddress }`. It's informational (a soft
- * cryptographic footnote), not a sync dependency. Two natural shapes:
- *   - *Fork commit*  (no local parent, remoteParent set) — start of a
- *     new StreamoRecord from someone else's value
- *   - *Merge commit* (both parent and remoteParent set) — combine values
- *     from this StreamoRecord and somewhere else; the new commit doesn't
- *     depend on the source from then on
- *
- * **Conflicts** are not states the StreamoRecord carries by design — they
- * are runtime "these bytes can't be appended" failures detected at the
- * relay-inbound writer. `session.getConflictDetected(pubkeyHex)` is the
- * reactive surfacing of that failure for UI; the chain itself stays clean
- * (rejected batches never land).
- *
- * See design.md §8.
- */
 import { Streamo } from './Streamo.js'
 import { verifySignature } from './Signer.js'
 
-/**
- * A Streamo whose values are commit records.
- *
- * Every byte on the chain is either a COMMIT, a child chunk referenced
- * by a commit's dataAddress, or a SIGNATURE anchoring everything before
- * it. `get()` and `getRefs()` are overridden to read from the last
- * commit's dataAddress transparently — callers don't have to know
- * about the commit envelope.
- *
- * To author, use the `WritableStreamoRecord` subclass.
- */
 export class StreamoRecord extends Streamo {
-  // pushRejected and conflictDetected — per-connection wire-state,
-  // both live on the RegistrySession per Mirror-and-Draft item 6:
-  //   - `session.getPushRejected(pubkeyHex)` → { reason, dataAddress } | null
-  //     (set when the peer sent {type:'reject', ...} for our push)
-  //   - `session.getConflictDetected(pubkeyHex)` → { dataAddress } | null
-  //     (set when relayInboundStream's alignment check catches local
-  //      content past the last shared sig)
-  // Neither is auto-cleared. Both are session-scoped (a different
-  // session for the same key gets a fresh empty map). Record used to
-  // hold these as fields; they moved 2026-07-22..2026-07-23.
 
-  /**
-   * Hex-encoded pubkey this Record was materialized under. Populated by
-   * `StreamoRecordRegistry._materialize` immediately after construction.
-   * Undefined for Records created without going through a registry.
-   * @type {string | undefined}
-   */
   publicKeyHex
 
-  // Optional back-reference to the session that subscribed this
-  // StreamoRecord over the wire. Set by `session.subscribe`; used by
-  // `WritableStreamoRecord.update()` to request a session-level resync
-  // when a push is rejected. Exposed to subclasses via `get _session`.
   #session = null
 
-  // Reactive: whether an upstream relay session is currently attached.
-  // Flipped true the first time `_attachSession` is called.
   #hasRelay = false
 
-
-  /**
-   * The signed commit batches at or after `offset`, in order, each shaped
-   * the way `StreamoRecordSerializer.submit` wants: `{ chunks, sig }`.
-   *
-   * This is the author side of what `ConnectionAccumulator` does for the
-   * wire. The accumulator exists to turn length-prefixed BYTES into these
-   * batches; an author already holds the chunks, so it needs the batching
-   * and not the framing. Going through the wire adapter in-process meant
-   * serializing a Record and parsing it straight back — on a small mixed
-   * record the 4-byte prefixes alone are 136% of the content.
-   *
-   * A trailing run of chunks with no SIG after them is deliberately
-   * omitted: unsigned bytes are not a submittable commit, and `submit`
-   * would reject them as malformed. Callers that must not race a pending
-   * signature await `signedLength === byteLength` first.
-   *
-   * @param {number} [offset=0]  skip chunks starting before this byte
-   * @returns {Array<{ chunks: Uint8Array[], sig: Uint8Array }>}
-   */
   commitBatchesFrom (offset = 0) {
     const batches = []
     let chunks = []
@@ -124,12 +24,6 @@ export class StreamoRecord extends Streamo {
     return batches
   }
 
-  /**
-   * Walk back from the tail to the most recent SIGNATURE chunk. Returns
-   * its starting address (the byte at which it begins), or -1 if there
-   * is no SIG in the store. SIGs are fixed-format 97-byte chunks; the
-   * first 32 bytes are the chainHash and the next 64 are the signature.
-   */
   #lastSigAddress () {
     let addr = this.byteLength - 1
     while (addr >= 0) {
@@ -140,11 +34,6 @@ export class StreamoRecord extends Streamo {
     return -1
   }
 
-  /**
-   * @override After a sign(), byteLength-1 points at the SIGNATURE chunk
-   * rather than the user data. Walk back past any trailing SIGs so reads
-   * land on the most recent non-SIG chunk (typically a COMMIT).
-   */
   get valueAddress () {
     let address = super.valueAddress
     while (address >= 0) {
@@ -155,41 +44,21 @@ export class StreamoRecord extends Streamo {
     return address
   }
 
-  /**
-   * Byte length covered by the most recent SIGNATURE chunk. Derived from
-   * the bytes — no cached state. Returns 0 if no SIG has been appended.
-   */
   get signedLength () {
     const sigStart = this.#lastSigAddress()
     return sigStart < 0 ? 0 : sigStart + 97
   }
 
-  /**
-   * The 32-byte chainHash committed by the most recent SIGNATURE chunk.
-   * Derived from the bytes: the first 32 bytes of that 97-byte chunk.
-   * Returns 32 zeros (the chain seed) if no SIG has been appended.
-   */
   get committedChainHash () {
     const sigStart = this.#lastSigAddress()
     if (sigStart < 0) return new Uint8Array(32)
     return this.slice(sigStart, sigStart + 32)
   }
 
-  /**
-   * The latest commit record, or null if nothing has been committed yet.
-   * Registers a reactive dependency on the commit log length.
-   * @returns {{ message: string, date: Date, dataAddress: number, parent: number|undefined, remoteParent?: { host: string, repo: string, dataAddress: number } }|null}
-   */
   get lastCommit () {
     this.recaller.reportKeyAccess(this._chunks, 'length')
     const address = this.valueAddress
     if (address < 0) return null
-    // Defensive decode: during origin-sync's initial replay, the recaller
-    // fires this getter on every chunk arrival. valueAddress can briefly
-    // point at a chunk whose referenced inner chunks (the Duple tree of
-    // the value, etc.) haven't been appended yet — resolve() throws on
-    // the missing address. Treat that as "no commit visible yet"; the
-    // watcher re-runs when the next chunk lands and the state stabilises.
     let value
     try {
       value = this.decode(address)
@@ -200,23 +69,14 @@ export class StreamoRecord extends Streamo {
     return value
   }
 
-  /**
-   * Decode the value at a path, reading from the last commit's dataAddress.
-   * Falls back to Streamo.get() if no commits exist yet.
-   *
-   * Registers reactive dependencies so watchers re-run when new commits land.
-   */
   get (...args) {
     if (typeof args[0] === 'number') return super.get(...args)
-    const commit = this.lastCommit  // registers 'length' dependency
+    const commit = this.lastCommit
     if (!commit) return super.get(...args)
     this.recaller.reportKeyAccess(this._chunks, JSON.stringify(args))
     return this.decodeAt(commit.dataAddress, ...args)
   }
 
-  /**
-   * Like Streamo.getRefs() but reads from the last commit's dataAddress.
-   */
   getRefs (...path) {
     const commit = this.lastCommit
     if (!commit) return super.getRefs(...path)
@@ -230,23 +90,12 @@ export class StreamoRecord extends Streamo {
     return this.asRefs(address)
   }
 
-  /**
-   * Eager-decoded value at the last commit's dataAddress.
-   * Returns undefined if nothing has been committed yet.
-   *
-   * NB: the name is historical — this returns the WHOLE value; the
-   * files map (if there is one) is at `.files` of the return. Reach
-   * for `get()` with no path when you want the same thing lazily.
-   */
   get files () {
     const commit = this.lastCommit
     if (!commit) return undefined
     return this.decode(commit.dataAddress)
   }
 
-  /**
-   * Iterate commits from newest to oldest. Lazy — decodes as it walks.
-   */
   * history () {
     let commit = this.lastCommit
     while (commit) {
@@ -255,22 +104,12 @@ export class StreamoRecord extends Streamo {
     }
   }
 
-  /**
-   * The commit before the head, or null if the head has no parent (initial
-   * commit / no commits at all). Positional accessor for the common case
-   * where you want "the previous one" without materializing history().
-   */
   get parent () {
     const head = this.lastCommit
     if (!head || head.parent === undefined) return null
     return this.decode(head.parent)
   }
 
-  /**
-   * The commit `n` steps back from the head. `n === 0` returns the head
-   * (same as `lastCommit`); `n === 1` is `parent`; etc. Returns null if
-   * `n` exceeds the chain length. Walks history() lazily — cost is O(n).
-   */
   ancestor (n) {
     if (n < 0) return null
     let i = 0
@@ -281,47 +120,10 @@ export class StreamoRecord extends Streamo {
     return null
   }
 
-  /**
-   * Stateless crypto-check: is `sig` a valid signature over `sig.chainHash`
-   * by `publicKey`? Doesn't re-verify chain consistency — that's the
-   * StreamoRecordSerializer's job at the relay (chain check happens there
-   * before any incoming batch lands).
-   */
   async verify (sig, publicKey) {
     return verifySignature(publicKey, sig.chainHash, sig.compactRawBytes)
   }
 
-  // ── Wire-state cells (subscribed Records reactive surface) ────────────
-
-  /**
-   * Reactive: true once makeRelayInboundStream has rejected an incoming
-   * batch because our local store has content past the last shared sig
-   * (a push-in-flight race: we wrote locally, the relay sent down other
-   * bytes before knowing about our push, our push will likely be
-   * rejected). This is a *conflict*, not a fork.
-   */
-  // conflictDetected getter/setter lived here until Mirror-and-Draft
-  // item 6 step 3g. Now on session — `session.getConflictDetected(pubkeyHex)`.
-
-  // pushRejected getter/setter lived here until Mirror-and-Draft item 6
-  // task 4 (2026-07-23). Now on session — `session.getPushRejected(pubkeyHex)`.
-  // Setter moved to `session.setPushRejected(pubkeyHex, info)`; the
-  // registry-sync layer's `handleRegistryPeer` writes there directly on
-  // `{type:'reject'}` receipt.
-
-  // relayChainHash getter removed 2026-07-22 — state has always been on
-  // the session (per Mirror-and-Draft migration item 6, commit e1e9bff);
-  // callers now go through `record._session?.getRelayChainHash?.(record.publicKeyHex)`
-  // directly. No shim; the primitive is genuinely wire-agnostic for this
-  // cell. See docs/EXPLORATION-mirror-and-draft-migration.md.
-
-  /**
-   * Back-reference to the session that subscribed this StreamoRecord. Set
-   * by `session.subscribe`; `WritableStreamoRecord.update()` reads it
-   * (via `_session`) to request a session-level resync after a rejected
-   * push. Null on Records that aren't attached to a wire (server-side
-   * archive-only, tests, etc.).
-   */
   _attachSession (session) {
     this.#session = session
     if (!this.#hasRelay) {
@@ -330,68 +132,17 @@ export class StreamoRecord extends Streamo {
     }
   }
 
-  /**
-   * The attached session, or null. Exposed via `_` accessor so subclasses
-   * (specifically WritableStreamoRecord.update) can reach it across the
-   * private-field boundary.
-   */
   get _session () { return this.#session }
 
-  /**
-   * Reactive: true once an upstream relay session has been attached.
-   * Stays true for the lifetime of this StreamoRecord — auto-reconnect
-   * (8.5.0) keeps the session object stable across blips.
-   */
   get hasRelay () {
     this.recaller.reportKeyAccess(this, 'hasRelay')
     return this.#hasRelay
   }
 
-  // _setRelaySubscribedAtOffset and relaySubscribedAtOffset getter removed
-  // 2026-07-22 — state has always been on session (per Mirror-and-Draft
-  // migration item 6, commit 8627940); callers now go through
-  // `record._session?.getRelaySubscribedAtOffset?.(record.publicKeyHex)`
-  // and `_session.setRelaySubscribedAtOffset(pubkey, offset)` directly.
-  // First-ack-only semantics live on session's setter. See
-  // docs/EXPLORATION-mirror-and-draft-migration.md.
-
-  /**
-   * Can this store be authored to? Always false here; WritableStreamoRecord
-   * overrides. Declared on the base so `isAuthorable` means the same thing
-   * on a Record, a WritableRecord and a Mirror — callers holding "some
-   * byte-store" can ask without knowing which they got.
-   */
   get isAuthorable () { return false }
 
-  // `caughtUpToRelay` and `isReadyToAuthor` lived here until 2026-08-01.
-  // They asked "has the wire told us anything yet" and fell back to
-  // `relayChainHash !== null` — which the code itself called a proxy, "not
-  // as precise as the watermark". `Mirror.remoteLength` IS that watermark,
-  // so both moved to Mirror and read it directly.
-
-  // `newDraft` lived here until 2026-08-01. Authoring is a Mirror's job —
-  // `mirror.newDraft(signer)` — because a Draft's commit awaits the wire
-  // cursor, and only the Mirror has one.
-
-  /**
-   * @override Wipes local bytes (via Streamo._reset) AND clears the
-   * divergence flags. Used by recovery-UX orchestration AND by
-   * WritableStreamoRecord.update() between retry attempts.
-   */
   _reset () {
     super._reset()
-    // pushRejected + conflictDetected + relayChainHash + relaySubscribedAtOffset
-    // all live on the RegistrySession per Mirror-and-Draft item 6.
-    // Clearing them is an explicit session concern — _reset() operates
-    // on Record's LOCAL bytes; session cells are wire-facts owned by
-    // the connection, not local state to clear. If we later need
-    // explicit reset (full resync UX), the caller does it via session.
   }
 
-  // The client-side receive path lived here as `makeRelayInboundStream`
-  // until 2026-08-01 — a shim onto relayInboundStream.js, which staged
-  // chunks and compared chain hashes at each SIG. It's `Mirror.makeReceiveStream`
-  // now: byte comparison at `remoteLength`, no chain interpretation. The
-  // job moved off the Record deliberately, because trust-and-append is
-  // something the wire does TO a Record, not part of a Record's identity.
 }

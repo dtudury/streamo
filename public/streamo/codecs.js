@@ -1,96 +1,7 @@
-/**
- * @file codecs — concrete codecs for every value type Streamo can encode.
- *
- * Primitives (UNDEFINED, NULL, FALSE, TRUE, UINT7, FLOAT64, DATE), bytes
- * (WORD, UINT8ARRAY, EMPTY_UINT8ARRAY), strings, composites (OBJECT,
- * ARRAY, EMPTY_*), the SIGNATURE chunk, and the internal balanced-tree
- * node Duple used to scale OBJECT/ARRAY storage. Every codec is a
- * { encode, decode, partReaders } object.
- *
- * The `r` (registry interface) is passed to every codec method and
- * helper as a leading argument — never captured in closure, so one codec
- * object serves every context. There were two flavours of `r` until
- * 2026-10-05, one without `append`, because answering a read could have to
- * materialize an inline part. Parts are always addressed now, so there is
- * nothing to materialize and one `r`.
- *
- * See design.md §3.
- *
- * ── Footer space — current state and forward-compat convention ─────────
- *
- * Each chunk's last byte (the footer) selects its codec via
- * `footerToCodec[footer]`. The footer-space is a single byte (0–255);
- * codecs claim contiguous ranges of footers as they're registered, sized
- * by `1 + sum-of-part-option-products`. CodecRegistry assigns
- * `baseFooter` sequentially in the order codecs appear in this file's
- * `makeCodecs()` return.
- *
- * Currently allocated: 186 of 256 footers (UINT7 alone claims 128 —
- * one footer per integer value 0–127, so any int 0–127 round-trips in
- * a single byte). DUPLE claims 16 (a 4×4 product of address options on
- * its two parts). WORD claims 5 — it is the one codec whose part is a
- * literal, where option 0 means a zero-byte literal rather than an
- * address. The 4 single-byte primitives + the fixed-shape SIGNATURE +
- * the empty-collection codecs each claim one.
- *
- * **70 footers are free** — 20 of them freed on 2026-10-06: 16 by dropping
- * the inline part option, and 4 more with BOXED, whose whole job was to give
- * a value "a first-class address rather than inline". Every value has one
- * now, so it had nothing left to do. New codecs added at the end of
- * `makeCodecs()` get the next contiguous range without touching any
- * existing footer assignment — old data stays readable forever.
- *
- * **Forward-compat convention** (the decision-in-place, 2026-05-27):
- *
- * - **Don't speculatively allocate.** Add codecs when a real use case
- *   demands them; reserve space by *not using it*. The cost of an
- *   unused slot is zero; the cost of a speculative slot we want to
- *   reclaim is "migrate every stored record."
- *
- * - **Add new codecs at the END of `makeCodecs()`'s return.** That
- *   keeps existing footers stable. Reordering or inserting mid-list
- *   is a format-break.
- *
- * - **Footer 255 is *informally* reserved** for a future META codec
- *   class (format-version, preamble, or any other format-evolution
- *   primitive). Not allocated; just don't bury it in the middle of
- *   ordinary additions. When we add META, register it consciously
- *   — likely as the last codec — and the slot we use becomes the
- *   reservation.
- *
- * - **Preamble decision (deferred):** Streamo records currently have
- *   no format-identifying header at offset 0. A record's first byte
- *   is whatever first chunk's footer happens to be. **If we evolve
- *   the format in a way that needs a version marker**, the planned
- *   shape is: a META chunk at offset 0, identified by a reserved
- *   footer (the 255 region above). Old records (without META at
- *   offset 0) are detectable by absence and read in v1 mode forever;
- *   new records carry their own version. **For now we don't need
- *   this**; documenting the shape so future-us doesn't have to
- *   re-invent it.
- *
- * - **Per-record version anchoring (lightweight complement):** for
- *   specific high-value records (Claude's journal, tarot readings,
- *   memory files when those land here), the worst-case read path is
- *   *"check out the streamo git hash that wrote this record."*
- *   Record the writing version's git hash alongside the record
- *   (e.g., in a sibling field or as part of value metadata) and the
- *   reader procedure for any format is recoverable from git history.
- *   Frugal pattern; complements META — META is the in-format
- *   convention, git-hash is the out-of-band escape hatch.
- *
- * The directional rule: **leave room for the futures we know about
- * without paying for them yet.**
- */
 import { numberToVar, varToNumber, range } from './utils.js'
 import { Opaque } from './Opaque.js'
 import { Signature } from './Signature.js'
 
-/**
- * Balanced binary tree node — internal to this file.
- * Arrays and objects are encoded as trees of these nodes.
- * Not exported; callers always work with plain arrays and objects.
- */
 class Duple {
   constructor (items) {
     if (items.length === 2) {
@@ -105,10 +16,6 @@ class Duple {
   }
 
   flat () {
-    // Walk the Duple tree, flattening only Duple nodes — never nested user
-    // values. (Earlier code used Array.prototype.flat() which silently
-    // flattened any nested array a caller had stored, so e.g. [3, [4,5]]
-    // would round-trip as [3, 4, 5].)
     const out = []
     for (const child of this.v) {
       if (child instanceof Duple) out.push(...child.flat())
@@ -126,14 +33,6 @@ class Duple {
   }
 }
 
-// ── Part reader factories ──────────────────────────────────────────────────
-// A partReader factory is `(r, code) => { type, width, address?, getCode?,
-// getDecoded }`. Readers close over their `r` so getCode/getDecoded recurse
-// through the same registry context.
-
-// A part is always an address. Option 0-3 selects a 1..4-byte little-endian
-// address; there is no inline option, so a part's bytes always live in their
-// own chunk.
 const addressReaders = range(4).map(i => (r, code) => {
   const width = i + 1
   const address = varToNumber(code.slice(-width))
@@ -152,12 +51,6 @@ const literalReaders = range(5).map(width => (r, code) => ({
   getDecoded: () => code.slice(-width)
 }))
 
-// Opaque payload: the chunk ends with [payload][length][footer], where the
-// footer option says how many little-endian length bytes precede it. The
-// payload is never decomposed — that is the point of the codec.
-// [payload][length][footer] — the length is little-endian and minimal-width,
-// the same encoding addressReaders uses for addresses, so option 0..3 means a
-// 1..4-byte length.
 const opaqueReaders = range(4).map(index => (r, code) => {
   const lengthWidth = index + 1
   const lengthAt = code.length - lengthWidth
@@ -165,11 +58,6 @@ const opaqueReaders = range(4).map(index => (r, code) => {
   return {
     type: `opaque(${lengthWidth})`,
     width: lengthWidth + length,
-    // new Uint8Array(...) rather than .slice(): chunks loaded from disk are
-    // Node Buffers, and Buffer.prototype.slice is an alias for subarray — a
-    // VIEW. Handing FLOAT64/DATE a view into the whole archive file breaks
-    // them, since they do new Float64Array(buf, byteOffset) and that offset
-    // must be a multiple of 8.
     getDecoded: () => new Uint8Array(code.subarray(lengthAt - length, lengthAt))
   }
 })
@@ -180,12 +68,6 @@ const uint7Readers = range(128).map(n => () => ({
   getDecoded: () => new Uint8Array([n])
 }))
 
-// ── Shared helpers ─────────────────────────────────────────────────────────
-
-/**
- * Lay out `[...parts][footer]` — every chunk in this file ends that way, and
- * four codecs used to spell it out by hand.
- */
 function withFooter (parts, footer) {
   const out = new Uint8Array(parts.reduce((total, part) => total + part.length, 0) + 1)
   let at = 0
@@ -194,33 +76,12 @@ function withFooter (parts, footer) {
   return out
 }
 
-/**
- * A part referring to an address we already hold.
- * @param {number} address
- * @returns {[Uint8Array, number]}
- */
+/** @param {number} address @returns {[Uint8Array, number]} */
 function partFromAddress (address) {
   const addrBytes = numberToVar(address)
-  return [addrBytes, addrBytes.length - 1] // option 0..3 for a 1..4-byte address
+  return [addrBytes, addrBytes.length - 1]
 }
 
-/**
- * Ensure `code` is stored and return [partBytes, optionIndex].
- * Option 0-3 is a 1..4-byte little-endian address.
- *
- * There used to be an option 0 meaning "inline" — the part's raw bytes sitting
- * in the parent chunk. It saved 0.27% of bytes and cost a refs type that could
- * not express its own result, a second flavour of `r` without `append`, and a
- * special case in every consumer. David, 2026-10-05: "everything is encoded
- * into an address of the Record. nothing is magic, nothing is special, this is
- * worth giving up a tiny filesize savings" — and on the records already on
- * disk, "if we need to support existing Records then we'll use an old version
- * of streamo."
- *
- * @param {{ addressOf: function, append: function, byteLength: number }} r
- * @param {Uint8Array} code
- * @returns {[Uint8Array, number]}
- */
 function addressPart (r, code) {
   return partFromAddress(r.addressOf(code) ?? r.append(code))
 }
@@ -239,16 +100,6 @@ function encodeMultipart (r, values, codec, asRefs) {
   return withFooter(parts, footer)
 }
 
-/**
- * Read a chunk's parts. The footer names the codec and, as a mixed-radix
- * offset from its baseFooter, which reader each part uses. A part is either
- * an address (a reference to another chunk) or literal data embedded in this
- * chunk. Exported 2026-10-07 because CodecRegistry.copyFrom needs the same
- * walk — it had its own copy of this loop, line for line.
- * @param {any} r
- * @param {Uint8Array} code
- * @returns {Array<{ type: string, width: number, address?: number, getCode?: function, getDecoded: function }>}
- */
 export function decodeParts (r, code) {
   const footer = code.at(-1)
   const codec = r.footerToCodec[footer]
@@ -267,22 +118,6 @@ export function decodeParts (r, code) {
   return parts
 }
 
-/**
- * Build all codecs. Returned codecs are instance-agnostic — every
- * encode/decode takes `r` as its first argument, so the same codec
- * objects can serve a read-write or read-only registry context
- * depending on which `r` is passed in.
- *
- * Each codec is an object with:
- *   type         — string name (set by the registry after registration)
- *   baseFooter   — set by the registry after registration
- *   partReaders  — optional array of option-arrays (see below)
- *   getWidth     — optional override; defaults to sum of part widths + 1
- *   encode(r, v, asRefs)         — returns Uint8Array or falsy
- *   decode(r, code, asRefs)      — returns the JS value
- *
- * @returns {Object} map of codec name → codec definition
- */
 export const isPlainObject = value =>
   !!value &&
   typeof value === 'object' &&
@@ -292,7 +127,6 @@ export const isPlainObject = value =>
   !(value instanceof Opaque)
 
 export function makeCodecs () {
-  // ── Codec definitions ────────────────────────────────────────────────────
 
   const UNDEFINED = {
     encode: (r, v) => v === undefined && new Uint8Array([UNDEFINED.baseFooter]),
@@ -314,7 +148,6 @@ export function makeCodecs () {
     decode: () => true
   }
 
-  /** ≤4-byte Uint8Array stored literally */
   const WORD = {
     partReaders: [literalReaders],
     encode (r, v) {
@@ -325,7 +158,6 @@ export function makeCodecs () {
     decode (r, code) { return decodeParts(r, code)[0].getDecoded() }
   }
 
-  /** Arbitrary-length Uint8Array (>4 bytes), stored via Duple tree of WORDs */
   const UINT8ARRAY = {
     partReaders: [addressReaders],
     encode (r, v) {
@@ -365,7 +197,6 @@ export function makeCodecs () {
     }
   }
 
-  /** Non-negative integer 0..127 */
   const UINT7 = {
     partReaders: [uint7Readers],
     encode (r, v) {
@@ -400,12 +231,6 @@ export function makeCodecs () {
     }
   }
 
-  // Fixed-format 97-byte chunk: [chainHash(32) | signature(64) | footer(1)].
-  //
-  // No partReaders → single footer slot, fixed width. The fixed footer +
-  // fixed length lets a verifier read the latest chainHash with a single
-  // slice of the last 97 bytes of HEAD — no chunk-graph walk required.
-  // No chunk references; chainHash + sig bytes are data, not pointers.
   const SIGNATURE = {
     getWidth: () => 97,
     encode (r, v) {
@@ -418,7 +243,6 @@ export function makeCodecs () {
     }
   }
 
-  /** Internal balanced binary tree node. Never exposed to callers. */
   const DUPLE = {
     partReaders: [addressReaders, addressReaders],
     encode (r, v, asRefs) {
@@ -431,7 +255,6 @@ export function makeCodecs () {
       const leftIsDuple = r.footerToCodec[leftCode.at(-1)]?.type === 'DUPLE'
       const rightIsDuple = r.footerToCodec[rightCode.at(-1)]?.type === 'DUPLE'
       if (!leftIsDuple && !rightIsDuple) {
-        // 'all' means return addresses for both slots (used by array asRefs)
         const nameIsRef = asRefs === 'all' || (Array.isArray(asRefs) && asRefs[1])
         const valueIsRef = asRefs === 'all' || asRefs === true || (Array.isArray(asRefs) && asRefs[0])
         return new Duple([
@@ -439,8 +262,6 @@ export function makeCodecs () {
           valueIsRef ? parts[1].address : parts[1].getDecoded(false)
         ])
       }
-      // Non-leaf: at least one child is itself a Duple subtree.
-      // With 'all', recurse into sub-duples and take the address of any leaf.
       if (asRefs === 'all') {
         return new Duple([
           leftIsDuple ? parts[0].getDecoded('all') : parts[0].address,
@@ -460,37 +281,19 @@ export function makeCodecs () {
     partReaders: [addressReaders],
     encode (r, v, asRefs) {
       if (!Array.isArray(v) || v.length === 0) return
-      // A dense single-element array is SINGLE_ARRAY's, registered at the end.
       if (v.length === 1 && Object.keys(v).length === 1) return
       if (v.length > 1 && Object.keys(v).length === v.length) {
         return encodeMultipart(r, [new Duple(v)], ARRAY, asRefs)
       }
-      // Sparse or single-element array: encode as an object with a length key.
-      // Under asRefs every value in that object is an ADDRESS, and `length`
-      // is one of its values — so it has to be the address of the number, not
-      // the number. Passing it raw made the count get read as an address.
       const length = asRefs ? r.encode(v.length) : v.length
       const obj = Object.assign({}, v, { length })
       return encodeMultipart(r, [obj], ARRAY, asRefs)
     },
     decode (r, code, asRefs) {
-      // Two representations, and they need different asRefs treatment.
-      //
-      // Dense multi-element arrays are a Duple tree of VALUES, so 'all' — an
-      // address for both slots — is exactly right.
-      //
-      // A single-element or sparse array is the OBJECT above ({...v, length}),
-      // where a Duple's slot 0 is a NAME. 'all' returns the address of the
-      // name string, and Object.assign reads that address as an index: before
-      // 2026-10-07, asRefs([7]) came back as a 24-long sparse array keyed by
-      // addr("0") and addr("length"). get(path) then returned undefined and
-      // set(path) wrote that shape back, corrupting the record.
       const part = decodeParts(r, code)[0]
       const inner = part.getDecoded(asRefs === true ? 'all' : asRefs)
       if (inner instanceof Duple) return inner.flat()
       if (asRefs === true) {
-        // Names as strings, values as addresses. `length` is metadata rather
-        // than an element, so it is decoded rather than handed back as one.
         const named = part.getDecoded(true)
         const out = new Array(r.decode(named.length))
         for (const [k, v] of Object.entries(named)) {
@@ -503,11 +306,6 @@ export function makeCodecs () {
   }
 
   const EMPTY_OBJECT = {
-    // Accepts any non-array object with no own enumerable keys, including class
-    // instances. (OBJECT also doesn't check the prototype on encode, so empty
-    // class instances should be encodable too — keeping them symmetric.) Type
-    // information is lost on round-trip in both cases; the decoded value is a
-    // plain {}.
     encode (r, v) {
       if (!isPlainObject(v)) return
       if (Object.keys(v).length === 0) return new Uint8Array([EMPTY_OBJECT.baseFooter])
@@ -529,24 +327,10 @@ export function makeCodecs () {
     }
   }
 
-  /**
-   * Arbitrary-length Uint8Array (>4 bytes) stored as ONE chunk: the bytes
-   * verbatim, a little-endian length, and a footer whose option says how wide
-   * that length is (1, 2 or 3 bytes → up to 16MB).
-   *
-   * The Duple-tree path in UINT8ARRAY above walks bytes to 4-byte leaves,
-   * which is right when the bytes share structure with other values and wrong
-   * when they are noise: a 4096-byte payload became 1013 chunks and grew 20%.
-   * Commits from another Record are exactly that kind of noise.
-   */
   const OPAQUE = {
     partReaders: [opaqueReaders],
     encode (r, v) {
       if (!(v instanceof Opaque)) return
-      // Guard on the length itself, not on numberToVar's output: numberToVar
-      // uses >>> and truncates at 32 bits, so 2**32 comes back as a ONE-byte
-      // zero. V8 will happily allocate an array that big, so without this the
-      // chunk would encode a length of 0 and corrupt silently.
       if (v.value.length >= 0x100000000) throw new Error(`Opaque: ${v.value.length} bytes exceeds the 4-byte length a footer option can say`)
       const length = numberToVar(v.value.length)
       return withFooter([v.value, length], OPAQUE.baseFooter + length.length - 1)
@@ -554,32 +338,11 @@ export function makeCodecs () {
     decode (r, code) { return new Opaque(decodeParts(r, code)[0].getDecoded()) }
   }
 
-  // Empty-Uint8Array codec is appended at the END of the registration list so
-  // it doesn't shift the footer values of existing codecs — chunks created
-  // before this codec was added still decode correctly.
   const EMPTY_UINT8ARRAY = {
     encode: (r, v) => v instanceof Uint8Array && v.length === 0 && new Uint8Array([EMPTY_UINT8ARRAY.baseFooter]),
     decode: () => new Uint8Array(0)
   }
 
-  /**
-   * A dense one-element array. Also appended at the END of the registration
-   * list, so no existing footer shifts.
-   *
-   * A Duple is a PAIR — `new Duple([x])` throws "Duple requires at least 2
-   * items" — so one element has nothing to pair with, and ARRAY used to fall
-   * back to the sparse representation ({...v, length}) for it. That cost 34
-   * bytes and 14 chunks for `[7]` against 7 bytes and 4 for `[7, 8]`, because
-   * the object has to store the strings "length" and "0" and the WORDs holding
-   * their bytes. It also routed the commonest array shape through the sparse
-   * path, where asRefs 'all' addressed a NAME and corrupted the record on a
-   * path write (fixed 2026-10-07, see ARRAY.decode).
-   *
-   * Pointing ARRAY's part straight at the element is not an option: the footer
-   * would not say whether that part is a tree of the elements or the single
-   * element itself, and `[[1, 2]]` makes those two readings differ. A distinct
-   * footer IS that distinction, which is the whole job of this codec.
-   */
   const SINGLE_ARRAY = {
     partReaders: [addressReaders],
     encode (r, v, asRefs) {
@@ -588,8 +351,6 @@ export function makeCodecs () {
     },
     decode (r, code, asRefs) {
       const part = decodeParts(r, code)[0]
-      // asRefs wants the element's ADDRESS, not its decoded value. No special
-      // mode needed — there is one part and it is always an address.
       if (asRefs === true || asRefs === 'all') return [part.address]
       return [part.getDecoded(asRefs)]
     }

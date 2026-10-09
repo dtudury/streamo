@@ -1,25 +1,15 @@
-/**
- * A content-addressable trie mapping Uint8Array → address (number).
- * Two Uint8Arrays with identical bytes will always resolve to the same entry.
- * Lookup and insert are O(n) in the number of matching prefix bits, not O(n²).
- */
 export class ContentMap {
   #offset
   #code
   #address
   #branches = []
 
-  constructor (offset = 0, code, address = -1) {
+  constructor (offset = 0, code = undefined, address = -1) {
     this.#offset = offset
     this.#code = code
     this.#address = address
   }
 
-  /**
-   * Returns the address stored for this code, or undefined if not found.
-   * @param {Uint8Array} code
-   * @returns {number|undefined}
-   */
   get (code) {
     if (this.#code === undefined || this.#address === -1) return undefined
     const { match, matchingBits } = this.#compare(code)
@@ -27,11 +17,6 @@ export class ContentMap {
     return this.#branches[matchingBits]?.get(code)
   }
 
-  /**
-   * Store a code → address mapping.
-   * @param {Uint8Array} code
-   * @param {number} address
-   */
   set (code, address) {
     if (this.#code === undefined || this.#address === -1) {
       this.#code = code
@@ -44,11 +29,6 @@ export class ContentMap {
     this.#branches[matchingBits] = new ContentMap(matchingBytes, code, address)
   }
 
-  /**
-   * Clone the map, including only entries with address ≤ maxAddress.
-   * @param {number} maxAddress
-   * @returns {ContentMap}
-   */
   clone (maxAddress) {
     if (this.#address > maxAddress) throw new Error('clone address is before branch')
     const copy = new ContentMap(this.#offset, this.#code, this.#address)

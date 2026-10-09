@@ -1,72 +1,12 @@
-/**
- * @file WritableStreamoRecord — a StreamoRecord you can author into.
- *
- * **Subclass for author capability.** A plain `StreamoRecord` is the
- * read-only definitional minimum: a Streamo whose bytes interpret as a
- * signed chain — readable, traversable, verifiable, but not writable.
- * WritableStreamoRecord adds the author surface: attachSigner, set,
- * setRefs, checkout, commit, merge, update, sign.
- *
- * **Why subclass for author, not compose:** authorability is type-level
- * (knowable at construction). The explorer holds StreamoRecord (peer
- * Records it subscribed to and can't sign for); the chat app holds
- * WritableStreamoRecord for the user's own identity Record. Different
- * intents, different types — the API refuses misuse loudly instead of
- * surfacing it as a runtime `attachSigner-was-never-called` surprise.
- *
- * **`locallyAuthoredOffset` lives here.** The low-water mark of bytes
- * this process authored. Streamo itself doesn't know about authorship —
- * it's a codec. StreamoRecord knows about *chains* but not specifically
- * about *which bytes I authored*. That concept is purely a property of
- * the writer, so it lives on the writer's class. Apps that hold a
- * Writable can read `repo.locallyAuthoredOffset` to know "have I signed
- * for anything this session" — a substrate primitive for future
- * reconnect-bandwidth optimization, and the architectural word for
- * "received vs. authored" that the corruption-fight footgun was missing.
- */
 import { Streamo, changedPaths } from './Streamo.js'
 import { StreamoRecord } from './StreamoRecord.js'
 import { Signature } from './Signature.js'
 import { arraysEqual, chainHashOf } from './utils.js'
-// chain-hash helpers (sha256 + chainHashOf + arraysEqual) moved to
-// utils.js on 2026-07-24 — previously duplicated with
-// StreamoRecordSerializer.js (validator side) and arraysEqual
-// duplicated across 5 files total.
 
-/**
- * Does this byte-store carry the author surface? Ask wherever a
- * `Mirror.local` is about to be written to: `local` is typed
- * `StreamoRecord | WritableStreamoRecord` and the read-only case is real,
- * not a typechecker artifact — a registry factory decides per key, and
- * `todomvc/main.js` documents the exact way it goes wrong.
- *
- * A predicate rather than a bare boolean so the check that throws is the
- * check that narrows, and the two can't drift.
- *
- * @param {any} x
- * @returns {x is WritableStreamoRecord}
- */
 export function hasAuthorSurface (x) {
   return x != null && typeof x.attachSigner === 'function'
 }
 
-/**
- * Fetch a StreamoRecord snapshot from an HTTP source URL or host shorthand.
- * Returns `{ repo, host, keyHex }` — the loaded slim StreamoRecord plus
- * enough context to construct a `remoteParent` citation automatically.
- *
- * The fetched Record is read-only (it's the source we're merging FROM,
- * not a target we author into), so it's instantiated as the slim
- * StreamoRecord.
- *
- * Accepted inputs:
- *   - `http://host:port/streams/<keyHex>` — full URL with explicit key
- *   - `https://host/streams/<keyHex>`     — TLS, default port
- *   - `https://host`                       — TLS, no path; falls through
- *                                            to /api/info for primaryKeyHex
- *   - `host:port`                          — shorthand; assumes http
- *   - `host`                               — shorthand; assumes https
- */
 async function fetchSnapshot (input) {
   let urlString = input
   if (!input.includes('://')) {
@@ -112,89 +52,30 @@ export class WritableStreamoRecord extends StreamoRecord {
   #signing = false
   #signPending = false
 
-  // (#recoveryStuck removed 2026-07-17 with update() — Draft's status
-  // transitions superseded/failed are the new signal.)
-
-  // Low-water mark of bytes this process authored locally — "the smallest
-  // offset at which I appended a byte I signed for." Apps can read
-  // `repo.locallyAuthoredOffset` to know "have I authored anything this
-  // session" (Infinity means no). Initial value Infinity = nothing
-  // authored yet. Archive replay, wire-inbound, and any other "received
-  // not authored" path leave it at Infinity. Only the author methods
-  // here call `_markAuthoredAtOffset` to lower the mark — they capture
-  // byteLength BEFORE the append and pass that, so the mark settles at
-  // the first authored byte.
-  //
-  // The corruption-fight motivator (2026-05-26): a watch.js process
-  // loaded its user's Record over the wire and, on every Stop-hook
-  // respawn, re-pushed those bytes to the relay. The substrate had no
-  // word for "I authored this" vs "I received this." The observer-
-  // doesn't-push guard in registrySync.subscribe handles the coarse
-  // case (slim StreamoRecord never pushes); this offset is the fine-
-  // grained "which bytes specifically did I sign for" word, available
-  // to apps + reserved for future bandwidth optimizations.
   #locallyAuthoredOffset = Infinity
 
-  /**
-   * Default commit message attached to every commit made via set() / setRefs().
-   * Empty by default — clients opt in to set this for attribution. The chat web
-   * client sets 'web' so commits are visibly distinguishable from a CLI
-   * client's. Not enforced; explicit commit(working, msg) wins.
-   */
   defaultMessage = ''
 
-  /**
-   * Reactive: the low-water mark of bytes this process authored locally.
-   * `Infinity` means "nothing authored yet" (the default; what archive
-   * replay and wire-inbound leave it at). Otherwise, the smallest byte
-   * offset at which an author method appended.
-   */
   get locallyAuthoredOffset () {
     this.recaller.reportKeyAccess(this, 'locallyAuthoredOffset')
     return this.#locallyAuthoredOffset
   }
 
-  /**
-   * Lower the mark to `offset` if it's currently higher. Idempotent and
-   * monotonic-downward. Called by the author methods with the
-   * byteLength captured BEFORE the author append. Internal —
-   * leading underscore by convention.
-   */
   _markAuthoredAtOffset (offset) {
     if (offset >= this.#locallyAuthoredOffset) return
     this.#locallyAuthoredOffset = offset
     this.recaller.reportKeyMutation(this, 'locallyAuthoredOffset')
   }
 
-  /**
-   * Attach a signer so every commit is automatically signed.
-   * Concurrent commits are batched: if a sign is in flight when another
-   * commit lands, one more sign runs after the current one finishes,
-   * covering all accumulated commits in a single signature.
-   *
-   * @param {import('./Signer.js').Signer} signer
-   * @param {string} name  stream name passed to signer.keysFor()
-   */
   attachSigner (signer, name) {
     this.#signer = signer
     this.#signerName = name
   }
 
-  /**
-   * Whether a signer has been attached. Used by callers (like Draft) that
-   * need to know before awaiting a sign — without a signer, waits for
-   * `signedLength === byteLength` never complete.
-   */
   get hasSigner () { return this.#signer !== null }
 
   #scheduleSign () {
     if (!this.#signer) return
-    // Once the underlying Addressifier is closed, any append (including
-    // SIG appends from sign()) will throw "cannot append to a closed
-    // Addressifier" — and the catch below would reschedule us forever.
-    // Bail out: closed streams stop trying to sign. The remaining
-    // unsigned tail stays unsigned; that's the caller's call when they
-    // chose to close.
     if (this.isClosed) return
     if (this.#signing) { this.#signPending = true; return }
     this.#signing = true
@@ -212,13 +93,6 @@ export class WritableStreamoRecord extends StreamoRecord {
       })
   }
 
-  /**
-   * Write a value by creating a new commit: checkout → set → commit.
-   *
-   * Signature: set([address,] ...path, value)  — same as Streamo.set().
-   * Path-level reactive mutations are fired after commit so watchers only
-   * watching specific paths get precise notifications.
-   */
   set (...args) {
     if (typeof args[0] === 'number') return Streamo.prototype.set.apply(this, args)
     const prevDataAddress = this.lastCommit?.dataAddress
@@ -232,9 +106,6 @@ export class WritableStreamoRecord extends StreamoRecord {
     return result
   }
 
-  /**
-   * Like Streamo.setRefs() but auto-commits via checkout → setRefs → commit.
-   */
   setRefs (...args) {
     const prevDataAddress = this.lastCommit?.dataAddress
     const working = this.checkout()
@@ -247,55 +118,19 @@ export class WritableStreamoRecord extends StreamoRecord {
     return result
   }
 
-  /**
-   * Clone the repository at the last commit's data address.
-   * The returned Streamo's get() immediately returns the last committed value.
-   * Returns an empty Streamo if nothing has been committed yet.
-   * @returns {Streamo}
-   */
   checkout () {
-    // Returns a plain Streamo working-scratch, NOT a WritableStreamoRecord
-    // — set() below feeds it into commit() as a raw byte producer, and
-    // wants base-Streamo.set (encode + append) semantics, not our own
-    // recursive checkout→set→commit. Explicitly build the Streamo via
-    // _applyClone instead of going through this.clone() (which now
-    // subclass-preserves, per its own honest contract).
     const working = new Streamo({ name: 'checkout' })
     const commit = this.lastCommit
     if (commit) this._applyClone(working, commit.dataAddress)
     return working
   }
 
-  /**
-   * Copy the current value of workingStreamo into the repository and append
-   * a commit record referencing it by address.
-   *
-   * When `options.remoteParent` is set, the commit cites another author's
-   * value: `{ host, repo, dataAddress }`. The local commit is still signed
-   * by us and append-only on our chain — `remoteParent` is a footnote, not
-   * a merge. Anyone holding the cited stream can verify the citation by
-   * decoding the value at `remoteParent.dataAddress` in that stream.
-   *
-   * `options.date` overrides the default "now" — useful when replaying
-   * pre-existing history (e.g. seeding a streamo from git log).
-   */
   commit (workingStreamo, message = '', options = {}) {
     if (workingStreamo.byteLength === 0) throw new Error('nothing to commit')
     const { remoteParent, date = new Date() } = options
-    // super.valueAddress (StreamoRecord's walk-past-trailing-SIGs override)
-    // is the right citation for the parent commit. Raw byteLength-1
-    // would land on a SIG chunk when auto-signing has just fired.
     const parentAddr = super.valueAddress
     const parent = parentAddr >= 0 ? parentAddr : undefined
-    // Capture byteLength BEFORE any author append so
-    // locallyAuthoredOffset settles at the first byte THIS commit
-    // contributed. The mark is monotonic-downward; later commits don't
-    // move it back up.
     const authoredFrom = this.byteLength
-    // sharedThrough = lastCommit.dataAddress when we have one — the working
-    // clone shares chunks with us up through that address. The smart copyFrom
-    // uses this to skip recursion on the shared region and only walk the
-    // genuinely-new chunks that working appended via its set(...).
     const sharedThrough = this.lastCommit?.dataAddress ?? -1
     const copied = this.copyFrom(workingStreamo, workingStreamo.valueAddress, sharedThrough)
     const dataAddress = copied
@@ -307,18 +142,6 @@ export class WritableStreamoRecord extends StreamoRecord {
     return result
   }
 
-  /**
-   * Incorporate a slice of `source`'s value into this repo as a single
-   * signed commit, with `remoteParent` set to cite the source.
-   *
-   * **Mode**: this version supports only `policy: 'replace'` — source's
-   * value at `from` REPLACES our value at `into`. Sibling keys at
-   * `into`'s parent are preserved.
-   *
-   * **Two shapes fall out naturally:**
-   *   - *Fork*  — merge into an empty repo → no local parent + remoteParent
-   *   - *Pull-overwrite* — merge into an existing chain → both set
-   */
   async merge (source, options = {}) {
     if (typeof source === 'string') {
       const { repo: fetched, host, keyHex } = await fetchSnapshot(source)
@@ -379,12 +202,6 @@ export class WritableStreamoRecord extends StreamoRecord {
     return this.commit(working, message ?? defaultMessage, { remoteParent: citation })
   }
 
-  /**
-   * Sign every byte appended since the last SIG (or from the start).
-   * Computes `chainHash = sha256(committedChainHash || sha256(newBytes))`,
-   * signs it, and appends a SIGNATURE chunk carrying the chainHash + the
-   * signature bytes.
-   */
   async sign (signer, streamoName) {
     const before = this.byteLength
     const newBytes = this.slice(this.signedLength, this.byteLength)
@@ -392,29 +209,13 @@ export class WritableStreamoRecord extends StreamoRecord {
     const compactRawBytes = await signer.sign(streamoName, chainHash)
     if (this.byteLength !== before) throw new Error('repo was modified while signing')
     const sig = new Signature(chainHash, compactRawBytes)
-    // Sign is an author act: lower the locallyAuthoredOffset to the
-    // first byte the SIG covers. If a commit just bumped the mark to
-    // this same `before` offset, this call is a no-op (idempotent).
     this._markAuthoredAtOffset(before)
     this.publish(this.encode(sig))
     return sig
   }
 
-  // `_awaitChainHash` lived here until 2026-08-01. It resolved on
-  // session.relayChainHash and rejected on pushRejected/conflictDetected —
-  // three outcomes under a name advertising one, which is why it looked
-  // like a one-line replacement and wasn't. It's `Mirror.awaitLanded` now:
-  // same three outcomes, landing expressed as a byte-position.
-
-  // update() was removed 2026-07-17 (item 3b). Callers use Draft
-  // (via Mirror.newDraft) or the commitWithRetry helper for the old
-  // retry-loop semantics. See EXPLORATION-sync-model.md for the
-  // Mirror-and-Draft design + migration path.
-
-  /** @override Writable by definition — this is the class split's point. */
   get isAuthorable () { return true }
 
-  /** @override Also resets locallyAuthoredOffset. */
   _reset () {
     super._reset()
     this.#locallyAuthoredOffset = Infinity

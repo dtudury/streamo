@@ -90,6 +90,7 @@ export class CodecRegistry extends Addressifier {
      * @returns {number} the address in THIS registry
      */
     copyFrom(source: CodecRegistry, sourceAddress: number, sharedThrough?: number): number;
+    appendChunk(code: Uint8Array): number;
     /**
      * Appends a compound code by splitting into constituent subcodes
      * (back-to-front, footer-determined widths) and appending each

@@ -82,10 +82,6 @@ function partFromAddress (address) {
   return [addrBytes, addrBytes.length - 1]
 }
 
-function addressPart (r, code) {
-  return partFromAddress(r.addressOf(code) ?? r.append(code))
-}
-
 function encodeMultipart (r, values, codec, asRefs) {
   if (values.length !== codec.partReaders.length) throw new Error('part count mismatch')
   const parts = []
@@ -127,7 +123,6 @@ export const isPlainObject = value =>
   !(value instanceof Opaque)
 
 export function makeCodecs () {
-
   const UNDEFINED = {
     encode: (r, v) => v === undefined && new Uint8Array([UNDEFINED.baseFooter]),
     decode: () => undefined

@@ -1,48 +1,33 @@
 import { Addressifier } from './Addressifier.js'
 import { makeCodecs, decodeParts } from './codecs.js'
-import { numberToVar, varToNumber } from './utils.js'
+import { numberToVar } from './utils.js'
 
 export class CodecRegistry extends Addressifier {
   footerToCodec = []
 
   #codecs
-  #r
 
   constructor () {
     super()
     this.#codecs = makeCodecs()
-    const self = this
-    this.#r = {
-      encode: (v, asRefs) => self.encode(v, asRefs),
-      decode: (code, asRefs) => self.#decodeWith(self.#r, code, asRefs),
-      append: code => self.#appendSubcode(code),
-      resolve: addr => self.resolve(addr),
-      addressOf: code => self.addressOf(code),
-      get byteLength () { return self.byteLength },
-      footerToCodec: this.footerToCodec
-    }
     this.#registerAll()
   }
 
   get byteLength () { return super.byteLength }
 
   decode (codeOrAddress, asRefs = false) {
-    return this.#decodeWith(this.#r, codeOrAddress, asRefs)
-  }
-
-  #decodeWith (r, codeOrAddress, asRefs) {
     const code = typeof codeOrAddress === 'number' ? this.resolve(codeOrAddress) : codeOrAddress
     if (!(code instanceof Uint8Array)) throw new Error('expected a Uint8Array or an address')
     const codec = this.footerToCodec[code.at(-1)]
-    return codec.decode(r, code, asRefs)
+    return codec.decode(this, code, asRefs)
   }
 
   encode (value, asRefs) {
     if (asRefs && typeof value === 'number') return value
     for (const name in this.#codecs) {
       const codec = this.#codecs[name]
-      const code = codec.encode?.(this.#r, value, asRefs)
-      if (code) return this.#appendSubcode(code)
+      const code = codec.encode?.(this, value, asRefs)
+      if (code) return this.appendChunk(code)
     }
     throw new Error(`no codec for value: ${value}`)
   }
@@ -52,7 +37,7 @@ export class CodecRegistry extends Addressifier {
     const { type } = this.footerToCodec[code.at(-1)]
     if (type === 'OBJECT' || type === 'EMPTY_OBJECT' ||
         type === 'ARRAY' || type === 'EMPTY_ARRAY' || type === 'SINGLE_ARRAY') {
-      return this.#decodeWith(this.#r, address, true)
+      return this.decode(address, true)
     }
     return address
   }
@@ -83,7 +68,7 @@ export class CodecRegistry extends Addressifier {
 
     const bytes = source.resolve(sourceAddress)
     const codec = source.footerToCodec[bytes.at(-1)]
-    const parts = decodeParts(source.#r, bytes)
+    const parts = decodeParts(source, bytes)
 
     if (!parts.length || parts.some(part => part.address === undefined)) {
       return this.encode(source.decode(sourceAddress))
@@ -107,7 +92,7 @@ export class CodecRegistry extends Addressifier {
     let pos = 0
     for (const p of partBytes) { out.set(p, pos); pos += p.length }
     out[pos] = footer
-    return this.#appendSubcode(out)
+    return this.appendChunk(out)
   }
 
   append (code) {
@@ -130,7 +115,7 @@ export class CodecRegistry extends Addressifier {
     return last
   }
 
-  #appendSubcode (code) {
+  appendChunk (code) {
     const existing = this.addressOf(code)
     if (existing !== undefined) return existing
     const address = super.append(code)
@@ -139,7 +124,6 @@ export class CodecRegistry extends Addressifier {
   }
 
   #registerAll () {
-    const r = this.#r
     for (const name in this.#codecs) {
       const codec = this.#codecs[name]
       codec.type = name
@@ -153,7 +137,7 @@ export class CodecRegistry extends Addressifier {
           let total = 1
           for (let i = c.partReaders.length - 1; i >= 0; i--) {
             const opts = c.partReaders[i]
-            const part = opts[option % opts.length](r, code.subarray(0, -total))
+            const part = opts[option % opts.length](this, code.subarray(0, -total))
             total += part.width
             option = Math.floor(option / opts.length)
           }

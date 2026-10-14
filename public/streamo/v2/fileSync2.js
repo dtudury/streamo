@@ -47,6 +47,15 @@ export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignor
     }
   }
 
+  const listOne = async dir => {
+    try {
+      return await readdir(dir, { withFileTypes: true })
+    } catch (err) {
+      if (dir !== folder && (err?.code === 'ENOENT' || err?.code === 'ENOTDIR')) return []
+      throw err
+    }
+  }
+
   const reloadIgnoresThenReadEverything = async reason => {
     let gitignoreRules = null
     try {
@@ -58,7 +67,7 @@ export async function fileSync2 ({ hub, rootKey, folder: folderPath = '.', ignor
 
     onDisk = {}
     const walk = async dir => {
-      for (const entry of await readdir(dir, { withFileTypes: true })) {
+      for (const entry of await listOne(dir)) {
         const abs = join(dir, entry.name)
         const rel = relative(folder, abs)
         if (!accepts(rel)) continue
